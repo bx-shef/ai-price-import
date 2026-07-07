@@ -1,0 +1,171 @@
+# Production stack. Images are pulled from GHCR and auto-updated by Watchtower.
+# The public-facing `app` joins the external nginx-proxy network (proxy-net);
+# `mcp` and `redis` stay on the internal `procure-net` only.
+#
+# Explicit project name isolates this stack from the nginx-proxy stack
+# (docker-compose.nginxproxy.yml, project `procure-proxy`). Without it both files
+# share the directory-derived project name, and `up --remove-orphans` here would
+# delete nginx-proxy/acme-companion. This value matches the previous directory
+# default so existing containers and volumes are reused (no migration).
+name: procure-ai
+
+services:
+  app:
+    image: ghcr.io/postroyka/procure-ai-app:${APP_IMAGE_TAG:-latest}
+    container_name: procure-app
+    # #44 (P1): даём процессу доработать текущие задания при `docker compose stop/down` перед
+    # SIGKILL. Должно быть БОЛЬШЕ окна graceful-drain бэкенда (SHUTDOWN_DRAIN_MS, по умолч. под
+    # бюджет файла AGENT_FILE_BUDGET_MS ~12 мин) с запасом. Для Watchtower-деплоя действует его
+    # `--stop-timeout` (см. сервис watchtower) — держим оба согласованными.
+    stop_grace_period: 13m
+    # #44 (P2): бэкенд держит rate-limiter и счётчик активных заданий В ПАМЯТИ процесса, очереди нет —
+    # поэтому строго ОДИН инстанс. НЕ запускать с `--scale app=N` и не масштабировать горизонтально без
+    # вынесения состояния в Redis/очередь. (`deploy.replicas` тут не ставим — в non-swarm compose он
+    # игнорируется и лишь вводит в заблуждение; ограничение обеспечивается этим правилом эксплуатации.)
+    # Ротация логов: иначе json-file растёт без границ (см. OPERATIONS §2.4/§2.5).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      redis:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+    env_file:
+      - .env.prod
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env.prod}@redis:6379
+      # nginx-proxy + acme-companion discovery (грабли #2: no LETSENCRYPT_EMAIL here).
+      VIRTUAL_HOST: ${VIRTUAL_HOST}
+      VIRTUAL_PORT: "3000"
+      LETSENCRYPT_HOST: ${LETSENCRYPT_HOST}
+    volumes:
+      - uploads:/app/uploads
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Watched by Watchtower (грабли #7). scope pins this to OUR watchtower only,
+    # so a watchtower from another stack on the same host can't update us.
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=procure-ai"
+    networks:
+      - procure-net
+      - proxy-net
+    restart: unless-stopped
+
+  mcp:
+    image: ghcr.io/postroyka/procure-ai-mcp:${MCP_IMAGE_TAG:-latest}
+    container_name: procure-mcp
+    # Ротация логов (как у app) — без лимита json-file растёт без границ (OPERATIONS §2.5).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    env_file:
+      - .env.prod
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=procure-ai"
+    networks:
+      - procure-net
+    restart: unless-stopped
+    # Read-only mount of the same uploads volume the app writes to: create_deal
+    # reads the source file by path and base64-encodes it for attachment to the
+    # Bitrix24 deal. RO keeps the MCP container from mutating uploads — it only
+    # consumes the file the app already persisted.
+    volumes:
+      - uploads:/app/uploads:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: procure-redis
+    command: redis-server --save 60 1 --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env.prod}
+    env_file:
+      - .env.prod
+    volumes:
+      - redis-data:/data
+    # Official image, intentionally NOT watched by Watchtower (no enable label).
+    networks:
+      - procure-net
+    restart: unless-stopped
+    healthcheck:
+      # REDISCLI_AUTH env var keeps the password out of `ps aux` / docker inspect args.
+      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  watchtower:
+    # Pinned, not :latest — it mounts docker.sock (грабли #6, supply-chain).
+    image: containrrr/watchtower:1.7.1
+    container_name: procure-watchtower
+    # --scope limits this instance to containers labelled watchtower.scope=procure-ai
+    # (app, mcp) — hard isolation from any other stack/watchtower on the host.
+    # #44 (P1): --stop-timeout поднят с 30s, чтобы Watchtower при обновлении дал бэкенду доработать
+    # текущий разбор файла (до AGENT_FILE_BUDGET_MS ~12 мин) перед SIGKILL — иначе задание гибнет на
+    # полпути. Согласовано со stop_grace_period сервиса app и SHUTDOWN_DRAIN_MS бэкенда (timeout > drain).
+    command: --interval 300 --cleanup --label-enable --scope procure-ai --stop-timeout 13m
+    # scope only — no watchtower.enable label: Watchtower must NOT self-update (pinned image).
+    labels:
+      - "com.centurylinklabs.watchtower.scope=procure-ai"
+    environment:
+      # daemon 24+ needs API >=1.44; default 1.25 silently fails (грабли #5).
+      DOCKER_API_VERSION: "1.47"
+      # Private GHCR: auth file generated by `docker login` on the host (грабли #12).
+      WATCHTOWER_REGISTRY_AUTH_FILE: /config.json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount the host docker config so Watchtower can pull private images.
+      - ${HOME}/.docker/config.json:/config.json:ro
+    networks:
+      - procure-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
+networks:
+  procure-net:
+    driver: bridge
+  # Shared reverse-proxy network — must already exist on the server (грабли #1).
+  proxy-net:
+    external: true
+
+# Only app-owned volumes here. TLS cert volumes (nginx-certs/acme-data) belong to
+# the proxy stack (docker-compose.nginxproxy.yml, project procure-proxy) — a
+# `down -v` here does NOT touch them.
+volumes:
+  uploads:
+  redis-data:
