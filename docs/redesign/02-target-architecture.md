@@ -24,9 +24,10 @@ Claude Code» — из методологии репозитория `ai-agent` 
 3. **Только стандартный REST, ноль кода в ядре Б24.** Убираем PHP-модуль коробки и патчи ядра.
    Поиск/создание сущностей — штатными методами (`crm.*`, `catalog.*`) по OAuth-токену портала.
 4. **Изолированный MCP (обязателен для AI-проектов).** Агент работает с **абстрактными**
-   инструментами (`find_supplier`, `find_contract`, `find_product`, `create_deal`) и не знает,
-   что за ними физически (Bitrix24 REST сейчас, 1С — потом подменой транспорта). Backend не ходит
-   в Bitrix24 REST из бизнес-логики напрямую — только через MCP.
+   инструментами (`find_supplier`, `find_product`, `create_deal`) и не знает, что за ними физически
+   (Bitrix24 REST сейчас, 1С — потом подменой транспорта). Backend не ходит в Bitrix24 REST из
+   бизнес-логики напрямую — только через MCP. **Поиск договора в стандартное приложение не входит**
+   (решение Q8) — это платная индивидуальная доработка на сервере клиента.
 5. **Пер-портальная настройка маппинга.** Приложение generic → нельзя хардкодить инфоблоки/поля
    конкретного клиента. Настройки портала (`app.option` через server-side REST) задают: каталог(и),
    поле артикула, где хранится УНП (реквизит), как искать договор, воронку/стадию сделки, правила НДС.
@@ -70,8 +71,8 @@ Claude Code» — из методологии репозитория `ai-agent` 
              ▼
      ┌────────────────────────────────────────────────┐
      │ MCP-сервер (изолированный, мультитенант)        │
-     │  find_supplier / find_contract /                │
-     │  find_product(s) / create_deal                  │
+     │  find_supplier / find_product(s) /              │
+     │  create_deal                                    │
      │  └─ СТАНДАРТНЫЙ REST по OAuth-токену портала ───┼──▶ Bitrix24 (облако/коробка клиента)
      │     crm.* / catalog.* — без кода в ядре Б24     │    crm.company.list, crm.requisite.*,
      └────────────────────────────────────────────────┘    catalog.product.list, crm.deal.add,
@@ -100,13 +101,13 @@ app/                      # Nuxt (авто-импорт)
 server/                   # Nitro
   api/                    # upload, job/[id], health, b24/events, queues, ops, settings, auth
   utils/                  # pure DI-логика: tokenStore, secretCrypto, b24Oauth, ensureAccessToken,
-                          #   portalRest, companyLookup, contractLookup, productLookup, dealWrite
+                          #   portalRest, companyLookup, productLookup, dealWrite (договор — не ищем)
   queue/                  # topology, connection, producers, handlers, worker, cron, stats
   db/                     # client.ts (pg pool + schema: portal_tokens, job_dedup, metrics), плагины
   agent/                  # оркестрация Claude Code (spawn, MCP-конфиг, таймауты/ретраи, DeepSeek env)
   plugins/                # migrate, queue, envCheck
 mcp/                      # изолированный MCP-сервер (первоклассный код + тесты)
-  tools/                  # find-supplier, find-contract, find-product(s), create-deal
+  tools/                  # find-supplier, find-product(s), create-deal
                           #   (внутри — вызовы стандартного crm.*/catalog.* по per-portal токену)
 prompts/                  # системный промпт агента
 tests/                    # unit (node) + nuxt (happy-dom); eval-харнесс точности
@@ -126,8 +127,8 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
 1. `POST /api/upload` → сохранить файл, создать задачу (Postgres), `enqueue file-extract`.
 2. `file-extract` (worker): pdftotext/OCR/office → `DOCUMENT_TEXT` → `enqueue agent-run`.
 3. `agent-run` (worker): spawn Claude Code (DeepSeek) с промптом + `DOCUMENT_TEXT`; агент через MCP
-   ищет поставщика/договор/товары (стандартный REST по токену портала + маппинг), извлекает структуру;
-   результат → `enqueue crm-sync`.
+   ищет поставщика и товары (стандартный REST по токену портала + маппинг), извлекает структуру
+   позиций; результат → `enqueue crm-sync`. Договор не ищем (Q8).
 4. `crm-sync` (worker): дедуп (персистентный стор) → `create_deal` через MCP → **стандартный REST**
    создаёт сделку, пишет позиции (`crm.item.productrow.set`, штатный НДС), прикрепляет файл, таймлайн;
    счётчики метрик.
@@ -144,7 +145,8 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
 **Запись в CRM (только стандартный REST через MCP):**
 - Поставщик — `crm.company.list` + `crm.requisite.list`/`crm.requisite.bankdetail.list` по УНП
   (реквизит `RQ_INN`/`RQ_IIK`), поле берётся из маппинга портала.
-- Договор — по настройке портала: смарт-процесс, поле сделки или список; без хардкода инфоблоков.
+- Договор — **не ищем** (решение Q8). Подбор договора — платная индивидуальная доработка на
+  сервере клиента (маркетинговая фича, см. `04-marketing-landing.md`).
 - Товар — `catalog.product.list` по свойству-артикулу (поле из маппинга); родительский товар.
 - Сделка — `crm.deal.add` (воронка/стадия из маппинга) + `crm.item.productrow.set` (штатный НДС),
   `crm.timeline.comment.add`, прикрепление файла через стандартный REST.
