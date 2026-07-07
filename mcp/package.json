@@ -50,7 +50,7 @@
     "@ai-sdk/openai": "^3.0.66",
     "@anthropic-ai/mcpb": "^2.1.2",
     "@commitlint/cli": "^21.0.2",
-    "@commitlint/config-conventional": "^21.0.2",
+    "@commitlint/config-conventional": "^21.2.0",
     "@nuxt/eslint": "^1.16.0",
     "@types/archiver": "^7.0.0",
     "@types/better-sqlite3": "^7.6.13",
