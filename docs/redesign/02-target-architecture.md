@@ -134,6 +134,23 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
    счётчики метрик.
 5. UI поллит `GET /api/job/:id` → результат по файлу.
 
+**Очередь — обязательна для всего конвейера (по образцу эталона `client-bank-alfa-by`).**
+`POST /api/upload` **не обрабатывает синхронно** — только кладёт файл, создаёт задачу и
+`enqueue`; ответ возвращается сразу, вся работа идёт в worker'ах через BullMQ+Redis. Переносим
+из эталона проверенные паттерны 1-в-1:
+- `server/queue/topology.ts` — **чистые контракты**: очереди (`b24-events`, `file-extract`,
+  `agent-run`, `crm-sync`), payload'ы джоб, **детерминированные идемпотентные `*JobId`** (дедуп
+  ретраев; разделитель `|`, не `:`).
+- `connection.ts` — ленивый `getQueue`, опции из `REDIS_URL` (без прямой зависимости от ioredis);
+  дефолты `attempts: 3`, exp-backoff 5s, `removeOnComplete/Fail`; гуард `queueEnabled()`.
+- `producers.ts` — `enqueue*` (**no-op без Redis**).
+- `handlers.ts` — **чистые обработчики с DI** (`HandlerDeps`), тестируются на фейках; живая проводка
+  транспортов (extract/agent/REST) — в `worker.ts`.
+- Для не-ретраящихся событий Б24 (`/api/b24/events`) — **синхронный фолбэк в БД**, если Redis недоступен
+  (как в эталоне), чтобы установка/удаление не потерялись.
+
+В MVP worker крутится **в процессе backend** (решение D2); под нагрузкой выносится в отдельный контейнер.
+
 **Установка в портал (мультитенант):** `/install` → `init → app.info/scope/event.get →
 event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. Событие `ONAPPINSTALL`
 на `/api/b24/events` приносит OAuth-креды → токены в Postgres (refresh шифруется). UF-поля/каталог —
