@@ -30,9 +30,10 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 | Что | Пакет | Роль |
 |---|---|---|
 | Server | **Nitro** (в составе Nuxt), `server/` | API-роуты, плагины |
-| БД | **`pg`** (+ `@types/pg`), ленивый `Pool` | Postgres: токены, дедуп, метрики |
+| БД | **`pg`** (+ `@types/pg`), ленивый `Pool` | Postgres: OAuth-токены per-portal, дедуп, метрики |
 | Очереди | **`bullmq`** поверх Redis | file-extract / agent-run / crm-sync |
 | Крипто | `node:crypto` (AES-256-GCM) | шифрование refresh-токена в покое |
+| Интеграция Б24 | **только стандартный REST** по OAuth (`crm.*`/`catalog.*`) | облачное приложение Маркета, мультитенант; **ноль кода в ядре/коробке Б24** |
 
 ## 3. AI-слой (из procure-ai)
 
