@@ -55,7 +55,7 @@
     "@types/archiver": "^7.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.19",
-    "ai": "^6.0.193",
+    "ai": "^7.0.16",
     "archiver": "^8.0.0",
     "esbuild": "^0.28.1",
     "eslint": "^10.5.0",
