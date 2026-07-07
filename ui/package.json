@@ -37,7 +37,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@nuxt/eslint": "^1.15.2",
+    "@nuxt/eslint": "^1.16.0",
     "@types/luxon": "^3.7.1",
     "@types/node": "^25.9.1",
     "dotenv": "^17.4.2",
