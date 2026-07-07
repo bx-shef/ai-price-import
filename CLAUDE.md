@@ -1,53 +1,51 @@
-# procure-ai
+# procure-ai (редизайн)
 
-## Workflow Rules
+AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
+(мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
+(накладная/счёт/КП/прайс), суть — найти контрагента и внести товары в целевую CRM-сущность.
 
-- **Never push directly to `main`** — all changes go via Pull Requests.
-- Before pushing, create a PR and request a code review.
-- Merges to `main` are done manually by the repo owner.
-- **Дефолты диагностики (#320/#338).** PR, меняющий env-дефолт видимости диагностики
-  (`SHOW_TIMINGS`, `HIDE_PERF_NOTE`, `TIMING_FAST_MS`/`TIMING_SLOW_MS`, `AGENT_FORCE_FEEDBACK` —
-  и любой будущий флаг диагностики) **без** сопутствующей правки
-  [`docs/DIAGNOSTICS_POLICY.md`](docs/DIAGNOSTICS_POLICY.md) — ревьюер **отклоняет**. Изменение
-  самой политики требует апрува владельца (CTO). Канонический текст процедуры и актуальный
-  перечень флагов — в `docs/DIAGNOSTICS_POLICY.md` (раздел «Дефолты и роль env-флагов»); здесь —
-  короткое напоминание. Это защита от ad-hoc-метаний дефолтов (#302 → #314 → #317).
-- **НДС-модель позиций сделки (#326).** Утверждённая модель: цена → `PRICE_BRUTTO` (1-в-1),
-  `TAX_INCLUDED=Y`, «Итого»/«НДС» прибиваются через `SUM`/`TAX_SUM` (НДС включён = `SUM/6`). Она
-  **зависит от кастомной правки ядра заказчика** `CCrmProductRow::SaveRows` (уважает переданные
-  `SUM`/`TAX_SUM`). Правка **в ядре Bitrix** → перезатирается при обновлении: **сохранять/ре-патчить**,
-  иначе «Итого»/«НДС» в сделках опустеют. Менять поля цены/НДС в `procuredeal.php` — только по
-  согласованию с владельцем (модель проверена на проде). Детали — `b24-controller/IMPLEMENTATION_NOTES.md`.
+> **Идёт редизайн.** Полное описание проекта, процесса, архитектуры, стека и решений —
+> в [`docs/redesign/`](docs/redesign/README.md) (00 старая арх. → 01 карта → 02 целевая арх. →
+> 03 стек → 04 маркетинг → 05 политика данных → 06 мультиязычность). Держим их синхронно.
 
-## Branch Strategy
+## Раскладка
 
-- Feature/fix branches: `feature/<name>` or `fix/<name>`
-- Development branch for this session: use the branch provided in session context
-- Target branch for PRs: `main`
+- `app/` — Nuxt (авто-импорт): `utils` (чистое ядро + тесты) / `composables` / `config` / `types` /
+  `components` / `pages` / `layouts`.
+- `server/` — Nitro backend: `api` / `utils` (чистые с DI) / `queue` (BullMQ) / `db` / `plugins` / `agent`.
+- `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
+  для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
+- `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).
+
+## Команды
+
+```bash
+pnpm dev          # дев-сервер
+pnpm lint         # ESLint
+pnpm typecheck    # nuxt prepare + vue-tsc --build (Nuxt 4 split-tsconfig)
+pnpm test         # Vitest (unit + nuxt)
+pnpm test:unit    # только unit (чистое ядро)
+pnpm generate     # SSG-сборка
+pnpm check        # lint + typecheck + test
+```
+
+## Конвенции
+
+- Комментарии/JSDoc — английский; пользовательский текст и доки — русский.
+- Чистые функции — `app/utils/*` (+ тесты), данные — `app/config/*`, типы — `app/types/*`.
+  Реактивное — `app/composables/*`, UI — компоненты/страницы.
+- Данные из API — только через `{{ }}` (auto-escape), без `v-html` с внешними данными.
+- Каждый `.md` в корне и `docs/` несёт `> Last reviewed: YYYY-MM-DD` под H1.
+
+## Workflow / Git
+
+- **В `main` не пушим — только через PR.** Ветка сессии — из контекста. Мержит владелец
+  (в этой сессии — по явному разрешению, если уверен, что не ломаешь).
+- Живой тест-портал Б24 доступен через вебхук в env `B24_HOOK` (в репозиторий не коммитим).
+  Скоупы: `crm, catalog, disk, im, placement`. Проверять REST-факты вживую, а не по памяти.
 
 ## GitHub API Rate Limits
 
-Квоты считаются раздельно: **REST-core** (5000 **запросов**/час) и **GraphQL**
-(5000 **очков**/час — points, не запросы). MCP-инструменты GitHub для записи/поиска/листинга
-(`issue_write`, `search_issues`, `list_issues`, резолв `duplicate_of`) ходят через **GraphQL**;
-один вложенный list/search стоит >1 очка, поэтому GraphQL выгорает первой, а REST-core остаётся
-свободен.
-
-- **Сначала смотри, какая квота кончилась**, не жди вслепую: `curl -s -H "Authorization: Bearer
-  $GITHUB_TOKEN_INGEST" https://api.github.com/rate_limit` отдаёт `remaining`+`reset` (epoch) по
-  каждому пулу — это **разные** лимиты: `core`, `graphql`, `search`. Поллер на этом эндпоинте
-  бесплатен. Жди до нужного `reset` **+2–5 с** (запас на рассинхрон часов).
-- **Читай прямым REST**, где можно: `GITHUB_TOKEN_INGEST` (read-only, не трогает GraphQL) — для
-  диагностики/enumeration. Для перебора бери постранично `GET
-  /repos/{o}/{r}/issues?state=all&per_page=100` (100 issue = 1 запрос) вместо одиночных `GET
-  /issues/{n}` (100 запросов); single-GET — только когда нужен конкретный номер.
-- **Кэшируй повторные чтения** условными запросами: `If-None-Match: <etag>` → `304` квоту не
-  тратит. Только REST; в GraphQL ETag нет.
-- **Записи (close/comment/labels/duplicate) — только через MCP** (GraphQL): **батчи** их в один
-  заход и **не молоти** `list/search` в цикле — они тоже жрут GraphQL-очки и роняют последующую
-  запись.
-- **Помни про secondary limits** (отдельный механизм поверх primary, отдают `403`): даже при
-  свободной primary-квоте контент-операции режутся на ~**80/мин и 500/час**, плюс ≤100
-  одновременных запросов (общий пул REST+GraphQL) и ≤2000 очков/мин на GraphQL. Поэтому записи
-  разноси во времени + exponential backoff с jitter, а не лей пачкой.
-- `GITHUB_TOKEN_INGEST` — **read-only**: writes через него дают `Resource not accessible`.
+Квоты раздельные: REST-core (5000 запросов/час) и GraphQL (5000 очков/час). MCP-инструменты записи/
+поиска/листинга идут через GraphQL — батчить записи, не молотить list/search в цикле. Читать прямым
+REST где можно. Помнить про secondary limits (≈80/мин, 500/час на контент-операции) → backoff с jitter.

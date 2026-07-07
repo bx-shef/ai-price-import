@@ -46,8 +46,8 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 
 | # | Этап | Статус |
 |---|---|---|
-| 0 | **Документация редизайна** — старая арх., карта, целевая арх., стек, маркетинг | 🧪 в работе |
-| 1 | **Скелет Nuxt-монолита** — `app/` (utils/composables/config/types) + `server/` (Nitro), Vitest 2 проекта, ESLint, tsconfig | 📝 |
+| 0 | **Документация редизайна** — старая арх., карта, целевая арх., стек, маркетинг, политика данных, мультиязычность | ✅ готово |
+| 1 | **Скелет Nuxt-монолита** — `app/` split + `server/api/health` + Vitest (unit) + ESLint + typecheck + SSG-сборка; чистое ядро (homoglyph/артикулы/роутинг/НДС/единицы/taxId) + 27 тестов; legacy-код перенесён в `legacy/` | 🧪 lint+typecheck+test+generate зелёные |
 | 2 | **Встройка в Б24 (мультитенант)** — `useB24()` dual-mode, `/install` + `event.bind` + `placement` (веб **и мобильное приложение**), OAuth per-portal (Postgres, шифрование refresh), ленивый `ensureAccessToken` + **проактивный keep-alive крон** (продление `refresh_token` за ~3 дня до 180-дневного истечения), `app.option` | 📝 |
 | 3 | **Настройки/маппинг портала** — форма настроек + чистое ядро маппинга: каталог, **поле артикула поставщика** (тип текст=построчно / строка=разделитель, задаёт админ), **целевая сущность + направление** (сделка/смарт-процесс/инвойс/КП; **роутинг**: ручной override → упорядоченные правила `{match: type|keyword → target}` → дефолт; `resolveTarget` — чистая функция), **тумблер сохранения файла** (дело — настраиваемое `crm.activity.configurable.add`, `layout` от приложения), **стратегия поиска/создания товара**, **единицы** (словарь→`catalog.measure` + дефолт + авто-создать), **чат ошибок + чат уведомлений**. НДС — ставки из Б24 (`crm.vat.list`). Налоговый ID — фикс. `RQ_INN`. Договор — не тут (Q8) | 📝 |
 | 4 | **Лендинг + маркетинг** — тёмная бренд-оболочка, `landing.ts`, HeroGraph, BriefForm, Метрика, OG, листинг Маркета | 📝 |
@@ -73,12 +73,17 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 - `docs/redesign/00-legacy-architecture.md` — снимок старой архитектуры (as-is).
 - Эта карта, целевая архитектура, стек, маркетинг-план (набор `docs/redesign/`).
 
-**В работе:**
-- Согласование целевой архитектуры и стратегии переписывания с владельцем (см. §6).
+- **Этап 1 (скелет)** — Nuxt 4 + Nitro поднят: `package.json`/`nuxt.config`/`tsconfig`/`eslint`/`vitest`
+  (2 проекта), `app/` split, `server/api/health.get.ts`, SessionStart-хук, чистое ядро с тестами
+  (`homoglyph`, `supplierArticles`, `routing/resolveTarget`, `vat`, `units`, `taxId`, `build`) — **27
+  unit-тестов**, `lint`+`typecheck`(Nuxt4 split-tsconfig)+`generate` зелёные. Legacy → `legacy/`.
+- **Живая проверка** REST на портале `B24_HOOK` (env, не коммитим): подтверждены `crm.vat.list`
+  (ставки портала, `RATE` null = «Без НДС»), `catalog.measure.list` (`code` 796=шт дефолт),
+  `disk.storage.getlist` (общий диск = `ENTITY_TYPE=common`), шаблоны реквизитов.
 
-**Дальше (ближайшее):**
-- Этап 1: инициализировать Nuxt-монолит по стеку [`03-stack.md`](03-stack.md) с SessionStart-хуком,
-  ESLint, Vitest (unit+nuxt), пустым `app/utils` + первым тестом, `server/api/health.get.ts`.
+**В работе / дальше:**
+- Этап 2 (встройка мультитенант): `useB24()`, `/install`+`event.bind`, OAuth per-portal (Postgres,
+  шифрование refresh, keep-alive крон), `app.option`. Дальше по roadmap.
 
 ---
 
