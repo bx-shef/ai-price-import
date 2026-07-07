@@ -39,7 +39,7 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 | Что | Технология | Роль |
 |---|---|---|
 | Агент | **Claude Code CLI** (headless, `--print --bare --output-format json`) | извлечение структуры + вызов MCP |
-| Провайдер | Anthropic API **или** DeepSeek (Anthropic-совместимый) — решение Q5 | `ANTHROPIC_*` env |
+| Провайдер | **DeepSeek** (Anthropic-совместимый endpoint) через `ANTHROPIC_*` env | решение Q5; см. заметку о юрисдикции ниже |
 | Протокол инструментов | **MCP** (`@modelcontextprotocol/sdk`, Streamable HTTP, Bearer) | изолированный MCP-сервер |
 | Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (rus+eng+bel), python (`openpyxl`/`xlrd`/`python-docx`) | PDF/скан/офис → текст |
 | Схемы | **`zod`** | валидация входов MCP-инструментов и вывода агента |
@@ -78,6 +78,13 @@ pnpm build        # Nitro node-server (backend-таргет)
 ```
 
 Перед пушем — `pnpm check` (= lint + typecheck + test) или `bash scripts/check-app.sh`.
+
+> **Юрисдикция LLM (DeepSeek = КНР).** Провайдер выбран DeepSeek. Данные документов (накладные,
+> реквизиты поставщиков) уходят на инференс в юрисдикцию КНР — для NDA/152-ФЗ/коммерческой тайны
+> нужно согласие заказчика и юриста (методология `ai-agent`, `docs/01-install/`). Технически слой
+> сделан провайдер-агностично (`ANTHROPIC_*` env), поэтому смена на Anthropic/Bedrock/Vertex —
+> замена переменных без правки кода. Извлечение текста и запись в CRM происходят локально; в LLM
+> уходит только текст документа (бинарники — нет).
 
 ## 7. Конвенции (из эталона)
 
