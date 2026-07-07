@@ -1,0 +1,63 @@
+{
+  "mock": {
+    "toast": {
+      "title": "Demo Mode",
+      "description": "Changes will not be applied."
+    }
+  },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Enter your credentials to continue.",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "failed": "Sign-in failed",
+    "invalid": "Invalid username or password.",
+    "error": "Could not sign in. Please try again."
+  },
+  "page": {
+    "index": {
+      "seo": {
+        "title": "Home"
+      },
+      "menu": {
+        "main": "Add User"
+      },
+      "message": {
+        "title": "See new deals",
+        "line1": "Remove user"
+      }
+    },
+    "install": {
+      "seo": {
+        "title": "Application Installation"
+      },
+      "ui": {
+        "title": "Application Installation"
+      },
+      "step": {
+        "init": {
+          "caption": "Please wait a moment..."
+        },
+        "events": {
+          "caption": "Events..."
+        },
+        "placement": {
+          "caption": "Widgets..."
+        },
+        "userFields": {
+          "caption": "Uf..."
+        },
+        "crm": {
+          "caption": "CRM..."
+        },
+        "serverSide": {
+          "caption": "Server-side scripts..."
+        },
+        "finish": {
+          "caption": "Completion"
+        }
+      }
+    }
+  }
+}

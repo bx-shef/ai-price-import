@@ -1,0 +1,394 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Минимально необходимые права по умолчанию: джобам CI нужен только read
+# исходников (тесты, сборка, локальная Docker-валидация без push). Любой джобе,
+# которой понадобится больше, права повышаются точечно на её уровне.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend lint, syntax & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          package_json_file: mcp/package.json
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.16.0"
+
+      - name: Verify Node + corepack + pnpm versions
+        run: node --version && corepack --version && pnpm --version
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Check syntax
+        run: |
+          node --check backend/index.js
+          node --check backend/feedback.js
+          node --check backend/agent-runner.js
+          node --check backend/jobs-store.js
+          node --check backend/extract-text.js
+          node --check backend/metrics.js
+          node --check backend/nbrb-rate.js
+          node --check backend/eval/score.js
+          node --check backend/eval/run.js
+          node --check backend/eval/baseline.js
+
+      - name: Run tests
+        working-directory: backend
+        run: pnpm test
+
+      - name: Python doc-extractor tests (doc_to_text.py)
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q -r backend/requirements.txt pytest
+          /tmp/venv/bin/pytest backend/tests/test_doc_to_text.py -q
+
+  mcp:
+    name: MCP lint, typecheck & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          package_json_file: mcp/package.json
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.16.0"
+
+      - name: Install dependencies
+        working-directory: mcp
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Nuxt types (required by eslint config)
+        working-directory: mcp
+        run: pnpm nuxt prepare
+
+      - name: Lint
+        working-directory: mcp
+        run: pnpm lint
+
+      - name: Run tests
+        working-directory: mcp
+        run: pnpm test
+
+      - name: Build
+        working-directory: mcp
+        run: pnpm build
+
+  test-mcp-overlay:
+    name: Test mcp-overlay deals tools
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          package_json_file: mcp/package.json
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.16.0"
+          cache: pnpm
+          cache-dependency-path: mcp/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Guard — deals must not exist in upstream mcp
+        run: '[ ! -e server/mcp/tools/deals ] || (echo "ERROR: deals already exists in upstream (file or dir) — overlay conflict" && exit 1)'
+
+      - run: cp -r ../mcp-overlay/server/mcp/tools/deals server/mcp/tools/deals
+
+      # Overlay shared utils (rest-timing.ts, #262) into the vendored utils dir.
+      # Mirrors Dockerfile.mcp's `COPY mcp-overlay/server/ ./server/`: the deals
+      # tools import `~/server/utils/rest-timing`, so it must be present for both
+      # typecheck and the vitest run below.
+      # Guard (mirrors the deals guard above): the overlay util names must NOT
+      # already exist upstream — otherwise `cp -r …/. server/utils/` would
+      # SILENTLY overwrite a vendored file on a future re-vendor. Fail loudly
+      # instead so the collision is caught in review, not in prod.
+      - name: Guard — overlay utils must not exist in upstream
+        run: '[ ! -e server/utils/rest-timing.ts ] || (echo "ERROR: rest-timing.ts already exists in upstream utils — overlay conflict" && exit 1)'
+      # `cp -r src/. dst/` copies the overlay util FILES into the existing
+      # upstream utils dir (new names only — guard above proves no overwrite).
+      - run: cp -r ../mcp-overlay/server/utils/. server/utils/
+
+      # Typecheck the overlay TOOLS against the vendored framework (#154 review): catches
+      # signature drift between our b24_pst_crm_* tools and mcp/server/utils on a re-vendor.
+      # BEFORE the test copy — the vitest-style overlay test files aren't nuxt-typechecked.
+      - name: Typecheck overlay tools against vendored mcp
+        run: pnpm typecheck
+
+      # Copy overlay tests into mcp/tests/ so vitest's default include
+      # pattern (tests/**/*.test.ts) picks them up without config overrides.
+      - run: cp -r ../mcp-overlay/tests/unit tests/overlay
+
+      - run: pnpm exec vitest run tests/overlay
+
+  b24-php:
+    name: b24 PHP controllers tests
+    # Пин конкретного образа (а не плавающего ubuntu-latest): фиксирует версию PHP
+    # (24.04 → PHP 8.3), чтобы тесты не начали незаметно гоняться под другой версией
+    # при обновлении раннера. PHP и Composer предустановлены в образе (как python3
+    # в backend-джобе) — сторонний setup-action не нужен, лишней supply-chain-
+    # поверхности в CI не добавляем (репо намеренно минимизирует экшены и права).
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: b24-controller
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: PHP & Composer versions
+        run: php --version && composer --version
+
+      # php -l ловит синтаксические ошибки контроллеров до деплоя. На коробке это
+      # делает deploy-скрипт, но в CI эти файлы раньше не линтовались.
+      - name: Lint controllers & config (php -l)
+        run: |
+          for f in lib/controllers/procure*.php lib/config.php; do
+            php -l "$f"
+          done
+
+      # composer.lock закоммичен → install ставит ровно locked-версии (детерминизм
+      # CI + защита от supply-chain дрейфа транзитивных зависимостей). Тесты не
+      # деплоятся (rsync шлёт на коробку только procure*.php + config.php).
+      - name: Install dev dependencies (PHPUnit)
+        run: composer install --no-interaction --no-progress
+
+      # memory_limit поднят: тест лимита размера файла (deal:022) аллоцирует ~34 МБ.
+      - name: PHPUnit
+        run: php -d memory_limit=512M vendor/bin/phpunit
+
+  lint-shell:
+    name: Lint deploy shell scripts (shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # shellcheck предустановлен на ubuntu-latest — без сторонних actions (репо
+      # минимизирует supply-chain-поверхность). Линтуем деплой-скрипты с нетривиальной
+      # bash-логикой (валидация путей, rollback, health-чек) — раньше не линтовались.
+      # -S warning: только warning+error (стиль/info не валят CI на мелочах).
+      - name: shellcheck
+        run: shellcheck -S warning scripts/deploy-b24-controller.sh scripts/smoke-test-b24.sh scripts/check-diagnostics-policy.sh
+
+  changes:
+    name: Detect Docker-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      # Решаем, нужна ли пересборка Docker-образов. На push в main собираем всегда
+      # (страховка перед деплоем). На PR — только если затронут реальный контекст
+      # сборки; docs/scripts-PR не дёргают медленный OCR-билд. base_ref — целевая
+      # ветка PR; сравниваем merge-base с HEAD (как в b24-deploy-reminder).
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+            echo "push/не-PR — Docker-валидация запускается всегда."
+            exit 0
+          fi
+          # Без '|| true': если git diff упадёт (например, origin/BASE_REF
+          # недостижим), джоба должна громко упасть, а не тихо вернуть docker=false
+          # и молча пропустить валидацию. prompts/ включён — он копируется в образ
+          # (Dockerfile.app: COPY prompts/). Каталоги mcp/ и mcp-overlay/ покрывают и
+          # mcp/Dockerfile, и overlay-инструменты (Dockerfile.mcp: COPY mcp-overlay/server/).
+          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD" -- \
+            Dockerfile.app Dockerfile.mcp \
+            backend ui mcp mcp-overlay prompts \
+            docker-compose.prod.yml docker-compose.nginxproxy.yml \
+            .github/workflows/ci.yml)
+          if [ -n "$changed" ]; then
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+            echo "Затронут Docker-контекст — валидация нужна:"
+            echo "$changed" | sed 's/^/  - /'
+          else
+            echo "docker=false" >> "$GITHUB_OUTPUT"
+            echo "Docker-контекст не затронут — сборку пропускаем."
+          fi
+
+  docker-validate:
+    name: Validate Docker builds & OCR deps
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Buildx + GHA-кэш слоёв: неизменные apk/pip/npm-слои переиспользуются между
+      # прогонами, а не качаются заново каждый раз.
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      # Full runtime build so the apk/pip OCR & office deps (incl. tesseract-ocr-data-bel)
+      # are validated in CI — not only on deploy via Watchtower.
+      # load: true — образ попадает в локальный daemon, чтобы прогнать его ниже.
+      - name: Build full app image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.app
+          tags: procure-app-validate
+          load: true
+          # Exercise the GIT_SHA build-arg path (ТЗ §6) so the footer-version wiring is validated
+          # in CI too; github.sha is the PR/commit being checked (prod build-args live in deploy.yml).
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=validate-app
+          cache-to: type=gha,mode=max,scope=validate-app
+
+      - name: Verify OCR/office tooling inside the image
+        run: |
+          docker run --rm procure-app-validate sh -c '
+            set -e
+            pdftotext -v 2>&1 | head -1
+            tesseract --list-langs
+            python3 -c "import openpyxl, xlrd, docx; print(\"py libs OK\")"
+          '
+
+      - name: Build mcp image (builder stage)
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.mcp
+          target: builder
+          tags: procure-mcp-validate
+          load: true
+          cache-from: type=gha,scope=validate-mcp
+          cache-to: type=gha,mode=max,scope=validate-mcp
+
+      # Catch YAML/interpolation errors in the compose files (incl. project isolation).
+      - name: Validate compose files
+        run: |
+          trap 'rm -f .env.prod' EXIT   # always remove the dummy env, even on failure
+          printf '%s\n' \
+            'REDIS_PASSWORD=ci-dummy' \
+            'BACKEND_API_TOKEN=ci-dummy' \
+            'NUXT_MCP_AUTH_TOKEN=ci-dummy' \
+            'NUXT_BITRIX24_WEBHOOK_URL=http://example.invalid' \
+            'PUBLIC_PAGE_BASIC_AUTH_PASS=ci-dummy' \
+            'VIRTUAL_HOST=example.invalid' \
+            'LETSENCRYPT_HOST=example.invalid' \
+            'LETSENCRYPT_EMAIL=ci@example.invalid' > .env.prod
+          docker compose -p procure-ai -f docker-compose.prod.yml --env-file .env.prod config --quiet
+          docker compose -p procure-proxy -f docker-compose.nginxproxy.yml --env-file .env.prod config --quiet
+
+  ui:
+    name: UI lint & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          package_json_file: mcp/package.json
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.16.0"
+
+      - name: Install dependencies
+        working-directory: ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Nuxt types (required by eslint config)
+        working-directory: ui
+        run: pnpm nuxt prepare
+
+      - name: Lint
+        working-directory: ui
+        run: pnpm lint
+
+      - name: Unit tests
+        working-directory: ui
+        run: pnpm test
+
+      - name: Build
+        working-directory: ui
+        run: pnpm build
+
+      # Regression guard for #41/#105 P1: the backend API token must never be embedded in the
+      # browser bundle. If someone re-adds it to runtimeConfig.public, the `backendToken` key
+      # appears in the client __NUXT__ payload under .output/public — fail the build then.
+      - name: Assert backend token absent from the browser bundle (#41/#105 P1)
+        working-directory: ui
+        run: |
+          if grep -rIl -e 'backendToken' -e 'NUXT_PUBLIC_BACKEND_TOKEN' .output/public; then
+            echo "::error::Backend API token leaked into the browser bundle (#41/#105 P1)"
+            exit 1
+          fi
+          echo "OK: no backend token in .output/public"
+
+  b24-deploy-reminder:
+    name: b24 deploy reminder
+    runs-on: ubuntu-latest
+    # Только для PR: если затронуты PHP-контроллеры / config модуля shef.purchase —
+    # после мержа в main они выкладываются на STAGING автоматически (workflow «Deploy
+    # b24-controller»), на PROD — вручную через workflow_dispatch с аппрувом. Docker/
+    # Watchtower их НЕ деплоит. Шаг лишь предупреждает, никогда не падает (issue #73).
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Warn if b24-controller PHP changed
+        env:
+          # base_ref — имя целевой ветки PR (обычно main). Сравниваем merge-base
+          # этой ветки с HEAD (merge-ref PR) — не зависит от достижимости head.sha
+          # в локальной истории (важно для PR из форков).
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD" -- \
+            'b24-controller/lib/controllers/procure*.php' \
+            'b24-controller/lib/config.php' || true)
+          if [ -n "$changed" ]; then
+            echo "::warning title=PHP-контроллеры — проверьте деплой::Изменены b24-controller. После мержа в main их выложит workflow «Deploy b24-controller» (авто; коробка задаётся repo-secrets). Docker/Watchtower эти файлы НЕ деплоит. См. b24-controller/README.md."
+            echo "Изменённые файлы b24-controller:"
+            echo "$changed" | sed 's/^/  - /'
+          else
+            echo "Файлы b24-controller не затронуты — ручной деплой не требуется."
+          fi
+
+  diagnostics-policy:
+    name: Diagnostics defaults policy gate (#338)
+    runs-on: ubuntu-latest
+    # Только для PR: если изменён ДЕФОЛТ флага диагностики в env-примерах без правки
+    # docs/DIAGNOSTICS_POLICY.md — гейт ПАДАЕТ (правило #338, CLAUDE.md → Workflow Rules).
+    # Триггер точечный (строки `FLAG=value` в env-примерах) → низкий риск ложных срабатываний.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Require DIAGNOSTICS_POLICY.md when a diagnostic default changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: bash scripts/check-diagnostics-policy.sh

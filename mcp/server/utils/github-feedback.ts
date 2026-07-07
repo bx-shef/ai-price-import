@@ -1,0 +1,335 @@
+/**
+ * Thin GitHub REST client used by `bx24mcp_submit_feedback` to persist agent
+ * feedback as GitHub issues. Built on `fetch` to avoid a runtime dependency on
+ * the octokit family for a single endpoint.
+ *
+ * Token comes from `NUXT_GITHUB_FEEDBACK_TOKEN`. Required scopes:
+ * - `public_repo` (or `repo` for private targets) for issue write.
+ *
+ * The function does not log the token, the request URL, or the response body
+ * on error — operators reading container logs should not be able to recover
+ * the credential from a failure.
+ */
+import { getTenantContext } from '~/server/utils/request-context'
+
+const GITHUB_API = 'https://api.github.com'
+
+export interface CreateIssueInput {
+  title: string
+  body: string
+  labels: string[]
+}
+
+export interface CreateIssueResult {
+  /** HTML URL of the created issue, safe to expose to the AI agent. */
+  url: string
+  /** Numeric issue id, useful for downstream links. */
+  number: number
+}
+
+export class GithubFeedbackError extends Error {
+  override readonly name = 'GithubFeedbackError'
+  readonly code: 'NOT_CONFIGURED' | 'UPSTREAM' | 'NETWORK'
+
+  constructor(message: string, code: GithubFeedbackError['code']) {
+    super(message)
+    this.code = code
+  }
+}
+
+export async function createGithubIssue(input: CreateIssueInput): Promise<CreateIssueResult> {
+  const { githubFeedbackToken, githubFeedbackRepo } = useRuntimeConfig()
+
+  if (!githubFeedbackToken) {
+    throw new GithubFeedbackError(
+      'GitHub feedback token is not configured on the server.',
+      'NOT_CONFIGURED',
+    )
+  }
+
+  // Guard the operator-supplied repo before it lands in the request path. The
+  // host is fixed (no SSRF), but an unvalidated value like `../../users/x`
+  // would still let a misconfiguration retarget the API call to an unintended
+  // resource. GitHub repo slugs are `owner/repo` over a conservative charset.
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(githubFeedbackRepo)) {
+    throw new GithubFeedbackError(
+      'GitHub feedback repo is misconfigured — expected "owner/repo".',
+      'NOT_CONFIGURED',
+    )
+  }
+
+  const url = `${GITHUB_API}/repos/${githubFeedbackRepo}/issues`
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${githubFeedbackToken}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+        'User-Agent': 'bx24-template-mcp',
+      },
+      body: JSON.stringify({
+        title: input.title,
+        body: input.body,
+        labels: input.labels,
+      }),
+    })
+  } catch {
+    // Deliberately swallow the cause — Node's fetch errors can include the URL
+    // and headers, which would echo the bearer token into operator logs.
+    throw new GithubFeedbackError('GitHub API is unreachable.', 'NETWORK')
+  }
+
+  if (!response.ok) {
+    // Map a handful of statuses to actionable messages without leaking the
+    // upstream body verbatim.
+    if (response.status === 401 || response.status === 403) {
+      throw new GithubFeedbackError(
+        'GitHub rejected the feedback token (401/403). Rotate it and retry.',
+        'UPSTREAM',
+      )
+    }
+    if (response.status === 404) {
+      throw new GithubFeedbackError(
+        `GitHub returned 404 — the configured feedback repo (${githubFeedbackRepo}) is missing or unreachable.`,
+        'UPSTREAM',
+      )
+    }
+    throw new GithubFeedbackError(
+      `GitHub returned ${response.status} when creating the feedback issue.`,
+      'UPSTREAM',
+    )
+  }
+
+  let data: { html_url?: string; number?: number }
+  try {
+    data = (await response.json()) as { html_url?: string; number?: number }
+  } catch {
+    // Rare but possible — proxies, GHE misconfig, etc. We must not let raw
+    // SyntaxError reach the agent unwrapped.
+    throw new GithubFeedbackError(
+      'GitHub returned a non-JSON response.',
+      'UPSTREAM',
+    )
+  }
+
+  if (!data.html_url || typeof data.number !== 'number') {
+    throw new GithubFeedbackError(
+      'GitHub returned a malformed issue payload.',
+      'UPSTREAM',
+    )
+  }
+
+  return { url: data.html_url, number: data.number }
+}
+
+// --- Rate limit ---------------------------------------------------------------
+//
+// Sliding-window counter. Cheap, in-memory, single-instance.
+//
+// Counts ATTEMPTS, not successes: a failed call (auth, network, 5xx) still
+// consumes one slot. This is the deliberate trade-off — it discourages tight
+// retry loops at the cost of being unfair on flaky networks. See FEEDBACK.md.
+//
+// Multi-tenant (issue #221): under OAuth, the window is keyed on the
+// caller's `memberId` from the request's ALS tenant context — one noisy
+// (or prompt-injected) tenant exhausting the quota must not block every
+// other tenant's feedback for the rest of the hour. Outside a tenant
+// scope (webhook mode, stdio bundle) everything shares the `__global__`
+// bucket, which is the pre-#221 behaviour exactly: a webhook deployment
+// has a single identity, so a single bucket is correct there.
+
+const WINDOW_MS = 60 * 60 * 1000 // 1 hour
+// 5/hour/tenant. Sits well below GitHub's per-token REST limit (5000/hr)
+// even if a shared bot token serves hundreds of tenants — see FEEDBACK.md
+// for the trade-off rationale (anti-spam ≫ per-tenant generosity). Keep
+// in lockstep with the same constant doc'd in the agent-facing
+// `skills/manage-bx24-template-mcp/feedback.md` quota paragraph.
+const MAX_REQUESTS_PER_WINDOW = 5
+// Bound on distinct tenant buckets. Matches the OAuth factory's LRU cap
+// order-of-magnitude; insertion-order eviction (Map iteration order) is
+// fine — an evicted bucket just resets that tenant's window early, which
+// fails OPEN for the tenant and never blocks anyone. NOTE: unlike the IP
+// map in `oauth-rate-limit.ts` (which IS true-LRU — see the contrasting
+// rationale there) this is NOT true-LRU — no MRU promotion on access —
+// so an active tenant can be evicted early if 200 others interleave.
+// Intentional divergence: a feedback over-quota is a soft annoyance (the
+// user just submits next session), so a premature quota reset
+// (fails-open) is the right corner; the install rate limiter cannot
+// afford fails-open (it would let an attacker reset their own bucket
+// by rotating IPs), so it pays the delete-then-set cost.
+const MAX_BUCKETS = 200
+
+const buckets = new Map<string, number[]>()
+
+/**
+ * Consume one feedback-quota slot for the current request's tenant.
+ *
+ * The window is keyed on the caller's `memberId` (from the ALS tenant
+ * context) under OAuth, or `__global__` outside a tenant scope (webhook /
+ * stdio). Counts ATTEMPTS, not successes — a failed `createGithubIssue`
+ * still consumes a slot (see the comment above + `FEEDBACK.md`).
+ *
+ * **Fails-open under eviction.** At `MAX_BUCKETS` distinct tenants the
+ * OLDEST bucket is evicted (insertion order, NOT true-LRU). An evicted
+ * tenant's window resets early on its next call — the trade-off is
+ * intentional (worst case: an extra GitHub issue; never unfair
+ * blocking). See the `MAX_BUCKETS` comment above and the contrast with
+ * the true-LRU IP map in `server/middleware/oauth-rate-limit.ts`.
+ *
+ * **ALS-outside fall-through.** When called outside a `runWithTenant`
+ * scope (webhook mode, stdio bundle), all callers share the
+ * `__global__` bucket. This is deliberate — those deployments have a
+ * single identity — but means a misuse of this function from a new
+ * code path that forgets to wrap its caller in `runWithTenant` would
+ * silently land in the global bucket. The unit test
+ * `outside a tenant scope the global bucket behaves exactly as before`
+ * pins the fallback.
+ *
+ * @param now — injectable clock for tests; defaults to `Date.now()`.
+ * @returns `{ ok }` — `false` when the per-tenant window is exhausted;
+ *   `remaining` slots left in the window; `resetInSeconds` until the
+ *   oldest slot frees up.
+ */
+export function consumeFeedbackQuota(now: number = Date.now()): {
+  ok: boolean
+  remaining: number
+  resetInSeconds: number
+} {
+  const key = getTenantContext()?.memberId ?? '__global__'
+  let timestamps = buckets.get(key)
+  if (!timestamps) {
+    if (buckets.size >= MAX_BUCKETS) {
+      // Insertion-order eviction (fails open — see MAX_BUCKETS comment
+      // above): a Map iterates keys in insertion order, so `.next()`
+      // returns the oldest insertion, NOT the least-recently-used.
+      // Deliberate divergence from oauth-rate-limit.ts (true LRU).
+      const oldest = buckets.keys().next().value
+      if (oldest !== undefined) buckets.delete(oldest)
+    }
+    timestamps = []
+    buckets.set(key, timestamps)
+  }
+
+  const cutoff = now - WINDOW_MS
+  // Drop expired entries in place to avoid unbounded growth.
+  while (timestamps.length > 0 && timestamps[0]! < cutoff) {
+    timestamps.shift()
+  }
+
+  if (timestamps.length >= MAX_REQUESTS_PER_WINDOW) {
+    const oldest = timestamps[0]!
+    return {
+      ok: false,
+      remaining: 0,
+      resetInSeconds: Math.max(1, Math.ceil((oldest + WINDOW_MS - now) / 1000)),
+    }
+  }
+
+  timestamps.push(now)
+  return {
+    ok: true,
+    remaining: MAX_REQUESTS_PER_WINDOW - timestamps.length,
+    resetInSeconds: WINDOW_MS / 1000,
+  }
+}
+
+// --- Sanitisation -------------------------------------------------------------
+
+// Canonical feedback-text cap, shared with the procure-ai backend (backend/feedback.js
+// MAX_COMMENT_LENGTH) so the two "text → GitHub issue" copies stay one contract (#190). 5000 is
+// generous for a feedback note and well under any GitHub body limit.
+const MAX_DETAILS_LENGTH = 5000
+
+// Hostile / accidentally-confusing characters in agent-supplied details.
+// Spelled out with `\u` / `\x` escapes so reviewers can verify what is
+// stripped without trusting invisible code points in the source — embedding
+// the literal characters here would itself be a Trojan Source vector against
+// the reviewer.
+//   - C0 controls except tab (0x09), LF (0x0A), CR (0x0D)
+//   - Bidi overrides (U+202A..U+202E, U+2066..U+2069)
+//   - Zero-width / BOM (U+200B..U+200D, U+FEFF)
+// eslint-disable-next-line no-control-regex
+const HOSTILE_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\u202a-\u202e\u2066-\u2069\u200b-\u200d\ufeff]/g
+
+/**
+ * Removes C0 controls, bidi overrides, zero-widths, and BOM from arbitrary
+ * agent-supplied text. Used standalone for the issue title (where Trojan
+ * Source visually flipping the GitHub issue list is the worry) and as a
+ * first step inside `sanitizeDetails` for the body.
+ */
+export function stripHostileChars(input: string): string {
+  return input.replace(HOSTILE_CHARS, '')
+}
+
+/**
+ * Trims an agent-supplied free-text field to a maximum length and replaces a
+ * narrow set of control characters that would corrupt the issue payload.
+ * Markdown is not aggressively escaped — see `formatIssueBody` for how the
+ * text is framed in the issue body (an HTML <pre><code> block) which renders
+ * everything as inert text.
+ */
+export function sanitizeDetails(input: string): string {
+  const stripped = stripHostileChars(input)
+  if (stripped.length <= MAX_DETAILS_LENGTH) return stripped
+  return `${stripped.slice(0, MAX_DETAILS_LENGTH)}…\n\n[truncated to ${MAX_DETAILS_LENGTH} characters]`
+}
+
+/**
+ * Tool names land in a GitHub label (`tool:<name>`). GitHub caps label names
+ * at 50 characters; with the 5-char prefix that leaves 45 for the name. We
+ * also reduce to the conservative `a-z0-9_` subset of what labels accept,
+ * so the label never triggers a 422 even if GitHub's allowed character set
+ * narrows in the future.
+ */
+export function sanitizeToolName(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 45)
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
+export interface FeedbackBody {
+  // Canonical kinds — keep in lockstep with the procure-ai backend FEEDBACK_KINDS and the metrics
+  // allowlist (positive | problem | suggestion). 'problem' (not 'issue') is the shared contract (#190).
+  kind: 'positive' | 'problem' | 'suggestion'
+  details: string
+  relatedTool?: string
+  severity?: 'low' | 'medium' | 'high'
+}
+
+/**
+ * Renders the issue body. The details block is wrapped in `<pre><code>` so
+ * Markdown control characters (backticks, asterisks, brackets, HTML tags) are
+ * inert. The trade-off is loss of intentional formatting from the agent —
+ * acceptable, since the audience is a maintainer triaging the issue.
+ */
+export function formatIssueBody(body: FeedbackBody): string {
+  const lines = [
+    `**Kind**: ${body.kind}`,
+    // `relatedTool` is sanitised to `a-z0-9_` upstream; escape here too as
+    // defence-in-depth against HTML injection if a future caller passes raw
+    // input. Note this neutralises HTML only, not Markdown metacharacters
+    // (`*`, `_`, backticks) — fine because it renders inline, not in a code
+    // block, and the upstream charset already excludes them.
+    `**Related tool**: ${body.relatedTool ? escapeHtml(body.relatedTool) : 'n/a'}`,
+    `**Severity**: ${body.severity ?? 'n/a'}`,
+    '',
+    '## Details',
+    '',
+    '<pre><code>',
+    escapeHtml(body.details),
+    '</code></pre>',
+    '',
+    '---',
+    '_Submitted programmatically by `bx24mcp_submit_feedback`._',
+  ]
+  return lines.join('\n')
+}

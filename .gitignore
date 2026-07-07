@@ -1,0 +1,30 @@
+node_modules/
+.env.prod
+.env.local
+.env
+backend/.env
+scripts/.env.deploy
+uploads/
+fixtures/
+*.log
+.DS_Store
+mcp/.nuxt/
+mcp/.claude/
+# Claude Code local session settings — must not be committed (machine-specific perms)
+.claude/settings.local.json
+ui/.nuxt/
+# b24-controller PHP-тесты (dev-only, не деплоятся): зависимости и кэш PHPUnit.
+# composer.lock КОММИТИМ (детерминизм CI — composer install по locked-версиям).
+b24-controller/vendor/
+b24-controller/.phpunit.cache/
+backend/uploads-test/
+backend/tests/fixtures/
+backend/tests/fixtures*/
+backend/tests/*/valid.pdf
+/home/
+
+# Python bytecode (backend/doc_to_text.py runs via python3)
+__pycache__/
+*.pyc
+
+.idea/

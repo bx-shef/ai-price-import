@@ -1,0 +1,51 @@
+# Builds the MCP image using the upstream subtree (mcp/) as the base,
+# then overlays PST-specific tools from mcp-overlay/ before the build step.
+# context must be the repo root (deploy.yml passes context: .)
+FROM node:22.16.0-alpine3.22 AS builder
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@11.5.0 --activate
+
+# v0.3.0 ships an OAuth token store backed by better-sqlite3 (a NATIVE module). On Alpine
+# a musl prebuild isn't always available, so the toolchain compiles it during install.
+# Builder-layer ONLY — the runtime stage copies just `.output`, so python/make/g++ never
+# ship in the final image. (Even with OAuth disabled by default the dep is installed/built,
+# because nuxt bundles all server code at build time.) Mirrors upstream Dockerfile.
+RUN apk add --no-cache python3 make g++
+
+# Install deps from the submodule lockfile first (layer cache).
+COPY mcp/package.json mcp/pnpm-lock.yaml mcp/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copy upstream source, then overlay only the server code (not tests/docs).
+COPY mcp/ .
+COPY mcp-overlay/server/ ./server/
+
+# Security (#57): the procurement agent only needs the b24_pst_crm_* tools. The vendored
+# upstream toolkit also ships tasks/users/meta (~32 tools); drop them before the build so
+# the MCP server never registers them. Shrinks the agent's blast radius (a prompt-injection
+# can't reach tasks.*/users.* in the live Bitrix24 webhook scope) and trims tool-schema
+# bloat in every model call. Tools are auto-discovered from this dir — no static imports
+# reference these, so removal is safe (the CI "Validate Docker builds" job verifies).
+RUN rm -rf ./server/mcp/tools/tasks ./server/mcp/tools/users ./server/mcp/tools/meta
+# Assert the removal actually took (rm -rf is silent on a wrong/renamed path): fail the build
+# here rather than ship an image that still registers tasks/users/meta. This is the CI guard
+# that the blast-radius reduction can't silently regress on an upstream resync.
+RUN test ! -d ./server/mcp/tools/tasks && test ! -d ./server/mcp/tools/users && test ! -d ./server/mcp/tools/meta
+
+RUN pnpm build
+
+FROM node:22.16.0-alpine3.22 AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NITRO_PORT=3000
+# Закрепляем webhook-only режим на уровне образа (#154 review): мультитенантный
+# OAuth/DXT из v0.3.0 нам не нужен, и его нельзя случайно включить, забыв строку в
+# .env. Чтобы включить осознанно — переопредели на рантайме (нужен том под SQLite
+# token-store, иначе токены теряются при рестарте; см. mcp/.env.example).
+ENV NUXT_BITRIX24_OAUTH_ENABLED=false
+COPY --from=builder /app/.output ./.output
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:3000/api/health || exit 1
+CMD ["node", ".output/server/index.mjs"]
