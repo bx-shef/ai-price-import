@@ -16,8 +16,13 @@ describe('isPlausibleTaxId', () => {
     expect(isPlausibleTaxId('123', 'UNP')).toBe(false)
   })
 
-  it('unknown kind → loose length check', () => {
+  it('rejects mid-range lengths not in the kind set', () => {
+    expect(isPlausibleTaxId('12345678901', 'INN')).toBe(false) // 11 (between 10 and 12)
+  })
+
+  it('unknown kind → loose length check (8..12)', () => {
     expect(isPlausibleTaxId('12345678')).toBe(true)
+    expect(isPlausibleTaxId('1234567890123')).toBe(false) // 13
     expect(isPlausibleTaxId('')).toBe(false)
   })
 })

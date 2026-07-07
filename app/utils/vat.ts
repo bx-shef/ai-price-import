@@ -26,6 +26,10 @@ export function parsePortalVatRates(rows: Array<{ ID: string, NAME: string, RATE
  * (caller reports an error to the error chat).
  */
 export function matchVatRate(docRate: number | null, portalRates: PortalVatRate[]): PortalVatRate | null {
-  const target = docRate === null || !Number.isFinite(docRate) ? null : Number(docRate)
+  // `null` = explicit «без НДС» → matches the null-rate portal entry.
+  // A non-finite number (NaN from a failed parse) is UNRECOGNISED, not tax-exempt:
+  // return null so the caller reports an error, never silently «Без НДС».
+  if (typeof docRate === 'number' && !Number.isFinite(docRate)) return null
+  const target = docRate === null ? null : Number(docRate)
   return portalRates.find(r => r.rate === target) ?? null
 }

@@ -1,20 +1,21 @@
 // Cross-script homoglyph folding for robust matching of articles / numbers /
 // keywords typed in mixed Cyrillic/Latin. Pure, no I/O.
 //
-// IMPORTANT (docs/redesign/06-multilingual.md §5): we fold only CROSS-SCRIPT
-// look-alikes (Cyrillic ↔ Latin). Kazakh-specific Cyrillic letters
-// (ә ғ қ ң ө ұ ү һ і) that have no Latin twin are preserved as-is — we must NOT
-// collapse қ→к, ө→о, etc. Only і→i and һ→h have Latin twins and are folded.
+// We fold only UNAMBIGUOUS lower-case Russian-Cyrillic → Latin look-alikes.
+// Borderline lower-case pairs (к/k, м/m, т/t, н/h, в/b) are intentionally NOT
+// folded — in lower case they are not truly identical and folding them would
+// corrupt common words. ALL Kazakh-distinctive letters (ә ғ қ ң ө ұ ү һ і) are
+// preserved as-is — including і (U+0456) and һ (U+04BB) — so that Kazakh words /
+// articles / keywords are not corrupted (docs/redesign/06-multilingual.md §5).
 
-/** Cyrillic letter → canonical Latin look-alike (lower-case domain). */
+/** Russian Cyrillic letter → canonical Latin look-alike (lower-case domain). */
 const CYRILLIC_TO_LATIN: Record<string, string> = {
-  а: 'a', в: 'b', е: 'e', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p',
-  с: 'c', т: 't', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's', ԛ: 'q', ԝ: 'w'
+  а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', ј: 'j', ѕ: 's'
 }
 
 /**
- * Fold a string to a canonical comparison form: lower-cased, cross-script
- * look-alikes mapped to Latin. Kazakh letters without a Latin twin survive.
+ * Fold a string to a canonical comparison form: lower-cased, unambiguous
+ * cross-script look-alikes mapped to Latin. Kazakh-distinctive letters survive.
  */
 export function foldHomoglyphs(input: string): string {
   const lower = input.toLowerCase()

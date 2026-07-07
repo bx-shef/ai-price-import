@@ -22,6 +22,16 @@ describe('ruleMatches', () => {
     expect(ruleMatches(rule, { text: 'Товарная накладная ТН №5' })).toBe(true)
     expect(ruleMatches(rule, { text: 'Счёт №5' })).toBe(false)
   })
+
+  it('type + keywords are AND (both must match)', () => {
+    const rule: RoutingRule = { match: { type: 'счёт', keywords: ['срочно'] }, target: INVOICE }
+    expect(ruleMatches(rule, { documentType: 'счёт', text: 'обычный счёт' })).toBe(false)
+    expect(ruleMatches(rule, { documentType: 'счёт', text: 'срочно оплатить' })).toBe(true)
+  })
+
+  it('empty-string keyword never matches', () => {
+    expect(ruleMatches({ match: { keywords: [''] }, target: DEAL }, { text: 'что угодно' })).toBe(false)
+  })
 })
 
 describe('resolveTarget', () => {
@@ -42,5 +52,13 @@ describe('resolveTarget', () => {
 
   it('falls back to default when nothing matches', () => {
     expect(resolveTarget({ documentType: 'прайс' }, rules, DEAL)).toEqual(DEAL)
+  })
+
+  it('first matching rule wins when several match', () => {
+    const overlapping: RoutingRule[] = [
+      { match: { keywords: ['счёт'] }, target: INVOICE },
+      { match: { keywords: ['счёт'] }, target: SUPPLY }
+    ]
+    expect(resolveTarget({ text: 'это счёт' }, overlapping, DEAL)).toEqual(INVOICE)
   })
 })

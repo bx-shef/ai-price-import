@@ -42,7 +42,7 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 | Агент | **Claude Code CLI** (headless, `--print --bare --output-format json`) | извлечение структуры + вызов MCP |
 | Провайдер | **DeepSeek** (Anthropic-совместимый endpoint) через `ANTHROPIC_*` env | решение Q5; см. заметку о юрисдикции ниже |
 | Протокол инструментов | **MCP** (`@modelcontextprotocol/sdk`, Streamable HTTP, Bearer) | изолированный MCP-сервер |
-| Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (rus+eng+bel), python (`openpyxl`/`xlrd`/`python-docx`) | PDF/скан/офис → текст |
+| Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (**rus+bel+kaz+eng**), python (`openpyxl`/`xlrd`/`python-docx`) | PDF/скан/офис → текст; языки — см. `06-multilingual.md` |
 | Схемы | **`zod`** | валидация входов MCP-инструментов и вывода агента |
 
 ## 4. Тесты / тулинг

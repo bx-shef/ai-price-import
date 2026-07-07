@@ -230,7 +230,7 @@ AI-импорт прайсов и накладных поставщиков в B
   homoglyph-логику, а также **OAuth/мультитенант-код** старого MCP (он оживает). **Eval-харнесс не
   переносим** (решение D5) — вместо скоринга требование «1-в-1 со счётом».
 - **Переделываем по эталону:** раскладку кода (pure `app/utils` + тесты), backend на Nitro c очередью
-  (BullMQ+Redis), Postgres под OAuth-токены/дедуп/метрики, деплой (multi-target Docker + CSP-hashing +
+  (BullMQ+Redis), Postgres под OAuth-токены/идемпотентность джоб/метрики, деплой (multi-target Docker + CSP-hashing +
   GHCR/Watchtower), встройку в Б24 (dual-mode, server-side REST по OAuth), лендинг + маркетинг + листинг Маркета.
 - **Выкидываем:** весь `b24-controller/` (PHP-модуль `shef.purchase`, `procure*.php`, **патч ядра НДС** —
   НДС теперь штатным `crm.item.productrow.set`); мёртвый чат-бот; вендоренный `mcp/` как git-subtree;

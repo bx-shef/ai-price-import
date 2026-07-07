@@ -31,4 +31,15 @@ describe('matchVatRate', () => {
   it('returns null when the portal has no such rate (→ error chat)', () => {
     expect(matchVatRate(25, rates)).toBeNull()
   })
+
+  it('NaN (unparsed rate) is NOT silently «Без НДС» — returns null (→ error)', () => {
+    expect(matchVatRate(Number.NaN, rates)).toBeNull()
+  })
+})
+
+describe('parsePortalVatRates empty RATE', () => {
+  it('treats empty string RATE as null («Без НДС»)', () => {
+    const [r] = parsePortalVatRates([{ ID: '9', NAME: 'x', RATE: '' }])
+    expect(r!.rate).toBeNull()
+  })
 })
