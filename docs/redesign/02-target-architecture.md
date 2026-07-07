@@ -178,7 +178,7 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
 **Импорт файла (happy path):**
 1. `POST /api/upload` → сохранить файл, создать задачу (Postgres), **опц. ручной override цели**
    рядом с файлом (тип сущности + направление), `enqueue file-extract`.
-2. `file-extract` (worker): pdftotext/OCR/office → `DOCUMENT_TEXT` → `enqueue agent-run`.
+2. `file-extract` (worker): pdftotext / OCR (tesseract `rus`+`bel`+`kaz`+`eng`) / office → `DOCUMENT_TEXT` → `enqueue agent-run`. Языки документов: рус/бел/каз — см. [`06-multilingual.md`](06-multilingual.md).
 3. `agent-run` (worker): spawn Claude Code (DeepSeek) с промптом + `DOCUMENT_TEXT`; агент через MCP
    ищет поставщика и товары (стандартный REST по токену портала + маппинг), извлекает структуру
    позиций; результат → `enqueue crm-sync`. Договор не ищем (Q8).
