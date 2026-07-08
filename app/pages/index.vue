@@ -31,23 +31,30 @@ const year = copyrightYears(2026, 2026)
 
     <div class="relative">
       <!-- Hero -->
-      <section class="mx-auto max-w-4xl px-6 pt-24 pb-16 text-center">
-        <span class="inline-block rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
-          Приложение для Bitrix24
-        </span>
-        <h1 class="mt-5 bg-gradient-to-b from-white to-slate-300 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl">
-          {{ LANDING_TITLE }}
-        </h1>
-        <p class="mx-auto mt-5 max-w-2xl text-lg text-slate-400">
-          {{ LANDING_SUBTITLE }}
-        </p>
-        <div class="mt-9">
-          <NuxtLink
-            to="/app"
-            class="inline-block rounded-xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
-          >
-            {{ LANDING_CTA }}
-          </NuxtLink>
+      <section class="relative mx-auto max-w-4xl px-6 pt-24 pb-16 text-center">
+        <div class="pointer-events-none absolute inset-0 opacity-50">
+          <ClientOnly>
+            <HeroGraph />
+          </ClientOnly>
+        </div>
+        <div class="relative z-10">
+          <span class="inline-block rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
+            Приложение для Bitrix24
+          </span>
+          <h1 class="mt-5 bg-gradient-to-b from-white to-slate-300 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl">
+            {{ LANDING_TITLE }}
+          </h1>
+          <p class="mx-auto mt-5 max-w-2xl text-lg text-slate-400">
+            {{ LANDING_SUBTITLE }}
+          </p>
+          <div class="mt-9">
+            <NuxtLink
+              to="/app"
+              class="inline-block rounded-xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
+            >
+              {{ LANDING_CTA }}
+            </NuxtLink>
+          </div>
         </div>
       </section>
 
