@@ -22,7 +22,11 @@ export async function getDocument(memberId: string, jobId: string, query: QueryF
   if (!p) return null
   const parsed = typeof p === 'string' ? safeParse(p) : p as StoredDoc
   if (!parsed || typeof parsed !== 'object') return null
-  return { doc: (parsed as StoredDoc).doc, signals: (parsed as StoredDoc).signals ?? {} }
+  const doc = (parsed as StoredDoc).doc
+  // A row with a payload but no `doc` is malformed — treat as absent, not a
+  // half-populated {doc: undefined} that would crash the crm-sync orchestration.
+  if (!doc || typeof doc !== 'object') return null
+  return { doc, signals: (parsed as StoredDoc).signals ?? {} }
 }
 
 /** Delete a job's stored document (after crm-sync / on cleanup). */

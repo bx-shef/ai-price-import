@@ -25,11 +25,15 @@ export interface CreateTargetOutput { entityId: number }
 
 /** MCP tool: create_target — create the CRM entity and (optionally) its product rows. */
 export async function createTargetTool(input: CreateTargetInput, call: RestCall): Promise<CreateTargetOutput> {
-  if (!input?.target || !Number.isFinite(input.target.entityTypeId)) throw new Error('create_target: target.entityTypeId required')
+  // entityTypeId must be a real CRM owner type (>0); 0/negative would produce a
+  // malformed crm.item.add and is never a valid target.
+  if (!input?.target || !(input.target.entityTypeId > 0)) throw new Error('create_target: target.entityTypeId required')
   const entityId = await createTargetItem(input.target, input.fields ?? {}, call)
   if (input.rows && input.rows.length) await setProductRows(input.target.entityTypeId, entityId, input.rows, call)
   return { entityId }
 }
 
-/** Names exposed to the agent (allowlist). */
-export const MCP_TOOL_NAMES = ['find_supplier', 'find_product', 'create_target'] as const
+/** Names of IMPLEMENTED tools exposed to the agent (allowlist). `find_product`
+ * is not advertised until implemented (product resolution currently runs in
+ * crm-sync backend). Guarded by a test against the exported functions. */
+export const MCP_TOOL_NAMES = ['find_supplier', 'create_target'] as const

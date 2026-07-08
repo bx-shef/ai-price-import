@@ -4,8 +4,12 @@
 
 export type AgentFaultKind = 'transient' | 'terminal'
 
+// NB: no bare /timeout/i — our own deadline kill ("agent timed out") must stay
+// terminal (retrying just times out again). Only PROVIDER-side timeouts retry:
+// a gateway timeout (504 → 5xx below, or the literal phrase) and network-level
+// ETIMEDOUT (connect timeout).
 const TRANSIENT_PATTERNS = [
-  /\b429\b/, /\b5\d\d\b/, /rate.?limit/i, /overloaded/i, /timeout/i,
+  /\b429\b/, /\b5\d\d\b/, /rate.?limit/i, /overloaded/i, /gateway.?timeout/i,
   /ECONNRESET/i, /ETIMEDOUT/i, /ENOTFOUND/i, /EAI_AGAIN/i, /socket hang up/i
 ]
 

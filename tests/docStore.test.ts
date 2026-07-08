@@ -32,4 +32,8 @@ describe('docStore', () => {
     await deleteDocument('m', 'j', q)
     expect(calls[0]!.sql).toContain('DELETE FROM import_doc')
   })
+  it('getDocument null on malformed payload with no doc (not {doc: undefined})', async () => {
+    expect(await getDocument('m', 'j', fakeQuery([{ payload: JSON.stringify({ signals: {} }) }]).q)).toBeNull()
+    expect(await getDocument('m', 'j', fakeQuery([{ payload: { signals: {} } }]).q)).toBeNull()
+  })
 })

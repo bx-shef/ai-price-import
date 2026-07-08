@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { classifyAgentError, nextBackoffMs, shouldRetry } from '../server/agent/retry'
 
 describe('classifyAgentError', () => {
-  it('transient on 429/5xx/network/timeout', () => {
-    for (const m of ['HTTP 429', 'status 503', 'rate limit exceeded', 'ECONNRESET', 'request timeout', 'overloaded']) {
+  it('transient on 429/5xx/rate-limit/network/gateway-timeout', () => {
+    for (const m of ['HTTP 429', 'status 503', 'HTTP 504', 'gateway timeout', 'rate limit exceeded', 'ECONNRESET', 'ETIMEDOUT', 'overloaded']) {
       expect(classifyAgentError(m)).toBe('transient')
     }
   })
-  it('terminal otherwise', () => {
+  it('terminal otherwise — incl. our OWN deadline kill (bare timeout ≠ retry)', () => {
     expect(classifyAgentError('invalid JSON schema')).toBe('terminal')
+    expect(classifyAgentError('agent timed out after 120s')).toBe('terminal')
+    expect(classifyAgentError('request timeout')).toBe('terminal')
     expect(classifyAgentError('')).toBe('terminal')
   })
 })

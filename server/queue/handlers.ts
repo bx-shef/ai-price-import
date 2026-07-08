@@ -17,6 +17,13 @@ export interface HandlerDeps {
   crmSyncDeps: (memberId: string, jobId: string) => CrmSyncDeps
   /** Persist the job outcome. */
   setJobStatus: (memberId: string, jobId: string, status: 'done' | 'error', result: string) => Promise<void>
+  /**
+   * Best-effort cleanup of the stored raw client document once the job is
+   * terminal (data minimisation — docs/redesign 05). Optional: a failed sweep
+   * must not fail the job. crm-sync does not retry, so the doc is safe to drop
+   * after the status is recorded.
+   */
+  deleteDocument?: (memberId: string, jobId: string) => Promise<void>
 }
 
 /** Handle a crm-sync job: load doc+mapping, run the pure orchestration, record status. */
@@ -34,5 +41,12 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
     result.created || !result.errors.length ? 'done' : 'error',
     JSON.stringify({ entityId: result.entityId, created: result.created, warnings: result.warnings, errors: result.errors })
   )
+  // Terminal now (status recorded, no crm-sync retry) — drop the raw client
+  // document. Best-effort: never fail the job on a cleanup error.
+  if (deps.deleteDocument) {
+    try {
+      await deps.deleteDocument(job.memberId, job.jobId)
+    } catch { /* retained rows are swept by a later TTL pass */ }
+  }
   return result
 }

@@ -64,4 +64,25 @@ describe('handleCrmSyncJob', () => {
     expect(r?.created).toBe(false)
     expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'done', expect.any(String))
   })
+
+  it('drops the stored client doc after the terminal status (cleanup)', async () => {
+    const deleteDocument = vi.fn(async () => {})
+    const d = deps({ deleteDocument })
+    await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(deleteDocument).toHaveBeenCalledWith('m', 'j')
+  })
+  it('cleanup failure never fails the job (best-effort)', async () => {
+    const deleteDocument = vi.fn(async () => {
+      throw new Error('db down')
+    })
+    const d = deps({ deleteDocument })
+    const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(r?.created).toBe(true)
+  })
+  it('no document → no cleanup call', async () => {
+    const deleteDocument = vi.fn(async () => {})
+    const d = deps({ getDocument: vi.fn(async () => null), deleteDocument })
+    await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(deleteDocument).not.toHaveBeenCalled()
+  })
 })
