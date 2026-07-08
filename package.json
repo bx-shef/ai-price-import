@@ -14,7 +14,7 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
-    "typecheck": "nuxt prepare && vue-tsc --build .nuxt/tsconfig.json",
+    "typecheck": "nuxt prepare && vue-tsc --build .nuxt/tsconfig.json && vue-tsc --noEmit -p .nuxt/tsconfig.server.json",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "check": "pnpm lint && pnpm typecheck && pnpm test"
