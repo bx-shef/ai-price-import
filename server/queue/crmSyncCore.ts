@@ -59,6 +59,12 @@ export async function runCrmSync(
   // Build rows. HARD errors (VAT rate not in portal) abort the whole document —
   // we must NOT drop lines (§8 «1-в-1, без потерь строк»); operator fixes the portal, re-imports.
   const vatRates = await deps.portalVatRates()
+  // VAT-inclusion must be known when any line carries VAT — otherwise the whole-document
+  // total flips (100 net → 120 gross). Undefined + VAT present ⇒ hard error, never guess.
+  const hasVat = doc.items.some(it => (it.vatRate ?? 0) > 0)
+  if (hasVat && doc.priceIncludesVat === undefined) {
+    errors.push('Не определено, включён ли НДС в цену — уточните документ и повторите импорт')
+  }
   const priceIncludesVat = doc.priceIncludesVat === true
   const rows: Array<Record<string, unknown>> = []
   let sort = 10

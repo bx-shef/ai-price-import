@@ -17,14 +17,19 @@ describe('textStore', () => {
     expect(calls[0]!.sql).toContain('ON CONFLICT (member_id, job_id) DO UPDATE')
     expect(calls[0]!.params).toEqual(['m', 'j', 'hello'])
   })
-  it('getText returns text or null (empty/absent → null)', async () => {
-    expect(await getText('m', 'j', fakeQuery([{ text: 'abc' }]).q)).toBe('abc')
+  it('getText returns text or null (empty/absent → null), scoped by member+job', async () => {
+    const { q, calls } = fakeQuery([{ text: 'abc' }])
+    expect(await getText('m', 'j', q)).toBe('abc')
+    expect(calls[0]!.sql).toContain('member_id=$1 AND job_id=$2') // tenant scoping
+    expect(calls[0]!.params).toEqual(['m', 'j'])
     expect(await getText('m', 'j', fakeQuery([{ text: '' }]).q)).toBeNull()
     expect(await getText('m', 'j', fakeQuery([]).q)).toBeNull()
   })
-  it('deleteText issues DELETE', async () => {
+  it('deleteText issues a member+job scoped DELETE (no cross-tenant wipe)', async () => {
     const { q, calls } = fakeQuery()
     await deleteText('m', 'j', q)
     expect(calls[0]!.sql).toContain('DELETE FROM import_text')
+    expect(calls[0]!.sql).toContain('member_id=$1 AND job_id=$2')
+    expect(calls[0]!.params).toEqual(['m', 'j'])
   })
 })

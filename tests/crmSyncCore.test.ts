@@ -95,6 +95,24 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     expect(r.errors.some(e => /0%/.test(e))).toBe(true)
   })
 
+  it('VAT present but priceIncludesVat undefined → hard error (total would flip)', async () => {
+    const deps = baseDeps()
+    const { priceIncludesVat, ...rest } = doc // omit the inclusion flag
+    void priceIncludesVat
+    const r = await runCrmSync('j', rest as ExtractedDocument, mapping(), {}, deps)
+    expect(r.created).toBe(false)
+    expect(r.errors.some(e => /включён ли НДС/.test(e))).toBe(true)
+    expect(deps.createTarget).not.toHaveBeenCalled()
+  })
+
+  it('no VAT anywhere + priceIncludesVat undefined → OK (flag irrelevant)', async () => {
+    const deps = baseDeps()
+    const d: ExtractedDocument = { currency: 'BYN', supplier: { name: 'X' }, items: [{ name: 'a', price: 10, quantity: 1, unit: 'шт' }] }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.created).toBe(true)
+    expect(r.errors).toHaveLength(0)
+  })
+
   it('currency not in portal → error, NOT created', async () => {
     const deps = baseDeps({ portalCurrencies: vi.fn(async () => ['BYN']) })
     const r = await runCrmSync('j', { ...doc, currency: 'USD' }, mapping(), {}, deps)

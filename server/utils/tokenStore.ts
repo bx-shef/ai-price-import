@@ -76,9 +76,11 @@ export async function getApplicationToken(memberId: string, query: QueryFn): Pro
   return t ? String(t) : null
 }
 
-/** Delete all data for a portal (ONAPPUNINSTALL — always purge). */
+/** Delete ALL data for a portal (ONAPPUNINSTALL — always purge, incl. client
+ * documents: import_text raw text + import_doc extracted structure). Leaving any
+ * client data after uninstall is a data-minimisation/privacy breach (docs 05). */
 export async function deletePortal(memberId: string, query: QueryFn): Promise<void> {
-  await query('DELETE FROM portal_tokens WHERE member_id = $1', [memberId])
-  await query('DELETE FROM job_result WHERE member_id = $1', [memberId])
-  await query('DELETE FROM metrics_counter WHERE member_id = $1', [memberId])
+  for (const table of ['portal_tokens', 'job_result', 'metrics_counter', 'import_job', 'import_text', 'import_doc']) {
+    await query(`DELETE FROM ${table} WHERE member_id = $1`, [memberId])
+  }
 }

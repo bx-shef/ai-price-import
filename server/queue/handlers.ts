@@ -58,6 +58,9 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
 
 // ── file-extract ────────────────────────────────────────────────────────────
 
+/** Hard cap on extracted DOCUMENT_TEXT (memory / storage / LLM-cost DoS guard). */
+export const MAX_DOCUMENT_TEXT = 500_000
+
 export interface FileExtractDeps {
   /** Extract DOCUMENT_TEXT from the stored file (pdftotext / OCR / office). May throw. */
   extractText: (memberId: string, jobId: string, fileId: string) => Promise<string>
@@ -66,10 +69,13 @@ export interface FileExtractDeps {
   enqueueAgentRun: (memberId: string, jobId: string) => Promise<void>
   /** Mark the job failed (records an error status the operator sees). */
   failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
+  /** Optional progress: mark the job 'extracting' at entry (UI stage indicator). */
+  markExtracting?: (memberId: string, jobId: string) => Promise<void>
 }
 
-/** file-extract: file → text → enqueue agent-run. Empty/failed extraction fails the job. */
+/** file-extract: file → text → enqueue agent-run. Empty/failed/oversized extraction fails the job. */
 export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDeps): Promise<{ ok: boolean }> {
+  await markProgress(deps.markExtracting, job.memberId, job.jobId)
   let text: string
   try {
     text = await deps.extractText(job.memberId, job.jobId, job.fileId)
@@ -79,6 +85,11 @@ export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDep
   }
   if (!text.trim()) {
     await deps.failJob(job.memberId, job.jobId, 'пустой текст документа (файл не распознан)')
+    return { ok: false }
+  }
+  // Loud failure, not silent truncation — dropping tail lines would break 1-в-1.
+  if (text.length > MAX_DOCUMENT_TEXT) {
+    await deps.failJob(job.memberId, job.jobId, `документ слишком большой (>${MAX_DOCUMENT_TEXT} символов) — разбейте на части`)
     return { ok: false }
   }
   await deps.saveText(job.memberId, job.jobId, text)
@@ -99,8 +110,10 @@ export interface AgentRunDeps {
   failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
   /** Optional: operator's manual target override chosen next to the file. */
   getManualOverride?: (memberId: string, jobId: string) => Promise<TargetRef | undefined>
-  /** Optional best-effort: drop the raw text once the structure is stored. */
+  /** Optional best-effort: drop the raw text (on success AND on terminal failure). */
   deleteText?: (memberId: string, jobId: string) => Promise<void>
+  /** Optional progress: mark the job 'processing' once extraction begins. */
+  markProcessing?: (memberId: string, jobId: string) => Promise<void>
 }
 
 /** agent-run: text → extract structure → store {doc, signals} → enqueue crm-sync. */
@@ -110,9 +123,13 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
     await deps.failJob(job.memberId, job.jobId, 'текст документа не найден')
     return { ok: false }
   }
+  await markProgress(deps.markProcessing, job.memberId, job.jobId)
   const { document, error } = await deps.extractDocument(text)
   if (!document) {
     await deps.failJob(job.memberId, job.jobId, error || 'не удалось извлечь документ')
+    // Terminal extraction failure (re-extraction of the same text won't differ) →
+    // drop the raw client text now; don't retain unrecognised documents.
+    await dropText(deps.deleteText, job.memberId, job.jobId)
     return { ok: false }
   }
   const manualOverride = deps.getManualOverride ? await deps.getManualOverride(job.memberId, job.jobId) : undefined
@@ -122,12 +139,26 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
     ...(manualOverride ? { manualOverride } : {})
   }
   await deps.saveDocument(job.memberId, job.jobId, { doc: document, signals })
-  // Raw text now lives (bounded) in the doc payload → drop the standalone copy.
-  if (deps.deleteText) {
-    try {
-      await deps.deleteText(job.memberId, job.jobId)
-    } catch { /* swept later */ }
-  }
+  // Enqueue BEFORE dropping the text: if enqueue throws, the text survives for the
+  // job retry (delete-then-enqueue would orphan the document on a transient blip).
   await deps.enqueueCrmSync(job.memberId, job.jobId)
+  // Raw text now lives (bounded) in the doc payload → drop the standalone copy.
+  await dropText(deps.deleteText, job.memberId, job.jobId)
   return { ok: true }
+}
+
+/** Best-effort progress marker — a failed status write must never fail the job. */
+async function markProgress(fn: ((m: string, j: string) => Promise<void>) | undefined, memberId: string, jobId: string): Promise<void> {
+  if (!fn) return
+  try {
+    await fn(memberId, jobId)
+  } catch { /* progress is advisory */ }
+}
+
+/** Best-effort raw-text cleanup — a failed sweep must never fail the job. */
+async function dropText(fn: ((m: string, j: string) => Promise<void>) | undefined, memberId: string, jobId: string): Promise<void> {
+  if (!fn) return
+  try {
+    await fn(memberId, jobId)
+  } catch { /* retained rows are purged on uninstall / swept by TTL */ }
 }

@@ -34,10 +34,13 @@ describe('tokenStore', () => {
     expect(await getApplicationToken('m', fakeQuery([{ application_token: 'app' }]).q)).toBe('app')
     expect(await getApplicationToken('m', fakeQuery([{ application_token: '' }]).q)).toBeNull()
   })
-  it('deletePortal purges all three tables', async () => {
+  it('deletePortal purges every per-portal table incl. client documents', async () => {
     const { q, calls } = fakeQuery()
     await deletePortal('m1', q)
-    expect(calls.map(c => c.sql.match(/FROM (\w+)/)![1])).toEqual(['portal_tokens', 'job_result', 'metrics_counter'])
+    expect(calls.map(c => c.sql.match(/FROM (\w+)/)![1])).toEqual(
+      ['portal_tokens', 'job_result', 'metrics_counter', 'import_job', 'import_text', 'import_doc']
+    )
+    for (const c of calls) expect(c.params).toEqual(['m1'])
   })
 })
 

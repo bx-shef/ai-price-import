@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentAllowedTools, agentDisallowedTools, buildAgentArgs, buildMcpConfig } from '../server/agent/mcpConfig'
+import { agentAllowedTools, agentDisallowedTools, agentSpawnEnv, buildAgentArgs, buildMcpConfig } from '../server/agent/mcpConfig'
 import { extractJson } from '../server/agent/extractJson'
 
 describe('mcpConfig', () => {
@@ -9,10 +9,33 @@ describe('mcpConfig', () => {
     expect(s.type).toBe('http')
     expect(s.headers.Authorization).toBe('Bearer job-bearer')
   })
-  it('allowlist = ONLY mcp tools (no Read); denies dangerous tools', () => {
+  it('allowlist = ONLY mcp tools', () => {
     expect(agentAllowedTools()).toContain('mcp__procure-ai__find_supplier')
-    expect(agentAllowedTools()).not.toContain('Read') // no file-read/exfil surface
-    expect(agentDisallowedTools()).toEqual(expect.arrayContaining(['Bash', 'Write', 'WebFetch']))
+    expect(agentAllowedTools()).not.toContain('Read')
+  })
+  it('denylist is EXHAUSTIVE — incl. the exfil-capable Read/Glob/Grep/Task/Agent', () => {
+    const d = agentDisallowedTools()
+    // These are the tools that need NO permission in headless mode → MUST be denied.
+    for (const t of ['Read', 'Glob', 'Grep', 'Task', 'Agent', 'Bash', 'Write', 'Edit', 'WebFetch', 'WebSearch', 'NotebookEdit']) {
+      expect(d).toContain(t)
+    }
+  })
+  it('extractor-mode args deny every tool (value after --disallowedTools = full list)', () => {
+    const args = buildAgentArgs()
+    const di = args.indexOf('--disallowedTools')
+    expect(args[di + 1]).toBe(agentDisallowedTools().join(','))
+  })
+  it('agentSpawnEnv passes LLM vars, strips backend secrets', () => {
+    const env = agentSpawnEnv({
+      PATH: '/usr/bin', DEEPSEEK_API_KEY: 'sk-x', ANTHROPIC_BASE_URL: 'https://api',
+      DATABASE_URL: 'postgres://secret', B24_TOKEN_ENC_KEY: 'key', B24_CLIENT_SECRET: 'cs', EMPTY: ''
+    })
+    expect(env.DEEPSEEK_API_KEY).toBe('sk-x')
+    expect(env.PATH).toBe('/usr/bin')
+    expect(env.DATABASE_URL).toBeUndefined()
+    expect(env.B24_TOKEN_ENC_KEY).toBeUndefined()
+    expect(env.B24_CLIENT_SECRET).toBeUndefined()
+    expect(env.EMPTY).toBeUndefined() // empty values dropped
   })
   it('builds headless args with mcp-config + allowlist (future enrichment mode)', () => {
     const args = buildAgentArgs('/tmp/cfg.json')

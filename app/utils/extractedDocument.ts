@@ -5,8 +5,11 @@ import type { DocumentItem, DocumentParty, ExtractedDocument, TaxIdKind } from '
 // document) → coerce/clamp everything, drop unusable rows, bound sizes (DoS).
 // Pure, no I/O. docs/redesign 02 §«Решения по проводке crm-sync».
 
-/** Max product rows we accept from one document (guards a runaway/hostile table). */
-export const MAX_ITEMS = 2000
+/** Hard ceiling on product rows from one document. A DoS guard against a
+ * runaway/hostile table — NOT a silent truncation point: the caller (runAgent)
+ * treats a raw item count above this as a hard error (no partial import), so real
+ * documents up to this size import 1-в-1 and anything larger fails loudly. */
+export const MAX_ITEMS = 10_000
 const MAX_STR = 500
 const MAX_TAXID_DIGITS = 24
 const TAX_ID_KINDS: readonly TaxIdKind[] = ['INN', 'UNP', 'BIN', 'IIN']
@@ -17,19 +20,30 @@ function str(v: unknown, max = MAX_STR): string | undefined {
   return t ? t.slice(0, max) : undefined
 }
 
-/** Coerce to a finite number (accepts "1 234,56" / "1,234.56" style strings). */
+/**
+ * Coerce a printed number to a finite value, or undefined. Handles ru/be/kk forms:
+ * whitespace/NBSP thousands ("1 234,56"), comma decimal, dot decimal, both-separator
+ * ("1.234.567,89" / "1,234.56"), dot- or comma-grouped thousands ("1.234.567"), and
+ * a trailing percent ("20%" → 20). Ambiguous single-separator cases resolve toward
+ * the DECIMAL reading (ru/be/kk convention: comma is the decimal point).
+ */
 function num(v: unknown): number | undefined {
   if (typeof v === 'number') return Number.isFinite(v) ? v : undefined
   if (typeof v !== 'string') return undefined
-  // Strip whitespace thousands-separators (JS \s covers NBSP/narrow-NBSP), then
-  // reconcile comma vs dot as the decimal separator.
-  let s = v.replace(/\s/g, '')
-  if (s.includes(',') && s.includes('.')) {
-    // Last separator is the decimal one; the other groups thousands.
+  let s = v.replace(/\s/g, '').replace(/%/g, '').replace(/[₽$€]/g, '')
+  if (!s) return undefined // "" / whitespace-only → undefined (so a default like ?? 1 applies)
+  const dots = (s.match(/\./g) || []).length
+  const commas = (s.match(/,/g) || []).length
+  if (commas && dots) {
+    // Both present: the LAST separator is the decimal; the other groups thousands.
     s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '')
-  } else if (s.includes(',')) {
-    s = s.replace(',', '.')
-  }
+  } else if (commas > 1) {
+    s = s.replace(/,/g, '') // 1,234,567 → thousands grouping
+  } else if (commas === 1) {
+    s = s.replace(',', '.') // decimal comma
+  } else if (dots > 1) {
+    s = s.replace(/\./g, '') // 1.234.567 → thousands grouping
+  } // single dot, no comma → left as the decimal point
   const n = Number(s)
   return Number.isFinite(n) ? n : undefined
 }
@@ -59,11 +73,16 @@ function normaliseItem(v: unknown): DocumentItem | null {
   if (!v || typeof v !== 'object') return null
   const o = v as Record<string, unknown>
   const name = str(o.name)
-  if (!name) return null // a row with no name is unusable
+  const price = num(o.price)
+  const quantity = num(o.quantity)
+  // A row with no name but real numbers is a genuine line whose name failed
+  // extraction — keep it under a placeholder so the total stays 1-в-1 rather than
+  // silently vanish. Only a row with neither a name nor any number is noise → drop.
+  if (!name && price === undefined && quantity === undefined) return null
   const item: DocumentItem = {
-    name,
-    price: num(o.price) ?? 0,
-    quantity: num(o.quantity) ?? 1
+    name: name ?? '(позиция без наименования)',
+    price: price ?? 0,
+    quantity: quantity ?? 1
   }
   const article = str(o.article)
   if (article) item.article = article
@@ -93,8 +112,9 @@ export function validateExtractedDocument(raw: unknown): ExtractedDocument | nul
   const doc: ExtractedDocument = { items }
   const documentType = str(o.documentType, 120)
   if (documentType) doc.documentType = documentType
-  // currency: ISO 4217-ish → letters only, uppercased, ≤ 3 (BYN/RUB/USD/KZT).
-  const cur = (str(o.currency) ?? '').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3)
+  // currency: ISO 4217 → letters only, uppercased, EXACTLY 3 (reject "USDT"/junk;
+  // do NOT truncate 4+ letters to 3, which would silently accept a wrong code).
+  const cur = (str(o.currency) ?? '').replace(/[^a-zA-Z]/g, '').toUpperCase()
   if (cur.length === 3) doc.currency = cur
   if (typeof o.priceIncludesVat === 'boolean') doc.priceIncludesVat = o.priceIncludesVat
   const supplier = normaliseSupplier(o.supplier)
