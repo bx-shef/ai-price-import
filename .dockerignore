@@ -1,0 +1,15 @@
+.git
+node_modules
+.output
+.nuxt
+.data
+dist
+legacy
+docs
+screenshots
+tests
+*.md
+.env
+.env.*
+!.env.example
+scratch*
