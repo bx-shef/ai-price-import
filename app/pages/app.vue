@@ -27,6 +27,13 @@ const tiles = computed(() => [
   { key: 'error', label: 'Ошибки', value: stats.value.error, cls: 'text-red-600' }
 ])
 
+// Parse each job once (result JSON) instead of 3× per row in the template.
+const rows = computed(() => jobs.value.map(job => ({
+  job,
+  meta: jobStatusMeta(job.status),
+  result: parseJobResult(job.result)
+})))
+
 const toneClass: Record<string, string> = {
   neutral: 'bg-gray-100 text-gray-600',
   info: 'bg-blue-100 text-blue-700',
@@ -101,32 +108,32 @@ const toneClass: Record<string, string> = {
         Пока нет загрузок — нажмите «Загрузить документ».
       </li>
       <li
-        v-for="job in jobs"
-        :key="job.jobId"
+        v-for="row in rows"
+        :key="row.job.jobId"
         class="flex items-center justify-between gap-3 p-3"
       >
         <div class="min-w-0">
           <p class="truncate text-sm font-medium">
-            {{ job.fileName || 'документ' }}
+            {{ row.job.fileName || 'документ' }}
           </p>
           <p
-            v-if="parseJobResult(job.result).errors.length"
+            v-if="row.result.errors.length"
             class="truncate text-xs text-red-500"
           >
-            {{ parseJobResult(job.result).errors[0] }}
+            {{ row.result.errors[0] }}
           </p>
           <p
-            v-else-if="parseJobResult(job.result).message"
+            v-else-if="row.result.message"
             class="truncate text-xs text-gray-500"
           >
-            {{ parseJobResult(job.result).message }}
+            {{ row.result.message }}
           </p>
         </div>
         <span
           class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
-          :class="toneClass[jobStatusMeta(job.status).tone]"
+          :class="toneClass[row.meta.tone]"
         >
-          {{ jobStatusMeta(job.status).label }}
+          {{ row.meta.label }}
         </span>
       </li>
     </ul>
