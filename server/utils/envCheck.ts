@@ -36,5 +36,15 @@ export function checkBackendEnv(env: Record<string, string | undefined>): EnvRep
     warnings.push('REDIS_URL unset — queue disabled (synchronous fallback only)')
   }
 
+  // Operator zone: if sign-in is enabled, its session-signing secret must be strong.
+  if (env.OPERATOR_PASSWORD) {
+    const opSecret = env.OPERATOR_SESSION_SECRET ?? env.B24_TOKEN_ENC_KEY ?? ''
+    if (opSecret.length < 16) {
+      warnings.push('OPERATOR_PASSWORD is set but the session secret is weak/unset — set a strong OPERATOR_SESSION_SECRET (else cookies are forgeable)')
+    } else if (!env.OPERATOR_SESSION_SECRET) {
+      warnings.push('OPERATOR_SESSION_SECRET unset — reusing B24_TOKEN_ENC_KEY for session signing (key separation recommended in prod)')
+    }
+  }
+
   return { errors, warnings }
 }

@@ -30,4 +30,16 @@ describe('checkBackendEnv', () => {
     expect(r.warnings.some(w => /CLIENT_ID/.test(w))).toBe(true)
     expect(r.warnings.some(w => /REDIS_URL/.test(w))).toBe(true)
   })
+
+  it('operator secret: weak → warn; enc-key fallback → key-separation warn; strong → none', () => {
+    const base = { B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_APPLICATION_TOKEN: 't', B24_CLIENT_ID: 'i', B24_CLIENT_SECRET: 's', REDIS_URL: 'r' }
+    // weak explicit secret
+    expect(checkBackendEnv({ ...base, OPERATOR_PASSWORD: 'p', OPERATOR_SESSION_SECRET: 'short' }).warnings.some(w => /weak/.test(w))).toBe(true)
+    // fallback to enc key (strong length) → key-separation warning
+    expect(checkBackendEnv({ ...base, OPERATOR_PASSWORD: 'p' }).warnings.some(w => /key separation/.test(w))).toBe(true)
+    // strong dedicated secret → no operator warning
+    expect(checkBackendEnv({ ...base, OPERATOR_PASSWORD: 'p', OPERATOR_SESSION_SECRET: 'a-strong-secret-32-characters-long' }).warnings.some(w => /secret/i.test(w))).toBe(false)
+    // no operator password → no operator warnings at all
+    expect(checkBackendEnv({ ...base, OPERATOR_SESSION_SECRET: 'short' }).warnings.some(w => /OPERATOR/.test(w))).toBe(false)
+  })
 })
