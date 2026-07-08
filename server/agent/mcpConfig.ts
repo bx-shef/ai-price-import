@@ -36,12 +36,22 @@ export function agentDisallowedTools(): string[] {
   return ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch']
 }
 
-/** Build headless Claude Code CLI args (prompt goes on stdin, not argv → no E2BIG). */
-export function buildAgentArgs(mcpConfigPath: string): string[] {
-  return [
-    '--print', '--bare', '--output-format', 'json',
-    '--mcp-config', mcpConfigPath,
-    '--allowedTools', agentAllowedTools().join(','),
-    '--disallowedTools', agentDisallowedTools().join(',')
-  ]
+/**
+ * Build headless Claude Code CLI args (prompt goes on stdin, not argv → no E2BIG).
+ *
+ * MVP extraction mode (no `mcpConfigPath`): the agent is a PURE text→JSON extractor
+ * with NO Bitrix24 access — every built-in tool denied, no MCP server. An untrusted
+ * document fed to the LLM can then only emit JSON; it cannot touch the portal or
+ * exfiltrate. The deterministic supplier/product lookup + CRM write run in crm-sync
+ * over the abstract tool bodies (docs/redesign 02 §«Решения по проводке crm-sync»).
+ *
+ * With `mcpConfigPath`: the documented agent→MCP-over-HTTP path (per-job bearer),
+ * reserved for a future mode where the LLM drives enrichment.
+ */
+export function buildAgentArgs(mcpConfigPath?: string): string[] {
+  const base = ['--print', '--bare', '--output-format', 'json']
+  const mcp = mcpConfigPath
+    ? ['--mcp-config', mcpConfigPath, '--allowedTools', agentAllowedTools().join(',')]
+    : ['--allowedTools', ''] // extractor: empty allowlist → no tools grantable
+  return [...base, ...mcp, '--disallowedTools', agentDisallowedTools().join(',')]
 }

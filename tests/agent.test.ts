@@ -14,9 +14,18 @@ describe('mcpConfig', () => {
     expect(agentAllowedTools()).not.toContain('Read') // no file-read/exfil surface
     expect(agentDisallowedTools()).toEqual(expect.arrayContaining(['Bash', 'Write', 'WebFetch']))
   })
-  it('builds headless args with mcp-config + allowlist', () => {
+  it('builds headless args with mcp-config + allowlist (future enrichment mode)', () => {
     const args = buildAgentArgs('/tmp/cfg.json')
     expect(args).toEqual(expect.arrayContaining(['--print', '--mcp-config', '/tmp/cfg.json', '--allowedTools']))
+  })
+  it('extractor mode (no mcp-config): empty allowlist, no --mcp-config, tools denied', () => {
+    const args = buildAgentArgs()
+    expect(args).not.toContain('--mcp-config')
+    // --allowedTools present but empty → nothing grantable
+    const ai = args.indexOf('--allowedTools')
+    expect(ai).toBeGreaterThanOrEqual(0)
+    expect(args[ai + 1]).toBe('')
+    expect(args).toContain('--disallowedTools')
   })
 })
 
