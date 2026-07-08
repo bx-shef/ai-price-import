@@ -28,7 +28,8 @@
     "@vueuse/nuxt": "^14.3.0",
     "nuxt": "^4.4.7",
     "pg": "^8.13.1",
-    "vue": "^3.5.0"
+    "vue": "^3.5.0",
+    "bullmq": "^5.79.2"
   },
   "devDependencies": {
     "@nuxt/eslint": "^1.15.2",
