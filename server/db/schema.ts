@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS import_job (
   PRIMARY KEY (member_id, job_id)
 );
 
+CREATE TABLE IF NOT EXISTS import_doc (
+  member_id  TEXT NOT NULL,
+  job_id     TEXT NOT NULL,
+  payload    JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (member_id, job_id)
+);
+
 CREATE TABLE IF NOT EXISTS metrics_counter (
   member_id  TEXT NOT NULL,
   name       TEXT NOT NULL,
