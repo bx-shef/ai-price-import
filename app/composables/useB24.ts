@@ -21,7 +21,12 @@ export function useB24() {
           frame = f
           return f
         })
-        .catch(() => null)
+        .catch(() => {
+          // Don't cache a failed handshake — reset so the next init() retries
+          // (a transient BX24 timing race must not kill the UI until page reload).
+          initPromise = null
+          return null
+        })
     }
     return initPromise
   }

@@ -28,8 +28,13 @@ async function load() {
     const r = await $fetch<{ queues: QueueCounts[] }>('/api/ops/queues')
     queues.value = r.queues
     error.value = ''
-  } catch {
-    error.value = 'Нет доступа или сервис недоступен'
+  } catch (e) {
+    // Cookie expired while the page was open → back to sign-in.
+    if ((e as { statusCode?: number })?.statusCode === 401) {
+      await router.push('/login')
+      return
+    }
+    error.value = 'Сервис недоступен'
   } finally {
     loading.value = false
   }

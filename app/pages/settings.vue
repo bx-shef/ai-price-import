@@ -119,13 +119,19 @@ const TARGET_PRESETS = [
       <!-- Сохранение файла -->
       <section class="flex items-center justify-between">
         <div>
-          <label class="block text-sm font-medium text-gray-700">Сохранять исходный файл</label>
+          <span
+            id="savefile-label"
+            class="block text-sm font-medium text-gray-700"
+          >Сохранять исходный файл</span>
           <p class="text-xs text-gray-500">
             На общий Диск портала, в папку приложения по месяцам.
           </p>
         </div>
         <button
           type="button"
+          role="switch"
+          aria-labelledby="savefile-label"
+          :aria-checked="mapping.saveFile"
           class="relative h-6 w-11 rounded-full transition-colors"
           :class="mapping.saveFile ? 'bg-blue-600' : 'bg-gray-300'"
           @click="mapping.saveFile = !mapping.saveFile"

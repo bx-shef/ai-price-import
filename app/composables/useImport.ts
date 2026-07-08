@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useB24 } from './useB24'
+import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import type { JobStatus } from '~/utils/jobStatus'
 
 // In-portal import client: upload a document and poll job status via the frame-token
@@ -14,14 +15,13 @@ export function useImport() {
   const uploading = ref(false)
   const error = ref('')
 
-  function headers(): Record<string, string> | null {
-    const a = auth()
-    return a ? { 'Authorization': `Bearer ${a.accessToken}`, 'X-B24-Domain': a.domain } : null
+  async function headers(): Promise<Record<string, string> | null> {
+    await init()
+    return buildFrameHeaders(auth())
   }
 
   async function refresh(): Promise<void> {
-    await init()
-    const h = headers()
+    const h = await headers()
     if (!h) {
       error.value = 'Импорт доступен только внутри портала Bitrix24'
       return
@@ -31,16 +31,15 @@ export function useImport() {
       const res = await $fetch<{ jobs: ImportJobView[] }>('/api/import/status', { headers: h })
       jobs.value = res.jobs
       error.value = ''
-    } catch {
-      error.value = 'Не удалось получить статус импорта'
+    } catch (e) {
+      error.value = fetchErrorMessage(e, 'Не удалось получить статус импорта')
     } finally {
       loading.value = false
     }
   }
 
   async function upload(file: File): Promise<boolean> {
-    await init()
-    const h = headers()
+    const h = await headers()
     if (!h) {
       error.value = 'Импорт доступен только внутри портала Bitrix24'
       return false
@@ -52,8 +51,8 @@ export function useImport() {
       await $fetch('/api/import/upload', { method: 'POST', headers: h, body: form })
       await refresh()
       return true
-    } catch {
-      error.value = 'Загрузка не удалась — проверьте формат и размер файла'
+    } catch (e) {
+      error.value = fetchErrorMessage(e, 'Загрузка не удалась — проверьте формат и размер файла')
       return false
     } finally {
       uploading.value = false

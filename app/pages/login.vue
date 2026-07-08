@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 
 // Operator sign-in (service zone). Layout `clear`, noindex, prerendered.
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Вход оператора', meta: [{ name: 'robots', content: 'noindex' }] })
 
-const { login, error } = useAuth()
+const { login, error, enabled, authenticated, check } = useAuth()
 const router = useRouter()
 const password = ref('')
 const busy = ref(false)
+
+onMounted(async () => {
+  await check()
+  if (authenticated.value) await router.push('/queues') // already signed in
+})
 
 async function submit() {
   if (busy.value) return
@@ -33,8 +38,19 @@ async function submit() {
         Служебная зона мониторинга импорта.
       </p>
 
-      <label class="mb-1 block text-sm font-medium text-gray-700">Пароль</label>
+      <p
+        v-if="!enabled"
+        class="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700"
+      >
+        Вход оператора отключён администратором.
+      </p>
+
+      <label
+        for="op-password"
+        class="mb-1 block text-sm font-medium text-gray-700"
+      >Пароль</label>
       <input
+        id="op-password"
         v-model="password"
         type="password"
         autocomplete="current-password"

@@ -2,7 +2,10 @@ import { checkCredentials, resolveAuthConfig, signSession } from '../../utils/se
 import { OP_COOKIE, OP_MAX_AGE_S } from '../../utils/operatorSession'
 
 // POST /api/auth/login — operator sign-in. Empty password ⇒ disabled (503).
-// Throttled at the edge (nginx limit_req) against brute force. docs AUTH.
+// Brute-force defense: a per-failure delay here (app-layer backstop) PLUS edge
+// rate-limiting required in prod (nginx limit_req) — see docs/AUTH.md.
+const FAILURE_DELAY_MS = 400
+
 export default defineEventHandler(async (event) => {
   const cfg = resolveAuthConfig(process.env)
   if (!cfg.password || !cfg.secret) {
@@ -12,6 +15,7 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const password = String((body as { password?: unknown })?.password ?? '')
   if (!checkCredentials(password, cfg)) {
+    await new Promise(resolve => setTimeout(resolve, FAILURE_DELAY_MS)) // slow guessing
     setResponseStatus(event, 401)
     return { error: 'неверный пароль' }
   }

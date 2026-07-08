@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useB24 } from './useB24'
+import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { defaultMapping } from '~/utils/portalSettings'
 import type { PortalMapping } from '~/types/mapping'
 
@@ -14,14 +15,13 @@ export function useSettings() {
   const saved = ref(false)
   const error = ref('')
 
-  function headers(): Record<string, string> | null {
-    const a = auth()
-    return a ? { 'Authorization': `Bearer ${a.accessToken}`, 'X-B24-Domain': a.domain } : null
+  async function headers(): Promise<Record<string, string> | null> {
+    await init()
+    return buildFrameHeaders(auth())
   }
 
   async function load(): Promise<void> {
-    await init()
-    const h = headers()
+    const h = await headers()
     if (!h) {
       error.value = 'Настройки доступны только внутри портала Bitrix24'
       return
@@ -31,16 +31,15 @@ export function useSettings() {
       const res = await $fetch<{ mapping: PortalMapping }>('/api/settings', { headers: h })
       mapping.value = res.mapping
       error.value = ''
-    } catch {
-      error.value = 'Не удалось загрузить настройки'
+    } catch (e) {
+      error.value = fetchErrorMessage(e, 'Не удалось загрузить настройки')
     } finally {
       loading.value = false
     }
   }
 
   async function save(): Promise<void> {
-    await init()
-    const h = headers()
+    const h = await headers()
     if (!h) {
       error.value = 'Настройки доступны только внутри портала Bitrix24'
       return
@@ -52,8 +51,8 @@ export function useSettings() {
       mapping.value = res.mapping
       saved.value = true
       error.value = ''
-    } catch {
-      error.value = 'Не удалось сохранить настройки'
+    } catch (e) {
+      error.value = fetchErrorMessage(e, 'Не удалось сохранить настройки')
     } finally {
       saving.value = false
     }

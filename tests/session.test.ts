@@ -19,6 +19,11 @@ describe('checkCredentials', () => {
     expect(checkCredentials('hunter2', { password: '', secret })).toBe(false) // disabled
     expect(checkCredentials('', { password: '', secret })).toBe(false)
   })
+  it('rejects a SAME-LENGTH wrong password (exercises the timingSafeEqual false path)', () => {
+    // Not caught by the length guard — pins the actual comparison (a broken != would ship green).
+    expect(checkCredentials('huntress', { password: 'hunter22', secret })).toBe(false)
+    expect(checkCredentials('AAAAAAAA', { password: 'BBBBBBBB', secret })).toBe(false)
+  })
 })
 
 describe('signSession / verifySession', () => {
@@ -35,6 +40,11 @@ describe('signSession / verifySession', () => {
     const t = signSession(secret, 1000)
     expect(verifySession(t, secret, 1000 + 10_001, 10_000).valid).toBe(false) // expired
     expect(verifySession(t, secret, 500, 10_000).valid).toBe(false) // issued in the future
+  })
+  it('boundaries: exactly at max-age and issuedAt==now are valid', () => {
+    const t = signSession(secret, 1000)
+    expect(verifySession(t, secret, 1000 + 10_000, 10_000).valid).toBe(true) // diff == maxAge → valid
+    expect(verifySession(t, secret, 1000, 10_000).valid).toBe(true) // issuedAt == now → valid
   })
   it('rejects empty/garbage tokens and missing secret', () => {
     expect(verifySession('', secret, 1, 1).valid).toBe(false)
