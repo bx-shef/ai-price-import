@@ -12,11 +12,25 @@ export function restUrl(domain: string, method: string): string {
   return `https://${host}/rest/${method}.json`
 }
 
-/** Extract `result` from a B24 response or throw a descriptive error. */
-export function unwrap(raw: unknown): unknown {
-  const o = raw as Record<string, unknown>
-  if (o && 'error' in o) {
-    throw new Error(`b24 rest: ${String(o.error)}${o.error_description ? `: ${String(o.error_description)}` : ''}`)
+/** Typed B24 REST error carrying the machine-readable error code + HTTP status,
+ * so callers can detect `expired_token`/`invalid_token` and retry after refresh. */
+export class B24RestError extends Error {
+  constructor(readonly code: string, readonly description: string, readonly status = 0) {
+    super(`b24 rest: ${code}${description ? `: ${description}` : ''}`)
+    this.name = 'B24RestError'
+  }
+}
+
+/** True when the error means the access token must be refreshed and the call retried. */
+export function isExpiredTokenError(err: unknown): boolean {
+  return err instanceof B24RestError && (err.code === 'expired_token' || err.code === 'invalid_token')
+}
+
+/** Extract `result` from a B24 response or throw a typed B24RestError. */
+export function unwrap(raw: unknown, status = 0): unknown {
+  const o = raw as Record<string, unknown> | null
+  if (o && typeof o === 'object' && 'error' in o) {
+    throw new B24RestError(String(o.error), o.error_description ? String(o.error_description) : '', status)
   }
   return o?.result
 }
@@ -29,7 +43,12 @@ export function makeRestCall(domain: string, accessToken: string, fetchFn: Fetch
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...params, auth: accessToken })
     })
-    const json = await res.json()
-    return unwrap(json)
+    let json: unknown
+    try {
+      json = await res.json()
+    } catch {
+      throw new B24RestError('INVALID_RESPONSE', `non-JSON body (HTTP ${res.status})`, res.status)
+    }
+    return unwrap(json, res.status)
   }
 }

@@ -20,9 +20,10 @@ function asTarget(v: unknown, fallback: TargetRef): TargetRef {
   const o = v as Record<string, unknown> | undefined
   const etid = Number(o?.entityTypeId)
   if (!Number.isFinite(etid) || etid <= 0) return fallback
+  const categoryId = Number(o?.categoryId)
   return {
     entityTypeId: etid,
-    ...(o?.categoryId != null ? { categoryId: Number(o.categoryId) } : {}),
+    ...(o?.categoryId != null && Number.isFinite(categoryId) ? { categoryId } : {}),
     ...(o?.stageId != null ? { stageId: String(o.stageId) } : {})
   }
 }

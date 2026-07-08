@@ -1,6 +1,6 @@
 # Карта проекта и процесс (редизайн procure-ai)
 
-> Last reviewed: 2026-07-07
+> Last reviewed: 2026-07-08
 
 Канонический срез состояния редизайна: цель, этапы, что сделано / в работе / дальше,
 блокеры, открытые вопросы и владельцы решений. Держим синхронно с
@@ -69,9 +69,16 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 
 ## 4. Сделано / в работе / дальше
 
-**Сделано (🧪/📝):**
-- `docs/redesign/00-legacy-architecture.md` — снимок старой архитектуры (as-is).
-- Эта карта, целевая архитектура, стек, маркетинг-план (набор `docs/redesign/`).
+**Сделано:**
+- Полный набор `docs/redesign/` (00–06) + корневой `CLAUDE.md`.
+- **Этап 1 (скелет)** — Nuxt 4 + Nitro, `app/` split, `server/api/health`, Vitest (2 проекта), ESLint,
+  чистое ядро (homoglyph/артикулы/роутинг/НДС/единицы/taxId) — зелёные lint/typecheck/generate.
+- **Ядро этапов 2 и 7 (🧪 код+тесты, не связано end-to-end):** `server/utils/*` — `b24Oauth`,
+  `accessToken` (ленивый/keep-alive предикаты), `secretCrypto` (AES-GCM), `b24Rest` (+ типизированная
+  `B24RestError` для ретрая по `expired_token`), `companyLookup` (RQ_INN), `crmWrite`
+  (productrow/create-target), `disk` (общий диск + папка по месяцам), `configurableActivity`;
+  `app/utils/portalSettings` (парсинг `app.option`). **77 unit-тестов.**
+- **НДС 1-в-1 ✅ подтверждён вживую** (`crm.item.productrow.set` без патча ядра).
 
 - **Этап 1 (скелет)** — Nuxt 4 + Nitro поднят: `package.json`/`nuxt.config`/`tsconfig`/`eslint`/`vitest`
   (2 проекта), `app/` split, `server/api/health.get.ts`, SessionStart-хук, чистое ядро с тестами
@@ -81,9 +88,11 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
   (ставки портала, `RATE` null = «Без НДС»), `catalog.measure.list` (`code` 796=шт дефолт),
   `disk.storage.getlist` (общий диск = `ENTITY_TYPE=common`), шаблоны реквизитов.
 
-**В работе / дальше:**
-- Этап 2 (встройка мультитенант): `useB24()`, `/install`+`event.bind`, OAuth per-portal (Postgres,
-  шифрование refresh, keep-alive крон), `app.option`. Дальше по roadmap.
+**В работе / дальше (не построено — связка):**
+- Связка I/O: `tokenStore` (Postgres), `ensureAccessToken` (исполняет refresh + ретрай),
+  `portalRest` (`makePortalRestCall(memberId)` → живой `RestCall`), `server/db/`.
+- Этап 2 UI/поток: `useB24()`, `/install`+`event.bind`, keep-alive крон, `app.option`-роуты.
+- Очередь (BullMQ topology/handlers/worker), агент+MCP (этап 6), проводка `crm-sync` (этап 7).
 
 ---
 

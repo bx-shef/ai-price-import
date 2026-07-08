@@ -41,12 +41,17 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
           open: {
             title: 'Открыть',
             type: 'primary',
-            action: { type: 'redirect', uri: input.openPath }
+            action: { type: 'redirect', uri: safeRelativePath(input.openPath) }
           }
         }
       }
     }
   }
+}
+
+/** Guard: only allow a same-portal relative path (no scheme, no protocol-relative). */
+export function safeRelativePath(path: string): string {
+  return /^\/[^/]/.test(path) ? path : '/crm/'
 }
 
 /** Portal path to open a created CRM entity (deal/quote/invoice/smart-process). */

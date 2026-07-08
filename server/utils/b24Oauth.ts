@@ -15,7 +15,8 @@ export interface B24TokenResponse {
   status?: string
 }
 
-/** Build the refresh request URL (creds go in the query per B24; caller uses POST body in prod). */
+/** Build refresh request params. Caller MUST send these in the POST body, never in the URL
+ * query (a client_secret/token in a query string would land in access logs). */
 export function buildRefreshParams(clientId: string, clientSecret: string, refreshToken: string): Record<string, string> {
   return {
     grant_type: 'refresh_token',

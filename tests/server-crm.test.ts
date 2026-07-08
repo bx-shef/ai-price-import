@@ -20,7 +20,7 @@ describe('crmWrite', () => {
     expect(ownerTypeCode(2)).toBe('D')
     expect(ownerTypeCode(7)).toBe('Q')
     expect(ownerTypeCode(31)).toBe('SI')
-    expect(ownerTypeCode(1030)).toBe('1030')
+    expect(ownerTypeCode(1030)).toBe('T1030') // dynamic smart-process
   })
   it('buildProductRow: taxIncluded + clamp + productId omitted when absent', () => {
     const row = buildProductRow({ productName: 'x', price: 4.355, quantity: 2, taxRate: 22, priceIncludesVat: true, measureCode: 796 }, 10)

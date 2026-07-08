@@ -2,6 +2,7 @@ import type { RestCall } from './b24Rest'
 
 // Find a counterparty company by tax id via the universal requisite field RQ_INN
 // (RU=ИНН, BY=УНП, KZ=БИН/ИИН — same field for all countries). DI over RestCall.
+// Intended consumer: the isolated MCP `find_supplier` tool (MCP is the only door to B24).
 
 const ENTITY_TYPE_ID_COMPANY = 4
 

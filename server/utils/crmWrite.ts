@@ -4,13 +4,20 @@ import type { TargetRef } from '~/types/mapping'
 
 // Pure builders + thin callers for creating the target CRM entity and its rows.
 // VAT model validated live: crm.item.productrow.set computes НДС 1-в-1 (no kernel patch).
+// NOTE: intended consumer is the isolated MCP `create_target` tool (docs/redesign 02 §1.4),
+// not direct calls from crm-sync — MCP is the only door to Bitrix24.
 
-/** Short owner-type code by entityTypeId (D=deal). Universal items use the entityTypeId string. */
+/**
+ * Short owner-type code for crm.item.productrow.set `ownerType`.
+ * Static entities have letter codes (D=deal, Q=quote, SI=smart-invoice);
+ * dynamic smart-processes (entityTypeId >= 1000) use the `T<entityTypeId>` token,
+ * NOT the bare numeric id (which B24 rejects). ⚠ verify `SI`/`T<id>` live per portal.
+ */
 export function ownerTypeCode(entityTypeId: number): string {
   if (entityTypeId === 2) return 'D'
   if (entityTypeId === 7) return 'Q'
   if (entityTypeId === 31) return 'SI'
-  return String(entityTypeId)
+  return `T${entityTypeId}`
 }
 
 export interface ProductRowInput {

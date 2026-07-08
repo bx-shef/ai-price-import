@@ -1,6 +1,6 @@
 # Целевая архитектура (редизайн procure-ai)
 
-> Last reviewed: 2026-07-07
+> Last reviewed: 2026-07-08
 
 Как должно быть после редизайна. Синтез двух референсов: раскладка/дисциплина/лендинг/деплой —
 из эталона `client-bank-alfa-by` (облачное приложение Маркета Б24); слой «изолированный MCP + агент
@@ -153,7 +153,7 @@ app/                      # Nuxt (авто-импорт)
 server/                   # Nitro
   api/                    # upload, job/[id], health, b24/events, queues, ops, settings, auth
   utils/                  # pure DI-логика: tokenStore, secretCrypto, b24Oauth, ensureAccessToken,
-                          #   portalRest, companyLookup, productLookup, dealWrite (договор — не ищем)
+                          #   portalRest, companyLookup, productLookup, crmWrite (договор — не ищем)
   queue/                  # topology, connection, producers, handlers, worker, cron, stats
   db/                     # client.ts (pg pool + schema: portal_tokens, job_result (идемпот.), metrics), плагины
   agent/                  # оркестрация Claude Code (spawn, MCP-конфиг, таймауты/ретраи, DeepSeek env)
