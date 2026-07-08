@@ -8,6 +8,11 @@ import type { ExtractRunners } from './textExtract'
 // pdftotext (poppler-utils), libreoffice (office→txt), tesseract-ocr with
 // rus+bel+kaz+eng language packs (docs/redesign 06 §6). Glue — validated by
 // typecheck; behaviour needs the binaries at runtime.
+//
+// DEPLOY NOTE: the timeout bounds CPU-time but NOT peak memory. A crafted upload
+// (zip/XML bomb, huge-dimension image) can OOM the worker. The backend container
+// MUST run with a memory limit (compose `mem_limit` / k8s limits) — that is the
+// enforcement layer, not this code.
 
 const RUN_TIMEOUT_MS = 90_000
 
@@ -38,11 +43,22 @@ function run(bin: string, args: string[]): Promise<string> {
   })
 }
 
-/** Decode a text file: utf-8, falling back to windows-1251 if it looks mojibake. */
+/**
+ * Decode bytes as UTF-8, falling back to windows-1251 only when the bytes are NOT
+ * valid UTF-8. Uses a fatal decoder (throws on invalid sequences) rather than
+ * scanning for U+FFFD — a valid UTF-8 document may legitimately contain U+FFFD and
+ * must not be flipped to 1251. Pure (Uint8Array in) → unit-tested.
+ */
+export function decodeBytes(buf: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf)
+  } catch {
+    return new TextDecoder('windows-1251').decode(buf)
+  }
+}
+
 async function decodeText(path: string): Promise<string> {
-  const buf = await readFile(path)
-  const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(buf)
-  return utf8.includes('�') ? new TextDecoder('windows-1251').decode(buf) : utf8
+  return decodeBytes(await readFile(path))
 }
 
 /** Office/spreadsheet → text via libreoffice convert-to-txt (into a temp dir). */

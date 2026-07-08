@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createJob, getJob, setJobStatus } from '../server/utils/jobStore'
+import { createJob, getJob, listJobs, setJobStatus } from '../server/utils/jobStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -26,5 +26,24 @@ describe('jobStore', () => {
     const j = await getJob('m', 'j1', fakeQuery([{ member_id: 'm', job_id: 'j1', status: 'processing', file_name: 'a.pdf', result: '' }]).q)
     expect(j).toMatchObject({ status: 'processing', fileName: 'a.pdf' })
     expect(await getJob('m', 'x', fakeQuery([]).q)).toBeNull()
+  })
+  it('listJobs member-scoped, DESC, clamps LIMIT into [1,200] for every input', async () => {
+    const { q, calls } = fakeQuery([])
+    await listJobs('m', q)
+    expect(calls[0]!.sql).toContain('WHERE member_id=$1')
+    expect(calls[0]!.sql).toContain('ORDER BY created_at DESC')
+    expect(calls[0]!.sql).toContain('LIMIT 50') // default
+    expect(calls[0]!.params).toEqual(['m'])
+    // clamp table — interpolated value must always be a bounded integer (no injection)
+    const limitOf = async (n: number) => {
+      const f = fakeQuery([])
+      await listJobs('m', f.q, n)
+      return f.calls[0]!.sql.match(/LIMIT (\d+)/)![1]
+    }
+    expect(await limitOf(Number.NaN)).toBe('50')
+    expect(await limitOf(0)).toBe('50')
+    expect(await limitOf(-5)).toBe('1')
+    expect(await limitOf(9999)).toBe('200')
+    expect(await limitOf(12.9)).toBe('12')
   })
 })

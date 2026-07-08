@@ -40,5 +40,5 @@ export async function resolveFrameMember(auth: FrameAuth, deps: FrameMemberDeps)
 
 function isAuthError(e: unknown): boolean {
   const msg = (e instanceof Error ? e.message : String(e)).toLowerCase()
-  return /invalid_token|expired_token|unauthorized|invalid_grant|access denied|\b401\b|\b403\b/.test(msg)
+  return /invalid_token|expired_token|wrong_auth|no_auth|unauthorized|authoriz|invalid_grant|access denied|insufficient_scope|\b401\b|\b403\b/.test(msg)
 }

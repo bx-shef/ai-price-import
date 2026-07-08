@@ -63,17 +63,26 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
   }
 }
 
-/** Memoised per-portal RestCall resolver (null when the portal has no token). */
+/** Memoised per-portal RestCall resolver. Caches only a RESOLVED, non-null RestCall:
+ * a null (no token yet) or a rejected promise (transient DB blip on first touch) is
+ * evicted, so a portal isn't poisoned for the worker's lifetime — the next job (or
+ * BullMQ retry) re-resolves against current state. */
 function restResolver(infra: LiveInfra): (memberId: string) => Promise<RestCall | null> {
   const cache = new Map<string, Promise<RestCall | null>>()
   const deps = { ...ensureDeps(infra), fetchFn: infra.fetchFn }
-  return (memberId) => {
-    let p = cache.get(memberId)
-    if (!p) {
-      p = makePortalRestCall(memberId, deps)
-      cache.set(memberId, p)
+  return async (memberId) => {
+    const cached = cache.get(memberId)
+    if (cached) return cached
+    const p = makePortalRestCall(memberId, deps)
+    cache.set(memberId, p)
+    try {
+      const result = await p
+      if (!result) cache.delete(memberId) // no token yet — allow a later re-resolve
+      return result
+    } catch (e) {
+      cache.delete(memberId) // transient failure — don't cache the rejection
+      throw e
     }
-    return p
   }
 }
 
@@ -109,7 +118,7 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
     extractDocument: async (documentText) => {
       const r = await runAgent(
         { documentText, instructions },
-        { spawn: infra.agentSpawn, sleep: ms => new Promise(res => setTimeout(res, ms)), random: () => 0.5 }
+        { spawn: infra.agentSpawn, sleep: ms => new Promise(res => setTimeout(res, ms)), random: () => Math.random() }
       )
       return { document: r.document, ...(r.error ? { error: r.error } : {}) }
     },

@@ -2,6 +2,7 @@ import { dbEnabled, query } from '../../db/client'
 import { extractEvent, parseBracketForm } from '~/utils/b24Events'
 import { decideB24Event } from '../../utils/b24EventsHandler'
 import { deletePortal, getApplicationToken, saveToken } from '../../utils/tokenStore'
+import { purgePortalFiles } from '../../utils/nodeFileIO'
 import { encryptSecret } from '../../utils/secretCrypto'
 
 // B24 outgoing-event webhook: ONAPPINSTALL / ONAPPUNINSTALL.
@@ -34,7 +35,8 @@ export default defineEventHandler(async (event) => {
   }
 
   if (decision.action === 'unregister') {
-    await deletePortal(ev.memberId, query)
+    await deletePortal(ev.memberId, query) // DB rows (tokens, jobs, text, docs, metrics)
+    await purgePortalFiles(ev.memberId) // on-disk uploaded bytes (best-effort)
     return { ok: true }
   }
 

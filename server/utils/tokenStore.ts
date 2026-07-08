@@ -70,9 +70,11 @@ export async function getToken(memberId: string, query: QueryFn): Promise<Portal
   return rows[0] ? mapRow(rows[0]) : null
 }
 
-/** Resolve the portal member_id from its domain (1:1). Null when not installed. */
+/** Resolve the portal member_id from its domain. Null when not installed. `domain`
+ * is not unique-constrained (a stale reinstall row could duplicate it), so ORDER BY
+ * member_id makes the auth pivot deterministic rather than arbitrary. */
 export async function getMemberIdByDomain(domain: string, query: QueryFn): Promise<string | null> {
-  const { rows } = await query('SELECT member_id FROM portal_tokens WHERE domain = $1 LIMIT 1', [domain])
+  const { rows } = await query('SELECT member_id FROM portal_tokens WHERE domain = $1 ORDER BY member_id LIMIT 1', [domain])
   const id = rows[0]?.member_id
   return id ? String(id) : null
 }

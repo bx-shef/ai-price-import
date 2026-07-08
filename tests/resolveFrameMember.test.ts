@@ -35,4 +35,18 @@ describe('resolveFrameMember', () => {
     const r = await resolveFrameMember(auth, { fetchFn: okFetch(), query: query([]) })
     expect(r).toEqual({ ok: false, status: 401 })
   })
+
+  it('classifies varied B24 auth codes as 401 (not retryable 502)', async () => {
+    for (const code of ['unauthorized', 'expired_token', 'insufficient_scope', 'NO_AUTH_FOUND', 'wrong_auth']) {
+      const fetchFn = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ error: code }) }))
+      const r = await resolveFrameMember(auth, { fetchFn, query: query([{ member_id: 'm' }]) })
+      expect(r.status, code).toBe(401)
+    }
+  })
+
+  it('a 5xx transport blip is 502 (retryable), not a spurious 401 lockout', async () => {
+    const fetchFn = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'QUERY_LIMIT_EXCEEDED' }) }))
+    const r = await resolveFrameMember(auth, { fetchFn, query: query([{ member_id: 'm' }]) })
+    expect(r.status).toBe(502)
+  })
 })

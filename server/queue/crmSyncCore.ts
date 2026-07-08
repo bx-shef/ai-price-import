@@ -107,6 +107,9 @@ export async function runCrmSync(
   }
 
   // Idempotency: create + checkpoint before rows; on retry resume rows (productrow.set replaces).
+  // NB: create→recordResult is not atomic (no transaction spans a REST create + a DB write).
+  // If the process dies in that ~1ms window, a retry re-creates → a rare duplicate. Fully
+  // closing it needs an entity-side job-id marker + pre-create search (future hardening).
   const existing = await deps.getExisting(jobId)
   let entityTypeId: number
   let entityId: number
