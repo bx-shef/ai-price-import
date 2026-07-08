@@ -1,5 +1,5 @@
 import { Worker } from 'bullmq'
-import { mkdir, unlink, writeFile } from 'node:fs/promises'
+import { unlink } from 'node:fs/promises'
 import { connectionOptions } from './connection'
 import { QUEUES } from './topology'
 import type { AgentJob, CrmSyncJob, ExtractJob } from './topology'
@@ -55,17 +55,4 @@ export function startWorkers(infra: LiveInfra = buildLiveInfra()): Worker[] {
 async function cleanupUpload(job: ExtractJob): Promise<void> {
   const { uploadPath } = await import('../utils/fileStore')
   await unlink(uploadPath(job.memberId, job.jobId)).catch(() => {})
-}
-
-/** node:fs FileIO for the upload store (used by the API upload handler). */
-export const nodeFileIO = {
-  mkdir: async (dir: string) => {
-    await mkdir(dir, { recursive: true })
-  },
-  writeFile: async (path: string, data: Uint8Array) => {
-    await writeFile(path, data)
-  },
-  unlink: async (path: string) => {
-    await unlink(path)
-  }
 }

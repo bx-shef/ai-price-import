@@ -28,10 +28,7 @@ export async function setJobStatus(memberId: string, jobId: string, status: JobS
   )
 }
 
-export async function getJob(memberId: string, jobId: string, query: QueryFn): Promise<ImportJob | null> {
-  const { rows } = await query('SELECT * FROM import_job WHERE member_id=$1 AND job_id=$2', [memberId, jobId])
-  const r = rows[0]
-  if (!r) return null
+function mapJob(r: Record<string, unknown>): ImportJob {
   return {
     memberId: String(r.member_id),
     jobId: String(r.job_id),
@@ -39,4 +36,19 @@ export async function getJob(memberId: string, jobId: string, query: QueryFn): P
     fileName: String(r.file_name ?? ''),
     result: String(r.result ?? '')
   }
+}
+
+/** Recent jobs for a portal (newest first), for the in-portal status view. */
+export async function listJobs(memberId: string, query: QueryFn, limit = 50): Promise<ImportJob[]> {
+  const capped = Math.max(1, Math.min(200, Math.trunc(limit) || 50))
+  const { rows } = await query(
+    `SELECT * FROM import_job WHERE member_id=$1 ORDER BY created_at DESC LIMIT ${capped}`,
+    [memberId]
+  )
+  return rows.map(mapJob)
+}
+
+export async function getJob(memberId: string, jobId: string, query: QueryFn): Promise<ImportJob | null> {
+  const { rows } = await query('SELECT * FROM import_job WHERE member_id=$1 AND job_id=$2', [memberId, jobId])
+  return rows[0] ? mapJob(rows[0]) : null
 }
