@@ -22,7 +22,7 @@ export function classifyAgentError(message: string): AgentFaultKind {
  */
 export function nextBackoffMs(attempt: number, jitter: number, baseMs = 1000, capMs = 30_000): number {
   const exp = Math.min(capMs, baseMs * 2 ** Math.max(0, attempt - 1))
-  const j = Math.min(0.999, Math.max(0, jitter))
+  const j = Math.max(0, Math.min(1, jitter))
   return Math.round(exp * (0.5 + 0.5 * j)) // 50%–100% of the exponential window
 }
 
