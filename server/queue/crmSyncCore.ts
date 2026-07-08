@@ -21,8 +21,17 @@ export interface CrmSyncDeps {
   createTarget: (target: TargetRef, fields: Record<string, unknown>) => Promise<number>
   setRows: (entityTypeId: number, entityId: number, rows: Array<Record<string, unknown>>) => Promise<void>
   recordResult: (jobId: string, entityTypeId: number, entityId: number) => Promise<void>
-  /** One error-chat message per document (batched). */
-  reportErrors: (messages: string[]) => Promise<void>
+  /** One error-chat message per document (batched). Supplier name for BB-safe context. */
+  reportErrors: (messages: string[], supplierName?: string) => Promise<void>
+  /** Optional success notification (chat). Failure here must not fail the import. */
+  notifySuccess?: (summary: {
+    supplierName?: string
+    entityTypeId: number
+    entityId: number
+    created: boolean
+    rowCount: number
+    warnings: string[]
+  }) => Promise<void>
 }
 
 export interface CrmSyncResult {
@@ -102,7 +111,7 @@ export async function runCrmSync(
 
   // Hard errors → report and DO NOT create a partial/wrong entity.
   if (errors.length) {
-    await deps.reportErrors(errors)
+    await deps.reportErrors(errors, doc.supplier?.name)
     return { entityTypeId: target.entityTypeId, entityId: 0, created: false, warnings, errors }
   }
 
@@ -131,6 +140,23 @@ export async function runCrmSync(
   }
 
   if (rows.length) await deps.setRows(entityTypeId, entityId, rows)
+
+  // Success chat notification (best-effort — never fail an import over a chat hiccup).
+  if (deps.notifySuccess) {
+    try {
+      await deps.notifySuccess({
+        supplierName: doc.supplier?.name,
+        entityTypeId,
+        entityId,
+        created,
+        rowCount: rows.length,
+        warnings
+      })
+    } catch {
+      warnings.push('Уведомление в чат не отправлено')
+    }
+  }
+
   return { entityTypeId, entityId, created, warnings, errors }
 }
 

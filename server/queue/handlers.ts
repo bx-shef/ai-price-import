@@ -18,8 +18,8 @@ export interface HandlerDeps {
   getMapping: (memberId: string) => Promise<PortalMapping>
   /** Load the extracted document + routing signals for a job (stored by agent-run). */
   getDocument: (memberId: string, jobId: string) => Promise<{ doc: ExtractedDocument, signals: RoutingSignals } | null>
-  /** Build the crm-sync deps bound to this portal/job (MCP tools). */
-  crmSyncDeps: (memberId: string, jobId: string) => CrmSyncDeps
+  /** Build the crm-sync deps bound to this portal/job/mapping (MCP tools). */
+  crmSyncDeps: (memberId: string, jobId: string, mapping: PortalMapping) => CrmSyncDeps
   /** Persist the job outcome. */
   setJobStatus: (memberId: string, jobId: string, status: 'done' | 'error', result: string) => Promise<void>
   /**
@@ -39,7 +39,7 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
     return null
   }
   const mapping = await deps.getMapping(job.memberId)
-  const crmDeps = deps.crmSyncDeps(job.memberId, job.jobId)
+  const crmDeps = deps.crmSyncDeps(job.memberId, job.jobId, mapping)
   const result = await runCrmSync(job.jobId, loaded.doc, mapping, loaded.signals, crmDeps)
   await deps.setJobStatus(
     job.memberId, job.jobId,

@@ -18,6 +18,7 @@ import { findProduct } from '../utils/productLookup'
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
+import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { extractText } from '../utils/textExtract'
 import { uploadPath } from '../utils/fileStore'
 import { runAgent } from '../agent/runAgent'
@@ -130,29 +131,38 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
   }
 }
 
-/** crm-sync deps bound to one portal+job (deterministic lookups via portal REST). */
-function liveCrmSyncDeps(memberId: string, rest: (m: string) => Promise<RestCall | null>, infra: LiveInfra): CrmSyncDeps {
+/** crm-sync deps bound to one portal+job+mapping (deterministic lookups via portal REST). */
+function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: string) => Promise<RestCall | null>, infra: LiveInfra): CrmSyncDeps {
   const need = async (): Promise<RestCall> => {
     const call = await rest(memberId)
     if (!call) throw new Error('портал не авторизован (нет токена)')
     return call
   }
-  // MVP productLookup resolves by name and ignores the mapping; when article-based
-  // lookup lands, thread the job's real mapping into crmSyncDeps.
-  const mappingForLookup: PortalMapping = defaultMapping()
   return {
     getExisting: jobId => getExistingResult(memberId, jobId, infra.query),
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, await need()),
-    findProduct: async item => findProduct(item, mappingForLookup, await need()),
+    findProduct: async item => findProduct(item, mapping, await need()),
     portalVatRates: async () => fetchVatRates(await need()),
     portalCurrencies: async () => fetchCurrencies(await need()),
     createTarget: async (target, fields) => createTargetItem(target, fields, await need()),
     setRows: async (etid, id, rows) => setProductRows(etid, id, rows, await need()),
     recordResult: (jobId, etid, id) => recordResult(memberId, jobId, etid, id, infra.query),
-    reportErrors: async (messages) => {
-      // MVP: count errors for the operator dashboard; error-chat delivery (im.message.add
-      // to mapping.errorChatId with BB-neutralised text) is the next slice.
-      if (messages.length) await bumpCounter(memberId, METRICS.errors, 1, infra.query)
+    reportErrors: async (messages, supplierName) => {
+      if (!messages.length) return
+      await bumpCounter(memberId, METRICS.errors, 1, infra.query)
+      // Deliver to the error chat (im.message.add, BB-neutralised). Best-effort:
+      // a chat failure must not mask the underlying import error.
+      if (mapping.errorChatId) {
+        try {
+          const call = await rest(memberId)
+          if (call) await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), call)
+        } catch { /* swallow — dashboard counter already bumped */ }
+      }
+    },
+    notifySuccess: async (summary) => {
+      if (!mapping.notifyChatId) return
+      const call = await need()
+      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary), call)
     }
   }
 }
@@ -163,7 +173,7 @@ export function liveCrmSyncHandlerDeps(infra: LiveInfra): HandlerDeps {
   return {
     getMapping: m => loadMapping(m, rest),
     getDocument: (m, j) => getDocument(m, j, infra.query),
-    crmSyncDeps: (m, _j) => liveCrmSyncDeps(m, rest, infra),
+    crmSyncDeps: (m, _j, mapping) => liveCrmSyncDeps(m, mapping, rest, infra),
     setJobStatus: (m, j, status, result) => setJobStatus(m, j, status, result, infra.query),
     deleteDocument: (m, j) => deleteDocument(m, j, infra.query)
   }

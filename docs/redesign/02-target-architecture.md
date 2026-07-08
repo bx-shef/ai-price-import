@@ -276,6 +276,18 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
   краткие итоги; можно вшить кнопку/`openRestApp`). **Админ настраивает только «сохранять файл или
   нет»** (тумблер) — сам вид дела не настраивается. **Комментарий в таймлайн и UF-поле в сущности НЕ
   пишем** (уходим от модели старого проекта `UF_CRM_DEAL_SH_PRCHS_AI_FILE` + `COMMENTS`).
+  - **Проверено вживую (тестовый портал, вебхук).** Общий диск = `disk.storage.getlist` с
+    `ENTITY_TYPE='common'` (у нас ID 3, «Общий диск»); `disk.folder.addsubfolder` (папка `procure-ai-import`)
+    и `disk.folder.uploadfile` (`fileContent: [name, base64]`) отрабатывают. `crm.activity.configurable.add`
+    **через вебхук отдаёт `ERROR_WRONG_CONTEXT`** — метод жив только в OAuth-контексте приложения; наш
+    `crm-sync` ходит per-portal OAuth-токеном (`makePortalRestCall`), поэтому в проде корректен, но
+    вебхуком не проверяется. **Файловый фолбэк, проверяемый вебхуком:** `crm.activity.todo.add` с
+    `fileTokens[0]=disk<ID>` прикрепляет диск-файл к делу (нужен `deadline`). Чат: `im.message.add`
+    (`DIALOG_ID`/`MESSAGE`) — прогон round-trip + `im.message.delete` — ОК.
+  - ⚠ **Жизненный цикл исходного файла.** Загруженные байты **удаляются сразу после file-extract**
+    (`worker.ts` `cleanupUpload`) — к шагу `crm-sync` файла уже нет. Поэтому сохранение на Диск должно
+    происходить **на стадии file-extract** (пока байты есть), а id диск-файла — переживать до `crm-sync`
+    (в doc-store/записи джобы), чтобы дело сослалось на него. Это отдельный микрослайс плюмбинга.
 
 **Промпт агента: извлечение налогового ID с учётом страны и языка.** Поиск по `RQ_INN` страно-
 агностичен, но **распознать** идентификатор в документе — задача агента, и она страно-/язык-зависима:

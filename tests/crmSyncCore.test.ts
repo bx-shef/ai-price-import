@@ -51,6 +51,23 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     ]))
   })
 
+  it('calls notifySuccess with a summary on success', async () => {
+    const notifySuccess = vi.fn(async () => {})
+    const deps = baseDeps({ notifySuccess })
+    await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(notifySuccess).toHaveBeenCalledWith(expect.objectContaining({
+      supplierName: 'ООО Ромашка', entityTypeId: 2, entityId: 555, created: true, rowCount: 1
+    }))
+  })
+
+  it('a failing notifySuccess adds a warning but does not fail the import', async () => {
+    const notifySuccess = vi.fn(() => Promise.reject(new Error('chat down')))
+    const deps = baseDeps({ notifySuccess })
+    const r = await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(r.created).toBe(true)
+    expect(r.warnings).toContain('Уведомление в чат не отправлено')
+  })
+
   it('idempotent: existing entity → no create, but resumes setRows', async () => {
     const deps = baseDeps({ getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 999 })) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
