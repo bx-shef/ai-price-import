@@ -19,6 +19,7 @@ import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
 import { extractText } from '../utils/textExtract'
+import { uploadPath } from '../utils/fileStore'
 import { runAgent } from '../agent/runAgent'
 import { buildExtractionPrompt } from '../../prompts/extract'
 import { enqueueAgent, enqueueCrmSync } from './producers'
@@ -90,7 +91,9 @@ async function loadMapping(memberId: string, rest: (m: string) => Promise<RestCa
 /** file-extract deps: real extract runners + text store + queue + status. */
 export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
   return {
-    extractText: (_m, _j, fileId) => extractText(fileId, fileId, infra.runners),
+    // Bytes live at uploadPath(member, job); fileId is the original filename, used
+    // only for extension-based format routing (planExtraction).
+    extractText: (m, j, fileId) => extractText(uploadPath(m, j), fileId, infra.runners),
     saveText: (m, j, text) => saveText(m, j, text, infra.query),
     enqueueAgentRun: (m, j) => enqueueAgent({ memberId: m, jobId: j }),
     failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, infra.query),
