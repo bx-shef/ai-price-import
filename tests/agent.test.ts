@@ -9,9 +9,9 @@ describe('mcpConfig', () => {
     expect(s.type).toBe('http')
     expect(s.headers.Authorization).toBe('Bearer job-bearer')
   })
-  it('allowlist = Read + mcp tools; denies dangerous tools', () => {
+  it('allowlist = ONLY mcp tools (no Read); denies dangerous tools', () => {
     expect(agentAllowedTools()).toContain('mcp__procure-ai__find_supplier')
-    expect(agentAllowedTools()).toContain('Read')
+    expect(agentAllowedTools()).not.toContain('Read') // no file-read/exfil surface
     expect(agentDisallowedTools()).toEqual(expect.arrayContaining(['Bash', 'Write', 'WebFetch']))
   })
   it('builds headless args with mcp-config + allowlist', () => {
@@ -27,9 +27,18 @@ describe('extractJson', () => {
   it('handles braces inside strings', () => {
     expect(extractJson('log {"name":"a}b{c","ok":true}')).toEqual({ name: 'a}b{c', ok: true })
   })
-  it('null on no/invalid json', () => {
+  it('handles escaped quotes (odd + even counts)', () => {
+    expect(extractJson('{"v":"5\\" pipe"}')).toEqual({ v: '5" pipe' })
+    expect(extractJson('log {"name":"ООО \\"Ромашка\\"","taxId":"190"}')).toEqual({ name: 'ООО "Ромашка"', taxId: '190' })
+    expect(extractJson('{"note":"ends with quote\\""}')).toEqual({ note: 'ends with quote"' })
+  })
+  it('selects the last complete top-level object', () => {
+    expect(extractJson('{"a":1} noise {"b":2}')).toEqual({ b: 2 })
+  })
+  it('null on no/invalid json / oversize', () => {
     expect(extractJson('no json here')).toBeNull()
     expect(extractJson('{broken')).toBeNull()
     expect(extractJson('')).toBeNull()
+    expect(extractJson('{"a":1}'.padEnd(2_000_001, ' '))).toBeNull()
   })
 })

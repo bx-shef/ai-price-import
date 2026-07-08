@@ -1,47 +1,49 @@
 // Pure, hardened extraction of the final JSON object from the agent's stdout.
-// DoS-bounded (ported concept from legacy). No I/O.
+// DoS-bounded. FORWARD scan (escapes can only be resolved left-to-right — a '"' is
+// escaped iff an odd run of '\' precedes it, which a backward scan gets wrong).
 
 const MAX_OUTPUT_CHARS = 2_000_000
 
-/** Extract the last balanced top-level JSON object from a text blob, or null. */
+/** Extract the LAST balanced top-level JSON object that parses, or null. */
 export function extractJson(output: string): unknown {
   if (!output || output.length > MAX_OUTPUT_CHARS) return null
-  const end = output.lastIndexOf('}')
-  if (end < 0) return null
 
-  // Walk back from the last '}' to its matching '{', respecting strings/escapes.
+  const spans: Array<[number, number]> = []
   let depth = 0
+  let start = -1
   let inStr = false
   let esc = false
-  for (let i = end; i >= 0; i--) {
+  for (let i = 0; i < output.length; i++) {
     const ch = output[i]!
     if (inStr) {
       if (esc) {
         esc = false
-        continue
-      }
-      if (ch === '\\') {
+      } else if (ch === '\\') {
         esc = true
-        continue
+      } else if (ch === '"') {
+        inStr = false
       }
-      if (ch === '"') inStr = false
       continue
     }
     if (ch === '"') {
       inStr = true
-      continue
-    }
-    if (ch === '}') {
-      depth++
     } else if (ch === '{') {
-      depth--
-      if (depth === 0) {
-        try {
-          return JSON.parse(output.slice(i, end + 1))
-        } catch {
-          return null
-        }
+      if (depth === 0) start = i
+      depth++
+    } else if (ch === '}') {
+      if (depth > 0) {
+        depth--
+        if (depth === 0 && start >= 0) spans.push([start, i])
       }
+    }
+  }
+
+  // Prefer the last complete top-level object; fall back to earlier ones if it fails to parse.
+  for (let s = spans.length - 1; s >= 0; s--) {
+    try {
+      return JSON.parse(output.slice(spans[s]![0], spans[s]![1] + 1))
+    } catch {
+      // try an earlier span
     }
   }
   return null

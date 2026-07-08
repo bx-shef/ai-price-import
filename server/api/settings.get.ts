@@ -12,8 +12,8 @@ export default defineEventHandler(async (event) => {
   const call = makeRestCall(auth.domain, auth.accessToken, globalThis.fetch as never)
   try {
     return { mapping: await readMapping(call) }
-  } catch (err) {
+  } catch {
     setResponseStatus(event, 502)
-    return { error: (err as Error).message }
+    return { error: 'settings read failed' }
   }
 })

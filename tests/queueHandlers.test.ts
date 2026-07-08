@@ -48,4 +48,20 @@ describe('handleCrmSyncJob', () => {
     expect(await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)).toBeNull()
     expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'error', expect.stringContaining('не найден'))
   })
+
+  it('hard error (VAT not in portal) → error status', async () => {
+    const badDoc: ExtractedDocument = { ...doc, items: [{ name: 'a', price: 10, quantity: 1, unit: 'шт', vatRate: 20 }] }
+    const d = deps({ getDocument: vi.fn(async () => ({ doc: badDoc, signals: {} })) })
+    const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(r?.created).toBe(false)
+    expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'error', expect.stringContaining('errors'))
+  })
+
+  it('idempotent re-run (existing, no errors) → done', async () => {
+    const cd = { ...crmDeps(), getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 99 })) }
+    const d = deps({ crmSyncDeps: vi.fn(() => cd) })
+    const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(r?.created).toBe(false)
+    expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'done', expect.any(String))
+  })
 })

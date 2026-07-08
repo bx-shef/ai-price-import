@@ -25,9 +25,11 @@ export function buildMcpConfig(input: McpConfigInput): Record<string, unknown> {
   }
 }
 
-/** Least-privilege tool allowlist: Read + the MCP tools, everything else denied. */
+/** Least-privilege tool allowlist: ONLY the MCP tools, everything else denied.
+ * The document is delivered on stdin (not a file), so the agent needs no `Read`
+ * — dropping it removes the file-read/exfil surface for prompt-injected documents. */
 export function agentAllowedTools(): string[] {
-  return ['Read', ...MCP_TOOL_NAMES.map(t => `mcp__procure-ai__${t}`)]
+  return MCP_TOOL_NAMES.map(t => `mcp__procure-ai__${t}`)
 }
 
 export function agentDisallowedTools(): string[] {

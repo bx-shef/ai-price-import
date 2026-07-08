@@ -13,6 +13,10 @@ describe('readMapping', () => {
     expect((await readMapping(vi.fn().mockResolvedValue({ saveFile: false }))).saveFile).toBe(false)
     expect((await readMapping(vi.fn().mockResolvedValue('not json'))).defaultTarget).toEqual({ entityTypeId: 2 })
   })
+  it('unset option ("" / null) → defaults (first-run path)', async () => {
+    expect((await readMapping(vi.fn().mockResolvedValue(''))).defaultTarget).toEqual({ entityTypeId: 2 })
+    expect((await readMapping(vi.fn().mockResolvedValue(null))).defaultTarget).toEqual({ entityTypeId: 2 })
+  })
 })
 
 describe('writeMapping', () => {

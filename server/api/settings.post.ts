@@ -11,11 +11,17 @@ export default defineEventHandler(async (event) => {
     return { error: 'frame auth required' }
   }
   const body = await readBody(event)
+  const mapping = body?.mapping ?? body
+  // Fail-closed: an empty/invalid body must NOT silently reset the mapping to defaults.
+  if (!mapping || typeof mapping !== 'object') {
+    setResponseStatus(event, 400)
+    return { error: 'mapping required' }
+  }
   const call = makeRestCall(auth.domain, auth.accessToken, globalThis.fetch as never)
   try {
-    return { mapping: await writeMapping(call, body?.mapping ?? body) }
-  } catch (err) {
+    return { mapping: await writeMapping(call, mapping) }
+  } catch {
     setResponseStatus(event, 502)
-    return { error: (err as Error).message }
+    return { error: 'settings save failed' }
   }
 })

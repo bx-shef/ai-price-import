@@ -4,22 +4,29 @@ import type { QueueName } from './topology'
 // Lazy BullMQ connection. Passes connection OPTIONS parsed from REDIS_URL (no direct
 // ioredis dependency). No-op-safe: queueEnabled() gates producers/workers.
 
-let opts: { host: string, port: number, password?: string, username?: string } | null | undefined
+export interface RedisOptions { host: string, port: number, password?: string, username?: string }
 
-export function connectionOptions() {
+/** Pure: parse a REDIS_URL into BullMQ connection options, or null when unset/invalid. */
+export function parseRedisUrl(url: string | undefined): RedisOptions | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    return {
+      host: u.hostname,
+      port: Number(u.port || 6379),
+      ...(u.password ? { password: decodeURIComponent(u.password) } : {}),
+      ...(u.username ? { username: decodeURIComponent(u.username) } : {})
+    }
+  } catch {
+    return null
+  }
+}
+
+let opts: RedisOptions | null | undefined
+
+export function connectionOptions(): RedisOptions | null {
   if (opts !== undefined) return opts
-  const url = process.env.REDIS_URL
-  if (!url) {
-    opts = null
-    return opts
-  }
-  const u = new URL(url)
-  opts = {
-    host: u.hostname,
-    port: Number(u.port || 6379),
-    ...(u.password ? { password: u.password } : {}),
-    ...(u.username ? { username: u.username } : {})
-  }
+  opts = parseRedisUrl(process.env.REDIS_URL)
   return opts
 }
 
