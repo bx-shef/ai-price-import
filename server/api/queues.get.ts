@@ -1,0 +1,21 @@
+import { getQueue } from '../queue/connection'
+import { readQueueCounts } from '../queue/stats'
+import type { QueueName } from '../queue/topology'
+
+// GET /api/queues — pipeline queue depths for the ops console. Guarded by the app
+// token via the X-Check-Token HEADER (never a query param → not in access logs);
+// nginx should `deny all` externally. Not the operator-session path (that's later).
+export default defineEventHandler(async (event) => {
+  const cfg = useRuntimeConfig()
+  const expected = String(cfg.b24ApplicationToken || '')
+  const provided = String(getHeader(event, 'x-check-token') || '')
+  if (!expected || provided !== expected) {
+    setResponseStatus(event, 403)
+    return { error: 'forbidden' }
+  }
+  const counts = await readQueueCounts(async (name: QueueName) => {
+    const q = getQueue(name)
+    return q ? (await q.getJobCounts()) as Record<string, number> : {}
+  })
+  return { queues: counts }
+})
