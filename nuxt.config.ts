@@ -28,8 +28,8 @@ export default defineNuxtConfig({
 
   nitro: {
     prerender: {
-      // Only the pages that exist today; in-portal/operator pages land in later этапы.
-      routes: ['/']
+      // Landing + in-portal pages (render as static; the pipeline runs via /api in-portal).
+      routes: ['/', '/import']
     }
   },
 
