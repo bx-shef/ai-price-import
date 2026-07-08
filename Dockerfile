@@ -9,6 +9,9 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
+# Bake the build commit into the footer/health (prerendered at build time).
+ARG COMMIT_SHA=dev
+ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
 # nuxt build → .output: Nitro node server incl. prerendered static pages in public/.
 RUN pnpm build
 
