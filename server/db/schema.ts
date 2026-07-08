@@ -25,6 +25,17 @@ CREATE TABLE IF NOT EXISTS job_result (
   PRIMARY KEY (member_id, job_id)
 );
 
+CREATE TABLE IF NOT EXISTS import_job (
+  member_id    TEXT NOT NULL,
+  job_id       TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'queued',
+  file_name    TEXT NOT NULL DEFAULT '',
+  result       TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (member_id, job_id)
+);
+
 CREATE TABLE IF NOT EXISTS metrics_counter (
   member_id  TEXT NOT NULL,
   name       TEXT NOT NULL,
