@@ -88,6 +88,16 @@ describe('ensureFreshToken', () => {
   it('throws when no token', async () => {
     await expect(ensureFreshToken('m1', ensureDeps({ getToken: vi.fn(async () => null) }))).rejects.toThrow(/no token/)
   })
+  it('throws when refresh needed but no refresh token', async () => {
+    const deps = ensureDeps({ getToken: vi.fn(async () => ({ ...baseTok, refreshTokenEnc: '' })) })
+    await expect(ensureFreshToken('m1', deps, true)).rejects.toThrow(/no refresh token/)
+  })
+  it('empty access token forces refresh even when time-valid', async () => {
+    const deps = ensureDeps({ getToken: vi.fn(async () => ({ ...baseTok, accessToken: '' })) })
+    const fresh = await ensureFreshToken('m1', deps)
+    expect(fresh.accessToken).toBe('new')
+    expect(deps.refreshTransport).toHaveBeenCalled()
+  })
 })
 
 describe('makePortalRestCall', () => {
@@ -114,5 +124,21 @@ describe('makePortalRestCall', () => {
     expect(await call!('crm.item.add')).toBe('OK2')
     expect(fetchFn).toHaveBeenCalledTimes(2)
     expect(deps.refreshTransport).toHaveBeenCalled() // forced refresh happened
+  })
+  it('retry exhausted: second call also expired → rejects, called twice', async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 401, json: async () => ({ error: 'expired_token', error_description: 'e' }) }))
+    const deps = { ...ensureDeps(), fetchFn }
+    const call = await makePortalRestCall('m1', deps)
+    await expect(call!('m')).rejects.toThrow(/expired_token/)
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+  })
+  it('non-expired error does not retry', async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 403, json: async () => ({ error: 'ACCESS_DENIED', error_description: 'no' }) }))
+    const deps = { ...ensureDeps(), fetchFn, refreshTransport: vi.fn(async () => ({ access_token: 'n', refresh_token: 'r', expires_in: 3600, member_id: 'm1', client_endpoint: '' })) }
+    const call = await makePortalRestCall('m1', deps)
+    await expect(call!('m')).rejects.toThrow(/ACCESS_DENIED/)
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    // only the initial ensureFreshToken (time-valid → no refresh) — no forced retry refresh
+    expect(deps.refreshTransport).not.toHaveBeenCalled()
   })
 })

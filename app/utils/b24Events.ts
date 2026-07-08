@@ -22,12 +22,22 @@ export function parseBracketForm(body: string): Record<string, unknown> {
     const eq = pair.indexOf('=')
     const rawKey = eq >= 0 ? pair.slice(0, eq) : pair
     const rawVal = eq >= 0 ? pair.slice(eq + 1) : ''
-    const key = decodeURIComponent(rawKey.replace(/\+/g, ' '))
-    const val = decodeURIComponent(rawVal.replace(/\+/g, ' '))
+    const key = safeDecode(rawKey)
+    const val = safeDecode(rawVal)
     const path = keyPath(key)
     assignPath(root, path, val)
   }
   return root
+}
+
+/** Decode a form component, tolerating malformed %-escapes (fall back to raw). */
+function safeDecode(s: string): string {
+  const spaced = s.replace(/\+/g, ' ')
+  try {
+    return decodeURIComponent(spaced)
+  } catch {
+    return spaced
+  }
 }
 
 function keyPath(key: string): string[] {

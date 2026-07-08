@@ -48,12 +48,12 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 |---|---|---|
 | 0 | **Документация редизайна** — старая арх., карта, целевая арх., стек, маркетинг, политика данных, мультиязычность | ✅ готово |
 | 1 | **Скелет Nuxt-монолита** — `app/` split + `server/api/health` + Vitest (unit) + ESLint + typecheck + SSG-сборка; чистое ядро (homoglyph/артикулы/роутинг/НДС/единицы/taxId) + 27 тестов; legacy-код перенесён в `legacy/` | 🧪 lint+typecheck+test+generate зелёные |
-| 2 | **Встройка в Б24 (мультитенант)** — `useB24()` dual-mode, `/install` + `event.bind` + `placement` (веб **и мобильное приложение**), OAuth per-portal (Postgres, шифрование refresh), ленивый `ensureAccessToken` + **проактивный keep-alive крон** (продление `refresh_token` за ~3 дня до 180-дневного истечения), `app.option` | 🧪 ядро: `b24Oauth`/`accessToken`/`secretCrypto`/`b24Rest`/`portalSettings` + тесты (не связано: нет `/install`, БД, крона) |
+| 2 | **Встройка в Б24 (мультитенант)** — `useB24()` dual-mode, `/install` + `event.bind` + `placement` (веб **и мобильное приложение**), OAuth per-portal (Postgres, шифрование refresh), ленивый `ensureAccessToken` + **проактивный keep-alive крон** (продление `refresh_token` за ~3 дня до 180-дневного истечения), `app.option` | 🧪 ядро+связка: `b24Oauth`/`accessToken`/`secretCrypto`/`b24Rest`/`tokenStore`/`ensureAccessToken`/`portalRest`/`server/db` + эндпоинт `/api/b24/events` + тесты (нет: `/install` UI, worker-транспорта, крона) |
 | 3 | **Настройки/маппинг портала** — форма настроек + чистое ядро маппинга: каталог, **поле артикула поставщика** (тип текст=построчно / строка=разделитель, задаёт админ), **целевая сущность + направление** (сделка/смарт-процесс/инвойс/КП; **роутинг**: ручной override → упорядоченные правила `{match: type|keyword → target}` → дефолт; `resolveTarget` — чистая функция), **тумблер сохранения файла** (дело — настраиваемое `crm.activity.configurable.add`, `layout` от приложения), **стратегия поиска/создания товара**, **единицы** (словарь→`catalog.measure` + дефолт + авто-создать), **чат ошибок + чат уведомлений**. НДС — ставки из Б24 (`crm.vat.list`). Налоговый ID — фикс. `RQ_INN`. Договор — не тут (Q8) | 📝 |
 | 4 | **Лендинг + маркетинг** — тёмная бренд-оболочка, `landing.ts`, HeroGraph, BriefForm, Метрика, OG, листинг Маркета | 📝 |
 | 5 | **Ядро загрузки/извлечения** — `app/utils` парсинг + `server/` извлечение текста (pdftotext/OCR/office) в очереди; UI загрузки **только in-portal** (веб+мобильное приложение) с ручным выбором цели у файла; результат = статус + **ссылка «открыть»** сущность. Standalone-загрузка — кастом (маркетинг) | 📝 |
 | 6 | **Агент + изолированный MCP** — порт промпта и инструментов (стандартный REST по токену портала) как первоклассный код с тестами; промпт распознаёт налоговый ID **с учётом страны и языка** (ИНН/УНП/БИН…, документ на любом языке → поиск по `RQ_INN`) | 📝 |
-| 7 | **Запись в CRM (стандартный REST)** — резолв цели (ручной→авто→дефолт) → `crm.item.add` + `crm.item.productrow.set` (НДС: ставки из `crm.vat.list`, `taxIncluded` единый на документ, ставки по позициям могут различаться); файл на **общий Диск** (папка приложения → подпапка по месяцам) + **настраиваемое дело** `crm.activity.configurable.add` с файлом (`layout` от приложения; тумблер сохранения файла). Без коммента/UF-поля. Lookups по маппингу (несколько совпадений → мин. ID + предупреждение); **без дедупа** (всегда создаём); **матрица нестыковок** (поставщик/товар/валюта/единица) → предупреждение или **чат ошибок**; предпросмотра нет | 🧪 ядро: `crmWrite`/`companyLookup`/`disk`/`configurableActivity` + тесты; НДС ✅ вживую (не связано: нет worker/агента) |
+| 7 | **Запись в CRM (стандартный REST)** — резолв цели (ручной→авто→дефолт) → `crm.item.add` + `crm.item.productrow.set` (НДС: ставки из `crm.vat.list`, `taxIncluded` единый на документ, ставки по позициям могут различаться); файл на **общий Диск** (папка приложения → подпапка по месяцам) + **настраиваемое дело** `crm.activity.configurable.add` с файлом (`layout` от приложения; тумблер сохранения файла). Без коммента/UF-поля. Lookups по маппингу (несколько совпадений → мин. ID + предупреждение); **без дедупа** (всегда создаём); **матрица нестыковок** (поставщик/товар/валюта/единица) → предупреждение или **чат ошибок**; предпросмотра нет | 🧪 ядро: `crmWrite`/`companyLookup`/`disk`/`configurableActivity`/`crmSyncCore.runCrmSync` + тесты; НДС ✅ вживую (не связано: нет worker/агента; `productLookup` — нужны сид-товары) |
 | 8 | **Метрики, обратная связь, оператор** — метрики 2 уровня (мотивирующие всегда на `/app` + детальные `/metrics`); **отзывы сотрудников** (👍/👎/💡+текст) → **закрытый репо издателя** (outbox) + **согласие на файл** (политика данных); **сигналы агента**; **страница оператора как в эталоне** (авторизация + `/queues` ECharts); health, AI-телеметрия, политика диагностики | 📝 |
 | 9 | **Деплой + CI/CD** — Docker multi-target, CSP-hashing, GHCR + Watchtower, required-check `ci` | 📝 |
 
@@ -69,30 +69,33 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 
 ## 4. Сделано / в работе / дальше
 
-**Сделано:**
+**Сделано (🧪 код+тесты, если не помечено ✅ вживую):**
 - Полный набор `docs/redesign/` (00–06) + корневой `CLAUDE.md`.
-- **Этап 1 (скелет)** — Nuxt 4 + Nitro, `app/` split, `server/api/health`, Vitest (2 проекта), ESLint,
-  чистое ядро (homoglyph/артикулы/роутинг/НДС/единицы/taxId) — зелёные lint/typecheck/generate.
-- **Ядро этапов 2 и 7 (🧪 код+тесты, не связано end-to-end):** `server/utils/*` — `b24Oauth`,
-  `accessToken` (ленивый/keep-alive предикаты), `secretCrypto` (AES-GCM), `b24Rest` (+ типизированная
-  `B24RestError` для ретрая по `expired_token`), `companyLookup` (RQ_INN), `crmWrite`
-  (productrow/create-target), `disk` (общий диск + папка по месяцам), `configurableActivity`;
-  `app/utils/portalSettings` (парсинг `app.option`). **77 unit-тестов.**
+- **Этап 1 (скелет)** — Nuxt 4 + Nitro: `package.json`/`nuxt.config`/`tsconfig`/`eslint`/`vitest`
+  (2 проекта), `app/` split, `server/api/health.get.ts`, SessionStart-хук; чистое ядро
+  (`homoglyph`, `supplierArticles`, `routing/resolveTarget`, `vat`, `units`, `taxId`, `build`).
+  Legacy → `legacy/`. `lint`+`typecheck`(Nuxt4 split-tsconfig)+`generate` зелёные.
+- **Ядро OAuth/токенов (этап 2):** `b24Oauth`, `accessToken` (ленивый/keep-alive предикаты),
+  `secretCrypto` (AES-GCM), `b24Rest` (типизированная `B24RestError` + **SSRF-гард** `isSafeB24Domain`),
+  `tokenStore` (Postgres, write-once `application_token`), `ensureAccessToken` (refresh + ретрай),
+  `portalRest` (`makePortalRestCall(memberId)` → **живой `RestCall`**), `server/db/` (схема + ленивый
+  pg-клиент + плагин миграции). **HTTP-эндпоинт `/api/b24/events`** (install/unregister, синхронная
+  запись, вердикт по сохранённому per-portal токену).
+- **Ядро записи в CRM (этап 7):** `companyLookup` (RQ_INN), `crmWrite` (productrow/create-target),
+  `disk` (общий диск + папка по месяцам), `configurableActivity`, `crmSyncCore.runCrmSync`
+  (роутинг→поставщик→НДС/единицы→позиции→создание + матрица нестыковок + идемпотентность).
+- **События/очередь:** `b24Events` (парсинг), `b24EventsHandler` (вердикт), `queue/topology` (контракты).
+- **Настройки:** `portalSettings` (парсинг `app.option`).
 - **НДС 1-в-1 ✅ подтверждён вживую** (`crm.item.productrow.set` без патча ядра).
+- **Живая проверка** REST на `B24_HOOK`: `crm.vat.list`, `catalog.measure.list`, `disk.storage.getlist`,
+  шаблоны реквизитов. **120 unit-тестов**, зелёные.
 
-- **Этап 1 (скелет)** — Nuxt 4 + Nitro поднят: `package.json`/`nuxt.config`/`tsconfig`/`eslint`/`vitest`
-  (2 проекта), `app/` split, `server/api/health.get.ts`, SessionStart-хук, чистое ядро с тестами
-  (`homoglyph`, `supplierArticles`, `routing/resolveTarget`, `vat`, `units`, `taxId`, `build`) — **27
-  unit-тестов**, `lint`+`typecheck`(Nuxt4 split-tsconfig)+`generate` зелёные. Legacy → `legacy/`.
-- **Живая проверка** REST на портале `B24_HOOK` (env, не коммитим): подтверждены `crm.vat.list`
-  (ставки портала, `RATE` null = «Без НДС»), `catalog.measure.list` (`code` 796=шт дефолт),
-  `disk.storage.getlist` (общий диск = `ENTITY_TYPE=common`), шаблоны реквизитов.
-
-**В работе / дальше (не построено — связка):**
-- Связка I/O: `tokenStore` (Postgres), `ensureAccessToken` (исполняет refresh + ретрай),
-  `portalRest` (`makePortalRestCall(memberId)` → живой `RestCall`), `server/db/`.
-- Этап 2 UI/поток: `useB24()`, `/install`+`event.bind`, keep-alive крон, `app.option`-роуты.
-- Очередь (BullMQ topology/handlers/worker), агент+MCP (этап 6), проводка `crm-sync` (этап 7).
+**В работе / дальше (не построено — живая проводка):**
+- Очередь-транспорт: `connection`/`producers`/`worker`/`cron` (BullMQ+Redis); `liveDeps`-проводка
+  `crmSyncCore` в worker; keep-alive крон продления токенов.
+- Этап 2 UI: `useB24()`, страница `/install` (`event.bind`), `app.option`-роуты, `placement`.
+- Извлечение текста (этап 5), агент + MCP (этап 6), `productLookup` (нужны сид-товары на портале).
+- Лендинг (4), метрики/оператор (8), деплой (9).
 
 ---
 

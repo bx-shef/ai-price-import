@@ -12,7 +12,9 @@ export type QueueName = typeof QUEUES[keyof typeof QUEUES]
 
 export interface EventJob { memberId: string, event: string, domain: string }
 export interface ExtractJob { memberId: string, jobId: string, fileId: string }
-export interface AgentJob { memberId: string, jobId: string, documentText: string }
+// The extracted DOCUMENT_TEXT is stored scoped by jobId (Postgres/disk), NOT inlined
+// in the payload — queue records must not hold full document text (docs/redesign 02 §7.3, 05).
+export interface AgentJob { memberId: string, jobId: string }
 export interface CrmSyncJob { memberId: string, jobId: string }
 
 /** Build a deterministic BullMQ job id. Uses `|` (BullMQ forbids `:`), so retries dedupe. */

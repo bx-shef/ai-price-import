@@ -19,6 +19,15 @@ describe('parseBracketForm', () => {
     expect(parseBracketForm('')).toEqual({})
     expect(parseBracketForm('k=a+b').k).toBe('a b')
   })
+  it('deep nesting and numeric indices (object, not array)', () => {
+    expect(parseBracketForm('a%5Bb%5D%5Bc%5D=1')).toEqual({ a: { b: { c: '1' } } })
+    expect(parseBracketForm('x%5B0%5D=a&x%5B1%5D=b')).toEqual({ x: { 0: 'a', 1: 'b' } })
+  })
+  it('scalar↔nested overwrite; malformed % tolerated (no throw)', () => {
+    expect(parseBracketForm('a=1&a%5Bb%5D=2')).toEqual({ a: { b: '2' } })
+    expect(() => parseBracketForm('k=%')).not.toThrow()
+    expect(parseBracketForm('k=%').k).toBe('%')
+  })
 })
 
 describe('extractEvent', () => {
@@ -51,6 +60,10 @@ describe('decideB24Event', () => {
   it('register / unregister on valid token', () => {
     expect(decideB24Event(ok, 'T')).toEqual({ status: 200, action: 'register' })
     expect(decideB24Event({ ...ok, event: 'ONAPPUNINSTALL' }, 'T')).toEqual({ status: 200, action: 'unregister' })
+  })
+  it('400 on missing memberId; 200/ignore on unknown but authenticated event', () => {
+    expect(decideB24Event({ ...ok, memberId: '' }, 'T').status).toBe(400)
+    expect(decideB24Event({ ...ok, event: 'ONCRMDEALADD' }, 'T')).toEqual({ status: 200, action: 'ignore' })
   })
 })
 

@@ -1,7 +1,7 @@
 import { dbEnabled, query } from '../../db/client'
 import { extractEvent, parseBracketForm } from '~/utils/b24Events'
 import { decideB24Event } from '../../utils/b24EventsHandler'
-import { deletePortal, saveToken } from '../../utils/tokenStore'
+import { deletePortal, getApplicationToken, saveToken } from '../../utils/tokenStore'
 import { encryptSecret } from '../../utils/secretCrypto'
 
 // B24 outgoing-event webhook: ONAPPINSTALL / ONAPPUNINSTALL.
@@ -12,9 +12,15 @@ export default defineEventHandler(async (event) => {
   const body = await readRawBody(event, 'utf8') || ''
   const ev = extractEvent(parseBracketForm(body))
 
-  // Bootstrap: first install has no stored token, so the trusted value is the
-  // app's configured application_token (env). Later events must match it too.
-  const expected = String(cfg.b24ApplicationToken || '')
+  // Trust model: once a portal is installed, verify against ITS stored
+  // application_token (per-tenant authenticity). First install has no stored
+  // token → fall back to the app's configured env token (bootstrap/TOFU).
+  const envToken = String(cfg.b24ApplicationToken || '')
+  let expected = envToken
+  if (dbEnabled() && ev.memberId) {
+    const stored = await getApplicationToken(ev.memberId, query)
+    if (stored) expected = stored
+  }
   const decision = decideB24Event(ev, expected)
   setResponseStatus(event, decision.status)
 

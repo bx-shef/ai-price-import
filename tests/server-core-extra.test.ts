@@ -22,13 +22,20 @@ describe('makeRestCall (injected fetch)', () => {
   })
   it('rejects on B24 error body', async () => {
     const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ error: 'QUERY_LIMIT', error_description: 'too many' }) }))
-    await expect(makeRestCall('p', 't', fetchFn)('m')).rejects.toThrow(/too many/)
+    await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn)('m')).rejects.toThrow(/too many/)
   })
 })
 
-describe('restUrl bare domain', () => {
-  it('handles no scheme / no trailing slash', () => {
+describe('restUrl + SSRF guard', () => {
+  it('handles no scheme / no trailing slash for a Bitrix24 host', () => {
     expect(restUrl('p.bitrix24.ru', 'm')).toBe('https://p.bitrix24.ru/rest/m.json')
+    expect(restUrl('https://co.bitrix24.by/', 'crm.item.add')).toBe('https://co.bitrix24.by/rest/crm.item.add.json')
+  })
+  it('refuses non-Bitrix24 / malicious hosts', () => {
+    expect(() => restUrl('evil.com', 'm')).toThrow(/UNSAFE_DOMAIN/)
+    expect(() => restUrl('bitrix24.ru.evil.com', 'm')).toThrow(/UNSAFE_DOMAIN/)
+    expect(() => restUrl('p.bitrix24.ru:22', 'm')).toThrow(/UNSAFE_DOMAIN/)
+    expect(() => restUrl('user@p.bitrix24.ru', 'm')).toThrow(/UNSAFE_DOMAIN/)
   })
 })
 

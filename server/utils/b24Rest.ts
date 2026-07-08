@@ -6,9 +6,22 @@ export type FetchFn = (url: string, init?: { method?: string, headers?: Record<s
 /** A bound REST caller for one portal (domain + access token). */
 export type RestCall = (method: string, params?: Record<string, unknown>) => Promise<unknown>
 
-/** Build a REST endpoint URL for a cloud portal domain + method. */
+/** Normalise a portal domain to a bare host. */
+export function normaliseHost(domain: string): string {
+  return domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim().toLowerCase()
+}
+
+/** SSRF guard: only allow Bitrix24 cloud hosts (the portal domain comes from the install event). */
+export function isSafeB24Domain(domain: string): boolean {
+  const host = normaliseHost(domain)
+  if (!host || host.includes('@') || host.includes(':')) return false
+  return /^([a-z0-9-]+\.)+bitrix24\.[a-z]{2,}$/.test(host) || host === 'oauth.bitrix24.tech'
+}
+
+/** Build a REST endpoint URL for a cloud portal domain + method. Throws on unsafe host. */
 export function restUrl(domain: string, method: string): string {
-  const host = domain.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  const host = normaliseHost(domain)
+  if (!isSafeB24Domain(host)) throw new B24RestError('UNSAFE_DOMAIN', `refusing REST to ${host}`)
   return `https://${host}/rest/${method}.json`
 }
 
