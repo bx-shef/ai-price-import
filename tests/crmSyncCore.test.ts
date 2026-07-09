@@ -43,7 +43,8 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.entityId).toBe(555)
     expect(deps.createTarget).toHaveBeenCalledWith(
       expect.objectContaining({ entityTypeId: 2, categoryId: 1 }),
-      expect.objectContaining({ companyId: 42, currencyId: 'BYN' })
+      // Гвоздь 100×2, НДС включён → opportunity 200, флаг ручной суммы (live-verified).
+      expect.objectContaining({ companyId: 42, currencyId: 'BYN', opportunity: 200, isManualOpportunity: 'Y' })
     )
     expect(deps.recordResult).toHaveBeenCalledWith('job1', 2, 555)
     expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
@@ -206,11 +207,26 @@ describe('runCrmSync — products / units / routing', () => {
     expect(r.errors).toHaveLength(0)
   })
 
-  it('empty items → creates, no setRows', async () => {
+  it('empty items → creates, no setRows, NO opportunity field', async () => {
     const deps = baseDeps()
     const r = await runCrmSync('j', { ...doc, items: [] }, mapping(), {}, deps)
     expect(r.created).toBe(true)
     expect(deps.setRows).not.toHaveBeenCalled()
+    expect(deps.createTarget).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.not.objectContaining({ opportunity: expect.anything() })
+    )
+  })
+
+  it('smart-process target (entityTypeId ≥ 1000) → NO opportunity/isManualOpportunity', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 1032 }
+    const deps = baseDeps()
+    await runCrmSync('j', doc, m, {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ entityTypeId: 1032 }),
+      expect.not.objectContaining({ isManualOpportunity: expect.anything() })
+    )
   })
 
   it('negative price/qty → clamped to 0 + warning', async () => {

@@ -92,6 +92,41 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
   })
 }
 
+/**
+ * Gross total of the product rows (VAT-inclusive). Live-verified need: on portals
+ * without trade-accounting/a catalog, `crm.item.productrow.set` does NOT recompute the
+ * parent `opportunity` (it stays 0). Setting `opportunity` = this sum + `isManualOpportunity:'Y'`
+ * at create time makes the entity total correct regardless of portal auto-recalc.
+ *
+ * Rounding mirrors Bitrix EXACTLY: the per-unit gross price is rounded to 2 dp FIRST
+ * (`priceBrutto = round2(price × (1+rate/100))`), THEN multiplied by quantity — otherwise
+ * the header total would diverge from the row grid (Σ priceBrutto·qty) by kopecks on
+ * net-priced multi-row docs, and `isManualOpportunity` would freeze that mismatch.
+ */
+export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
+  let sum = 0
+  for (const r of rows) {
+    const price = finite(Number(r.price))
+    const qty = finite(Number(r.quantity), 1)
+    const inclusive = r.taxIncluded === 'Y'
+    const rate = r.taxRate == null ? 0 : finite(Number(r.taxRate))
+    const unitGross = inclusive ? price : round2(price * (1 + rate / 100))
+    sum += unitGross * qty
+  }
+  return round2(sum)
+}
+
+/**
+ * Whether we set an explicit `opportunity`+`isManualOpportunity` on this entity type.
+ * Only money-bearing STATIC entities always expose the field: deal(2), quote(7),
+ * smart-invoice(31). Dynamic smart-processes (entityTypeId ≥ 1000) expose it only when
+ * their money toggle is on — setting an absent field can reject the create — so we skip
+ * them and let the portal handle the total.
+ */
+export function supportsOpportunity(entityTypeId: number): boolean {
+  return entityTypeId === 2 || entityTypeId === 7 || entityTypeId === 31
+}
+
 function finite(n: number, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback
 }

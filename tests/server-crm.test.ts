@@ -1,9 +1,41 @@
 import { describe, expect, it, vi } from 'vitest'
 import { restUrl, unwrap } from '../server/utils/b24Rest'
-import { buildProductRow, buildProductRows, createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite'
+import { buildProductRow, buildProductRows, computeOpportunity, createTargetItem, ownerTypeCode, setProductRows, supportsOpportunity } from '../server/utils/crmWrite'
 import { findCompanyByTaxId } from '../server/utils/companyLookup'
 import { buildConfigurableActivity, entityOpenPath } from '../server/utils/configurableActivity'
 import { monthlySubfolderName, pickCommonStorage } from '../server/utils/disk'
+
+describe('computeOpportunity', () => {
+  it('sums gross: inclusive rows as-is, net rows + VAT', () => {
+    // 100×2 incl → 200; net 100×1 @20% → 120 ⇒ 320
+    expect(computeOpportunity([
+      { price: 100, quantity: 2, taxRate: 22, taxIncluded: 'Y' },
+      { price: 100, quantity: 1, taxRate: 20, taxIncluded: 'N' }
+    ])).toBe(320)
+  })
+  it('null taxRate = no VAT; empty rows = 0', () => {
+    expect(computeOpportunity([{ price: 50, quantity: 3, taxRate: null, taxIncluded: 'N' }])).toBe(150)
+    expect(computeOpportunity([])).toBe(0)
+  })
+  it('non-finite price → 0; missing quantity → 1 (matches buildProductRow clamps)', () => {
+    expect(computeOpportunity([{ price: NaN, quantity: 2, taxIncluded: 'Y' }])).toBe(0)
+    expect(computeOpportunity([{ price: 100, quantity: NaN, taxIncluded: 'Y' }])).toBe(100)
+  })
+  it('rounds per-unit gross BEFORE ×qty (matches Bitrix priceBrutto), not once at the end', () => {
+    // net 10.11 @20% → unit round2(12.132)=12.13 ×3 = 36.39 (NOT 36.40 from line-then-round)
+    expect(computeOpportunity([{ price: 10.11, quantity: 3, taxRate: 20, taxIncluded: 'N' }])).toBe(36.39)
+  })
+})
+
+describe('supportsOpportunity', () => {
+  it('true for deal/quote/smart-invoice, false for smart-process and others', () => {
+    expect(supportsOpportunity(2)).toBe(true)
+    expect(supportsOpportunity(7)).toBe(true)
+    expect(supportsOpportunity(31)).toBe(true)
+    expect(supportsOpportunity(1032)).toBe(false)
+    expect(supportsOpportunity(1)).toBe(false)
+  })
+})
 
 describe('b24Rest', () => {
   it('restUrl', () => {
