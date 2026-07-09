@@ -152,13 +152,13 @@
 | `priceIncludesVat` undefined при НДС>0 | `tests/crmSyncCore.test.ts` | Жёсткая ошибка «Не определено, включён ли НДС»; без НДС undefined → OK | [авто] |
 | `vatRate=0` не в портале / NaN-ставка | `tests/crmSyncCore.test.ts`, `tests/vat.test.ts` | Жёсткая ошибка (0% ≠ «Без НДС»); `matchVatRate` NaN → null → ошибка | [авто] |
 | Валюта не в портале | `tests/crmSyncCore.test.ts` | «Валюта X отсутствует», не создана, `notifySuccess` не вызван | [авто] |
-| Товар по name/article | `tests/productLookup.test.ts` | `by='name'` игнорирует article; `by='article'` сначала свойство каталога, фолбэк NAME, при попадании без лишнего NAME-запроса | [авто] |
+| Товар по name/article | `tests/productLookup.test.ts` | `by='name'` игнорирует article; `by='article'`: `%PROPERTY_<id>` (order ID ASC) сужает → точная сверка `articleMatches`; отсекает ложные `A-10`⊄`{A-100}`; оба варианта (text/string); нечисловое поле → пропуск; фолбэк NAME | [авто] |
 | Товар не найден skip/create | `tests/crmSyncCore.test.ts` | `skip-warn` пропуск+warning; `create` зовёт `createProduct`, null→«произвольная позиция» | [авто] |
 | Единица/отриц. значения/пустой items | `tests/crmSyncCore.test.ts`, `tests/units.test.ts` | Единица не сопоставлена → WARNING+дефолт; отриц. price/qty→clamp 0+warning; пустой items→create без `setRows` | [авто] |
 | `ownerTypeCode`/`buildProductRow` | `tests/server-crm.test.ts` | 2→D,7→Q,31→SI,≥1000→`T<id>`; `taxIncluded` Y/N; `productId` опускается | [авто] |
 | Живая проверка productrow.set / SI / T<id> | Портал: смарт-процесс + `crm.item.productrow.set` | НДС 1-в-1, ownerType корректен | [нужен живой портал] |
 | Сумма сделки не 0 без торгового учёта | Портал без каталога → создать сделку с позициями | `opportunity` = нашей сумме (не 0), `isManualOpportunity=Y` держится; header == Σ строк | [нужен живой портал] |
-| Дефолтный каталог без article-свойства | Портал iblock 25 | Article-стратегия только при явной `mapping.article.field` | [нужен живой портал] |
+| Поиск по артикулу на портале | ✅ **проверено вживую 2026-07-09** (свойство создано на iblock 25) | exact-фильтр не находит мультиартикул → нужен `%LIKE`; оба варианта (построчно/через `;`) найдены; ложные отсечены; символьный код НЕ фильтрует → только числовой `PROPERTY_<id>` | ✅ |
 | Ручной override цели | `tests/crmSyncCore.test.ts`, `tests/routing.test.ts` | Роут в др. entityType, `stageId`/`categoryId` прокидываются | [авто] |
 | Чат: нейтрализация BB / капы / ссылки | `tests/chatNotify.test.ts` | `neutralizeBb` фолдит `[`/`]`; warnings кап 10, message кап 20; `entityLink` 2/7/иное | [авто] |
 | Чат: `sendChatMessage` / сбой notifySuccess | `tests/chatNotify.test.ts`, `tests/crmSyncCore.test.ts` | Пустой→null, нечисловой→null, успех→id>0 `URL_PREVIEW='N'`; сбой notifySuccess → warning, не падение | [авто] |
@@ -169,7 +169,7 @@
 | Кэш RestCall / портал без токена | Код-ревью `liveDeps.ts`, `need()` | null и rejected вычищаются из кэша; `need()` бросает «портал не авторизован» | [вручную] |
 | Диск + настраиваемое дело (ядро) | `tests/diskActivity.test.ts` | `buildConfigurableActivity` (капы, `safeRelativePath`); `pickCommonStorage`/`monthlySubfolderName`/`ensureSubfolder`/`uploadFile` | [авто] |
 | Диск/дело НЕ проведены в пайплайн | grep `server/queue/` пуст | Реальная загрузка на диск и `crm.activity.configurable.add` не подключены | [нужен живой портал] |
-| Сквозная проверка | Живой портал (`B24_HOOK`, mapping) → документ через extract→agent→crm-sync | Сущность с компанией/валютой/строками (НДС 1-в-1), success-чат; при отсутствии ставки/валюты — error-чат; дубль-загрузка идемпотентна | [нужен живой портал] + [нужен LLM-ключ] |
+| Сквозная проверка | Живой портал (mapping) → документ через extract→agent→crm-sync | Сущность с компанией/валютой/строками (НДС 1-в-1), success-чат; при отсутствии ставки/валюты — error-чат; дубль-загрузка идемпотентна | ✅ **пройдено вживую 2026-07-09** (засеянный портал + DeepSeek): компания по RQ_INN, opportunity, персист позиций, файл на Диск, дело (todo+file), чат. Осталось: `configurable.add` в OAuth-контексте, идемпотентность дубля |
 
 ### Очереди (BullMQ/Redis)
 
@@ -311,7 +311,7 @@
 Проверки, которые нельзя прогнать без внешней зависимости, — сгруппированы по причине блокировки.
 
 **[нужен живой портал] Bitrix24 (env `B24_HOOK`, scopes `crm,catalog,disk,im,placement`):**
-- Реальный поиск компании по taxId (`RQ_INN` + `ENTITY_TYPE_ID=4`), подтверждение `ownerType SI`/`T<entityTypeId>` и `crm.item.productrow.set` (НДС 1-в-1), проверка каталога iblock 25 на article-свойство — раздел crm-sync.
+- Реальный поиск компании по taxId (`RQ_INN` + `ENTITY_TYPE_ID=4`), подтверждение `ownerType SI`/`T<entityTypeId>` и `crm.item.productrow.set` (НДС 1-в-1) — раздел crm-sync. Article-поиск товара по свойству каталога — ✅ проверен вживую (см. выше).
 - Фактическая отправка success/error в чат (`im.message.add`, scope `im`); доставка в `errorChatId`.
 - Загрузка исходного файла на Общий диск и `crm.activity.configurable.add` (ядро готово, но не проведено в пайплайн).
 - Сквозной путь extract→agent→crm-sync с созданием целевой сущности и идемпотентностью дубль-загрузки.
