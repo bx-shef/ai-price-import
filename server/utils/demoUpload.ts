@@ -36,10 +36,7 @@ export function decodeText(bytes: Uint8Array): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   } catch {
-    try {
-      return new TextDecoder('windows-1251').decode(bytes)
-    } catch {
-      return new TextDecoder('utf-8').decode(bytes) // last resort, lossy
-    }
+    // Non-fatal 1251 decoder never throws → this is the definitive fallback.
+    return new TextDecoder('windows-1251').decode(bytes)
   }
 }

@@ -131,7 +131,13 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
   }
 }
 
-/** crm-sync deps bound to one portal+job+mapping (deterministic lookups via portal REST). */
+/**
+ * crm-sync deps bound to one portal+job+mapping (deterministic lookups via portal REST).
+ * NOTE: `createProduct` is intentionally NOT provided yet — so `mapping.product.onMissing
+ * === 'create'` degrades to a freeform product line + an explicit warning in
+ * `runCrmSync` (never silent). Wiring real `crm.product.add` is a follow-up (needs the
+ * catalog/section policy); until then 'create' behaves like 'freeform'.
+ */
 function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: string) => Promise<RestCall | null>, infra: LiveInfra): CrmSyncDeps {
   const need = async (): Promise<RestCall> => {
     const call = await rest(memberId)

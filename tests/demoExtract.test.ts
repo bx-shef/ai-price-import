@@ -157,6 +157,21 @@ describe('extractDemo — robustness', () => {
     expect(r.items).toHaveLength(1)
     expect(r.items[0]).toMatchObject({ name: 'Гайка', quantity: 10, sum: 3 })
   })
+  it('does NOT let a short totals row veto delimiter detection (regression)', () => {
+    // «Итого|200» is 2 cells; must not discard the pipe delimiter.
+    const text = 'Наименование|Кол-во|Цена|Сумма\nНасос|2|100|200\nИтого|200'
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]).toMatchObject({ name: 'Насос', quantity: 2, sum: 200 })
+    expect(r.totals.sum).toBe(200)
+  })
+  it('does NOT classify a product named «НДС-насос» as a VAT total', () => {
+    const text = 'Наименование|Кол-во|Цена|Сумма\nНДС-насос|1|100|100\nНасос|1|50|50'
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toContain('НДС-насос')
+    expect(r.items).toHaveLength(2)
+    expect(r.totals.vat).toBeUndefined()
+  })
 })
 
 describe('extractDemo — invoice/waybill totals across languages', () => {
