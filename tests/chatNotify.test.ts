@@ -44,6 +44,17 @@ describe('buildSuccessMessage', () => {
     const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 1, created: false, rowCount: 0, warnings: [] })
     expect(msg).toContain('уже был импортирован')
   })
+  it('omits the warnings block entirely when there are none', () => {
+    const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 1, created: true, rowCount: 1, warnings: [] })
+    expect(msg).not.toContain('Предупреждения')
+  })
+  it('caps the warnings block at 10 lines', () => {
+    const warnings = Array.from({ length: 15 }, (_, i) => `w${i}`)
+    const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 1, created: true, rowCount: 1, warnings })
+    expect(msg).toContain('Предупреждения (15)') // header shows the true count
+    expect(msg).toContain('• w9')
+    expect(msg).not.toContain('• w10') // but only 10 lines rendered
+  })
 })
 
 describe('buildErrorMessage', () => {
@@ -52,6 +63,12 @@ describe('buildErrorMessage', () => {
     expect(msg).toContain('⛔ Импорт не выполнен')
     expect(msg).not.toContain('[b]')
     expect(msg).toContain('• Валюта XXX отсутствует')
+  })
+  it('caps the message list at 20 lines', () => {
+    const messages = Array.from({ length: 25 }, (_, i) => `e${i}`)
+    const msg = buildErrorMessage(undefined, messages)
+    expect(msg).toContain('• e19')
+    expect(msg).not.toContain('• e20')
   })
 })
 

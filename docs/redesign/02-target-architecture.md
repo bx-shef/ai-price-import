@@ -127,7 +127,7 @@ Claude Code» — из методологии репозитория `ai-agent` 
      │  create_target (deal/smart/invoice/quote)       │
      │  └─ СТАНДАРТНЫЙ REST по OAuth-токену портала ───┼──▶ Bitrix24 (облако/коробка клиента)
      │     crm.* / catalog.* — без кода в ядре Б24     │    crm.company.list, crm.requisite.*,
-     └────────────────────────────────────────────────┘    catalog.product.list, crm.item.add,
+     └────────────────────────────────────────────────┘    crm.product.list, crm.item.add,
                                                             crm.category.*, crm.item.productrow.set, ...
 ```
 
@@ -255,7 +255,8 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
   зависимость вынесена в **промпт агента** (см. ниже).
 - Договор — **не ищем** (решение Q8). Подбор договора — платная индивидуальная доработка на
   сервере клиента (маркетинговая фича, см. `04-marketing-landing.md`).
-- Товар — `catalog.product.list` по **полю артикула поставщика** из маппинга; поле парсится по
+- Товар — `crm.product.list` по **полю артикула поставщика** из маппинга (фильтр `PROPERTY_<code>`,
+  подтверждено вживую: `crm.product.list` отдаёт `{ID, NAME}`); поле парсится по
   своему типу (текст = построчно / строка = через админский разделитель) в набор артикулов
   (`parseSupplierArticles`), сверка с извлечённым артикулом (homoglyph-tolerant); родительский товар.
 - Целевая сущность — универсальный `crm.item.add` по `entityTypeId` (2=сделка / ≥1000=смарт-процесс /

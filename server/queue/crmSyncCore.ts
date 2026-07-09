@@ -142,7 +142,9 @@ export async function runCrmSync(
   if (rows.length) await deps.setRows(entityTypeId, entityId, rows)
 
   // Success chat notification (best-effort — never fail an import over a chat hiccup).
-  if (deps.notifySuccess) {
+  // Gated on `created`: an idempotent resume (retry / redelivery of an already-done job)
+  // must NOT re-post — the notification went out on the first, creating run.
+  if (deps.notifySuccess && created) {
     try {
       await deps.notifySuccess({
         supplierName: doc.supplier?.name,

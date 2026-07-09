@@ -68,6 +68,13 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.warnings).toContain('Уведомление в чат не отправлено')
   })
 
+  it('idempotent resume → does NOT re-notify (created=false path stays silent)', async () => {
+    const notifySuccess = vi.fn(async () => {})
+    const deps = baseDeps({ getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 999 })), notifySuccess })
+    await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(notifySuccess).not.toHaveBeenCalled()
+  })
+
   it('idempotent: existing entity → no create, but resumes setRows', async () => {
     const deps = baseDeps({ getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 999 })) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
@@ -100,8 +107,17 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     const r = await runCrmSync('j', bad, mapping(), {}, deps)
     expect(r.created).toBe(false)
     expect(r.errors.some(e => /25%/.test(e))).toBe(true)
-    expect(deps.reportErrors).toHaveBeenCalled()
+    // reportErrors receives the supplier name (BB-safe chat context) …
+    expect(deps.reportErrors).toHaveBeenCalledWith(expect.any(Array), 'ООО Ромашка')
     expect(deps.createTarget).not.toHaveBeenCalled()
+  })
+
+  it('hard error → notifySuccess is NOT called (no false success chat)', async () => {
+    const notifySuccess = vi.fn(async () => {})
+    const deps = baseDeps({ notifySuccess })
+    const bad: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт', vatRate: 25 }] }
+    await runCrmSync('j', bad, mapping(), {}, deps)
+    expect(notifySuccess).not.toHaveBeenCalled()
   })
 
   it('vatRate 0 not in portal → hard error (not «Без НДС»)', async () => {
