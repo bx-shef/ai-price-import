@@ -43,7 +43,8 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.entityId).toBe(555)
     expect(deps.createTarget).toHaveBeenCalledWith(
       expect.objectContaining({ entityTypeId: 2, categoryId: 1 }),
-      expect.objectContaining({ companyId: 42, currencyId: 'BYN' })
+      // Гвоздь 100×2, НДС включён → opportunity 200, флаг ручной суммы (live-verified).
+      expect.objectContaining({ companyId: 42, currencyId: 'BYN', opportunity: 200, isManualOpportunity: 'Y' })
     )
     expect(deps.recordResult).toHaveBeenCalledWith('job1', 2, 555)
     expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([

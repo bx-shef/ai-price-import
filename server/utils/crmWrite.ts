@@ -92,6 +92,24 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
   })
 }
 
+/**
+ * Gross total of the product rows (VAT-inclusive). Live-verified need: on portals
+ * without trade-accounting/a catalog, `crm.item.productrow.set` does NOT recompute the
+ * parent `opportunity` (it stays 0). Setting `opportunity` = this sum + `isManualOpportunity:'Y'`
+ * at create time makes the entity total correct regardless of portal auto-recalc.
+ * Line gross = price×qty, plus VAT when the price is net (`taxIncluded !== 'Y'`).
+ */
+export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
+  let sum = 0
+  for (const r of rows) {
+    const line = finite(Number(r.price)) * finite(Number(r.quantity), 1)
+    const inclusive = r.taxIncluded === 'Y'
+    const rate = r.taxRate == null ? 0 : finite(Number(r.taxRate))
+    sum += inclusive ? line : line * (1 + rate / 100)
+  }
+  return round2(sum)
+}
+
 function finite(n: number, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback
 }

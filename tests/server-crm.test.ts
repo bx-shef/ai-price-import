@@ -1,9 +1,26 @@
 import { describe, expect, it, vi } from 'vitest'
 import { restUrl, unwrap } from '../server/utils/b24Rest'
-import { buildProductRow, buildProductRows, createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite'
+import { buildProductRow, buildProductRows, computeOpportunity, createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite'
 import { findCompanyByTaxId } from '../server/utils/companyLookup'
 import { buildConfigurableActivity, entityOpenPath } from '../server/utils/configurableActivity'
 import { monthlySubfolderName, pickCommonStorage } from '../server/utils/disk'
+
+describe('computeOpportunity', () => {
+  it('sums gross: inclusive rows as-is, net rows + VAT', () => {
+    // 100×2 incl → 200; net 100×1 @20% → 120 ⇒ 320
+    expect(computeOpportunity([
+      { price: 100, quantity: 2, taxRate: 22, taxIncluded: 'Y' },
+      { price: 100, quantity: 1, taxRate: 20, taxIncluded: 'N' }
+    ])).toBe(320)
+  })
+  it('null taxRate = no VAT; empty rows = 0', () => {
+    expect(computeOpportunity([{ price: 50, quantity: 3, taxRate: null, taxIncluded: 'N' }])).toBe(150)
+    expect(computeOpportunity([])).toBe(0)
+  })
+  it('non-finite price/qty are clamped', () => {
+    expect(computeOpportunity([{ price: NaN, quantity: 2, taxIncluded: 'Y' }])).toBe(0)
+  })
+})
 
 describe('b24Rest', () => {
   it('restUrl', () => {
