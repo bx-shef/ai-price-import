@@ -1,6 +1,6 @@
 # Стек технологий (редизайн procure-ai)
 
-> Last reviewed: 2026-07-08
+> Last reviewed: 2026-07-09
 
 Целевой стек взят из эталона `client-bank-alfa-by` (проверенная на проде раскладка Bitrix24-приложения)
 и дополнен слоем AI-агента из старого procure-ai. Версии — ориентир на момент фиксации; при инициализации
@@ -40,7 +40,7 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 | Что | Технология | Роль |
 |---|---|---|
 | Агент | **Claude Code CLI** (headless, `--print --bare --output-format json`) | извлечение структуры + вызов MCP |
-| Провайдер | **DeepSeek** (Anthropic-совместимый endpoint) через `ANTHROPIC_*` env | решение Q5; см. заметку о юрисдикции ниже |
+| Провайдер | **DeepSeek V4** (Anthropic-совместимый endpoint `https://api.deepseek.com/anthropic`) через `ANTHROPIC_*` env; ключ — в `ANTHROPIC_AUTH_TOKEN` | решение Q5; модели `deepseek-v4-flash` (дефолт) / `deepseek-v4-pro`; извлечение проверено вживую на рус/бел/каз (поставщик/налоговый ID/позиции/НДС) 2026-07-09; см. юрисдикцию ниже |
 | Протокол инструментов | **MCP** (`@modelcontextprotocol/sdk`, Streamable HTTP, Bearer) | изолированный MCP-сервер |
 | Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (**rus+bel+kaz+eng**), python (`openpyxl`/`xlrd`/`python-docx`) | PDF/скан/офис → текст; языки — см. `06-multilingual.md` |
 | Схемы | **`zod`** | валидация входов MCP-инструментов и вывода агента |
