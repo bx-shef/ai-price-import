@@ -141,7 +141,8 @@
 
 | Проверка | Действие | Ожидаемо | Метка |
 |---|---|---|---|
-| Happy path: создание target | `tests/crmSyncCore.test.ts` | `createTarget` с fields; `recordResult` ДО `setRows`; строки пишутся; `created=true` | [авто] |
+| Happy path: создание target | `tests/crmSyncCore.test.ts` | `createTarget` с fields (вкл. `opportunity`+`isManualOpportunity:'Y'` для сделки/КП/смарт-счёта); `recordResult` ДО `setRows`; строки пишутся; `created=true` | [авто] |
+| Сумма сделки (opportunity) | `tests/server-crm.test.ts` (`computeOpportunity`/`supportsOpportunity`) | по-юнитное округление как Bitrix; проставляется только для 2/7/31, смарт-процесс (≥1000) пропускается | [авто] |
 | Уведомление об успехе | `tests/crmSyncCore.test.ts` | `notifySuccess` с summary (supplier/entityId/rowCount/warnings) | [авто] |
 | Идемпотентный повтор | `tests/crmSyncCore.test.ts` | `getExisting`≠null → нет create, `setRows` повторяется (замещение), `created=false`, без повторного `notifySuccess` | [авто] |
 | Поставщик не найден | `tests/crmSyncCore.test.ts` | Сущность создаётся без `companyId`, warning; без `taxId` — lookup не вызывается | [авто] |
@@ -156,6 +157,7 @@
 | Единица/отриц. значения/пустой items | `tests/crmSyncCore.test.ts`, `tests/units.test.ts` | Единица не сопоставлена → WARNING+дефолт; отриц. price/qty→clamp 0+warning; пустой items→create без `setRows` | [авто] |
 | `ownerTypeCode`/`buildProductRow` | `tests/server-crm.test.ts` | 2→D,7→Q,31→SI,≥1000→`T<id>`; `taxIncluded` Y/N; `productId` опускается | [авто] |
 | Живая проверка productrow.set / SI / T<id> | Портал: смарт-процесс + `crm.item.productrow.set` | НДС 1-в-1, ownerType корректен | [нужен живой портал] |
+| Сумма сделки не 0 без торгового учёта | Портал без каталога → создать сделку с позициями | `opportunity` = нашей сумме (не 0), `isManualOpportunity=Y` держится; header == Σ строк | [нужен живой портал] |
 | Дефолтный каталог без article-свойства | Портал iblock 25 | Article-стратегия только при явной `mapping.article.field` | [нужен живой портал] |
 | Ручной override цели | `tests/crmSyncCore.test.ts`, `tests/routing.test.ts` | Роут в др. entityType, `stageId`/`categoryId` прокидываются | [авто] |
 | Чат: нейтрализация BB / капы / ссылки | `tests/chatNotify.test.ts` | `neutralizeBb` фолдит `[`/`]`; warnings кап 10, message кап 20; `entityLink` 2/7/иное | [авто] |

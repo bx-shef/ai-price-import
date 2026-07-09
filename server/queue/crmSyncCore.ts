@@ -3,7 +3,7 @@ import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { resolveTarget, type RoutingSignals } from '~/utils/routing'
 import { resolveMeasure } from '~/utils/units'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
-import { buildProductRow, computeOpportunity } from '../utils/crmWrite'
+import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 
 // Pure crm-sync orchestration with injected dependencies (no I/O here).
 // Deps are abstract async fns → wired to the isolated MCP tools (not direct REST):
@@ -134,7 +134,11 @@ export async function runCrmSync(
       ...(doc.currency ? { currencyId: doc.currency } : {}),
       // Set the total explicitly (+ manual flag): live-verified that productrow.set does
       // NOT recompute `opportunity` on portals without trade-accounting → deal would show 0.
-      ...(rows.length ? { opportunity: computeOpportunity(rows), isManualOpportunity: 'Y' } : {})
+      // Only for entities that always expose the field (deal/quote/smart-invoice); dynamic
+      // smart-processes are skipped (the field may be absent → create could be rejected).
+      ...(rows.length && supportsOpportunity(target.entityTypeId)
+        ? { opportunity: computeOpportunity(rows), isManualOpportunity: 'Y' }
+        : {})
     }
     entityTypeId = target.entityTypeId
     entityId = await deps.createTarget(target, fields)
