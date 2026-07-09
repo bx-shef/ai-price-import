@@ -58,6 +58,34 @@ const year = copyrightYears(2026, 2026)
         </div>
       </section>
 
+      <!-- Live demo: attach a file → parsed supplier + goods -->
+      <section
+        id="demo"
+        class="mx-auto max-w-4xl px-6 py-14"
+      >
+        <h2 class="mb-3 text-center text-2xl font-semibold text-white">
+          Попробуйте прямо сейчас
+        </h2>
+        <p class="mx-auto mb-8 max-w-2xl text-center text-sm text-slate-400">
+          Прикрепите КП, счёт или ТТН — покажем, что распознаём: подрядчика и таблицу товаров.
+          Демо разбирает документ и ничего не записывает.
+        </p>
+        <ClientOnly>
+          <DemoTryout />
+        </ClientOnly>
+
+        <!-- Custom-dev banner -->
+        <div class="mx-auto mt-10 max-w-3xl rounded-2xl border border-cyan-400/20 bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 p-6 text-center">
+          <p class="text-slate-200">
+            Нужно под ваш процесс — свои поля, свои сущности, свой источник?
+            <span class="font-semibold text-white">Доработаем и развернём на ваших серверах.</span>
+          </p>
+          <p class="mt-1 text-sm text-slate-400">
+            {{ LANDING_PUBLISHER }} — Bitrix24-партнёр.
+          </p>
+        </div>
+      </section>
+
       <!-- How it works -->
       <section class="mx-auto max-w-4xl px-6 py-14">
         <h2 class="mb-10 text-center text-2xl font-semibold text-white">
