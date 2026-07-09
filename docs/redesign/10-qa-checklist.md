@@ -169,7 +169,7 @@
 | Кэш RestCall / портал без токена | Код-ревью `liveDeps.ts`, `need()` | null и rejected вычищаются из кэша; `need()` бросает «портал не авторизован» | [вручную] |
 | Диск + настраиваемое дело (ядро) | `tests/diskActivity.test.ts` | `buildConfigurableActivity` (капы, `safeRelativePath`); `pickCommonStorage`/`monthlySubfolderName`/`ensureSubfolder`/`uploadFile` | [авто] |
 | Диск/дело НЕ проведены в пайплайн | grep `server/queue/` пуст | Реальная загрузка на диск и `crm.activity.configurable.add` не подключены | [нужен живой портал] |
-| Сквозная проверка | Живой портал (`B24_HOOK`, mapping) → документ через extract→agent→crm-sync | Сущность с компанией/валютой/строками (НДС 1-в-1), success-чат; при отсутствии ставки/валюты — error-чат; дубль-загрузка идемпотентна | [нужен живой портал] + [нужен LLM-ключ] |
+| Сквозная проверка | Живой портал (mapping) → документ через extract→agent→crm-sync | Сущность с компанией/валютой/строками (НДС 1-в-1), success-чат; при отсутствии ставки/валюты — error-чат; дубль-загрузка идемпотентна | ✅ **пройдено вживую 2026-07-09** (засеянный портал + DeepSeek): компания по RQ_INN, opportunity, персист позиций, файл на Диск, дело (todo+file), чат. Осталось: `configurable.add` в OAuth-контексте, идемпотентность дубля |
 
 ### Очереди (BullMQ/Redis)
 
