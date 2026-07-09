@@ -87,16 +87,20 @@ export function parseNum(raw: string): number | undefined {
   return negative ? -n : n
 }
 
-/** Detect the delimiter of a table by consistent column count across lines. */
+/**
+ * Detect the table delimiter by counting how many lines split into ≥3 cells.
+ * We require ≥2 such "wide" lines (header + ≥1 data), but we do NOT require EVERY
+ * delimited line to be wide — a real table routinely ends with a short summary row
+ * (`Итого|200`), which must not veto detection. First candidate with the most wide
+ * lines wins; comma is last (ambiguous with decimal commas).
+ */
 function detectDelimiter(lines: string[]): string | null {
-  for (const d of ['|', '\t', ';']) {
-    const counts = lines.filter(l => l.includes(d)).map(l => l.split(d).length)
-    if (counts.length >= 2 && counts.every(c => c >= 3)) return d
+  let best: { d: string, wide: number } | null = null
+  for (const d of ['|', '\t', ';', ',']) {
+    const wide = lines.filter(l => l.includes(d) && l.split(d).length >= 3).length
+    if (wide >= 2 && (!best || wide > best.wide)) best = { d, wide }
   }
-  // Comma only if it yields ≥3 columns AND lines aren't decimal-comma noise.
-  const commaCounts = lines.filter(l => (l.match(/,/g) ?? []).length >= 2).map(l => l.split(',').length)
-  if (commaCounts.length >= 2 && commaCounts.every(c => c >= 3)) return ','
-  return null
+  return best?.d ?? null
 }
 
 /** Map header cells to our column roles. */
@@ -222,8 +226,9 @@ function classifyTotal(s: string): 'vat' | 'total' | 'sum' | null {
   // «Всего к оплате» / «Барлығы төлеуге» is the grand total — check it before the
   // bare «Барлығы»/«Итого» (which also appears inside the grand-total phrase).
   if (/всего\s+к\s+оплате|усяго\s+да\s+аплаты|барлығы\s+төлеу|итого\s+к\s+оплате/iu.test(s)) return 'total'
-  if (/(?<![\p{L}])(ндс|пдв|ққс|қкс)(?![\p{L}])/iu.test(s)) return 'vat'
-  if (/(?<![\p{L}])(итого|усяго|разам|барлығы|жиыны)(?![\p{L}])/iu.test(s)) return 'sum'
+  // Exclude a dash+letter suffix so a product like «НДС-насос» is NOT read as a total.
+  if (/(?<![\p{L}])(ндс|пдв|ққс|қкс)(?![\p{L}-])/iu.test(s)) return 'vat'
+  if (/(?<![\p{L}])(итого|усяго|разам|барлығы|жиыны)(?![\p{L}-])/iu.test(s)) return 'sum'
   return null
 }
 

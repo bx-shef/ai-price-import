@@ -176,7 +176,7 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
 ## 4. Потоки данных
 
 **Импорт файла (happy path):**
-1. `POST /api/upload` → сохранить файл, создать задачу (Postgres), **опц. ручной override цели**
+1. `POST /api/import/upload` → сохранить файл, создать задачу (Postgres), **опц. ручной override цели**
    рядом с файлом (тип сущности + направление), `enqueue file-extract`.
 2. `file-extract` (worker): pdftotext / OCR (tesseract `rus`+`bel`+`kaz`+`eng`) / office → `DOCUMENT_TEXT` → `enqueue agent-run`. Языки документов: рус/бел/каз — см. [`06-multilingual.md`](06-multilingual.md).
 3. `agent-run` (worker): spawn Claude Code (DeepSeek) с промптом + `DOCUMENT_TEXT`; агент через MCP
@@ -187,7 +187,7 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
    (`crm.item.add` по `entityTypeId`+`categoryId`), пишет позиции (`crm.item.productrow.set`, штатный
    НДС), кладёт файл на Диск (папка → подпапка по месяцам) и создаёт **дело** с файлом
    (без коммента/UF-поля); счётчики метрик.
-5. UI поллит `GET /api/job/:id` → результат по файлу: статус (создано / без сделки + причина) +
+5. UI поллит `GET /api/import/status` → результат по файлу: статус (создано / без сделки + причина) +
    **ссылка «открыть»** созданную сущность в портале (по типу: `crm.item` detail-путь;
    в портале — через `BX24.openPath`/слайдер, работает и в вебе, и в мобильном приложении).
 
@@ -202,7 +202,7 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
 Проверяем на реальном мобильном клиенте (визуальная верификация).
 
 **Очередь — обязательна для всего конвейера (по образцу эталона `client-bank-alfa-by`).**
-`POST /api/upload` **не обрабатывает синхронно** — только кладёт файл, создаёт задачу и
+`POST /api/import/upload` **не обрабатывает синхронно** — только кладёт файл, создаёт задачу и
 `enqueue`; ответ возвращается сразу, вся работа идёт в worker'ах через BullMQ+Redis. Переносим
 из эталона проверенные паттерны 1-в-1:
 - `server/queue/topology.ts` — **чистые контракты**: очереди (`b24-events`, `file-extract`,
