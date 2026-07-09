@@ -1,0 +1,41 @@
+# Local/dev compose for the procure-ai redesign: Nitro backend (serves pages + API +
+# in-process pipeline workers) + Postgres + Redis. Prod adds GHCR images + a reverse
+# proxy (see docs/redesign 09 / the client-bank-alfa-by reference). Not the prod file.
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - uploads:/data/uploads
+    # Extraction runs untrusted files through libreoffice/tesseract — bound memory so a
+    # zip/XML/image bomb can't OOM the host (review finding). Tune per workload.
+    mem_limit: 2g
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: procure
+      POSTGRES_PASSWORD: procure
+      POSTGRES_DB: procure
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+volumes:
+  uploads: {}
+  pgdata: {}
+  redisdata: {}

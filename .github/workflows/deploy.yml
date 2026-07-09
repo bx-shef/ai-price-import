@@ -1,21 +1,15 @@
-name: Publish images
+name: Publish image
 
-# Per-run label so the Actions list shows what each run deployed.
 run-name: >-
   ${{ (github.event_name == 'push' && format('🚀 Release {0} → prod (:latest)', github.ref_name))
   || (github.event_name == 'workflow_dispatch' && '🚀 Manual deploy → prod (:latest)')
   || format('🚀 Deploy main {0} → prod (:latest)', github.event.workflow_run.head_sha) }}
 
-# Build images and publish them to GHCR. CONTINUOUS DEPLOYMENT — a green CI on main ships to prod;
-# no release tag is required. The CI run IS the gate: only a GREEN main commit publishes :latest.
-#   • Push to main → after CI passes (workflow_run): build :latest + sha-<sha>. Watchtower picks it
-#     up → prod. A red CI never reaches build-and-push, so prod only ever gets green commits.
-#   • Push a v* tag → build :latest + :<tag> + sha-<sha> — an OPTIONAL marked release / rollback
-#     point (gated: that commit's CI must be green). Not required for a deploy.
-#   • Manual workflow_dispatch → same, gated on that commit's CI being green.
-#
-# The production server runs Watchtower, which polls GHCR (~5 min) for :latest and recreates the
-# containers automatically — no SSH deploy step here. sha-<sha> images are kept for rollback (§13).
+# Build + publish the single redesign backend image to GHCR. CONTINUOUS DEPLOYMENT —
+# a GREEN CI on main ships to prod (Watchtower polls :latest); no release tag required.
+#   • Push to main → after CI passes (workflow_run): :latest + sha-<sha>.
+#   • Push a v* tag → :latest + :<tag> + sha-<sha> (optional marked release, CI-gated).
+#   • Manual dispatch → same, CI-gated.
 on:
   workflow_run:
     workflows: [CI]
@@ -25,27 +19,19 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-# Group per triggering COMMIT so a later main push can't cancel an in-flight release, and
-# a tag + manual dispatch of the same commit serialize (don't both push :latest at once).
-# Re-runs targeting the same commit still supersede each other.
 concurrency:
   group: deploy-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: true
 
-# Supply-chain hardening: minimal default permissions.
 permissions:
   contents: read
 
 jobs:
-  # Enforce a GREEN CI on the exact commit before any deploy that moves :latest — both the
-  # manual escape hatch (workflow_dispatch) AND a v* release tag (a tag can be pushed onto
-  # any commit, incl. one that never passed CI). The workflow_run trigger is already CI-gated
-  # by definition (it only fires after CI completes), so this check is skipped there.
   verify-ci:
     name: Verify CI is green for this commit
     runs-on: ubuntu-latest
     permissions:
-      actions: read   # read the CI workflow's run conclusions for this SHA
+      actions: read
     steps:
       - name: Require a green CI run on this SHA (release tag & manual dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
@@ -53,8 +39,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sha="${{ github.sha }}"
-          # Take the MOST RECENT completed CI run for this commit — a re-run can flip the
-          # result, so "is the latest run green", not "was any run ever green".
           latest="$(gh api -X GET \
             "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
             -f head_sha="$sha" -f status=completed \
@@ -64,50 +48,29 @@ jobs:
             echo "::error::CI for ${sha} is not green (latest: ${latest:-none}). Refusing to publish :latest."
             exit 1
           fi
-          echo "CI is green for ${sha} — deploy of :latest allowed."
 
   build-and-push:
-    name: Build and push Docker images to GHCR
+    name: Build and push image to GHCR
     needs: [verify-ci]
     runs-on: ubuntu-latest
-    # THE green-CI gate for main pushes lives HERE: a workflow_run reaches build-and-push only when
-    # the triggering CI run succeeded, so a red CI on main never publishes :latest. (verify-ci
-    # additionally gates tag/dispatch, where green CI isn't implied by the trigger.) Do NOT drop the
-    # `workflow_run.conclusion == 'success'` clause — it is the only thing protecting prod on main.
+    # Green-CI gate for main pushes: a workflow_run reaches here only when the triggering
+    # CI succeeded — a red CI on main never publishes :latest. Do NOT drop this clause.
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
-    # Only this job needs to write packages.
     permissions:
       contents: read
       packages: write
-
-    strategy:
-      matrix:
-        include:
-          - name: app
-            dockerfile: Dockerfile.app
-            context: .
-          - name: mcp
-            dockerfile: Dockerfile.mcp
-            context: .
-
     steps:
-      # Resolve the commit to build and the image tags. Continuous deployment: EVERY trigger
-      # publishes :latest (→ prod) plus an immutable sha-<sha> (rollback). A v* tag additionally
-      # publishes the version image tag as a release marker.
       - name: Resolve commit + image tags
         id: meta
         env:
-          # head_sha is empty for tag/dispatch (then we fall back to github.sha). The env + shell
-          # `${VAR:-…}` also guards the rare "null" string an API response can give — a bare
-          # `${{ … || github.sha }}` expression would pass "null" through → a bogus :sha-null tag.
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           sha="${HEAD_SHA:-${{ github.sha }}}"
           if [ "$sha" = "null" ]; then sha="${{ github.sha }}"; fi
-          base="ghcr.io/${{ github.repository_owner }}/procure-ai-${{ matrix.name }}"
+          base="ghcr.io/${{ github.repository_owner }}/procure-ai"
           tags="${base}:latest"$'\n'"${base}:sha-${sha}"
           if [ "${{ github.event_name }}" = "push" ]; then
-            tags="${tags}"$'\n'"${base}:${{ github.ref_name }}"   # v* tag → version image marker
+            tags="${tags}"$'\n'"${base}:${{ github.ref_name }}"
           fi
           {
             echo "sha=${sha}"
@@ -116,8 +79,6 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # CI-triggered: check out the exact commit CI validated. Tag/manual: the resolved
-      # github.sha (tag commit or selected ref HEAD).
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ steps.meta.outputs.sha }}
@@ -127,24 +88,19 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # Built-in token, no extra PAT needed for push.
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Build and push ${{ matrix.name }} image
+      - name: Build and push backend image
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
+          context: .
+          target: backend
           push: true
-          # Bake the build version into the UI footer (ТЗ §6). meta.sha is the exact commit being
-          # built (same value as the sha-<sha> tag). Only Dockerfile.app declares GIT_SHA; the mcp
-          # image ignores an unknown build-arg, so passing it to the whole matrix is harmless.
           build-args: |
-            GIT_SHA=${{ steps.meta.outputs.sha }}
-          # sha-<sha> always (rollback); :latest + :<tag> only on release/dispatch (see meta step).
+            COMMIT_SHA=${{ steps.meta.outputs.sha }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
