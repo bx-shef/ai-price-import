@@ -50,7 +50,7 @@ const NUMBER_RE = /(?:№|N|#)\s*([\p{L}0-9][\p{L}0-9\-/]*)/u
 const DATE_RE = /(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})/
 
 const COL = {
-  name: /наимен|найменн|номенклат|товар|тавар|атау/i,
+  name: /наимен|найменн|номенклат|товар|тавар|тауар|атау|продук|позиц|описан|услуг|қызмет|өнім/i,
   article: /артик|артык/i,
   qty: /кол[-\s]?во|колич|колькас|сан|мөлшер/i,
   unit: /^ед\.?$|адзін|^адз\.?$|бірл/i,
@@ -68,20 +68,23 @@ const LANG_HINTS: Array<{ lang: DemoLang, re: RegExp }> = [
 export function parseNum(raw: string): number | undefined {
   const s = (raw ?? '').replace(/[\s\u00A0\u202F]/g, '').trim() // strip spaces incl. NBSP
   if (!s) return undefined
+  // Accounting negatives: parenthesized «(330,00)» or leading/trailing minus.
+  const negative = /^\(.*\)$/.test(s) || s.startsWith('-') || s.endsWith('-')
+  let body = s.replace(/^\(/, '').replace(/\)$/, '').replace(/-/g, '')
   // If both separators present, the last one is the decimal separator.
-  let norm = s
-  const lastComma = s.lastIndexOf(',')
-  const lastDot = s.lastIndexOf('.')
+  const lastComma = body.lastIndexOf(',')
+  const lastDot = body.lastIndexOf('.')
   if (lastComma >= 0 && lastDot >= 0) {
     const dec = Math.max(lastComma, lastDot)
-    norm = s.slice(0, dec).replace(/[.,]/g, '') + '.' + s.slice(dec + 1)
+    body = body.slice(0, dec).replace(/[.,]/g, '') + '.' + body.slice(dec + 1)
   } else if (lastComma >= 0) {
-    norm = s.replace(/,/g, '.')
+    body = body.replace(/,/g, '.')
   }
-  const cleaned = norm.replace(/[^0-9.-]/g, '')
+  const cleaned = body.replace(/[^0-9.]/g, '')
   if (!/\d/.test(cleaned)) return undefined
   const n = Number(cleaned)
-  return Number.isFinite(n) ? n : undefined
+  if (!Number.isFinite(n)) return undefined
+  return negative ? -n : n
 }
 
 /** Detect the delimiter of a table by consistent column count across lines. */
@@ -177,18 +180,27 @@ export function extractDemo(input: string): DemoResult {
         continue
       }
       const name = pick(cells, roles.name)
-      if (!name) continue
+      const quantity = parseNum(pick(cells, roles.qty))
+      const price = parseNum(pick(cells, roles.price))
+      const sum = parseNum(pick(cells, roles.sum))
+      // A blank name cell on an otherwise numeric row = real data we must not silently
+      // drop (wrapped/continuation line). Keep it with a placeholder + one warning.
+      // A blank row with no numbers is just noise → skip.
+      if (!name) {
+        if (quantity === undefined && price === undefined && sum === undefined) continue
+        if (!warnings.includes('Есть строки без наименования')) warnings.push('Есть строки без наименования')
+      }
       if (items.length >= MAX_DEMO_ITEMS) {
         warnings.push('Показаны не все строки (демо-лимит)')
         break
       }
       items.push({
-        name,
+        name: name || '(без наименования)',
         article: pick(cells, roles.article) || undefined,
-        quantity: parseNum(pick(cells, roles.qty)),
+        quantity,
         unit: pick(cells, roles.unit) || undefined,
-        price: parseNum(pick(cells, roles.price)),
-        sum: parseNum(pick(cells, roles.sum))
+        price,
+        sum
       })
     }
     if (!roles) warnings.push('Таблица товаров не распознана')

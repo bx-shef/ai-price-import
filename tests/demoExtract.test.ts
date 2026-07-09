@@ -18,6 +18,11 @@ describe('parseNum', () => {
     expect(parseNum('')).toBeUndefined()
     expect(parseNum('—')).toBeUndefined()
   })
+  it('accounting negatives: parentheses and trailing/leading minus', () => {
+    expect(parseNum('(330,00)')).toBe(-330)
+    expect(parseNum('1 234,56-')).toBeCloseTo(-1234.56)
+    expect(parseNum('-42')).toBe(-42)
+  })
 })
 
 describe('extractDemo — Russian samples', () => {
@@ -123,5 +128,46 @@ describe('extractDemo — robustness', () => {
     expect(r.supplier?.taxIdKind).toBe('ИНН')
     expect(r.items).toHaveLength(1)
     expect(r.items[0]).toMatchObject({ name: 'Болт М6', quantity: 100, sum: 50 })
+  })
+  it('recognizes БИН / ИИН / ЖСН tax-id kinds', () => {
+    expect(extractDemo('БИН: 123456789012').supplier?.taxIdKind).toBe('БИН')
+    expect(extractDemo('ИИН 987654321098').supplier?.taxIdKind).toBe('ИИН')
+    expect(extractDemo('ЖСН: 111122223333').supplier?.taxIdKind).toBe('ЖСН')
+  })
+  it('language unknown when no locale hint present', () => {
+    expect(extractDemo('Just a plain english note.').language).toBe('unknown')
+  })
+  it('recognizes alternative name-column words (Продукция/Позиция/Услуга)', () => {
+    for (const head of ['Продукция', 'Позиция', 'Услуга', 'Тауар']) {
+      const r = extractDemo(`${head} | Кол-во | Цена | Сумма\nНечто | 2 | 5.00 | 10.00`)
+      expect(r.items).toHaveLength(1)
+      expect(r.items[0]?.name).toBe('Нечто')
+    }
+  })
+  it('keeps a numeric row with a blank name under a placeholder + warns', () => {
+    const text = 'Наименование | Кол-во | Цена | Сумма\n | 3 | 4.00 | 12.00'
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]?.name).toBe('(без наименования)')
+    expect(r.warnings).toContain('Есть строки без наименования')
+  })
+  it('parses a semicolon-delimited table', () => {
+    const text = 'Наименование;Кол-во;Цена;Сумма\nГайка;10;0.30;3.00'
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]).toMatchObject({ name: 'Гайка', quantity: 10, sum: 3 })
+  })
+})
+
+describe('extractDemo — invoice/waybill totals across languages', () => {
+  it('invoice-ru totals', () => {
+    const r = extractDemo(demo('invoice-ru.txt'))
+    expect(r.totals).toMatchObject({ sum: 1172, vat: 234.4, total: 1406.4 })
+  })
+  it('be grand-total label «усяго да аплаты»', () => {
+    expect(extractDemo(demo('invoice-be.txt')).totals.total).toBe(1190.4)
+  })
+  it('kk grand-total label «барлығы төлеуге»', () => {
+    expect(extractDemo(demo('invoice-kk.txt')).totals.total).toBe(1111.04)
   })
 })

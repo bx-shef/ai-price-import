@@ -42,8 +42,10 @@ describe('createRateLimiter — 3 per 10 min window', () => {
 })
 
 describe('clientKey', () => {
-  it('takes the first XFF hop, trims, ignores later hops', () => {
-    expect(clientKey('203.0.113.5, 10.0.0.1', '10.0.0.9')).toBe('203.0.113.5')
+  it('takes the LAST XFF hop (nginx appends the real peer; earlier hops are spoofable)', () => {
+    // Attacker sends "1.2.3.4"; nginx appends the true peer 203.0.113.5 at the end.
+    expect(clientKey('1.2.3.4, 203.0.113.5', '203.0.113.5')).toBe('203.0.113.5')
+    expect(clientKey('203.0.113.5', '10.0.0.9')).toBe('203.0.113.5')
   })
   it('falls back to the socket address, then "unknown"', () => {
     expect(clientKey(undefined, '198.51.100.7')).toBe('198.51.100.7')
