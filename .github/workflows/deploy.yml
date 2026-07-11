@@ -50,7 +50,7 @@ jobs:
           fi
 
   build-and-push:
-    name: Build and push image to GHCR
+    name: Build and push ${{ matrix.target }} image to GHCR
     needs: [verify-ci]
     runs-on: ubuntu-latest
     # Green-CI gate for main pushes: a workflow_run reaches here only when the triggering
@@ -59,6 +59,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        # backend = Nitro (pages+API+pipeline); app = front nginx (proxy/limit_req/CSP).
+        include:
+          - target: backend
+            suffix: ''
+          - target: app
+            suffix: '-app'
     steps:
       - name: Resolve commit + image tags
         id: meta
@@ -67,7 +75,7 @@ jobs:
         run: |
           sha="${HEAD_SHA:-${{ github.sha }}}"
           if [ "$sha" = "null" ]; then sha="${{ github.sha }}"; fi
-          base="ghcr.io/${{ github.repository_owner }}/procure-ai"
+          base="ghcr.io/${{ github.repository_owner }}/procure-ai${{ matrix.suffix }}"
           tags="${base}:latest"$'\n'"${base}:sha-${sha}"
           if [ "${{ github.event_name }}" = "push" ]; then
             tags="${tags}"$'\n'"${base}:${{ github.ref_name }}"
@@ -93,14 +101,14 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Build and push backend image
+      - name: Build and push ${{ matrix.target }} image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          target: backend
+          target: ${{ matrix.target }}
           push: true
           build-args: |
             COMMIT_SHA=${{ steps.meta.outputs.sha }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}

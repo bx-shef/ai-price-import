@@ -1,0 +1,74 @@
+# Production compose for procure-ai — behind the SHARED nginx-proxy + acme-companion
+# (external network `proxy-net`, as with currency-converter / client-bank-alfa-by).
+# GHCR images + Watchtower auto-update. One domain: price-import.bx-shef.by.
+#
+# Server prep (once): shared `nginx-proxy` + `acme-companion` + a global Watchtower
+# already run on `proxy-net`. Then here:  docker compose -f docker-compose.prod.yml up -d
+# Secrets come from a git-ignored `.env` next to this file.
+services:
+  # Front reverse proxy: TLS is terminated by the shared nginx-proxy, which routes
+  # the vhost here; this adds login rate-limit, internal-endpoint deny, CSP, body caps.
+  app:
+    image: ghcr.io/bx-shef/procure-ai-app:latest
+    environment:
+      VIRTUAL_HOST: price-import.bx-shef.by
+      VIRTUAL_PORT: "8080"
+      LETSENCRYPT_HOST: price-import.bx-shef.by
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+    depends_on:
+      - backend
+    networks:
+      - proxy-net
+      - internal
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    restart: unless-stopped
+
+  # Nitro: prerendered pages + /api + in-process pipeline workers (BullMQ).
+  backend:
+    image: ghcr.io/bx-shef/procure-ai:latest
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - uploads:/data/uploads
+    networks:
+      - internal
+    # Untrusted files run through libreoffice/tesseract — bound memory vs a decode bomb.
+    mem_limit: 2g
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-procure}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-procure}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    networks:
+      - internal
+    restart: unless-stopped
+
+networks:
+  # Created once on the server by the shared nginx-proxy stack.
+  proxy-net:
+    external: true
+  internal:
+    driver: bridge
+
+volumes:
+  uploads: {}
+  pgdata: {}
+  redisdata: {}

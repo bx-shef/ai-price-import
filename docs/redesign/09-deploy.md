@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-08
+> Last reviewed: 2026-07-09
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -17,9 +17,19 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 ## Сборка и запуск
 
 - **Локально:** `cp .env.example .env` → заполнить → `docker compose up --build`. Backend на `:3000`.
-- **Прод:** CI (`.github/workflows/redesign-ci.yml`) собирает образ; публикацию в **GHCR** + деплой
-  через **Watchtower** добить по образцу `currency-converter`/`client-bank-alfa-by` (matrix build →
-  `docker-compose.prod.yml` с GHCR-образами). CI уже валидирует, что образ **собирается** (docker-build job).
+- **Прод:** домен **`price-import.bx-shef.by`** за общим `nginx-proxy` + `acme-companion` (сеть
+  `proxy-net`, как `currency-converter`). CI `deploy.yml` (workflow_run после зелёного `ci`) собирает
+  и пушит в **GHCR два образа** (matrix `backend`+`app`): `ghcr.io/bx-shef/procure-ai` (Nitro:
+  страницы+API+пайплайн) и `ghcr.io/bx-shef/procure-ai-app` (фронт-nginx: proxy/limit_req/CSP).
+  `docker-compose.prod.yml` поднимает `app`+`backend`+`db`+`redis`; **Watchtower** авто-обновляет
+  образы с меткой `com.centurylinklabs.watchtower.enable=true`. `ci.yml` валидирует сборку **обоих**
+  образов на каждом PR (docker-build matrix; app-стадия гоняет `nginx -t`).
+
+  **Развёртывание на общем сервере:**
+  1. A-запись `price-import.bx-shef.by → <IP>` (общий сервер).
+  2. `.env` рядом с `docker-compose.prod.yml` (секреты; см. ниже) — в git не коммитим.
+  3. `docker compose -f docker-compose.prod.yml up -d` → acme выпустит TLS автоматически.
+  4. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
 
 ## Env (полный список — `.env.example`)
 
