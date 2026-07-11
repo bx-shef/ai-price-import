@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useSettings } from '~/composables/useSettings'
+import { useCatalogProperties } from '~/composables/useCatalogProperties'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -10,6 +11,15 @@ useHead({ title: 'Настройки импорта' })
 
 const { mapping, loading, saving, saved, error, load, save } = useSettings()
 onMounted(load)
+
+// Supplier-article field: searchable picker over the portal's catalog product
+// properties (P7). The model carries the property CODE (string); coerce the picker's
+// `string | undefined` to the mapping's non-optional field.
+const { fetcher: articleFetcher } = useCatalogProperties()
+const articleField = computed<string | undefined>({
+  get: () => mapping.value.article.field || undefined,
+  set: (v) => { mapping.value.article.field = v ?? '' }
+})
 
 const TARGET_PRESETS = [
   { id: 2, label: 'Сделка' },
@@ -75,10 +85,11 @@ const ON_MISSING_ITEMS = [
 
       <!-- Поле артикула поставщика -->
       <B24FormField label="Поле артикула поставщика">
-        <B24Input
-          v-model="mapping.article.field"
-          placeholder="например, PROPERTY_123 или свойство каталога"
-          class="w-full"
+        <AsyncSearchSelect
+          v-model="articleField"
+          :fetcher="articleFetcher"
+          :min-chars="0"
+          placeholder="Выберите свойство каталога…"
         />
         <B24RadioGroup
           v-model="mapping.article.kind"
