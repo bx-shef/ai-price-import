@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { bumpCounter, METRICS, readCounters } from '../server/utils/metricsStore'
+import { bumpCounter, METRICS, readCounters, resetCounters } from '../server/utils/metricsStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -38,5 +38,14 @@ describe('readCounters', () => {
   })
   it('empty when no rows', async () => {
     expect(await readCounters('m', fakeQuery([]).q)).toEqual({})
+  })
+})
+
+describe('resetCounters', () => {
+  it('deletes only the caller portal counters (member-scoped)', async () => {
+    const { q, calls } = fakeQuery()
+    await resetCounters('m42', q)
+    expect(calls[0]!.sql).toContain('DELETE FROM metrics_counter WHERE member_id=$1')
+    expect(calls[0]!.params).toEqual(['m42'])
   })
 })
