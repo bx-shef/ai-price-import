@@ -158,7 +158,7 @@ const buildHref = commitUrl(commitSha as string)
           :href="buildHref"
           target="_blank"
           rel="noopener noreferrer"
-          class="mt-1 inline-block text-xs text-slate-600 underline decoration-dotted underline-offset-2 transition hover:text-slate-400"
+          class="mt-1 inline-block text-xs text-slate-400 underline decoration-dotted underline-offset-2 transition hover:text-slate-200"
         >сборка {{ buildSha }}</a>
       </section>
     </div>
