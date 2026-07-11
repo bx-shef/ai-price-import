@@ -8,6 +8,7 @@ import {
   LANDING_SUBTITLE,
   LANDING_TITLE
 } from '~/utils/landing'
+import { shortSha, commitUrl } from '~/utils/build'
 
 // Public marketing landing (etap 4). Dark brand shell (vibecode palette) — the
 // public face; in-portal pages keep their own light theme.
@@ -16,6 +17,12 @@ useHead({
   bodyAttrs: { class: 'bg-[#05010f]' }
 })
 const year = copyrightYears(2026, 2026)
+
+// Footer build link: which commit is live (deploy traceability). SHA from
+// NUXT_PUBLIC_COMMIT_SHA (CI passes github.sha; 'dev' locally → links to repo root).
+const { public: { commitSha } } = useRuntimeConfig()
+const buildSha = shortSha(commitSha as string) || 'dev'
+const buildHref = commitUrl(commitSha as string)
 </script>
 
 <template>
@@ -147,6 +154,12 @@ const year = copyrightYears(2026, 2026)
         <p class="mt-12 text-xs text-slate-500">
           © {{ year }} · {{ LANDING_PUBLISHER }}
         </p>
+        <a
+          :href="buildHref"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="mt-1 inline-block text-xs text-slate-600 underline decoration-dotted underline-offset-2 transition hover:text-slate-400"
+        >сборка {{ buildSha }}</a>
       </section>
     </div>
   </main>
