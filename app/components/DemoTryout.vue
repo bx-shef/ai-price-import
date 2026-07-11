@@ -81,7 +81,7 @@ async function upload(file: File) {
     }
   } catch (err: unknown) {
     const data = (err as { data?: { error?: string } })?.data
-    error.value = data?.error || 'Ошибка обработки. Для демо подойдёт текстовый файл (.txt/.csv).'
+    error.value = data?.error || 'Ошибка обработки. Для демо подойдёт текст (.txt/.csv) или Excel (.xlsx).'
   } finally {
     loading.value = false
   }
@@ -146,10 +146,10 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
       @drop.prevent="onDrop"
     >
       <span class="text-slate-300">Перетащите файл сюда или нажмите, чтобы выбрать</span>
-      <span class="mt-1 text-xs text-slate-500">Для демо: текстовый файл (.txt/.csv), до 1 МБ</span>
+      <span class="mt-1 text-xs text-slate-500">Для демо: текст (.txt/.csv) или Excel (.xlsx), до 1 МБ</span>
       <input
         type="file"
-        accept=".txt,.csv,.tsv,text/plain"
+        accept=".txt,.csv,.tsv,.xlsx,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         class="hidden"
         @change="onFile"
       >

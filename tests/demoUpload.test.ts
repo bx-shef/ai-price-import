@@ -11,15 +11,16 @@ describe('ext', () => {
 })
 
 describe('validateDemoFile', () => {
-  it('accepts txt/csv/tsv within the size cap', () => {
+  it('accepts txt/csv/tsv + xlsx within the size cap', () => {
     expect(validateDemoFile('doc.txt', 100)).toEqual({ ok: true })
     expect(validateDemoFile('data.csv', 100).ok).toBe(true)
+    expect(validateDemoFile('price.xlsx', 100).ok).toBe(true) // Excel now supported
   })
   it('rejects empty (400), oversized (413), wrong ext (415)', () => {
     expect(validateDemoFile('doc.txt', 0)).toMatchObject({ ok: false, status: 400 })
     expect(validateDemoFile('doc.txt', MAX_DEMO_BYTES + 1)).toMatchObject({ ok: false, status: 413 })
-    expect(validateDemoFile('doc.pdf', 100)).toMatchObject({ ok: false, status: 415 })
-    expect(validateDemoFile('doc.xlsx', 100)).toMatchObject({ ok: false, status: 415 })
+    expect(validateDemoFile('doc.pdf', 100)).toMatchObject({ ok: false, status: 415 }) // PDF still full-version only
+    expect(validateDemoFile('scan.jpg', 100)).toMatchObject({ ok: false, status: 415 })
   })
 })
 

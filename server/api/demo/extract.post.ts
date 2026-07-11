@@ -1,6 +1,7 @@
 import { extractDemo } from '~/utils/demoExtract'
 import { createRateLimiter, clientKey } from '../../utils/demoRateLimit'
-import { decodeText, validateDemoFile, MAX_DEMO_BYTES } from '../../utils/demoUpload'
+import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, MAX_DEMO_BYTES } from '../../utils/demoUpload'
+import { xlsxToText } from '../../utils/demoXlsx'
 
 // POST /api/demo/extract — PUBLIC landing tryout. NO auth, NO Bitrix24, NO storage.
 // Accepts a small text document (txt/csv), runs the deterministic extractor, returns
@@ -54,7 +55,21 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  const result = extractDemo(decodeText(file.data))
+  // Spreadsheet → tab-separated text (row/col-capped); text file → decode. Then the
+  // same deterministic extractor. An xlsx parse failure is a 422, not a 500.
+  let text: string
+  if (DEMO_XLSX_EXT.includes(ext(file.filename))) {
+    try {
+      text = await xlsxToText(file.data)
+    } catch {
+      setResponseStatus(event, 422)
+      return { error: 'Не удалось прочитать Excel-файл. Попробуйте .xlsx или текстовую выгрузку.' }
+    }
+  } else {
+    text = decodeText(file.data)
+  }
+
+  const result = extractDemo(text)
   return {
     result,
     notice: 'Демо-режим: файл обрабатывается публично и не сохраняется. Не загружайте конфиденциальные документы.',

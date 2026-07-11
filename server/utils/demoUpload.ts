@@ -1,8 +1,10 @@
 // Pure helpers for the public demo endpoint (extension/size validation + text decode).
 // Kept out of the .post.ts handler so they can be unit-tested without an h3 event.
 
-export const MAX_DEMO_BYTES = 1024 * 1024 // 1 MB — plenty for a text document
-export const DEMO_ALLOWED_EXT = ['txt', 'csv', 'tsv', 'text']
+export const MAX_DEMO_BYTES = 1024 * 1024 // 1 MB — plenty for a text doc or a demo xlsx
+export const DEMO_ALLOWED_EXT = ['txt', 'csv', 'tsv', 'text', 'xlsx']
+/** Extensions parsed as a spreadsheet (vs. decoded as text). */
+export const DEMO_XLSX_EXT = ['xlsx']
 
 /** Lower-case extension without the dot, or '' when the name has none. */
 export function ext(name: string): string {
@@ -25,7 +27,7 @@ export function validateDemoFile(name: string, size: number): DemoFileVerdict {
     return {
       ok: false,
       status: 415,
-      error: 'Демо понимает текстовые выгрузки (.txt/.csv). Для PDF/сканов/Excel — полная версия внутри Bitrix24.'
+      error: 'Демо понимает текст (.txt/.csv) и Excel (.xlsx). Для PDF/сканов — полная версия внутри Bitrix24.'
     }
   }
   return { ok: true }
