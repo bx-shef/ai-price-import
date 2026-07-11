@@ -52,13 +52,15 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
     result.created || !result.errors.length ? 'done' : 'error',
     JSON.stringify({ entityId: result.entityId, created: result.created, warnings: result.warnings, errors: result.errors })
   )
-  // Dashboard counters: one document processed, plus (on success) the CRM entity and
-  // the product rows written. `errors` is bumped upstream (reportErrors) — not here.
-  if (deps.bumpMetrics) {
+  // Dashboard counters: one document processed, plus (on success) the CRM entity and the
+  // product rows ACTUALLY written (result.rowCount, after skips — not doc.items.length).
+  // An idempotent redelivery (already processed) re-counts nothing. `errors` is bumped
+  // upstream (reportErrors) — not here.
+  if (deps.bumpMetrics && !result.idempotent) {
     await bumpMetricsSafe(deps.bumpMetrics, job.memberId, {
       docs: 1,
       created: result.created ? 1 : 0,
-      lines: result.created ? loaded.doc.items.length : 0
+      lines: result.rowCount
     })
   }
   // Terminal now (status recorded, no crm-sync retry) — drop the raw client

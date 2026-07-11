@@ -38,6 +38,11 @@ export interface CrmSyncResult {
   entityTypeId: number
   entityId: number
   created: boolean
+  /** Product rows actually written (after skip-warn/skips) — the true «lines» count. */
+  rowCount: number
+  /** True when this was an idempotent resume (getExisting hit) — a redelivery of an
+   * already-processed job, so dashboard counters must NOT re-count it. */
+  idempotent: boolean
   warnings: string[]
   errors: string[]
 }
@@ -112,7 +117,7 @@ export async function runCrmSync(
   // Hard errors → report and DO NOT create a partial/wrong entity.
   if (errors.length) {
     await deps.reportErrors(errors, doc.supplier?.name)
-    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, warnings, errors }
+    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, warnings, errors }
   }
 
   // Idempotency: create + checkpoint before rows; on retry resume rows (productrow.set replaces).
@@ -166,7 +171,7 @@ export async function runCrmSync(
     }
   }
 
-  return { entityTypeId, entityId, created, warnings, errors }
+  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existing, warnings, errors }
 }
 
 function clampNonNeg(n: number, fallback = 0): number {

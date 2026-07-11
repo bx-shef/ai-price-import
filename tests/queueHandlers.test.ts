@@ -65,6 +65,30 @@ describe('handleCrmSyncJob', () => {
     expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 0, lines: 0 })
   })
 
+  it('idempotent redelivery re-counts nothing (docs not double-counted)', async () => {
+    const bumpMetrics = vi.fn(async () => {})
+    const cd = { ...crmDeps(), getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 99 })) }
+    const d = deps({ bumpMetrics, crmSyncDeps: vi.fn(() => cd) })
+    const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(r?.idempotent).toBe(true)
+    expect(bumpMetrics).not.toHaveBeenCalled()
+  })
+
+  it('lines uses rows actually written, not doc.items.length (skip-warn drops a line)', async () => {
+    const bumpMetrics = vi.fn(async () => {})
+    // 2 items, product missing + onMissing skip-warn → both rows skipped → rowCount 0.
+    const twoItem: ExtractedDocument = { ...doc, items: [
+      { name: 'a', price: 10, quantity: 1, unit: 'шт', vatRate: null },
+      { name: 'b', price: 5, quantity: 2, unit: 'шт', vatRate: null }
+    ] }
+    const m = defaultMapping()
+    m.units.dictionary = { шт: 796 }
+    m.product.onMissing = 'skip-warn'
+    const d = deps({ bumpMetrics, getMapping: vi.fn(async () => m), getDocument: vi.fn(async () => ({ doc: twoItem, signals: {} })) })
+    await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 0 })
+  })
+
   it('a metrics-write failure never fails the job', async () => {
     const bumpMetrics = vi.fn(async () => {
       throw new Error('db down')
