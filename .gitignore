@@ -24,6 +24,9 @@ dist/
 # Runtime
 uploads/
 
+# Visual-verification captures (may show a real portal's CRM data/domains) — dev-only
+screenshots/
+
 # Legacy code kept for porting — has its own toolchain; ignore its build artifacts
 legacy/**/.nuxt/
 legacy/**/node_modules/
