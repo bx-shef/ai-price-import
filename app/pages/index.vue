@@ -26,35 +26,137 @@ const buildHref = commitUrl(commitSha as string)
 </script>
 
 <template>
-  <main class="landing-root relative min-h-screen overflow-hidden bg-[#05010f] text-slate-200">
-    <!-- radial brand glow -->
-    <div
-      class="pointer-events-none absolute inset-0"
-      aria-hidden="true"
-    >
-      <div class="absolute left-1/2 top-[-10%] h-[520px] w-[820px] -translate-x-1/2 rounded-full bg-cyan-500/20 blur-[120px]" />
-      <div class="absolute right-[-5%] top-[30%] h-[380px] w-[380px] rounded-full bg-indigo-500/15 blur-[110px]" />
-    </div>
+  <div>
+    <LandingHeader />
 
-    <div class="relative">
-      <!-- Hero -->
-      <section class="relative mx-auto max-w-4xl px-6 pt-24 pb-16 text-center">
-        <div class="pointer-events-none absolute inset-0 opacity-50">
-          <ClientOnly>
-            <HeroGraph />
-          </ClientOnly>
-        </div>
-        <div class="relative z-10">
-          <span class="inline-block rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
-            Приложение для Bitrix24
-          </span>
-          <h1 class="mt-5 bg-gradient-to-b from-white to-slate-300 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl">
-            {{ LANDING_TITLE }}
-          </h1>
-          <p class="mx-auto mt-5 max-w-2xl text-lg text-slate-400">
-            {{ LANDING_SUBTITLE }}
+    <main
+      id="top"
+      class="landing-root relative min-h-screen bg-[#05010f] text-slate-200"
+    >
+      <!-- radial brand glow — clip the off-screen blurred blobs HERE (not on <main>),
+         so <main> has no overflow-hidden that would break the sticky LandingHeader. -->
+      <div
+        class="pointer-events-none absolute inset-0 overflow-hidden"
+        aria-hidden="true"
+      >
+        <div class="absolute left-1/2 top-[-10%] h-[520px] w-[820px] -translate-x-1/2 rounded-full bg-cyan-500/20 blur-[120px]" />
+        <div class="absolute right-[-5%] top-[30%] h-[380px] w-[380px] rounded-full bg-indigo-500/15 blur-[110px]" />
+      </div>
+
+      <div class="relative">
+        <!-- Hero -->
+        <section class="relative mx-auto max-w-4xl px-6 pt-24 pb-16 text-center">
+          <div class="pointer-events-none absolute inset-0 opacity-50">
+            <ClientOnly>
+              <HeroGraph />
+            </ClientOnly>
+          </div>
+          <div class="relative z-10">
+            <span class="inline-block rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
+              Приложение для Bitrix24
+            </span>
+            <h1 class="mt-5 bg-gradient-to-b from-white to-slate-300 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl">
+              {{ LANDING_TITLE }}
+            </h1>
+            <p class="mx-auto mt-5 max-w-2xl text-lg text-slate-400">
+              {{ LANDING_SUBTITLE }}
+            </p>
+            <div class="mt-9">
+              <NuxtLink
+                to="/app"
+                class="inline-block rounded-xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
+              >
+                {{ LANDING_CTA }}
+              </NuxtLink>
+            </div>
+          </div>
+        </section>
+
+        <!-- Live demo: attach a file → parsed supplier + goods -->
+        <section
+          id="demo"
+          class="mx-auto max-w-4xl px-6 py-14 scroll-mt-16"
+        >
+          <h2 class="mb-3 text-center text-2xl font-semibold text-white">
+            Попробуйте прямо сейчас
+          </h2>
+          <p class="mx-auto mb-8 max-w-2xl text-center text-sm text-slate-400">
+            Прикрепите КП, счёт или ТТН — покажем, что распознаём: подрядчика и таблицу товаров.
+            Демо разбирает документ и ничего не записывает.
           </p>
-          <div class="mt-9">
+          <ClientOnly>
+            <DemoTryout />
+          </ClientOnly>
+
+          <!-- Custom-dev banner -->
+          <div class="mx-auto mt-10 max-w-3xl rounded-2xl border border-cyan-400/20 bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 p-6 text-center">
+            <p class="text-slate-200">
+              Нужно под ваш процесс — свои поля, свои сущности, свой источник?
+              <span class="font-semibold text-white">Доработаем и развернём на ваших серверах.</span>
+            </p>
+            <p class="mt-1 text-sm text-slate-400">
+              {{ LANDING_PUBLISHER }} — Bitrix24-партнёр.
+            </p>
+          </div>
+        </section>
+
+        <!-- How it works -->
+        <section
+          id="how"
+          class="mx-auto max-w-4xl px-6 py-14 scroll-mt-16"
+        >
+          <h2 class="mb-10 text-center text-2xl font-semibold text-white">
+            Как это работает
+          </h2>
+          <div class="grid gap-5 sm:grid-cols-3">
+            <div
+              v-for="s in LANDING_STEPS"
+              :key="s.n"
+              class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur"
+            >
+              <div class="flex h-9 w-9 items-center justify-center rounded-full bg-cyan-500/15 text-sm font-semibold text-cyan-300 ring-1 ring-cyan-400/30">
+                {{ s.n }}
+              </div>
+              <h3 class="mt-4 font-semibold text-white">
+                {{ s.title }}
+              </h3>
+              <p class="mt-1.5 text-sm text-slate-400">
+                {{ s.text }}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Why us -->
+        <section
+          id="why"
+          class="mx-auto max-w-4xl px-6 py-14 scroll-mt-16"
+        >
+          <h2 class="mb-10 text-center text-2xl font-semibold text-white">
+            Почему мы
+          </h2>
+          <div class="grid gap-5 sm:grid-cols-2">
+            <div
+              v-for="f in LANDING_FEATURES"
+              :key="f.title"
+              class="rounded-2xl border border-white/10 bg-white/[0.03] p-6"
+            >
+              <h3 class="font-semibold text-cyan-300">
+                {{ f.title }}
+              </h3>
+              <p class="mt-1.5 text-sm text-slate-400">
+                {{ f.text }}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- CTA + footer -->
+        <section class="mx-auto max-w-4xl px-6 py-16 text-center">
+          <h2 class="text-2xl font-semibold text-white">
+            Импортируйте первый документ за минуту
+          </h2>
+          <div class="mt-7">
             <NuxtLink
               to="/app"
               class="inline-block rounded-xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
@@ -62,105 +164,17 @@ const buildHref = commitUrl(commitSha as string)
               {{ LANDING_CTA }}
             </NuxtLink>
           </div>
-        </div>
-      </section>
-
-      <!-- Live demo: attach a file → parsed supplier + goods -->
-      <section
-        id="demo"
-        class="mx-auto max-w-4xl px-6 py-14"
-      >
-        <h2 class="mb-3 text-center text-2xl font-semibold text-white">
-          Попробуйте прямо сейчас
-        </h2>
-        <p class="mx-auto mb-8 max-w-2xl text-center text-sm text-slate-400">
-          Прикрепите КП, счёт или ТТН — покажем, что распознаём: подрядчика и таблицу товаров.
-          Демо разбирает документ и ничего не записывает.
-        </p>
-        <ClientOnly>
-          <DemoTryout />
-        </ClientOnly>
-
-        <!-- Custom-dev banner -->
-        <div class="mx-auto mt-10 max-w-3xl rounded-2xl border border-cyan-400/20 bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 p-6 text-center">
-          <p class="text-slate-200">
-            Нужно под ваш процесс — свои поля, свои сущности, свой источник?
-            <span class="font-semibold text-white">Доработаем и развернём на ваших серверах.</span>
+          <p class="mt-12 text-xs text-slate-500">
+            © {{ year }} · {{ LANDING_PUBLISHER }}
           </p>
-          <p class="mt-1 text-sm text-slate-400">
-            {{ LANDING_PUBLISHER }} — Bitrix24-партнёр.
-          </p>
-        </div>
-      </section>
-
-      <!-- How it works -->
-      <section class="mx-auto max-w-4xl px-6 py-14">
-        <h2 class="mb-10 text-center text-2xl font-semibold text-white">
-          Как это работает
-        </h2>
-        <div class="grid gap-5 sm:grid-cols-3">
-          <div
-            v-for="s in LANDING_STEPS"
-            :key="s.n"
-            class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur"
-          >
-            <div class="flex h-9 w-9 items-center justify-center rounded-full bg-cyan-500/15 text-sm font-semibold text-cyan-300 ring-1 ring-cyan-400/30">
-              {{ s.n }}
-            </div>
-            <h3 class="mt-4 font-semibold text-white">
-              {{ s.title }}
-            </h3>
-            <p class="mt-1.5 text-sm text-slate-400">
-              {{ s.text }}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Why us -->
-      <section class="mx-auto max-w-4xl px-6 py-14">
-        <h2 class="mb-10 text-center text-2xl font-semibold text-white">
-          Почему мы
-        </h2>
-        <div class="grid gap-5 sm:grid-cols-2">
-          <div
-            v-for="f in LANDING_FEATURES"
-            :key="f.title"
-            class="rounded-2xl border border-white/10 bg-white/[0.03] p-6"
-          >
-            <h3 class="font-semibold text-cyan-300">
-              {{ f.title }}
-            </h3>
-            <p class="mt-1.5 text-sm text-slate-400">
-              {{ f.text }}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <!-- CTA + footer -->
-      <section class="mx-auto max-w-4xl px-6 py-16 text-center">
-        <h2 class="text-2xl font-semibold text-white">
-          Импортируйте первый документ за минуту
-        </h2>
-        <div class="mt-7">
-          <NuxtLink
-            to="/app"
-            class="inline-block rounded-xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
-          >
-            {{ LANDING_CTA }}
-          </NuxtLink>
-        </div>
-        <p class="mt-12 text-xs text-slate-500">
-          © {{ year }} · {{ LANDING_PUBLISHER }}
-        </p>
-        <a
-          :href="buildHref"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="mt-1 inline-block text-xs text-slate-400 underline decoration-dotted underline-offset-2 transition hover:text-slate-200"
-        >сборка {{ buildSha }}</a>
-      </section>
-    </div>
-  </main>
+          <a
+            :href="buildHref"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="mt-1 inline-block text-xs text-slate-400 underline decoration-dotted underline-offset-2 transition hover:text-slate-200"
+          >сборка {{ buildSha }}</a>
+        </section>
+      </div>
+    </main>
+  </div>
 </template>
