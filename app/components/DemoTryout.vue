@@ -13,7 +13,7 @@ const SAMPLES: Sample[] = [
   { id: 'invoice-ru', label: 'Счёт', lang: 'RU' },
   { id: 'ttn-ru', label: 'ТТН', lang: 'RU' },
   { id: 'kp-be', label: 'КП', lang: 'BY' },
-  { id: 'invoice-be', label: 'Рахунак', lang: 'BY' },
+  { id: 'invoice-be', label: 'Счёт', lang: 'BY' },
   { id: 'ttn-be', label: 'ТТН', lang: 'BY' },
   { id: 'kp-kk', label: 'Ұсыныс', lang: 'KZ' },
   { id: 'invoice-kk', label: 'Шот', lang: 'KZ' },
@@ -101,18 +101,40 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
   <div class="mx-auto max-w-3xl">
     <!-- Samples -->
     <p class="mb-3 text-sm text-slate-400">
-      Попробуйте на примере (рус / бел / каз):
+      Попробуйте на примере (РФ / РБ / Казахстан) — можно и скачать:
     </p>
     <div class="mb-6 flex flex-wrap gap-2">
-      <button
+      <span
         v-for="s in SAMPLES"
         :key="s.id"
-        type="button"
-        class="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-sm text-slate-200 transition hover:border-cyan-400/40 hover:bg-cyan-400/10"
-        @click="runSample(s)"
+        class="inline-flex items-stretch overflow-hidden rounded-lg border border-white/10 bg-white/[0.04]"
       >
-        {{ s.label }} <span class="text-slate-500">{{ s.lang }}</span>
-      </button>
+        <button
+          type="button"
+          class="px-3 py-1.5 text-sm text-slate-200 transition hover:bg-cyan-400/10"
+          @click="runSample(s)"
+        >
+          {{ s.label }} <span class="text-slate-500">{{ s.lang }}</span>
+        </button>
+        <a
+          :href="`/demo/${s.id}.txt`"
+          :download="`${s.id}.txt`"
+          class="flex items-center border-l border-white/10 px-2 text-slate-500 transition hover:bg-cyan-400/10 hover:text-cyan-300"
+          :aria-label="`Скачать пример: ${s.label} (${s.lang})`"
+          :title="`Скачать пример (${s.lang})`"
+        >
+          <svg
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />
+          </svg>
+        </a>
+      </span>
     </div>
 
     <!-- Dropzone -->

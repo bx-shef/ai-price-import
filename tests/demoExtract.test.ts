@@ -54,22 +54,24 @@ describe('extractDemo — Russian samples', () => {
   })
 })
 
-describe('extractDemo — Belarusian samples', () => {
-  it('КП be: пастаўшчык + УНП + найменне table', () => {
+describe('extractDemo — Belarus samples (Russian-language, per RB practice)', () => {
+  it('КП РБ: поставщик + УНП + таблица', () => {
     const r = extractDemo(demo('kp-be.txt'))
     expect(r.docType).toBe('quote')
-    expect(r.language).toBe('be')
-    expect(r.supplier?.name).toContain('БудМатэрыялы')
-    expect(r.supplier?.taxId).toBe('192778899')
+    expect(r.language).toBe('ru') // RB documents are written in Russian
+    expect(r.supplier?.name).toContain('СтройМатериалы')
+    expect(r.supplier?.taxId).toBe('192778899') // УНП preserved
     expect(r.items).toHaveLength(3)
     expect(r.totals.total).toBe(6724.8)
   })
-  it('рахунак-фактура be → invoice', () => {
+  it('счёт РБ → invoice', () => {
     const r = extractDemo(demo('invoice-be.txt'))
     expect(r.docType).toBe('invoice')
+    expect(r.language).toBe('ru')
+    expect(r.supplier?.taxId).toBe('101223344')
     expect(r.items).toHaveLength(3)
   })
-  it('таварна-транспартная be → waybill', () => {
+  it('товарно-транспортная накладная РБ → waybill', () => {
     const r = extractDemo(demo('ttn-be.txt'))
     expect(r.docType).toBe('waybill')
     expect(r.items).toHaveLength(3)
