@@ -7,8 +7,11 @@ import { opsTokenOk } from '../utils/operatorSession'
 // token via the X-Check-Token HEADER (never a query param → not in access logs);
 // nginx should `deny all` externally. Not the operator-session path (/api/ops/queues).
 export default defineEventHandler(async (event) => {
-  const cfg = useRuntimeConfig()
-  if (!opsTokenOk(String(cfg.b24ApplicationToken || ''), String(getHeader(event, 'x-check-token') || ''))) {
+  // process.env (bare name), NOT useRuntimeConfig — Nuxt only maps NUXT_-prefixed vars,
+  // so cfg.b24ApplicationToken is always '' at runtime and the token check would 403
+  // even when B24_APPLICATION_TOKEN is set. Matches envCheck / events.post.ts.
+  const expectedToken = process.env.B24_APPLICATION_TOKEN ?? ''
+  if (!opsTokenOk(expectedToken, String(getHeader(event, 'x-check-token') || ''))) {
     setResponseStatus(event, 403)
     return { error: 'forbidden' }
   }

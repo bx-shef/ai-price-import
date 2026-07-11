@@ -11,15 +11,19 @@ import type { FetchFn } from '../../utils/b24Rest'
 // Verifies application_token (fail-closed) then applies register/unregister.
 // Online events are not retried by B24 → we write synchronously here (no queue dependency).
 export default defineEventHandler(async (event) => {
-  const cfg = useRuntimeConfig()
   const body = await readRawBody(event, 'utf8') || ''
   const ev = extractEvent(parseBracketForm(body))
+
+  // Secrets come from process.env (bare names), NOT useRuntimeConfig(): Nuxt only
+  // overrides runtimeConfig from NUXT_-prefixed vars, but the deploy sets bare
+  // B24_TOKEN_ENC_KEY / B24_APPLICATION_TOKEN (env_file .env) — same as worker.ts /
+  // envCheck. Reading them via cfg would silently see '' and 500 every install.
 
   // Trust model (B24 «Безопасность в обработчиках»): a known portal is verified
   // against ITS stored application_token; a first install is authenticated via the
   // delivered access_token (application_token is learned, not pre-shared). The env
   // token is an OPTIONAL extra gate on first install — normally empty.
-  const envToken = String(cfg.b24ApplicationToken || '')
+  const envToken = process.env.B24_APPLICATION_TOKEN ?? ''
   const storedToken = (dbEnabled() && ev.memberId) ? await getApplicationToken(ev.memberId, query) : null
   const decision = decideB24Event(ev, storedToken, envToken)
   setResponseStatus(event, decision.status)
@@ -56,6 +60,14 @@ export default defineEventHandler(async (event) => {
   }
 
   // register: persist tokens (refresh encrypted at rest).
+  // KNOWN LIMITATION (low-sev, tracked): verifyInstallToken proves control of ev.domain,
+  // but we store under the client-supplied ev.memberId without binding member_id↔domain.
+  // An attacker who controls any real portal could pre-seed a row for a NOT-YET-installed
+  // victim's member_id (with their own application_token, write-once), so the victim's
+  // later genuine install 403s on the known-portal branch — a targeted install-poisoning
+  // DoS (no hijack/data-theft; needs the victim's member_id + un-installed state). Full
+  // fix = authenticate member_id from a trusted source (OAuth token exchange returns
+  // member_id) instead of trusting the event field. Deferred — not a deploy blocker.
   const refresh = String(auth.refresh_token ?? '')
   const now = Date.now()
   await saveToken({
@@ -63,7 +75,7 @@ export default defineEventHandler(async (event) => {
     domain: ev.domain || String(auth.domain ?? ''),
     clientEndpoint: String(auth.client_endpoint ?? ''),
     accessToken: String(auth.access_token ?? ''),
-    refreshTokenEnc: refresh ? encryptSecret(refresh, String(cfg.b24TokenEncKey || '')) : '',
+    refreshTokenEnc: refresh ? encryptSecret(refresh, process.env.B24_TOKEN_ENC_KEY ?? '') : '',
     applicationToken: ev.applicationToken,
     expiresIn: Number(auth.expires_in ?? 3600),
     issuedAtMs: now,
