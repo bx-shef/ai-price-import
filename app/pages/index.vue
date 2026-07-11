@@ -26,7 +26,10 @@ const buildHref = commitUrl(commitSha as string)
 </script>
 
 <template>
-  <main class="landing-root relative min-h-screen overflow-hidden bg-[#05010f] text-slate-200">
+  <main
+    id="top"
+    class="landing-root relative min-h-screen overflow-hidden bg-[#05010f] text-slate-200"
+  >
     <!-- radial brand glow -->
     <div
       class="pointer-events-none absolute inset-0"
@@ -37,6 +40,8 @@ const buildHref = commitUrl(commitSha as string)
     </div>
 
     <div class="relative">
+      <LandingHeader />
+
       <!-- Hero -->
       <section class="relative mx-auto max-w-4xl px-6 pt-24 pb-16 text-center">
         <div class="pointer-events-none absolute inset-0 opacity-50">
@@ -68,7 +73,7 @@ const buildHref = commitUrl(commitSha as string)
       <!-- Live demo: attach a file → parsed supplier + goods -->
       <section
         id="demo"
-        class="mx-auto max-w-4xl px-6 py-14"
+        class="mx-auto max-w-4xl px-6 py-14 scroll-mt-16"
       >
         <h2 class="mb-3 text-center text-2xl font-semibold text-white">
           Попробуйте прямо сейчас
@@ -94,7 +99,10 @@ const buildHref = commitUrl(commitSha as string)
       </section>
 
       <!-- How it works -->
-      <section class="mx-auto max-w-4xl px-6 py-14">
+      <section
+        id="how"
+        class="mx-auto max-w-4xl px-6 py-14 scroll-mt-16"
+      >
         <h2 class="mb-10 text-center text-2xl font-semibold text-white">
           Как это работает
         </h2>
@@ -118,7 +126,10 @@ const buildHref = commitUrl(commitSha as string)
       </section>
 
       <!-- Why us -->
-      <section class="mx-auto max-w-4xl px-6 py-14">
+      <section
+        id="why"
+        class="mx-auto max-w-4xl px-6 py-14 scroll-mt-16"
+      >
         <h2 class="mb-10 text-center text-2xl font-semibold text-white">
           Почему мы
         </h2>
