@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import ChevronLeftMIcon from '@bitrix24/b24icons-vue/outline/ChevronLeftMIcon'
-import CirclePlusIcon from '@bitrix24/b24icons-vue/outline/CirclePlusIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useImport } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
@@ -12,19 +11,17 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов' })
 
 const { jobs, loading, uploading, error, refresh, upload } = useImport()
-const fileInput = ref<HTMLInputElement | null>(null)
-const dragOver = ref(false)
 
 onMounted(refresh)
 
-async function onFiles(files: FileList | null) {
-  if (!files || !files.length) return
-  for (const f of Array.from(files)) await upload(f)
-  if (fileInput.value) fileInput.value.value = ''
-}
-function onDrop(e: DragEvent) {
-  dragOver.value = false
-  void onFiles(e.dataTransfer?.files ?? null)
+// Native B24FileUpload (multiple, built-in dropzone) → upload each picked file, then
+// clear the model so the same file can be re-selected. Per-file status shows in the
+// list below (fire-and-forget, matching the previous UX).
+const pending = ref<File[] | null>(null)
+async function onPicked(files: File[] | null | undefined) {
+  if (!files?.length) return
+  for (const f of files) await upload(f)
+  pending.value = null
 }
 
 const toneClass: Record<string, string> = {
@@ -60,42 +57,21 @@ const rows = computed(() => jobs.value.map(job => ({
       Загрузите накладную, счёт, КП или прайс — приложение найдёт контрагента и внесёт товары в CRM.
     </p>
 
-    <div
-      class="rounded-xl border-2 border-dashed p-8 text-center transition-colors"
-      :class="dragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-300'"
-      @dragover.prevent="dragOver = true"
-      @dragleave.prevent="dragOver = false"
-      @drop.prevent="onDrop"
-    >
-      <p class="mb-3 text-sm text-gray-600">
-        Перетащите файл(ы) сюда или
-      </p>
-      <B24Button
-        :icon="CirclePlusIcon"
-        color="air-primary"
-        :loading="uploading"
-        :disabled="uploading"
-        :label="uploading ? 'Загрузка…' : 'Выбрать файл'"
-        @click="fileInput?.click()"
-      />
-      <input
-        ref="fileInput"
-        type="file"
-        multiple
-        class="hidden"
-        accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.docx"
-        @change="onFiles(($event.target as HTMLInputElement).files)"
-      >
-      <p class="mt-3 text-xs text-gray-400">
-        PDF, изображения, Excel, Word · до 20 МБ
-      </p>
-    </div>
+    <B24FileUpload
+      v-model="pending"
+      multiple
+      accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.docx"
+      :disabled="uploading"
+      size="lg"
+      label="Перетащите файл(ы) сюда или нажмите"
+      description="PDF, изображения, Excel, Word · до 20 МБ"
+      @update:model-value="onPicked"
+    />
 
     <B24Alert
       v-if="error"
       class="mt-3"
       color="air-primary-warning"
-      variant="soft"
       :title="error"
     />
 

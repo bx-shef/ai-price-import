@@ -169,7 +169,6 @@ const toneClass: Record<string, string> = {
         v-if="metricsError"
         class="mt-3"
         color="air-primary-warning"
-        variant="soft"
         size="sm"
         :title="metricsError"
       />
@@ -179,7 +178,6 @@ const toneClass: Record<string, string> = {
       v-if="error"
       class="mt-3"
       color="air-primary-warning"
-      variant="soft"
       :title="error"
     />
 

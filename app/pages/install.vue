@@ -216,7 +216,6 @@ onMounted(runInstall)
                   :key="`g-${s}`"
                   :label="s"
                   color="air-primary-success"
-                  variant="soft"
                   size="sm"
                 />
                 <B24Badge
@@ -224,7 +223,6 @@ onMounted(runInstall)
                   :key="`m-${s}`"
                   :label="`${s} (нет)`"
                   color="air-primary-alert"
-                  variant="soft"
                   size="sm"
                 />
               </div>

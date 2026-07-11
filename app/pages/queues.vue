@@ -85,7 +85,6 @@ onMounted(async () => {
       v-if="error"
       class="mb-4"
       color="air-primary-warning"
-      variant="soft"
       :title="error"
     />
 

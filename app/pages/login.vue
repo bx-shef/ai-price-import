@@ -42,7 +42,6 @@ async function submit() {
         v-if="!enabled"
         class="mb-4"
         color="air-primary-warning"
-        variant="soft"
         title="Вход оператора отключён администратором."
       />
 
@@ -62,7 +61,6 @@ async function submit() {
           v-if="error"
           class="mt-2"
           color="air-primary-alert"
-          variant="soft"
           :title="error"
         />
       </div>
