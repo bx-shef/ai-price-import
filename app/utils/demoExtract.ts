@@ -88,16 +88,20 @@ export function parseNum(raw: string): number | undefined {
 }
 
 /**
- * Detect the table delimiter by counting how many lines split into ≥3 cells.
- * We require ≥2 such "wide" lines (header + ≥1 data), but we do NOT require EVERY
- * delimited line to be wide — a real table routinely ends with a short summary row
- * (`Итого|200`), which must not veto detection. First candidate with the most wide
+ * Detect the table delimiter by counting how many lines split into enough cells.
+ * Explicit delimiters (`|`/`\t`/`;`) need only ≥2 cells so a common 2-column price
+ * list (`Наименование | Цена`) is recognised; comma needs ≥3 because it collides with
+ * decimal commas («1 850,00»), so a 2-cell comma split is almost always a number, not
+ * a table. We require ≥2 such "wide" lines (header + ≥1 data), but we do NOT require
+ * EVERY delimited line to be wide — a real table routinely ends with a short summary
+ * row (`Итого|200`), which must not veto detection. First candidate with the most wide
  * lines wins; comma is last (ambiguous with decimal commas).
  */
 function detectDelimiter(lines: string[]): string | null {
   let best: { d: string, wide: number } | null = null
   for (const d of ['|', '\t', ';', ',']) {
-    const wide = lines.filter(l => l.includes(d) && l.split(d).length >= 3).length
+    const minCells = d === ',' ? 3 : 2
+    const wide = lines.filter(l => l.includes(d) && l.split(d).length >= minCells).length
     if (wide >= 2 && (!best || wide > best.wide)) best = { d, wide }
   }
   return best?.d ?? null
