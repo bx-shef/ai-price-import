@@ -17,6 +17,7 @@
     "typecheck": "nuxt prepare && vue-tsc --build .nuxt/tsconfig.json && vue-tsc --noEmit -p .nuxt/tsconfig.server.json",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
+    "screenshot": "node scripts/screenshot.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "dependencies": {
@@ -40,6 +41,7 @@
     "@vue/test-utils": "^2.4.11",
     "eslint": "^10.4.1",
     "happy-dom": "^20.10.1",
+    "playwright-core": "^1.56.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
     "vue-tsc": "^3.3.3"
