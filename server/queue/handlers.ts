@@ -29,6 +29,12 @@ export interface HandlerDeps {
    * after the status is recorded.
    */
   deleteDocument?: (memberId: string, jobId: string) => Promise<void>
+  /**
+   * Bump per-portal dashboard counters after a crm-sync (best-effort; absent in
+   * tests). Covers docs/created/lines; the `errors` counter is bumped upstream in
+   * crm-sync's reportErrors, so it is NOT set here (no double count).
+   */
+  bumpMetrics?: (memberId: string, deltas: Record<string, number>) => Promise<void>
 }
 
 /** Handle a crm-sync job: load doc+mapping, run the pure orchestration, record status. */
@@ -46,6 +52,15 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
     result.created || !result.errors.length ? 'done' : 'error',
     JSON.stringify({ entityId: result.entityId, created: result.created, warnings: result.warnings, errors: result.errors })
   )
+  // Dashboard counters: one document processed, plus (on success) the CRM entity and
+  // the product rows written. `errors` is bumped upstream (reportErrors) — not here.
+  if (deps.bumpMetrics) {
+    await bumpMetricsSafe(deps.bumpMetrics, job.memberId, {
+      docs: 1,
+      created: result.created ? 1 : 0,
+      lines: result.created ? loaded.doc.items.length : 0
+    })
+  }
   // Terminal now (status recorded, no crm-sync retry) — drop the raw client
   // document. Best-effort: never fail the job on a cleanup error.
   if (deps.deleteDocument) {
@@ -153,6 +168,13 @@ async function markProgress(fn: ((m: string, j: string) => Promise<void>) | unde
   try {
     await fn(memberId, jobId)
   } catch { /* progress is advisory */ }
+}
+
+/** Best-effort dashboard-counter bump — a metrics write must never fail the job. */
+async function bumpMetricsSafe(fn: (m: string, d: Record<string, number>) => Promise<void>, memberId: string, deltas: Record<string, number>): Promise<void> {
+  try {
+    await fn(memberId, deltas)
+  } catch { /* counters are advisory — never fail the import on a metrics write */ }
 }
 
 /** Best-effort raw-text cleanup — a failed sweep must never fail the job. */
