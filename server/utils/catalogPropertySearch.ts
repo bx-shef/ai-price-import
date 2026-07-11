@@ -35,10 +35,10 @@ export interface PropertySearchPage {
  * when no catalog is found (empty portal / missing scope).
  */
 export async function resolveMainIblockId(call: RestCall): Promise<number | null> {
-  const resp = await call('catalog.catalog.list', {}) as {
-    result?: { catalogs?: Array<Record<string, unknown>> }
-  }
-  const catalogs = resp?.result?.catalogs ?? []
+  // RestCall (makeRestCall) already returns the UNWRAPPED `result`, so read `catalogs`
+  // directly — NOT `result.catalogs` (that double-unwrap yields undefined in prod).
+  const resp = await call('catalog.catalog.list', {}) as { catalogs?: Array<Record<string, unknown>> }
+  const catalogs = resp?.catalogs ?? []
   const main = catalogs.find(c => c.productIblockId == null) ?? catalogs[0]
   const id = main ? Number(main.iblockId) : NaN
   return Number.isInteger(id) && id > 0 ? id : null
@@ -50,8 +50,8 @@ export async function resolveMainIblockId(call: RestCall): Promise<number | null
  * human name. A property with neither code nor a positive id is dropped (unreferenceable).
  */
 export function normalizeProperties(resp: unknown): PropertyOption[] {
-  const rows = (resp as { result?: { productProperties?: Array<Record<string, unknown>> } })
-    ?.result?.productProperties
+  // RestCall returns the UNWRAPPED result → read `productProperties` directly.
+  const rows = (resp as { productProperties?: Array<Record<string, unknown>> })?.productProperties
   if (!Array.isArray(rows)) return []
   const out: PropertyOption[] = []
   for (const p of rows) {

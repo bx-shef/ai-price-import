@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useSettings } from '~/composables/useSettings'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 
@@ -20,6 +20,20 @@ const articleField = computed<string | undefined>({
   get: () => mapping.value.article.field || undefined,
   set: (v) => { mapping.value.article.field = v ?? '' }
 })
+// Seed the picker's selected option so a SAVED code shows (as label) before the
+// property list is fetched (lazy, on first open) — otherwise the field looks blank.
+// On a real pick, capture the property's human label so it shows going forward.
+const selectedArticle = ref<Record<string, unknown> | undefined>()
+watch(() => mapping.value.article.field, (code) => {
+  if (!code) {
+    selectedArticle.value = undefined
+    return
+  }
+  if (selectedArticle.value?.value !== code) selectedArticle.value = { value: code, label: code }
+}, { immediate: true })
+function onArticlePicked(o: Record<string, unknown> | undefined) {
+  selectedArticle.value = o
+}
 
 const TARGET_PRESETS = [
   { id: 2, label: 'Сделка' },
@@ -88,8 +102,10 @@ const ON_MISSING_ITEMS = [
         <AsyncSearchSelect
           v-model="articleField"
           :fetcher="articleFetcher"
+          :selected-option="selectedArticle"
           :min-chars="0"
           placeholder="Выберите свойство каталога…"
+          @update:selected-option="onArticlePicked"
         />
         <B24RadioGroup
           v-model="mapping.article.kind"

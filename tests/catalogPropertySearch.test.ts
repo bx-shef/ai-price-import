@@ -7,25 +7,24 @@ import {
 } from '../server/utils/catalogPropertySearch'
 import type { RestCall } from '../server/utils/b24Rest'
 
-// Live-verified shapes (B24_HOOK, scope catalog):
-//   catalog.catalog.list → result.catalogs[] { iblockId, productIblockId, name }
-//   catalog.productProperty.list → result.productProperties[] { id, code, name, propertyType }
+// Shapes as a real RestCall (makeRestCall) delivers them: it UNWRAPS the B24 envelope
+// (returns `json.result`), so the core sees `{ catalogs }` / `{ productProperties }`
+// directly — NOT `{ result: { … } }`. (An earlier draft double-unwrapped `.result`;
+// tests returning the raw wire shape hid that the picker was always empty in prod.)
+//   catalog.catalog.list → { catalogs: [ { iblockId, productIblockId, name } ] }
+//   catalog.productProperty.list → { productProperties: [ { id, code, name, propertyType } ] }
 const CATALOGS = {
-  result: {
-    catalogs: [
-      { iblockId: 25, productIblockId: null, name: 'CRM Product Catalog' },
-      { iblockId: 27, productIblockId: 25, name: 'CRM Product Catalog (offers)' }
-    ]
-  }
+  catalogs: [
+    { iblockId: 25, productIblockId: null, name: 'CRM Product Catalog' },
+    { iblockId: 27, productIblockId: 25, name: 'CRM Product Catalog (offers)' }
+  ]
 }
 const PROPERTIES = {
-  result: {
-    productProperties: [
-      { id: 93, code: 'MORE_PHOTO', name: 'Image', propertyType: 'F' },
-      { id: 99, code: 'SUPPLIER_ARTICLE', name: 'Артикул поставщика', propertyType: 'S' },
-      { id: 100, code: '', name: 'Безымянное', propertyType: 'S' } // no code → PROPERTY_100
-    ]
-  }
+  productProperties: [
+    { id: 93, code: 'MORE_PHOTO', name: 'Image', propertyType: 'F' },
+    { id: 99, code: 'SUPPLIER_ARTICLE', name: 'Артикул поставщика', propertyType: 'S' },
+    { id: 100, code: '', name: 'Безымянное', propertyType: 'S' } // no code → PROPERTY_100
+  ]
 }
 
 /** Fake RestCall dispatching by method. */
@@ -42,11 +41,11 @@ describe('resolveMainIblockId', () => {
     expect(await resolveMainIblockId(fakeCall())).toBe(25)
   })
   it('falls back to the first catalog when none has a null parent', async () => {
-    const call = fakeCall({ 'catalog.catalog.list': { result: { catalogs: [{ iblockId: 40, productIblockId: 5 }] } } })
+    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [{ iblockId: 40, productIblockId: 5 }] } })
     expect(await resolveMainIblockId(call)).toBe(40)
   })
   it('returns null when there are no catalogs', async () => {
-    const call = fakeCall({ 'catalog.catalog.list': { result: { catalogs: [] } } })
+    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [] } })
     expect(await resolveMainIblockId(call)).toBeNull()
   })
 })
@@ -61,12 +60,12 @@ describe('normalizeProperties', () => {
     ])
   })
   it('drops a property with neither code nor a positive id', () => {
-    const opts = normalizeProperties({ result: { productProperties: [{ id: 0, code: '', name: 'X' }] } })
+    const opts = normalizeProperties({ productProperties: [{ id: 0, code: '', name: 'X' }] })
     expect(opts).toEqual([])
   })
   it('returns [] for a malformed response', () => {
     expect(normalizeProperties(null)).toEqual([])
-    expect(normalizeProperties({ result: {} })).toEqual([])
+    expect(normalizeProperties({})).toEqual([])
   })
 })
 
@@ -94,7 +93,7 @@ describe('searchCatalogProperties', () => {
     expect(page.hasMore).toBe(false)
   })
   it('no catalog → empty page (never throws)', async () => {
-    const call = fakeCall({ 'catalog.catalog.list': { result: { catalogs: [] } } })
+    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [] } })
     expect(await searchCatalogProperties(call, '')).toEqual({ items: [], hasMore: false })
   })
 })
