@@ -28,7 +28,9 @@ export default defineNuxtConfig({
   nitro: {
     prerender: {
       // Landing + in-portal + operator pages (static shells; data/actions via /api).
-      routes: ['/', '/app', '/import', '/settings', '/login', '/queues']
+      // /install is the B24 Marketplace install handler — must be prerendered so a HEAD
+      // request returns 200 for B24's URL validation.
+      routes: ['/', '/app', '/import', '/settings', '/login', '/queues', '/install']
     }
   },
 
