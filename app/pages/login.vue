@@ -47,7 +47,6 @@ async function submit() {
 
       <B24FormField label="Пароль">
         <B24Input
-          id="op-password"
           v-model="password"
           type="password"
           autocomplete="current-password"
