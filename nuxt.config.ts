@@ -11,14 +11,13 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
 
   runtimeConfig: {
-    // server-only (never exposed to client)
-    databaseUrl: '',
-    redisUrl: '',
-    b24ClientId: '',
-    b24ClientSecret: '',
-    b24ApplicationToken: '',
-    b24TokenEncKey: '',
+    // Server secrets are read from process.env directly (bare names: DATABASE_URL,
+    // REDIS_URL, B24_CLIENT_ID/SECRET, B24_APPLICATION_TOKEN, B24_TOKEN_ENC_KEY) — NOT
+    // via runtimeConfig, because Nuxt only overrides runtimeConfig from NUXT_-prefixed
+    // env, while the deploy (.env / env_file) uses the bare names. Declaring them here
+    // would create dead '' keys that silently shadow the real env (500s / inert gates).
     public: {
+      // Client-exposed; correctly overridden by NUXT_PUBLIC_-prefixed env at runtime.
       siteUrl: '',
       commitSha: 'dev'
     }

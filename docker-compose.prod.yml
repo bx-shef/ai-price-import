@@ -60,7 +60,15 @@ services:
     # Ни хост-порта, ни proxy-net — доступен только через app's /api/ proxy_pass.
     expose:
       - "3000"
+    # Все переменные backend — из .env (bare-имена: B24_TOKEN_ENC_KEY, B24_CLIENT_*,
+    # B24_APPLICATION_TOKEN, ANTHROPIC_*, NUXT_PUBLIC_SITE_URL, OPERATOR_*, UPLOAD_DIR …).
     env_file: .env
+    environment:
+      # DATABASE_URL/REDIS_URL — единый источник: строим из POSTGRES_* и имён сервисов,
+      # переопределяя env_file, чтобы пароль не разъезжался с `db` (иначе backend молча
+      # не подключится к БД, а healthcheck пройдёт). См. review finding (DATABASE_URL drift).
+      DATABASE_URL: postgres://${POSTGRES_USER:-procure}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-procure}
+      REDIS_URL: redis://redis:6379
     # Liveness — образ несёт свой HEALTHCHECK (node fetch /api/health); дублируем в compose,
     # чтобы `docker compose ps` показывал здоровье backend сразу (node есть в образе, wget нет).
     healthcheck:
