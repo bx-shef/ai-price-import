@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useSettings } from '~/composables/useSettings'
+import { useCatalogProperties } from '~/composables/useCatalogProperties'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -10,6 +11,29 @@ useHead({ title: 'Настройки импорта' })
 
 const { mapping, loading, saving, saved, error, load, save } = useSettings()
 onMounted(load)
+
+// Supplier-article field: searchable picker over the portal's catalog product
+// properties (P7). The model carries the property CODE (string); coerce the picker's
+// `string | undefined` to the mapping's non-optional field.
+const { fetcher: articleFetcher } = useCatalogProperties()
+const articleField = computed<string | undefined>({
+  get: () => mapping.value.article.field || undefined,
+  set: (v) => { mapping.value.article.field = v ?? '' }
+})
+// Seed the picker's selected option so a SAVED code shows (as label) before the
+// property list is fetched (lazy, on first open) — otherwise the field looks blank.
+// On a real pick, capture the property's human label so it shows going forward.
+const selectedArticle = ref<Record<string, unknown> | undefined>()
+watch(() => mapping.value.article.field, (code) => {
+  if (!code) {
+    selectedArticle.value = undefined
+    return
+  }
+  if (selectedArticle.value?.value !== code) selectedArticle.value = { value: code, label: code }
+}, { immediate: true })
+function onArticlePicked(o: Record<string, unknown> | undefined) {
+  selectedArticle.value = o
+}
 
 const TARGET_PRESETS = [
   { id: 2, label: 'Сделка' },
@@ -75,10 +99,13 @@ const ON_MISSING_ITEMS = [
 
       <!-- Поле артикула поставщика -->
       <B24FormField label="Поле артикула поставщика">
-        <B24Input
-          v-model="mapping.article.field"
-          placeholder="например, PROPERTY_123 или свойство каталога"
-          class="w-full"
+        <AsyncSearchSelect
+          v-model="articleField"
+          :fetcher="articleFetcher"
+          :selected-option="selectedArticle"
+          :min-chars="0"
+          placeholder="Выберите свойство каталога…"
+          @update:selected-option="onArticlePicked"
         />
         <B24RadioGroup
           v-model="mapping.article.kind"
