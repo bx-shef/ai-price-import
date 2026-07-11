@@ -4,6 +4,7 @@ import { useSettings } from '~/composables/useSettings'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
+// UI on native b24ui controls (B24Button/B24Input/B24Select/B24Switch/B24RadioGroup).
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
 
@@ -14,6 +15,17 @@ const TARGET_PRESETS = [
   { id: 2, label: 'Сделка' },
   { id: 31, label: 'Смарт-счёт' },
   { id: 7, label: 'Коммерческое предложение' }
+]
+
+const ARTICLE_KIND_ITEMS = [
+  { label: 'построчно (текст)', value: 'text' },
+  { label: 'через разделитель', value: 'string' }
+]
+
+const ON_MISSING_ITEMS = [
+  { label: 'Пропустить строку (предупреждение)', value: 'skip-warn' },
+  { label: 'Создать товар в каталоге', value: 'create' },
+  { label: 'Внести как произвольную позицию', value: 'freeform' }
 ]
 </script>
 
@@ -26,133 +38,88 @@ const TARGET_PRESETS = [
       Куда и как приложение вносит товары из документов в вашем портале.
     </p>
 
-    <p
+    <B24Alert
       v-if="error"
-      class="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700"
-    >
-      {{ error }}
-    </p>
+      class="mb-4"
+      color="air-primary-warning"
+      variant="soft"
+      :title="error"
+    />
 
     <div
       class="space-y-6"
       :class="{ 'pointer-events-none opacity-50': loading }"
     >
       <!-- Целевая сущность -->
-      <section>
-        <label class="mb-1 block text-sm font-medium text-gray-700">Целевая сущность CRM</label>
+      <B24FormField label="Целевая сущность CRM">
         <div class="flex flex-wrap gap-2">
-          <button
+          <B24Button
             v-for="p in TARGET_PRESETS"
             :key="p.id"
-            type="button"
-            class="rounded-lg border px-3 py-1.5 text-sm transition-colors"
-            :class="mapping.defaultTarget.entityTypeId === p.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-600 hover:border-gray-400'"
-            @click="mapping.defaultTarget.entityTypeId = p.id"
-          >
-            {{ p.label }}
-          </button>
+            :label="p.label"
+            size="sm"
+            :color="mapping.defaultTarget.entityTypeId === p.id ? 'air-primary' : 'air-tertiary-no-accent'"
+            :aria-pressed="mapping.defaultTarget.entityTypeId === p.id"
+            @click="() => { mapping.defaultTarget.entityTypeId = p.id }"
+          />
         </div>
         <div class="mt-2 flex items-center gap-2">
           <span class="text-xs text-gray-500">или ID типа (смарт-процесс ≥ 1000):</span>
-          <input
-            v-model.number="mapping.defaultTarget.entityTypeId"
-            type="number"
-            min="1"
-            class="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
-          >
+          <B24InputNumber
+            v-model="mapping.defaultTarget.entityTypeId"
+            :min="1"
+            class="w-28"
+            aria-label="ID типа целевой сущности"
+          />
         </div>
-      </section>
+      </B24FormField>
 
       <!-- Поле артикула поставщика -->
-      <section>
-        <label class="mb-1 block text-sm font-medium text-gray-700">Поле артикула поставщика</label>
-        <input
+      <B24FormField label="Поле артикула поставщика">
+        <B24Input
           v-model="mapping.article.field"
-          type="text"
           placeholder="например, PROPERTY_123 или свойство каталога"
-          class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-        >
-        <div class="mt-2 flex gap-4 text-sm text-gray-600">
-          <label class="flex items-center gap-1.5">
-            <input
-              v-model="mapping.article.kind"
-              type="radio"
-              value="text"
-            > построчно (текст)
-          </label>
-          <label class="flex items-center gap-1.5">
-            <input
-              v-model="mapping.article.kind"
-              type="radio"
-              value="string"
-            > через разделитель
-          </label>
-        </div>
-        <input
+          class="w-full"
+        />
+        <B24RadioGroup
+          v-model="mapping.article.kind"
+          :items="ARTICLE_KIND_ITEMS"
+          orientation="horizontal"
+          class="mt-2"
+        />
+        <B24Input
           v-if="mapping.article.kind === 'string'"
           v-model="mapping.article.delimiter"
-          type="text"
           placeholder="разделитель, например ;"
-          class="mt-2 w-32 rounded-md border border-gray-300 px-2 py-1 text-sm"
-        >
-      </section>
+          class="mt-2 w-32"
+        />
+      </B24FormField>
 
       <!-- Стратегия товара -->
-      <section>
-        <label class="mb-1 block text-sm font-medium text-gray-700">Если товар не найден</label>
-        <select
+      <B24FormField label="Если товар не найден">
+        <B24Select
           v-model="mapping.product.onMissing"
-          class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-        >
-          <option value="skip-warn">
-            Пропустить строку (предупреждение)
-          </option>
-          <option value="create">
-            Создать товар в каталоге
-          </option>
-          <option value="freeform">
-            Внести как произвольную позицию
-          </option>
-        </select>
-      </section>
+          :items="ON_MISSING_ITEMS"
+          class="w-full"
+        />
+      </B24FormField>
 
       <!-- Сохранение файла -->
-      <section class="flex items-center justify-between">
-        <div>
-          <span
-            id="savefile-label"
-            class="block text-sm font-medium text-gray-700"
-          >Сохранять исходный файл</span>
-          <p class="text-xs text-gray-500">
-            На общий Диск портала, в папку приложения по месяцам.
-          </p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-labelledby="savefile-label"
-          :aria-checked="mapping.saveFile"
-          class="relative h-6 w-11 rounded-full transition-colors"
-          :class="mapping.saveFile ? 'bg-blue-600' : 'bg-gray-300'"
-          @click="mapping.saveFile = !mapping.saveFile"
-        >
-          <span
-            class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform"
-            :class="mapping.saveFile ? 'translate-x-5' : ''"
-          />
-        </button>
-      </section>
+      <B24Switch
+        v-model="mapping.saveFile"
+        label="Сохранять исходный файл"
+        description="На общий Диск портала, в папку приложения по месяцам."
+      />
     </div>
 
     <div class="mt-8 flex items-center gap-3">
-      <button
-        type="button"
-        class="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+      <B24Button
+        color="air-primary"
+        :loading="saving"
         :disabled="saving || loading"
+        :label="saving ? 'Сохранение…' : 'Сохранить'"
         @click="save"
-      >
-        {{ saving ? 'Сохранение…' : 'Сохранить' }}
-      </button>
+      />
       <span
         v-if="saved"
         class="text-sm text-green-600"

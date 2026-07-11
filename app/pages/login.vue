@@ -38,40 +38,44 @@ async function submit() {
         Служебная зона мониторинга импорта.
       </p>
 
-      <p
+      <B24Alert
         v-if="!enabled"
-        class="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700"
-      >
-        Вход оператора отключён администратором.
-      </p>
+        class="mb-4"
+        color="air-primary-warning"
+        variant="soft"
+        title="Вход оператора отключён администратором."
+      />
 
-      <label
-        for="op-password"
-        class="mb-1 block text-sm font-medium text-gray-700"
-      >Пароль</label>
-      <input
-        id="op-password"
-        v-model="password"
-        type="password"
-        autocomplete="current-password"
-        class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-        placeholder="••••••••"
-      >
+      <B24FormField label="Пароль">
+        <B24Input
+          id="op-password"
+          v-model="password"
+          type="password"
+          autocomplete="current-password"
+          placeholder="••••••••"
+          class="w-full"
+        />
+      </B24FormField>
 
-      <p
-        v-if="error"
-        class="mt-2 text-sm text-red-600"
-      >
-        {{ error }}
-      </p>
+      <div aria-live="assertive">
+        <B24Alert
+          v-if="error"
+          class="mt-2"
+          color="air-primary-alert"
+          variant="soft"
+          :title="error"
+        />
+      </div>
 
-      <button
+      <B24Button
         type="submit"
-        class="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+        class="mt-5"
+        color="air-primary"
+        block
+        :loading="busy"
         :disabled="busy || !password"
-      >
-        {{ busy ? 'Вход…' : 'Войти' }}
-      </button>
+        :label="busy ? 'Вход…' : 'Войти'"
+      />
     </form>
   </div>
 </template>

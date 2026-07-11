@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import ChevronLeftMIcon from '@bitrix24/b24icons-vue/outline/ChevronLeftMIcon'
+import CirclePlusIcon from '@bitrix24/b24icons-vue/outline/CirclePlusIcon'
+import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useImport } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
 
@@ -41,22 +44,15 @@ const rows = computed(() => jobs.value.map(job => ({
 
 <template>
   <div class="mx-auto max-w-2xl p-4 sm:p-6">
-    <NuxtLink
-      to="/app"
-      class="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-    >
-      <svg
-        class="h-4 w-4"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        aria-hidden="true"
-      >
-        <path d="M15 18l-6-6 6-6" />
-      </svg>
-      К обзору
-    </NuxtLink>
+    <div class="mb-3">
+      <B24Button
+        :icon="ChevronLeftMIcon"
+        to="/app"
+        label="К обзору"
+        color="air-tertiary-no-accent"
+        size="xs"
+      />
+    </div>
     <h1 class="mb-1 text-xl font-semibold">
       Импорт документов
     </h1>
@@ -74,14 +70,14 @@ const rows = computed(() => jobs.value.map(job => ({
       <p class="mb-3 text-sm text-gray-600">
         Перетащите файл(ы) сюда или
       </p>
-      <button
-        type="button"
-        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+      <B24Button
+        :icon="CirclePlusIcon"
+        color="air-primary"
+        :loading="uploading"
         :disabled="uploading"
+        :label="uploading ? 'Загрузка…' : 'Выбрать файл'"
         @click="fileInput?.click()"
-      >
-        {{ uploading ? 'Загрузка…' : 'Выбрать файл' }}
-      </button>
+      />
       <input
         ref="fileInput"
         type="file"
@@ -95,25 +91,27 @@ const rows = computed(() => jobs.value.map(job => ({
       </p>
     </div>
 
-    <p
+    <B24Alert
       v-if="error"
-      class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700"
-    >
-      {{ error }}
-    </p>
+      class="mt-3"
+      color="air-primary-warning"
+      variant="soft"
+      :title="error"
+    />
 
     <div class="mt-6 mb-2 flex items-center justify-between">
       <h2 class="text-sm font-semibold text-gray-700">
         Последние загрузки
       </h2>
-      <button
-        type="button"
-        class="text-xs text-blue-600 hover:underline disabled:opacity-50"
+      <B24Button
+        :icon="RefreshIcon"
+        color="air-tertiary-no-accent"
+        size="xs"
+        :loading="loading"
         :disabled="loading"
+        :label="loading ? 'Обновление…' : 'Обновить'"
         @click="refresh"
-      >
-        {{ loading ? 'Обновление…' : 'Обновить' }}
-      </button>
+      />
     </div>
 
     <ul class="divide-y rounded-lg border border-gray-200">
