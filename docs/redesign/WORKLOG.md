@@ -8,7 +8,7 @@
 (Workflow) → починить → lint/typecheck/test → PR → мерж при зелёном CI → обновить статусы → отчёт %.
 Гоняю на fresh-ветках от `main`; Watchtower на сервере сам подтянет новые образы.
 
-## Прогресс: ~45%
+## Прогресс: ~52%
 
 Фундамент (деплой, установка в портал, фрейм-авторизация, бинарь агента) — готов (#26–#30).
 Дальше — замечания ниже.
@@ -27,7 +27,8 @@
 | P3 | Доступ к странице **настроек** из `/app` (кнопка/ссылка) | DONE | #31 | Шестерёнка в шапке `/app` → `/settings`. 5 проверяющих — 0 замечаний. |
 | P4 | **Мобильный режим** — визуальная проверка (скриншоты) + фиксы | DONE | этот PR | Заведён харнесс `pnpm screenshot` (`scripts/screenshot.mjs` + `playwright-core` на предустановленном Chromium) — снимает все роуты × mobile/desktop × light/dark в `screenshots/` (gitignored). Прогнал, посмотрел пиксели: `/app`,`/import`,`/settings`,`/`,`/queues`(auth-gate),`/login` в мобайле — чисто, без обрезки/переполнения, приложение работает. Doc — `docs/redesign/VISUAL_VERIFICATION.md`. Находка (отложено, дизайн): in-portal-страницы standalone — light-only (нет `app.config.ts` colorMode; тёмная тема лендинга — через класс `.landing-shell`). |
 | P5 | **Демо** принимает PDF/Excel (сейчас только txt/csv) | WIP | #37 | **P5-a Excel (.xlsx) — готов+смёржен** (#37): xlsx→TSV (безопасный ридер `exceljs`: бюджет несжатого размера + лимит записей + таймаут против zip-бомб) → `demoExtract` (2-колоночные прайсы, формулы, многострочные ячейки). Эндпоинт rate-limited, файл не сохраняется. **P5-b PDF** — отдельно: `pdftotext` даёт пробельные колонки, а `detectDelimiter` их не ловит → нужен детектор пробельных таблиц (иначе pdf «принят, но пусто»). In-portal `/app` уже принимает pdf/xlsx/xls/docx ✅. |
-| P6 | **Нативные компоненты b24ui** вместо raw HTML (кнопки/инпуты/селекты/свитчи) на всех страницах | WIP | — | Замечание владельца: UI использует `<button>`/`<input>`/`<select>`/`role=switch` вместо `B24Button`/`B24Input`/`B24Select`/`B24Switch`. Затронуты `app.vue`,`settings.vue`,`import.vue`,`login.vue`,`queues.vue`,`DemoTryout.vue`. Перевод на b24ui + визуальная проверка скриншотами. |
+| P6 | **Нативные компоненты b24ui** вместо raw HTML (кнопки/инпуты/селекты/свитчи) на всех страницах | DONE | #39 | Замечание владельца: UI использует `<button>`/`<input>`/`<select>`/`role=switch` вместо b24ui. Переведены все in-portal-страницы: `settings.vue` (B24Button-сегменты/B24InputNumber/B24Input/B24RadioGroup/B24Select/B24Switch/B24Alert), `app.vue` (B24Button+иконки/B24Alert), `import.vue` (**B24FileUpload** — нативная дропзона), `login.vue` (B24FormField+B24Input+B24Button block), `queues.vue`. Сверено с офиц. llms.txt: убран несуществующий `variant="soft"` у B24Alert везде (+install.vue). 5 проверяющих — 1 замечание (лишний `id` на B24Input в login ломал бы label↔input связку B24FormField) устранено, остальное чисто. Проверено скриншотами. Лендинг `DemoTryout.vue` намеренно оставлен на брендовой тёмной вёрстке. |
+| P7 | **Поле «Артикул поставщика»** — поисковый пикер (B24SelectMenu) вместо free-text | TODO | — | Замечание владельца (дал ссылку на select-menu.md + образец подбора в client-bank). Порт async-инфры из client-bank: `remoteSearch.ts`+тесты (чистое), `useRemoteSearch.ts` (реактивное), `AsyncSearchSelect.vue` (над B24SelectMenu, `ignore-filter`+`v-model:search-term`). Backend: поиск свойств каталога `catalog.productProperty.list` (по iblockId) — чистое ядро + фрейм-роут, как `chatSearch`. Вживую сверить метод через `B24_HOOK` (скоуп catalog есть). Отдельный PR (после #39). |
 
 ## Приоритет 2 — Демо-контент
 
@@ -52,4 +53,8 @@
 
 - 2026-07-11 — карта заведена, цикл запущен, фундамент #26–#30 готов. Старт с P-приоритета.
 - 2026-07-11 — P5-a (Excel в демо) + харднинг ридера смёржен (#37). P4 (визуальный харнесс
-  `pnpm screenshot` + прогон по мобайлу) — готов. Владелец добавил P6 (нативный b24ui вместо raw HTML) — взял в работу.
+  `pnpm screenshot` + прогон по мобайлу) — смёржен (#38). Владелец добавил P6 (нативный b24ui вместо raw HTML) —
+  переведены все in-portal-страницы, проверено скриншотами; на 5 проверяющих.
+- 2026-07-11 — P6 (#39): сверка с офиц. b24ui-доками (убран мёртвый `variant`), нативный B24FileUpload,
+  5 проверяющих (1 a11y-замечание устранено). Владелец уточнил: поле «Артикул» — поисковый пикер (P7,
+  `catalog.productProperty.list` + порт async-подбора из client-bank), берётся следующим.

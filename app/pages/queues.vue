@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useAuth } from '~/composables/useAuth'
 
 // Operator queue monitor (service zone). Auth-gated (server 401 + client redirect).
@@ -61,31 +62,31 @@ onMounted(async () => {
       <h1 class="text-xl font-semibold">
         Очереди импорта
       </h1>
-      <div class="flex items-center gap-3">
-        <button
-          type="button"
-          class="text-sm text-blue-600 hover:underline disabled:opacity-50"
+      <div class="flex items-center gap-2">
+        <B24Button
+          :icon="RefreshIcon"
+          color="air-tertiary-no-accent"
+          size="sm"
+          :loading="loading"
           :disabled="loading"
+          :label="loading ? 'Обновление…' : 'Обновить'"
           @click="load"
-        >
-          {{ loading ? 'Обновление…' : 'Обновить' }}
-        </button>
-        <button
-          type="button"
-          class="text-sm text-gray-500 hover:underline"
+        />
+        <B24Button
+          label="Выйти"
+          color="air-tertiary-no-accent"
+          size="sm"
           @click="signOut"
-        >
-          Выйти
-        </button>
+        />
       </div>
     </div>
 
-    <p
+    <B24Alert
       v-if="error"
-      class="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700"
-    >
-      {{ error }}
-    </p>
+      class="mb-4"
+      color="air-primary-warning"
+      :title="error"
+    />
 
     <div class="space-y-3">
       <div

@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
+import CirclePlusIcon from '@bitrix24/b24icons-vue/outline/CirclePlusIcon'
+import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
 import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
@@ -71,34 +74,20 @@ const toneClass: Record<string, string> = {
         </p>
       </div>
       <div class="flex shrink-0 items-center gap-2">
-        <NuxtLink
+        <B24Button
+          :icon="SettingsIcon"
           to="/settings"
-          class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50"
+          color="air-tertiary-no-accent"
+          size="sm"
           aria-label="Настройки импорта"
-        >
-          <svg
-            class="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"
-          >
-            <circle
-              cx="12"
-              cy="12"
-              r="3"
-            />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-          <span class="hidden sm:inline">Настройки</span>
-        </NuxtLink>
-        <NuxtLink
+        />
+        <B24Button
+          :icon="CirclePlusIcon"
           to="/import"
-          class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-        >
-          Загрузить документ
-        </NuxtLink>
+          color="air-primary"
+          size="sm"
+          label="Загрузить документ"
+        />
       </div>
     </div>
 
@@ -126,36 +115,31 @@ const toneClass: Record<string, string> = {
         <h2 class="text-sm font-semibold text-gray-700">
           Экономия
         </h2>
-        <div class="text-xs">
-          <button
+        <div class="flex items-center gap-2 text-xs">
+          <B24Button
             v-if="!confirmReset"
-            type="button"
-            class="rounded px-2 py-1 text-gray-500 transition-colors hover:text-red-600"
-            @click="confirmReset = true"
-          >
-            Сбросить
-          </button>
-          <span
-            v-else
-            class="inline-flex items-center gap-3"
-          >
+            label="Сбросить"
+            color="air-tertiary-no-accent"
+            size="xs"
+            @click="() => { confirmReset = true }"
+          />
+          <template v-else>
             <span class="text-gray-600">Сбросить метрики?</span>
-            <button
-              type="button"
-              class="rounded px-2 py-1 font-medium text-red-600 hover:underline disabled:opacity-50"
+            <B24Button
+              color="air-primary-alert"
+              size="xs"
+              :loading="resetting"
               :disabled="resetting"
+              :label="resetting ? 'Сброс…' : 'Да'"
               @click="doReset"
-            >
-              {{ resetting ? 'Сброс…' : 'Да' }}
-            </button>
-            <button
-              type="button"
-              class="rounded px-2 py-1 text-gray-600 hover:underline"
-              @click="confirmReset = false"
-            >
-              Отмена
-            </button>
-          </span>
+            />
+            <B24Button
+              label="Отмена"
+              color="air-tertiary-no-accent"
+              size="xs"
+              @click="() => { confirmReset = false }"
+            />
+          </template>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
@@ -181,33 +165,35 @@ const toneClass: Record<string, string> = {
         <span>Создано в CRM: {{ counters.created || 0 }}</span>
         <span>Позиций: {{ counters.lines || 0 }}</span>
       </div>
-      <p
+      <B24Alert
         v-if="metricsError"
-        class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700"
-      >
-        {{ metricsError }}
-      </p>
+        class="mt-3"
+        color="air-primary-warning"
+        size="sm"
+        :title="metricsError"
+      />
     </div>
 
-    <p
+    <B24Alert
       v-if="error"
-      class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700"
-    >
-      {{ error }}
-    </p>
+      class="mt-3"
+      color="air-primary-warning"
+      :title="error"
+    />
 
     <div class="mt-6 mb-2 flex items-center justify-between">
       <h2 class="text-sm font-semibold text-gray-700">
         Последние операции
       </h2>
-      <button
-        type="button"
-        class="text-xs text-blue-600 hover:underline disabled:opacity-50"
+      <B24Button
+        :icon="RefreshIcon"
+        color="air-tertiary-no-accent"
+        size="xs"
+        :loading="loading"
         :disabled="loading"
+        :label="loading ? 'Обновление…' : 'Обновить'"
         @click="refresh"
-      >
-        {{ loading ? 'Обновление…' : 'Обновить' }}
-      </button>
+      />
     </div>
 
     <ul class="divide-y rounded-lg border border-gray-200">

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import ChevronLeftMIcon from '@bitrix24/b24icons-vue/outline/ChevronLeftMIcon'
+import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useImport } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
 
@@ -9,19 +11,17 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов' })
 
 const { jobs, loading, uploading, error, refresh, upload } = useImport()
-const fileInput = ref<HTMLInputElement | null>(null)
-const dragOver = ref(false)
 
 onMounted(refresh)
 
-async function onFiles(files: FileList | null) {
-  if (!files || !files.length) return
-  for (const f of Array.from(files)) await upload(f)
-  if (fileInput.value) fileInput.value.value = ''
-}
-function onDrop(e: DragEvent) {
-  dragOver.value = false
-  void onFiles(e.dataTransfer?.files ?? null)
+// Native B24FileUpload (multiple, built-in dropzone) → upload each picked file, then
+// clear the model so the same file can be re-selected. Per-file status shows in the
+// list below (fire-and-forget, matching the previous UX).
+const pending = ref<File[] | null>(null)
+async function onPicked(files: File[] | null | undefined) {
+  if (!files?.length) return
+  for (const f of files) await upload(f)
+  pending.value = null
 }
 
 const toneClass: Record<string, string> = {
@@ -41,22 +41,15 @@ const rows = computed(() => jobs.value.map(job => ({
 
 <template>
   <div class="mx-auto max-w-2xl p-4 sm:p-6">
-    <NuxtLink
-      to="/app"
-      class="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-    >
-      <svg
-        class="h-4 w-4"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        aria-hidden="true"
-      >
-        <path d="M15 18l-6-6 6-6" />
-      </svg>
-      К обзору
-    </NuxtLink>
+    <div class="mb-3">
+      <B24Button
+        :icon="ChevronLeftMIcon"
+        to="/app"
+        label="К обзору"
+        color="air-tertiary-no-accent"
+        size="xs"
+      />
+    </div>
     <h1 class="mb-1 text-xl font-semibold">
       Импорт документов
     </h1>
@@ -64,56 +57,37 @@ const rows = computed(() => jobs.value.map(job => ({
       Загрузите накладную, счёт, КП или прайс — приложение найдёт контрагента и внесёт товары в CRM.
     </p>
 
-    <div
-      class="rounded-xl border-2 border-dashed p-8 text-center transition-colors"
-      :class="dragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-300'"
-      @dragover.prevent="dragOver = true"
-      @dragleave.prevent="dragOver = false"
-      @drop.prevent="onDrop"
-    >
-      <p class="mb-3 text-sm text-gray-600">
-        Перетащите файл(ы) сюда или
-      </p>
-      <button
-        type="button"
-        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-        :disabled="uploading"
-        @click="fileInput?.click()"
-      >
-        {{ uploading ? 'Загрузка…' : 'Выбрать файл' }}
-      </button>
-      <input
-        ref="fileInput"
-        type="file"
-        multiple
-        class="hidden"
-        accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.docx"
-        @change="onFiles(($event.target as HTMLInputElement).files)"
-      >
-      <p class="mt-3 text-xs text-gray-400">
-        PDF, изображения, Excel, Word · до 20 МБ
-      </p>
-    </div>
+    <B24FileUpload
+      v-model="pending"
+      multiple
+      accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.docx"
+      :disabled="uploading"
+      size="lg"
+      label="Перетащите файл(ы) сюда или нажмите"
+      description="PDF, изображения, Excel, Word · до 20 МБ"
+      @update:model-value="onPicked"
+    />
 
-    <p
+    <B24Alert
       v-if="error"
-      class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700"
-    >
-      {{ error }}
-    </p>
+      class="mt-3"
+      color="air-primary-warning"
+      :title="error"
+    />
 
     <div class="mt-6 mb-2 flex items-center justify-between">
       <h2 class="text-sm font-semibold text-gray-700">
         Последние загрузки
       </h2>
-      <button
-        type="button"
-        class="text-xs text-blue-600 hover:underline disabled:opacity-50"
+      <B24Button
+        :icon="RefreshIcon"
+        color="air-tertiary-no-accent"
+        size="xs"
+        :loading="loading"
         :disabled="loading"
+        :label="loading ? 'Обновление…' : 'Обновить'"
         @click="refresh"
-      >
-        {{ loading ? 'Обновление…' : 'Обновить' }}
-      </button>
+      />
     </div>
 
     <ul class="divide-y rounded-lg border border-gray-200">
