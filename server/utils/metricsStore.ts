@@ -34,3 +34,9 @@ export async function readCounters(memberId: string, query: QueryFn): Promise<Re
   for (const r of rows) out[String(r.name)] = Number(r.value) || 0
   return out
 }
+
+/** Reset (delete) all counters for a portal — the operator's «сбросить метрики». Scoped
+ * to member_id so one portal never touches another's counters. */
+export async function resetCounters(memberId: string, query: QueryFn): Promise<void> {
+  await query('DELETE FROM metrics_counter WHERE member_id=$1', [memberId])
+}
