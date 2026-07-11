@@ -41,6 +41,22 @@ const rows = computed(() => jobs.value.map(job => ({
 
 <template>
   <div class="mx-auto max-w-2xl p-4 sm:p-6">
+    <NuxtLink
+      to="/app"
+      class="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+    >
+      <svg
+        class="h-4 w-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <path d="M15 18l-6-6 6-6" />
+      </svg>
+      К обзору
+    </NuxtLink>
     <h1 class="mb-1 text-xl font-semibold">
       Импорт документов
     </h1>
