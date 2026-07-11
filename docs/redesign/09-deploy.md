@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-08
+> Last reviewed: 2026-07-11
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -16,18 +16,47 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 
 ## Сборка и запуск
 
-- **Локально:** `cp .env.example .env` → заполнить → `docker compose up --build`. Backend на `:3000`.
-- **Прод:** CI (`.github/workflows/redesign-ci.yml`) собирает образ; публикацию в **GHCR** + деплой
-  через **Watchtower** добить по образцу `currency-converter`/`client-bank-alfa-by` (matrix build →
-  `docker-compose.prod.yml` с GHCR-образами). CI уже валидирует, что образ **собирается** (docker-build job).
+- **Локально:** `cp .env.example .env` → заполнить → `make build-local` (`docker compose up --build`).
+  Backend на `:3000`. Гейт перед пушем — `make check`.
+- **Прод:** домен **`price-import.bx-shef.by`** за общим `nginx-proxy` + `acme-companion` (сеть
+  `proxy-net`, как `currency-converter`). CI `deploy.yml` (workflow_run после зелёного `ci`) собирает
+  и пушит в **GHCR два образа** (matrix `backend`+`app`): `ghcr.io/bx-shef/procure-ai` (Nitro:
+  страницы+API+пайплайн) и `ghcr.io/bx-shef/procure-ai-app` (фронт-nginx: proxy/limit_req/CSP).
+  `docker-compose.prod.yml` поднимает `app`+`backend`+`db`+`redis` (воркеры пайплайна — in-process в
+  backend; сети `dbnet`/`queuenet` `internal:true` изолируют БД/Redis); **Watchtower** авто-обновляет
+  образы с меткой `com.centurylinklabs.watchtower.enable=true`. `ci.yml` валидирует сборку **обоих**
+  образов на каждом PR (docker-build matrix; app-стадия гоняет `nginx -t`).
+
+  **Файлы деплоя** (обёртки — `Makefile`, цели ниже):
+  - `docker-compose.prod.yml` — стек приложения (`make prod-up` / `prod-redeploy` / `logs` / `ps`).
+  - `docker-compose.server.yml` — **общий** reverse-proxy `nginx-proxy`+`acme-companion` (`make server-up`).
+  - `docker-compose.watchtower.yml` — **общий** Watchtower авто-апдейта (`make watchtower-up`).
+  - `docker-compose.yml` — локальная сборка/дев.
+
+  ⚠️ `server.yml` и `watchtower.yml` — инфраструктура **одна на ХОСТ**, общая для всех приложений
+  (currency-converter, client-bank-alfa-by, procure-ai). На текущем сервере **уже подняты** (контейнеры
+  `server`/`letsencrypt`/`…watchtower` из стека currency-converter) — второй раз не запускаем (конфликт
+  портов 80/443 и имён). Эти два файла нужны только при развёртывании **чистого** хоста.
+
+  **Развёртывание на общем сервере** (инфра уже есть → шаги 1–4):
+  1. A-запись `price-import.bx-shef.by → <IP>` (общий сервер).
+  2. `.env` рядом с `docker-compose.prod.yml` (секреты; см. ниже; `DOMAIN`=`price-import.bx-shef.by`) — в git не коммитим.
+  3. `make prod-up` (`docker compose -f docker-compose.prod.yml up -d`) → acme выпустит TLS автоматически.
+  4. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
+
+  **Чистый хост** (инфры ещё нет → сначала): `make server-up` → `make watchtower-up` → затем шаги 2–4.
 
 ## Env (полный список — `.env.example`)
 
-Обязательные: `DATABASE_URL`, `REDIS_URL`, `B24_CLIENT_ID/SECRET`, `B24_APPLICATION_TOKEN`,
+Обязательные: `DATABASE_URL`, `REDIS_URL`, `B24_CLIENT_ID/SECRET`,
 `B24_TOKEN_ENC_KEY` (base64 32 байта), `NUXT_PUBLIC_SITE_URL` (абсолютный — из него строится URL
 хендлера событий Б24). LLM-провайдер (агент): `ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL` (DeepSeek).
 Оператор (опц.): `OPERATOR_PASSWORD` + **`OPERATOR_SESSION_SECRET`** (свой, не фолбэк на enc-key).
-`envCheck` на старте валидирует и предупреждает (не роняет процесс).
+`B24_APPLICATION_TOKEN` — **не заполняем**: `application_token` приходит в `ONAPPINSTALL` и
+запоминается по порталу (B24 «Безопасность в обработчиках»); первая установка проверяется по
+доставленному `access_token` (`server/utils/verifyInstallToken`), дальнейшие события — по
+сохранённому токену. Значение задают только как доп. глобальный гейт первой установки (плейсхолдер
+здесь = 403 на каждую установку). `envCheck` на старте валидирует и предупреждает (не роняет процесс).
 
 ## nginx (reverse-proxy, один домен)
 

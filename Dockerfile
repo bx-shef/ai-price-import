@@ -34,3 +34,13 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", ".output/server/index.mjs"]
+
+# ── app: the front reverse proxy (behind the shared nginx-proxy) ──────────────
+# Non-root nginx (listens :8080). Adds login rate-limit, internal-endpoint deny,
+# CSP/security headers for the B24 iframe, body-size caps. Proxies to backend:3000.
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS app
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY proxy_common.conf /etc/nginx/proxy_common.conf
+# Fail the build on a bad config (proxy_pass hostnames resolve at runtime, not here).
+RUN nginx -t
+EXPOSE 8080

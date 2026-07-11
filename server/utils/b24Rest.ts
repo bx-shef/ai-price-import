@@ -39,6 +39,13 @@ export function isExpiredTokenError(err: unknown): boolean {
   return err instanceof B24RestError && (err.code === 'expired_token' || err.code === 'invalid_token')
 }
 
+/** True when a REST error means the auth token was REJECTED (forbidden) rather than a
+ * transport/network failure — lets callers tell "unauthorised" from "retry later". */
+export function isAuthRejection(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return /invalid_token|expired_token|wrong_auth|no_auth|unauthorized|authoriz|invalid_grant|access denied|insufficient_scope|\b401\b|\b403\b/.test(msg)
+}
+
 /** Extract `result` from a B24 response or throw a typed B24RestError. */
 export function unwrap(raw: unknown, status = 0): unknown {
   const o = raw as Record<string, unknown> | null

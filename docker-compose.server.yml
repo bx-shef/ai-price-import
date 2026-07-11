@@ -1,0 +1,66 @@
+# ОБЩИЙ reverse-proxy сервера: nginx-proxy (авто-vhost + TLS-терминация) + acme-companion
+# (авто-выпуск/продление Let's Encrypt). ОДИН на ВЕСЬ СЕРВЕР, общий для ВСЕХ приложений
+# (currency-converter, client-bank-alfa-by, procure-ai …). Создаёт docker-сеть `proxy-net`,
+# к которой prod-стеки приложений подключаются как external.
+#
+# ⚠️ На ЭТОМ сервере он УЖЕ запущен (контейнеры `server` + `letsencrypt` из стека
+#    currency-converter). НЕ поднимайте второй экземпляр — конфликт по портам 80/443 и
+#    именам контейнеров. Этот файл нужен только для развёртывания ЧИСТОГО хоста.
+#    Подробности и порядок — docs/redesign/09-deploy.md.
+#
+# Bootstrap чистого хоста:
+#   1) docker compose -f docker-compose.server.yml up -d      # прокси + TLS + сеть proxy-net
+#   2) docker compose -f docker-compose.watchtower.yml up -d  # авто-обновление образов
+#   3) (в каждом приложении) docker compose -f docker-compose.prod.yml up -d
+
+services:
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:1.6-alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - conf:/etc/nginx/conf.d
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - certs:/etc/nginx/certs:ro
+      - /var/run/docker.sock:/tmp/docker.sock:ro   # авто-обнаружение контейнеров по VIRTUAL_HOST
+    networks:
+      - proxy-net
+    labels:
+      # acme-companion находит прокси по этой метке (или по NGINX_PROXY_CONTAINER ниже).
+      com.github.nginx-proxy.nginx-proxy: "true"
+    restart: unless-stopped
+
+  acme-companion:
+    image: nginxproxy/acme-companion:2.4
+    container_name: acme-companion
+    volumes:
+      - certs:/etc/nginx/certs:rw
+      - acme:/etc/acme.sh
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Глобальный контакт по умолчанию; per-vhost переопределяется LETSENCRYPT_EMAIL в prod.
+      DEFAULT_EMAIL: ${LETSENCRYPT_EMAIL:-}
+      NGINX_PROXY_CONTAINER: nginx-proxy
+    depends_on:
+      - nginx-proxy
+    networks:
+      - proxy-net
+    restart: unless-stopped
+
+networks:
+  # Явное имя, чтобы prod-стеки приложений подключались как `external: true` → `proxy-net`.
+  proxy-net:
+    name: proxy-net
+    driver: bridge
+
+volumes:
+  conf:
+  vhost:
+  html:
+  certs:
+  acme:

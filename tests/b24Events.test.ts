@@ -48,22 +48,41 @@ describe('safeEqual', () => {
 
 describe('decideB24Event', () => {
   const ok = { event: 'ONAPPINSTALL', memberId: 'm', applicationToken: 'T', domain: 'p', data: {}, auth: {} }
+
   it('400 on missing event/member', () => {
-    expect(decideB24Event({ ...ok, event: '' }, 'T').status).toBe(400)
-  })
-  it('503 when no expected token configured', () => {
-    expect(decideB24Event(ok, '').status).toBe(503)
-  })
-  it('403 on token mismatch (fail-closed)', () => {
-    expect(decideB24Event(ok, 'OTHER')).toEqual({ status: 403, action: 'ignore' })
-  })
-  it('register / unregister on valid token', () => {
-    expect(decideB24Event(ok, 'T')).toEqual({ status: 200, action: 'register' })
-    expect(decideB24Event({ ...ok, event: 'ONAPPUNINSTALL' }, 'T')).toEqual({ status: 200, action: 'unregister' })
-  })
-  it('400 on missing memberId; 200/ignore on unknown but authenticated event', () => {
+    expect(decideB24Event({ ...ok, event: '' }, null).status).toBe(400)
     expect(decideB24Event({ ...ok, memberId: '' }, 'T').status).toBe(400)
-    expect(decideB24Event({ ...ok, event: 'ONCRMDEALADD' }, 'T')).toEqual({ status: 200, action: 'ignore' })
+  })
+
+  describe('known portal (stored token)', () => {
+    it('403 on token mismatch (fail-closed)', () => {
+      expect(decideB24Event(ok, 'STORED')).toEqual({ status: 403, action: 'ignore' })
+    })
+    it('register / unregister on matching stored token — no access-token verification', () => {
+      expect(decideB24Event(ok, 'T')).toEqual({ status: 200, action: 'register' })
+      expect(decideB24Event({ ...ok, event: 'ONAPPUNINSTALL' }, 'T')).toEqual({ status: 200, action: 'unregister' })
+    })
+    it('200/ignore on an unrelated but authenticated event', () => {
+      expect(decideB24Event({ ...ok, event: 'ONCRMDEALADD' }, 'T')).toEqual({ status: 200, action: 'ignore' })
+    })
+  })
+
+  describe('unknown portal (first install)', () => {
+    it('registers via access-token verification when no env gate', () => {
+      expect(decideB24Event(ok, null)).toEqual({ status: 200, action: 'register', verifyAccessToken: true })
+      expect(decideB24Event(ok, '')).toEqual({ status: 200, action: 'register', verifyAccessToken: true })
+    })
+    it('optional env gate: matches → register+verify, mismatch → 403', () => {
+      expect(decideB24Event(ok, null, 'T')).toEqual({ status: 200, action: 'register', verifyAccessToken: true })
+      expect(decideB24Event(ok, null, 'OTHER')).toEqual({ status: 403, action: 'ignore' })
+    })
+    it('403 on any non-install event for an unknown portal (unverifiable)', () => {
+      expect(decideB24Event({ ...ok, event: 'ONAPPUNINSTALL' }, null)).toEqual({ status: 403, action: 'ignore' })
+      expect(decideB24Event({ ...ok, event: 'ONCRMDEALADD' }, null)).toEqual({ status: 403, action: 'ignore' })
+    })
+    it('400 when a first install carries no application_token to remember', () => {
+      expect(decideB24Event({ ...ok, applicationToken: '' }, null).status).toBe(400)
+    })
   })
 })
 
