@@ -21,6 +21,7 @@ describe('resolveFrameMember', () => {
     const r = await resolveFrameMember(auth, { fetchFn, query: query([{ member_id: 'm42' }]) })
     expect(r.ok).toBe(false)
     expect(r.status).toBe(401)
+    expect(r.reason).toBe('token-rejected')
   })
 
   it('502 on a transport failure (retryable, not forbidden)', async () => {
@@ -29,11 +30,23 @@ describe('resolveFrameMember', () => {
     })
     const r = await resolveFrameMember(auth, { fetchFn, query: query([]) })
     expect(r.status).toBe(502)
+    expect(r.reason).toBe('transport')
   })
 
   it('401 when the portal is not installed (no member for domain)', async () => {
     const r = await resolveFrameMember(auth, { fetchFn: okFetch(), query: query([]) })
-    expect(r).toEqual({ ok: false, status: 401 })
+    expect(r).toEqual({ ok: false, status: 401, reason: 'not-installed' })
+  })
+
+  it('normalises the frame domain (case/trailing slash) before the member lookup', async () => {
+    const q = vi.fn(async () => ({ rows: [{ member_id: 'm42' }] }))
+    // Frame reports a differently-cased host with a trailing slash; the stored install
+    // domain is bare lower-case. Normalisation must let them still match.
+    const variant = { accessToken: 'tok', domain: 'BEL.Bitrix24.by/' }
+    const r = await resolveFrameMember(variant, { fetchFn: okFetch(), query: q })
+    expect(r).toEqual({ ok: true, memberId: 'm42' })
+    // getMemberIdByDomain must be queried with the bare lower-case host.
+    expect(q).toHaveBeenCalledWith(expect.any(String), ['bel.bitrix24.by'])
   })
 
   it('classifies varied B24 auth codes as 401 (not retryable 502)', async () => {

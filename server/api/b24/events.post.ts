@@ -5,7 +5,7 @@ import { deletePortal, getApplicationToken, saveToken } from '../../utils/tokenS
 import { purgePortalFiles } from '../../utils/nodeFileIO'
 import { encryptSecret } from '../../utils/secretCrypto'
 import { verifyInstallToken } from '../../utils/verifyInstallToken'
-import type { FetchFn } from '../../utils/b24Rest'
+import { normaliseHost, type FetchFn } from '../../utils/b24Rest'
 
 // B24 outgoing-event webhook: ONAPPINSTALL / ONAPPUNINSTALL.
 // Verifies application_token (fail-closed) then applies register/unregister.
@@ -72,7 +72,9 @@ export default defineEventHandler(async (event) => {
   const now = Date.now()
   await saveToken({
     memberId: ev.memberId,
-    domain: ev.domain || String(auth.domain ?? ''),
+    // Normalised (bare lower-case host) so the frame-auth lookup (resolveFrameMember,
+    // also normalised) matches regardless of case/scheme differences.
+    domain: normaliseHost(ev.domain || String(auth.domain ?? '')),
     clientEndpoint: String(auth.client_endpoint ?? ''),
     accessToken: String(auth.access_token ?? ''),
     refreshTokenEnc: refresh ? encryptSecret(refresh, process.env.B24_TOKEN_ENC_KEY ?? '') : '',

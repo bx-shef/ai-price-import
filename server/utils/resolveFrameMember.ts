@@ -1,5 +1,5 @@
 import type { FetchFn } from './b24Rest'
-import { isAuthRejection, makeRestCall } from './b24Rest'
+import { isAuthRejection, makeRestCall, normaliseHost } from './b24Rest'
 import type { QueryFn } from './tokenStore'
 import { getMemberIdByDomain } from './tokenStore'
 import type { FrameAuth } from './frameAuth'
@@ -15,11 +15,15 @@ export interface FrameMemberDeps {
   query: QueryFn
 }
 
+/** Why resolution failed (for diagnostics — surfaced by the caller). */
+export type FrameMemberReason = 'token-rejected' | 'transport' | 'not-installed'
+
 export interface FrameMemberResult {
   ok: boolean
   memberId?: string
   /** 401 = token invalid / not installed; 502 = verification transport error. */
   status?: 401 | 502
+  reason?: FrameMemberReason
 }
 
 /** Verify the frame token and resolve member_id, or an error status. Never throws. */
@@ -30,10 +34,13 @@ export async function resolveFrameMember(auth: FrameAuth, deps: FrameMemberDeps)
   } catch (e) {
     // An auth rejection means the token doesn't control the portal → 401; a transport
     // failure (network) → 502 so the client retries rather than treating it as forbidden.
-    return { ok: false, status: isAuthRejection(e) ? 401 : 502 }
+    const rejected = isAuthRejection(e)
+    return { ok: false, status: rejected ? 401 : 502, reason: rejected ? 'token-rejected' : 'transport' }
   }
-  // 2. Map the (now-verified) domain to the installed portal's member_id.
-  const memberId = await getMemberIdByDomain(auth.domain, deps.query)
-  if (!memberId) return { ok: false, status: 401 }
+  // 2. Map the (now-verified) domain to the installed portal's member_id. Normalise the
+  // host (lower-case, strip scheme/path) so a frame domain that differs only in case or
+  // form from the stored install domain still matches (getMemberIdByDomain is exact).
+  const memberId = await getMemberIdByDomain(normaliseHost(auth.domain), deps.query)
+  if (!memberId) return { ok: false, status: 401, reason: 'not-installed' }
   return { ok: true, memberId }
 }
