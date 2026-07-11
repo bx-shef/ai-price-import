@@ -159,6 +159,24 @@ describe('extractDemo — robustness', () => {
     expect(r.items).toHaveLength(1)
     expect(r.items[0]).toMatchObject({ name: 'Гайка', quantity: 10, sum: 3 })
   })
+  it('parses a 2-column price list (Наименование | Цена) via pipe/tab/semicolon', () => {
+    for (const d of ['|', '\t', ';']) {
+      const text = `Наименование${d}Цена\nПерчатки рабочие${d}1.10\nКаска защитная${d}9.80`
+      const r = extractDemo(text)
+      expect(r.items).toHaveLength(2)
+      expect(r.items[0]).toMatchObject({ name: 'Перчатки рабочие', price: 1.1 })
+      expect(r.items[1]).toMatchObject({ name: 'Каска защитная', price: 9.8 })
+    }
+  })
+  it('does NOT treat a 2-cell comma split as a table (decimal-comma safety)', () => {
+    // «name, price» is 2 cells on the comma. Comma needs ≥3 cells (unlike pipe/tab/
+    // semicolon) precisely because a decimal comma collides with a field comma — so a
+    // 2-column comma list stays unrecognised rather than shredding «980» into cells.
+    const text = 'Наименование, Цена\nПерчатки рабочие, 110\nКаска защитная, 980'
+    const r = extractDemo(text)
+    expect(r.warnings).toContain('Таблица товаров не распознана')
+    expect(r.items).toHaveLength(0)
+  })
   it('does NOT let a short totals row veto delimiter detection (regression)', () => {
     // «Итого|200» is 2 cells; must not discard the pipe delimiter.
     const text = 'Наименование|Кол-во|Цена|Сумма\nНасос|2|100|200\nИтого|200'
