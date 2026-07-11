@@ -1,15 +1,32 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useImport } from '~/composables/useImport'
+import { useMetrics } from '~/composables/useMetrics'
 import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
+import { formatMinutes } from '~/utils/savings'
 
-// In-portal home/dashboard (P8 UI slice): status summary + recent operations.
-// Reuses the /import composable/API. Layout `clear`, prerendered.
+// In-portal home/dashboard (P8 UI slice): savings + status summary + recent operations.
+// Reuses the /import + /metrics composables. Layout `clear`, prerendered.
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов — обзор' })
 
 const { jobs, loading, error, refresh } = useImport()
-onMounted(refresh)
+const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
+onMounted(() => {
+  refresh()
+  loadMetrics()
+})
+
+// Two-step reset (no window.confirm): click «Сбросить» → confirm inline. Keep the
+// confirm visible (so «Да» shows «Сброс…»/disabled) until the request resolves.
+const confirmReset = ref(false)
+async function doReset(): Promise<void> {
+  try {
+    await resetMetrics()
+  } finally {
+    confirmReset.value = false
+  }
+}
 
 const stats = computed(() => {
   const s = { total: jobs.value.length, done: 0, error: 0, running: 0 }
@@ -101,6 +118,75 @@ const toneClass: Record<string, string> = {
           {{ t.label }}
         </div>
       </div>
+    </div>
+
+    <!-- Экономия: сколько времени/денег сберёг импорт (оценка), + сброс метрик -->
+    <div class="mt-4 rounded-xl border border-gray-200 p-4">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold text-gray-700">
+          Экономия
+        </h2>
+        <div class="text-xs">
+          <button
+            v-if="!confirmReset"
+            type="button"
+            class="rounded px-2 py-1 text-gray-500 transition-colors hover:text-red-600"
+            @click="confirmReset = true"
+          >
+            Сбросить
+          </button>
+          <span
+            v-else
+            class="inline-flex items-center gap-3"
+          >
+            <span class="text-gray-600">Сбросить метрики?</span>
+            <button
+              type="button"
+              class="rounded px-2 py-1 font-medium text-red-600 hover:underline disabled:opacity-50"
+              :disabled="resetting"
+              @click="doReset"
+            >
+              {{ resetting ? 'Сброс…' : 'Да' }}
+            </button>
+            <button
+              type="button"
+              class="rounded px-2 py-1 text-gray-600 hover:underline"
+              @click="confirmReset = false"
+            >
+              Отмена
+            </button>
+          </span>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="rounded-lg bg-green-50 p-3">
+          <div class="text-2xl font-semibold text-green-700">
+            {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+          </div>
+          <div class="mt-1 text-xs text-gray-500">
+            Сэкономлено времени
+          </div>
+        </div>
+        <div class="rounded-lg bg-green-50 p-3">
+          <div class="text-2xl font-semibold text-green-700">
+            {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
+          </div>
+          <div class="mt-1 text-xs text-gray-500">
+            Сэкономлено денег (оценка)
+          </div>
+        </div>
+      </div>
+      <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+        <span>Документов: {{ counters.docs || 0 }}</span>
+        <span>Создано в CRM: {{ counters.created || 0 }}</span>
+        <span>Позиций: {{ counters.lines || 0 }}</span>
+      </div>
+      <p
+        v-if="metricsError"
+        class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700"
+      >
+        {{ metricsError }}
+      </p>
     </div>
 
     <p
