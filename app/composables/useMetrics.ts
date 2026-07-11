@@ -24,10 +24,7 @@ export function useMetrics() {
 
   async function load(): Promise<void> {
     const h = await headers()
-    if (!h) {
-      error.value = 'Метрики доступны только внутри портала Bitrix24'
-      return
-    }
+    if (!h) return // outside a portal: stay graceful (panel shows zeros, no error surfaced)
     loading.value = true
     try {
       const res = await $fetch<MetricsView>('/api/import/metrics', { headers: h })

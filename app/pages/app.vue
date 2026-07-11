@@ -11,17 +11,21 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов — обзор' })
 
 const { jobs, loading, error, refresh } = useImport()
-const { counters, savings, resetting, load: loadMetrics, reset: resetMetrics } = useMetrics()
+const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 onMounted(() => {
   refresh()
   loadMetrics()
 })
 
-// Two-step reset (no window.confirm): click «Сбросить» → confirm inline.
+// Two-step reset (no window.confirm): click «Сбросить» → confirm inline. Keep the
+// confirm visible (so «Да» shows «Сброс…»/disabled) until the request resolves.
 const confirmReset = ref(false)
 async function doReset(): Promise<void> {
-  confirmReset.value = false
-  await resetMetrics()
+  try {
+    await resetMetrics()
+  } finally {
+    confirmReset.value = false
+  }
 }
 
 const stats = computed(() => {
@@ -126,19 +130,19 @@ const toneClass: Record<string, string> = {
           <button
             v-if="!confirmReset"
             type="button"
-            class="text-gray-400 transition-colors hover:text-red-500"
+            class="rounded px-2 py-1 text-gray-500 transition-colors hover:text-red-600"
             @click="confirmReset = true"
           >
             Сбросить
           </button>
           <span
             v-else
-            class="inline-flex items-center gap-2"
+            class="inline-flex items-center gap-3"
           >
-            <span class="text-gray-500">Сбросить метрики?</span>
+            <span class="text-gray-600">Сбросить метрики?</span>
             <button
               type="button"
-              class="font-medium text-red-600 hover:underline disabled:opacity-50"
+              class="rounded px-2 py-1 font-medium text-red-600 hover:underline disabled:opacity-50"
               :disabled="resetting"
               @click="doReset"
             >
@@ -146,7 +150,7 @@ const toneClass: Record<string, string> = {
             </button>
             <button
               type="button"
-              class="text-gray-500 hover:underline"
+              class="rounded px-2 py-1 text-gray-600 hover:underline"
               @click="confirmReset = false"
             >
               Отмена
@@ -165,7 +169,7 @@ const toneClass: Record<string, string> = {
         </div>
         <div class="rounded-lg bg-green-50 p-3">
           <div class="text-2xl font-semibold text-green-700">
-            {{ savings ? savings.moneySaved : 0 }} {{ savings?.currency || '' }}
+            {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
           </div>
           <div class="mt-1 text-xs text-gray-500">
             Сэкономлено денег (оценка)
@@ -177,6 +181,12 @@ const toneClass: Record<string, string> = {
         <span>Создано в CRM: {{ counters.created || 0 }}</span>
         <span>Позиций: {{ counters.lines || 0 }}</span>
       </div>
+      <p
+        v-if="metricsError"
+        class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700"
+      >
+        {{ metricsError }}
+      </p>
     </div>
 
     <p
