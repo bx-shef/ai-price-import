@@ -25,9 +25,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tesseract-ocr tesseract-ocr-rus tesseract-ocr-bel tesseract-ocr-kaz \
       fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
+# Headless extraction agent (AGENT_BIN=claude): the Claude Code CLI, spawned per job
+# as a PURE text→JSON extractor against DeepSeek's Anthropic-compatible endpoint
+# (ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL). Without it the pipeline fails «spawn claude ENOENT».
+RUN npm install -g @anthropic-ai/claude-code@2.1.207
 ENV NODE_ENV=production
 ENV UPLOAD_DIR=/data/uploads
-RUN mkdir -p /data/uploads
+# HOME must be defined + writable: the agent subprocess (secret-free env via agentSpawnEnv)
+# passes HOME through, and Claude Code writes its config under $HOME/.claude on first run.
+ENV HOME=/root
+RUN mkdir -p /data/uploads /root/.claude
 COPY --from=build /app/.output ./.output
 EXPOSE 3000
 # Liveness is GET /api/health (docs/redesign 02).

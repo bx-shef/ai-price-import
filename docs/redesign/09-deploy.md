@@ -13,6 +13,9 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 - **Postgres** — токены порталов, задачи, извлечённый текст/структура, метрики (миграции идемпотентны, на старте).
 - **Redis** — очереди BullMQ (`b24-events`/`file-extract`/`agent-run`/`crm-sync`). Без него пайплайн выключен, загрузка отдаёт 503.
 - Бинарники извлечения — **в образе** (`poppler-utils`, `libreoffice`, `tesseract-ocr` + `rus/bel/kaz`).
+- **Агент-экстрактор** (`AGENT_BIN=claude`) — CLI `@anthropic-ai/claude-code` **в образе** (глобально);
+  гоняется против DeepSeek по `ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL`. Без него пайплайн падает
+  «spawn claude ENOENT». `HOME` задан (`/root`) — Claude Code пишет конфиг в `$HOME/.claude`.
 
 ## Сборка и запуск
 
