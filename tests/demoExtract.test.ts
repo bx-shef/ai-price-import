@@ -181,7 +181,7 @@ describe('extractDemo — invoice/waybill totals across languages', () => {
     const r = extractDemo(demo('invoice-ru.txt'))
     expect(r.totals).toMatchObject({ sum: 1172, vat: 234.4, total: 1406.4 })
   })
-  it('be grand-total label «усяго да аплаты»', () => {
+  it('РБ grand-total label «Всего к оплате»', () => {
     expect(extractDemo(demo('invoice-be.txt')).totals.total).toBe(1190.4)
   })
   it('kk grand-total label «барлығы төлеуге»', () => {
