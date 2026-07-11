@@ -1,72 +1,143 @@
-# Production compose for procure-ai — behind the SHARED nginx-proxy + acme-companion
-# (external network `proxy-net`, as with currency-converter / client-bank-alfa-by).
-# GHCR images + Watchtower auto-update. One domain: price-import.bx-shef.by.
+# Продакшн procure-ai — разместить на сервере в /home/bitrix/price-import/
+# Требует:
+#   - docker network proxy-net (создаётся общим nginx-proxy — см. docker-compose.server.yml /
+#     на этом сервере уже поднят вместе с currency-converter);
+#   - запущенный общий Watchtower на хосте (docker-compose.watchtower.yml) — он один на
+#     сервер и сам подхватит контейнеры по метке watchtower.enable ниже;
+#   - .env рядом с этим файлом (git-ignored) со всеми переменными backend (см. .env.example):
+#     NUXT_PUBLIC_SITE_URL, LETSENCRYPT_EMAIL, POSTGRES_PASSWORD, B24_TOKEN_ENC_KEY,
+#     B24_CLIENT_ID/SECRET, ANTHROPIC_*, DATABASE_URL, REDIS_URL … (B24_APPLICATION_TOKEN
+#     оставляем ПУСТЫМ — токен приходит в ONAPPINSTALL и запоминается по порталу).
+# Свой Watchtower здесь НЕ поднимаем: второй экземпляр конфликтует по имени и плодит
+# двойные перезапуски (см. docs/redesign/09-deploy.md).
 #
-# Server prep (once): shared `nginx-proxy` + `acme-companion` + a global Watchtower
-# already run on `proxy-net`. Then here:  docker compose -f docker-compose.prod.yml up -d
-# Secrets come from a git-ignored `.env` next to this file.
+# Один домен, две роли: nginx `app` отдаёт пререндер-страницы и проксирует /api/* в
+# `backend` (Nitro) — вебхук B24 живёт на https://<DOMAIN>/api/b24/events без CORS.
+# Наружу (в общий nginx-proxy) смотрит только `app`; backend/db/redis — в приватных сетях.
+# Воркеры пайплайна (extract → agent → crm-sync) идут IN-PROCESS в backend (плагин queue);
+# отдельный worker-контейнер — следующий шаг масштабирования (см. CLAUDE.md / REFACTOR).
+
 services:
-  # Front reverse proxy: TLS is terminated by the shared nginx-proxy, which routes
-  # the vhost here; this adds login rate-limit, internal-endpoint deny, CSP, body caps.
+  # Front reverse proxy: TLS терминирует общий nginx-proxy, который маршрутизирует vhost
+  # сюда; этот слой добавляет login-throttle, deny внутренних эндпоинтов, CSP, лимиты тела.
   app:
     image: ghcr.io/bx-shef/procure-ai-app:latest
+    container_name: procure-ai
+    # Образ — nginx unprivileged (non-root) на :8080.
+    expose:
+      - "8080"
     environment:
-      VIRTUAL_HOST: price-import.bx-shef.by
+      # nginx-proxy ждёт ГОЛЫЙ хост (не URL). DOMAIN — в .env (напр. price-import.bx-shef.by);
+      # backend отдельно получает полный NUXT_PUBLIC_SITE_URL через env_file.
+      VIRTUAL_HOST: ${DOMAIN:?set DOMAIN in .env (bare host, e.g. price-import.bx-shef.by)}
       VIRTUAL_PORT: "8080"
-      LETSENCRYPT_HOST: price-import.bx-shef.by
-      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+      LETSENCRYPT_HOST: ${DOMAIN}
+      # Per-vhost ACME контакт; переопределяет глобальный DEFAULT_EMAIL acme-companion.
+      # Пусто допустимо (сертификат выпустится без account email).
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-}
     depends_on:
+      # best-effort порядок; nginx.conf резолвит `backend` лениво и отдаёт 502, если он
+      # кратко недоступен, — поэтому app не падает на старте из-за неготовности backend.
       - backend
     networks:
-      - proxy-net
-      - internal
+      - proxy-net   # смотрит наружу через общий nginx-proxy
+      - internal    # ходит в backend для /api/ proxy_pass
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     labels:
+      # Подхватывается единственным хостовым Watchtower (--label-enable).
       com.centurylinklabs.watchtower.enable: "true"
     restart: unless-stopped
 
-  # Nitro: prerendered pages + /api + in-process pipeline workers (BullMQ).
+  # Nitro: пререндер-страницы + /api + in-process воркеры пайплайна (BullMQ).
   backend:
     image: ghcr.io/bx-shef/procure-ai:latest
+    container_name: procure-ai-backend
+    # Ни хост-порта, ни proxy-net — доступен только через app's /api/ proxy_pass.
+    expose:
+      - "3000"
     env_file: .env
-    depends_on:
-      - db
-      - redis
+    # Liveness — образ несёт свой HEALTHCHECK (node fetch /api/health); дублируем в compose,
+    # чтобы `docker compose ps` показывал здоровье backend сразу (node есть в образе, wget нет).
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       - uploads:/data/uploads
     networks:
-      - internal
-    # Untrusted files run through libreoffice/tesseract — bound memory vs a decode bomb.
+      - internal   # принимает /api от app + исходящие в B24/DeepSeek
+      - dbnet      # до Postgres
+      - queuenet   # до Redis (BullMQ)
+    # Извлечение гоняет недоверенные файлы через libreoffice/tesseract — лимит памяти
+    # против zip/XML/image-бомбы (таймаут ограничивает CPU, не RAM).
     mem_limit: 2g
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     restart: unless-stopped
 
+  # Postgres — токены порталов, задачи, извлечённый текст/структура, метрики.
   db:
     image: postgres:16-alpine
+    container_name: procure-ai-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-procure}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (must match DATABASE_URL)}
       POSTGRES_DB: ${POSTGRES_DB:-procure}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-procure} -d ${POSTGRES_DB:-procure}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
-      - internal
+      - dbnet
     restart: unless-stopped
 
+  # Redis — очереди BullMQ. Только в `queuenet` (internal: true): без хост-порта и egress,
+  # доступен лишь backend. Durable (appendonly) — задачи переживают рестарт.
   redis:
     image: redis:7-alpine
+    container_name: procure-ai-redis
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
-      - internal
+      - queuenet
     restart: unless-stopped
 
 networks:
-  # Created once on the server by the shared nginx-proxy stack.
+  # Создаётся один раз на сервере общим nginx-proxy стеком (docker-compose.server.yml).
   proxy-net:
     external: true
+  # app ↔ backend и исходящие backend'а в Bitrix24/DeepSeek (поэтому НЕ internal).
   internal:
     driver: bridge
+  # backend ↔ Postgres. internal: true — БД полностью изолирована (ни входа снаружи, ни egress).
+  dbnet:
+    driver: bridge
+    internal: true
+  # backend ↔ Redis. internal: true — Redis без хост-порта и без egress, не покидает эту сеть.
+  queuenet:
+    driver: bridge
+    internal: true
 
 volumes:
   uploads: {}

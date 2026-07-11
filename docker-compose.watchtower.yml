@@ -1,0 +1,22 @@
+# ОБЩИЙ Watchtower сервера — авто-обновление контейнеров, у которых есть метка
+# com.centurylinklabs.watchtower.enable=true (наши app/backend в docker-compose.prod.yml).
+# ОДИН на ВЕСЬ СЕРВЕР, общий для ВСЕХ приложений.
+#
+# ⚠️ На ЭТОМ сервере он УЖЕ запущен (контейнер `…-watchtower-1` из стека currency-converter,
+#    образ containrrr/watchtower). НЕ поднимайте второй — два Watchtower плодят двойные
+#    перезапуски и гонки. Этот файл нужен только для развёртывания ЧИСТОГО хоста.
+#    Подробности — docs/redesign/09-deploy.md.
+
+services:
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    container_name: watchtower
+    # --label-enable: трогаем ТОЛЬКО помеченные контейнеры (не весь хост).
+    # --cleanup: удалять старые образы после обновления. --interval: опрос раз в 5 минут.
+    command: --label-enable --cleanup --interval 300
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Приватный GHCR (ghcr.io/bx-shef/*): смонтировать docker-креды для pull приватных
+      # образов. Публичные образы — строку можно не добавлять.
+      # - ${HOME}/.docker/config.json:/config.json:ro
+    restart: unless-stopped
