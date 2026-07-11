@@ -181,6 +181,9 @@ export function liveCrmSyncHandlerDeps(infra: LiveInfra): HandlerDeps {
     getDocument: (m, j) => getDocument(m, j, infra.query),
     crmSyncDeps: (m, _j, mapping) => liveCrmSyncDeps(m, mapping, rest, infra),
     setJobStatus: (m, j, status, result) => setJobStatus(m, j, status, result, infra.query),
-    deleteDocument: (m, j) => deleteDocument(m, j, infra.query)
+    deleteDocument: (m, j) => deleteDocument(m, j, infra.query),
+    bumpMetrics: async (m, deltas) => {
+      for (const [name, by] of Object.entries(deltas)) await bumpCounter(m, name, by, infra.query)
+    }
   }
 }
