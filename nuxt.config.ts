@@ -8,6 +8,13 @@ export default defineNuxtConfig({
     '@bitrix24/b24jssdk-nuxt'
   ],
 
+  app: {
+    head: {
+      // Global favicon (SVG — modern browsers; the landing + in-portal pages inherit it).
+      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }]
+    }
+  },
+
   css: ['~/assets/css/main.css'],
 
   runtimeConfig: {
