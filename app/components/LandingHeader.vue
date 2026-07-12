@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { LANDING_CTA, LANDING_MARKET_URL } from '~/utils/landing'
+import { LANDING_CTA_MARKET, LANDING_MARKET_URL } from '~/utils/landing'
 
 // Sticky landing navigation (L3, enriched to client-bank parity): section anchors +
 // market / legal / operators links, a business-card trigger (L2), and a persistent
@@ -13,7 +13,6 @@ const NAV: NavItem[] = [
   { label: 'Демо', to: '#demo' },
   { label: 'Как это работает', to: '#how' },
   { label: 'Почему мы', to: '#why' },
-  { label: 'В Маркете', to: LANDING_MARKET_URL, external: true },
   { label: 'Реквизиты', to: 'https://offer.bx-shef.by/legal', external: true },
   { label: 'Операторам', to: '/login', route: true }
 ]
@@ -71,12 +70,14 @@ function openCardMobile() {
       </nav>
 
       <div class="flex items-center gap-2">
-        <NuxtLink
-          to="/app"
+        <a
+          :href="LANDING_MARKET_URL"
+          target="_blank"
+          rel="noopener noreferrer"
           class="shrink-0 rounded-lg bg-cyan-500 px-4 py-1.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
         >
-          {{ LANDING_CTA }}
-        </NuxtLink>
+          {{ LANDING_CTA_MARKET }}
+        </a>
         <!-- Mobile hamburger -->
         <button
           type="button"
