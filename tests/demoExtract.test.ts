@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { extractDemo, MAX_DEMO_ITEMS, parseNum } from '../app/utils/demoExtract'
+import { currencySymbol, detectCurrencyCode, extractDemo, MAX_DEMO_ITEMS, parseNum } from '../app/utils/demoExtract'
 
 const demo = (name: string): string =>
   readFileSync(fileURLToPath(new URL(`../public/demo/${name}`, import.meta.url)), 'utf8')
@@ -207,5 +207,26 @@ describe('extractDemo — invoice/waybill totals across languages', () => {
   })
   it('kk grand-total label «барлығы төлеуге»', () => {
     expect(extractDemo(demo('invoice-kk.txt')).totals.total).toBe(1111.04)
+  })
+})
+
+describe('currency', () => {
+  it('currencySymbol maps ISO codes to symbols', () => {
+    expect(currencySymbol('RUB')).toBe('₽')
+    expect(currencySymbol('BYN')).toBe('Br')
+    expect(currencySymbol('KZT')).toBe('₸')
+    expect(currencySymbol(undefined)).toBeUndefined()
+    expect(currencySymbol('XXX')).toBe('XXX') // unknown passes through
+  })
+  it('detectCurrencyCode infers from tax-id kind when no explicit token', () => {
+    expect(detectCurrencyCode('счёт', 'ИНН')).toBe('RUB')
+    expect(detectCurrencyCode('счёт', 'УНП')).toBe('BYN')
+    expect(detectCurrencyCode('шот', 'БСН')).toBe('KZT')
+    expect(detectCurrencyCode('в рублях РФ')).toBe('RUB') // explicit token wins
+  })
+  it('demo samples expose a currency symbol per market (РФ ₽ / РБ Br / КЗ ₸)', () => {
+    expect(extractDemo(demo('invoice-ru.txt')).currency).toBe('₽')
+    expect(extractDemo(demo('invoice-be.txt')).currency).toBe('Br')
+    expect(extractDemo(demo('invoice-kk.txt')).currency).toBe('₸')
   })
 })

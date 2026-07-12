@@ -31,8 +31,37 @@ export interface DemoResult {
   supplier?: { name?: string, taxId?: string, taxIdKind?: TaxIdKind }
   items: DemoItem[]
   totals: { sum?: number, vat?: number, total?: number }
+  /** Display currency symbol for the amounts (₽ / Br / ₸ / …), when recognised. */
+  currency?: string
   language: DemoLang
   warnings: string[]
+}
+
+const CURRENCY_SYMBOL: Record<string, string> = {
+  RUB: '₽', BYN: 'Br', KZT: '₸', USD: '$', EUR: '€', UAH: '₴'
+}
+
+/** ISO currency code → display symbol (unknown code passes through unchanged). */
+export function currencySymbol(code: string | undefined): string | undefined {
+  if (!code) return undefined
+  return CURRENCY_SYMBOL[code.toUpperCase()] ?? code
+}
+
+/**
+ * Best-effort currency for the demo: an explicit token in the text wins; otherwise
+ * infer from the tax-id kind (ИНН→RUB, УНП→BYN, БСН/БИН/ИИН/ЖСН→KZT — the demo's
+ * three markets). Returns an ISO code, or undefined when nothing is recognised.
+ */
+export function detectCurrencyCode(text: string, taxIdKind?: TaxIdKind): string | undefined {
+  if (/₽|(?<![\p{L}])руб|(?<![\p{L}])rub(?![\p{L}])|российск/iu.test(text)) return 'RUB'
+  if (/(?<![\p{L}])BYN(?![\p{L}])|бел[.\s]*руб|(?<![\p{L}])Br(?![\p{L}])/iu.test(text)) return 'BYN'
+  if (/₸|тенге|теңге|(?<![\p{L}])KZT(?![\p{L}])/iu.test(text)) return 'KZT'
+  if (/€|(?<![\p{L}])EUR(?![\p{L}])|евро/iu.test(text)) return 'EUR'
+  if (/\$|(?<![\p{L}])USD(?![\p{L}])|доллар/iu.test(text)) return 'USD'
+  if (taxIdKind === 'ИНН') return 'RUB'
+  if (taxIdKind === 'УНП') return 'BYN'
+  if (taxIdKind === 'БИН' || taxIdKind === 'БСН' || taxIdKind === 'ИИН' || taxIdKind === 'ЖСН') return 'KZT'
+  return undefined
 }
 
 // NB: JS `\b` is ASCII-only — it does NOT form a boundary next to Cyrillic/Kazakh
@@ -219,7 +248,9 @@ export function extractDemo(input: string): DemoResult {
   if (!supplier?.name && !supplier?.taxId) warnings.push('Поставщик не распознан')
   if (!items.length) warnings.push('Позиции не распознаны')
 
-  return { docType, docTypeLabel, number, date, supplier, items, totals, language: detectLang(text), warnings }
+  const currency = currencySymbol(detectCurrencyCode(text, supplier?.taxIdKind))
+
+  return { docType, docTypeLabel, number, date, supplier, items, totals, currency, language: detectLang(text), warnings }
 }
 
 function pick(cells: string[], idx: number | undefined): string {

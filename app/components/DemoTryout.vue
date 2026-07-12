@@ -94,7 +94,13 @@ async function onDrop(e: DragEvent) {
   if (file) await upload(file)
 }
 
+const cur = computed(() => result.value?.currency || '')
 const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+/** Amount with the recognised currency symbol appended (space-separated). */
+const amount = (n: number) => (cur.value ? `${money(n)} ${cur.value}` : money(n))
+/** Column headers carry the currency so per-row cells stay uncluttered. */
+const priceHeader = computed(() => (cur.value ? `Цена, ${cur.value}` : 'Цена'))
+const sumHeader = computed(() => (cur.value ? `Сумма, ${cur.value}` : 'Сумма'))
 </script>
 
 <template>
@@ -162,9 +168,19 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     <!-- Result -->
     <div
       v-if="loading"
-      class="mt-6 text-center text-slate-400"
+      class="mt-6"
+      role="status"
+      aria-live="polite"
     >
-      Разбираем…
+      <div class="mb-2 text-center text-sm text-slate-400">
+        Разбираем документ…
+      </div>
+      <div
+        class="demo-progress h-1.5 w-full overflow-hidden rounded-full bg-white/10"
+        aria-label="Идёт разбор документа"
+      >
+        <div class="demo-progress__bar h-full w-1/3 rounded-full bg-cyan-400" />
+      </div>
     </div>
     <div
       v-else-if="error"
@@ -222,10 +238,10 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
                 Кол-во
               </th>
               <th class="py-1.5 pr-3 font-medium">
-                Цена
+                {{ priceHeader }}
               </th>
               <th class="py-1.5 font-medium">
-                Сумма
+                {{ sumHeader }}
               </th>
             </tr>
           </thead>
@@ -245,7 +261,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
                 {{ it.quantity ?? '—' }}<span
                   v-if="it.unit"
                   class="text-slate-500"
-                > {{ it.unit }}</span>
+                >&nbsp;{{ it.unit }}</span>
               </td>
               <td class="py-1.5 pr-3 text-slate-300">
                 {{ it.price !== undefined ? money(it.price) : '—' }}
@@ -267,7 +283,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
           :key="p.k"
         >
           <span class="text-slate-500">{{ p.k }}:</span>
-          <span class="ml-1 text-slate-100">{{ money(p.v) }}</span>
+          <span class="ml-1 text-slate-100">{{ amount(p.v) }}</span>
         </div>
       </div>
 
@@ -292,3 +308,22 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Indeterminate progress: a cyan bar sweeps left→right while the document is parsed
+   (real AI path takes a couple of seconds; deterministic path is near-instant). */
+.demo-progress__bar {
+  animation: demo-progress-slide 1.2s linear infinite;
+}
+@keyframes demo-progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-progress__bar {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+</style>

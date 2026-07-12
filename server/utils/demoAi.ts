@@ -1,5 +1,5 @@
 import type { ExtractedDocument } from '~/types/document'
-import type { DemoResult, DemoDocType, DemoItem, TaxIdKind } from '~/utils/demoExtract'
+import { currencySymbol, type DemoResult, type DemoDocType, type DemoItem, type TaxIdKind } from '~/utils/demoExtract'
 
 // AI path for the PUBLIC demo (P5-b): PDF / scan / office → text extraction
 // (poppler / libreoffice / OCR) → DeepSeek agent → structured result, OR an honest
@@ -45,19 +45,25 @@ export function extractedToDemoResult(doc: ExtractedDocument): DemoResult {
   const anySum = items.some(i => i.sum !== undefined)
   const totalSum = items.reduce((a, i) => a + (i.sum ?? 0), 0)
   const s = doc.supplier
+  const taxIdKind = s?.taxIdKind ? TAX_KIND_MAP[s.taxIdKind] : undefined
   const supplier = s && (s.name || s.taxId)
     ? {
         name: s.name || undefined,
         taxId: s.taxId || undefined,
-        taxIdKind: s.taxIdKind ? TAX_KIND_MAP[s.taxIdKind] : undefined
+        taxIdKind
       }
     : undefined
+  // Currency from the agent's ISO code when present, else inferred from the tax-id kind.
+  const currency = currencySymbol(doc.currency) ?? currencySymbol(
+    taxIdKind === 'ИНН' ? 'RUB' : taxIdKind === 'УНП' ? 'BYN' : taxIdKind ? 'KZT' : undefined
+  )
   return {
     docType: type,
     docTypeLabel: label,
     supplier,
     items,
     totals: { sum: anySum ? round2(totalSum) : undefined },
+    currency,
     language: 'unknown',
     warnings: []
   }
