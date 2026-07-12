@@ -224,6 +224,14 @@ describe('currency', () => {
     expect(detectCurrencyCode('шот', 'БСН')).toBe('KZT')
     expect(detectCurrencyCode('в рублях РФ')).toBe('RUB') // explicit token wins
   })
+  it('«бел. руб.» → BYN even though it contains «руб» (not RUB)', () => {
+    expect(detectCurrencyCode('Цена, бел. руб.', 'УНП')).toBe('BYN')
+    expect(detectCurrencyCode('белорусских рублей')).toBe('BYN')
+  })
+  it('«европоддон» does not false-positive as EUR (falls to tax-id inference)', () => {
+    expect(detectCurrencyCode('Европоддон 1200×800', 'БСН')).toBe('KZT')
+    expect(detectCurrencyCode('оплата в евро')).toBe('EUR') // real token still works
+  })
   it('demo samples expose a currency symbol per market (РФ ₽ / РБ Br / КЗ ₸)', () => {
     expect(extractDemo(demo('invoice-ru.txt')).currency).toBe('₽')
     expect(extractDemo(demo('invoice-be.txt')).currency).toBe('Br')

@@ -53,11 +53,13 @@ export function currencySymbol(code: string | undefined): string | undefined {
  * three markets). Returns an ISO code, or undefined when nothing is recognised.
  */
 export function detectCurrencyCode(text: string, taxIdKind?: TaxIdKind): string | undefined {
+  // BYN before RUB: «бел. руб.» / «белорусских рублей» contain «руб», so the
+  // Belarusian wording must match first — otherwise the generic RUB «руб» preempts it.
+  if (/(?<![\p{L}])BYN(?![\p{L}])|(?<![\p{L}])Br(?![\p{L}])|бел[.\s]*руб|белорусск/iu.test(text)) return 'BYN'
   if (/₽|(?<![\p{L}])руб|(?<![\p{L}])rub(?![\p{L}])|российск/iu.test(text)) return 'RUB'
-  if (/(?<![\p{L}])BYN(?![\p{L}])|бел[.\s]*руб|(?<![\p{L}])Br(?![\p{L}])/iu.test(text)) return 'BYN'
   if (/₸|тенге|теңге|(?<![\p{L}])KZT(?![\p{L}])/iu.test(text)) return 'KZT'
-  if (/€|(?<![\p{L}])EUR(?![\p{L}])|евро/iu.test(text)) return 'EUR'
-  if (/\$|(?<![\p{L}])USD(?![\p{L}])|доллар/iu.test(text)) return 'USD'
+  if (/€|(?<![\p{L}])EUR(?![\p{L}])|(?<![\p{L}])евро(?![\p{L}])/iu.test(text)) return 'EUR'
+  if (/\$|(?<![\p{L}])USD(?![\p{L}])|(?<![\p{L}])доллар/iu.test(text)) return 'USD'
   if (taxIdKind === 'ИНН') return 'RUB'
   if (taxIdKind === 'УНП') return 'BYN'
   if (taxIdKind === 'БИН' || taxIdKind === 'БСН' || taxIdKind === 'ИИН' || taxIdKind === 'ЖСН') return 'KZT'
