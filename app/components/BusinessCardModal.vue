@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import QRCode from 'qrcode'
 import PhoneAddIcon from '@bitrix24/b24icons-vue/solid/PhoneAddIcon'
 import TelegramIcon from '@bitrix24/b24icons-vue/social/TelegramIcon'
 import CrossLIcon from '@bitrix24/b24icons-vue/outline/CrossLIcon'
@@ -55,6 +54,8 @@ const card = {
 onMounted(async () => {
   const target = 'https://' + card.site
   try {
+    // Lazy-load qrcode only when the card mounts — keep ~50KB off the eager landing bundle.
+    const QRCode = (await import('qrcode')).default
     // Десктоп: декоративный белый-на-прозрачном, вписан в тёмную тему карточки.
     qrDataUrl.value = await QRCode.toDataURL(target, {
       width: 180,
@@ -176,7 +177,7 @@ function downloadVCard() {
     phoneTel: card.phoneTel,
     email: card.email,
     url: 'https://' + card.site,
-    note: `Импорт выписки клиент-банка в Bitrix24. ${card.unp}.`
+    note: `AI-импорт документов и товаров в Bitrix24. ${card.unp}.`
   })
 
   triggerDownload(new Blob([vcf], { type: 'text/vcard;charset=utf-8' }), 'igor-shevchik.vcf')
