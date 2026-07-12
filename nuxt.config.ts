@@ -28,7 +28,12 @@ export default defineNuxtConfig({
       siteUrl: '',
       commitSha: 'dev',
       // Yandex.Metrika id (empty → useMetrikaGoal no-ops; landing analytics optional).
-      metrikaId: ''
+      metrikaId: '',
+      // Embedded Bitrix24 CRM web-form (BriefForm). Empty id/secret → placeholder slot;
+      // owner sets NUXT_PUBLIC_B24_FORM_ID / _SECRET / _SCRIPT_URL to embed the real form.
+      b24FormId: process.env.NUXT_PUBLIC_B24_FORM_ID || '',
+      b24FormSecret: process.env.NUXT_PUBLIC_B24_FORM_SECRET || '',
+      b24FormScriptUrl: process.env.NUXT_PUBLIC_B24_FORM_SCRIPT_URL || ''
     }
   },
   future: { compatibilityVersion: 4 },
