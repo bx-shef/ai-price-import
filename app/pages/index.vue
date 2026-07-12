@@ -45,9 +45,9 @@ const cardOpen = ref(false)
       <div class="relative">
         <!-- Hero -->
         <section class="relative mx-auto max-w-4xl px-6 pt-24 pb-16 text-center">
-          <div class="pointer-events-none absolute inset-0 opacity-50">
+          <div class="pointer-events-none absolute inset-0 opacity-60">
             <ClientOnly>
-              <HeroGraph />
+              <HeroDocFlow />
             </ClientOnly>
           </div>
           <div class="relative z-10">
