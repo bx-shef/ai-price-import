@@ -41,6 +41,14 @@ describe('extractedToDemoResult', () => {
     expect(r.items[1]).toMatchObject({ name: 'Каска защитная', sum: 392 })
     expect(r.totals.sum).toBe(722)
   })
+  it('omits the grand total for a price list (items but no per-line sums)', () => {
+    const r = extractedToDemoResult({ items: [
+      { name: 'Перчатки', price: 1.1 }, // прайс: name+price, no quantity → sum undefined
+      { name: 'Каска', price: 9.8 }
+    ] })
+    expect(r.items[0]?.sum).toBeUndefined()
+    expect(r.totals.sum).toBeUndefined()
+  })
   it('placeholder name for a blank name; no supplier when empty', () => {
     const r = extractedToDemoResult({ items: [{ name: '  ', quantity: 1, price: 2 }] })
     expect(r.items[0]?.name).toBe('(без наименования)')

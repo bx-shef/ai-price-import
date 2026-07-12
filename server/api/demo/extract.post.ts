@@ -60,7 +60,15 @@ export default defineEventHandler(async (event) => {
     return { error: 'Файл слишком большой для демо (до 5 МБ).' }
   }
 
-  const form = await readMultipartFormData(event)
+  // A malformed/truncated multipart body (bad boundary, corrupt payload under the cap)
+  // makes h3's parser throw — catch it so a bad request yields a clean {error}, not a 500.
+  let form
+  try {
+    form = await readMultipartFormData(event)
+  } catch {
+    setResponseStatus(event, 400)
+    return { error: 'Не удалось прочитать загруженный файл.' }
+  }
   const file = form?.find(p => p.name === 'file' && p.filename)
   if (!file || !file.filename || !file.data?.length) {
     setResponseStatus(event, 400)

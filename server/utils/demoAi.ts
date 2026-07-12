@@ -39,6 +39,10 @@ export function extractedToDemoResult(doc: ExtractedDocument): DemoResult {
       sum
     }
   })
+  // Only surface a grand total when at least one line produced a computable sum.
+  // A price list (прайс) is name+price with no quantities → every line sum=undefined;
+  // reporting "Итого: 0" there would be misleading, so omit the total instead.
+  const anySum = items.some(i => i.sum !== undefined)
   const totalSum = items.reduce((a, i) => a + (i.sum ?? 0), 0)
   const s = doc.supplier
   const supplier = s && (s.name || s.taxId)
@@ -53,7 +57,7 @@ export function extractedToDemoResult(doc: ExtractedDocument): DemoResult {
     docTypeLabel: label,
     supplier,
     items,
-    totals: { sum: items.length ? round2(totalSum) : undefined },
+    totals: { sum: anySum ? round2(totalSum) : undefined },
     language: 'unknown',
     warnings: []
   }
