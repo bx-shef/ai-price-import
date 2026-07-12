@@ -14,10 +14,6 @@ ARG COMMIT_SHA=dev
 ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
 # nuxt build → .output: Nitro node server incl. prerendered static pages in public/.
 RUN pnpm build
-# Inject sha256 hashes of Nuxt's inline scripts into nginx.conf (replaces the
-# __CSP_SCRIPT_HASHES__ placeholder) so the served CSP drops script-src 'unsafe-inline'.
-# Computed from the exact prerendered HTML the backend serves → hashes always match.
-RUN node scripts/csp-hashes.mjs .output/public nginx.conf nginx.conf
 
 FROM node:22-slim AS backend
 WORKDIR /app
@@ -50,8 +46,7 @@ CMD ["node", ".output/server/index.mjs"]
 # Non-root nginx (listens :8080). Adds login rate-limit, internal-endpoint deny,
 # CSP/security headers for the B24 iframe, body-size caps. Proxies to backend:3000.
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS app
-# nginx.conf comes from the build stage — it has the CSP script hashes injected.
-COPY --from=build /app/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY proxy_common.conf /etc/nginx/proxy_common.conf
 # Fail the build on a bad config (proxy_pass hostnames resolve at runtime, not here).
 RUN nginx -t
