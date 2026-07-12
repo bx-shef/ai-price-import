@@ -70,13 +70,15 @@ function openCardMobile() {
       </nav>
 
       <div class="flex items-center gap-2">
+        <!-- Full CTA on ≥sm; a compact label on phones so the row never overflows -->
         <a
           :href="LANDING_MARKET_URL"
           target="_blank"
           rel="noopener noreferrer"
-          class="shrink-0 rounded-lg bg-cyan-500 px-4 py-1.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+          class="shrink-0 rounded-lg bg-cyan-500 px-3 py-1.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 sm:px-4"
         >
-          {{ LANDING_CTA_MARKET }}
+          <span class="hidden sm:inline">{{ LANDING_CTA_MARKET }}</span>
+          <span class="sm:hidden">В Маркет</span>
         </a>
         <!-- Mobile hamburger -->
         <button
