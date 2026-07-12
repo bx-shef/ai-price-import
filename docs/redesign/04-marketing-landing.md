@@ -1,6 +1,14 @@
 # Маркетинг и лендинг (редизайн procure-ai)
 
-> Last reviewed: 2026-07-07
+> Last reviewed: 2026-07-12
+
+> **Статус: реализовано (PR #41–#54).** Лендинг собран по композиции/виду client-bank на наших
+> блоках, акцент cyan. **Расхождения с планом ниже** (план был написан до сборки): hero-анимация —
+> `HeroParticles.vue` (parallax-поле точек, не node-graph `HeroGraph`); тёмная тема лендинга — через
+> `bodyAttrs`/классы в `app/pages/index.vue` (без отдельного layout `landing`/`.landing-shell`/
+> `data-force-dark`); CSP — на **sha256-хэшах** (`scripts/csp-hashes.mjs`, без `unsafe-inline`);
+> промо-карточки `CustomDevCard`/`AppInBitrixCard` из эталона не портировались — рынок-CTA сделан
+> своей карточкой + ссылками; форма — `BriefForm` (встроенная CRM-форма Б24, задать env `NUXT_PUBLIC_B24_FORM_*`).
 
 План маркетинговой части: публичный лендинг + промо/cross-sell + аналитика. Подход и почти все
 компоненты переносимы 1-в-1 из эталона `client-bank-alfa-by` (который сам портирован с
@@ -40,9 +48,9 @@
   индивидуальная доработка (не в базовом флоу).
 - **Форматы/интеграции** (tech-row) — PDF, скан/фото (OCR), XLSX/XLS, DOCX; таргет — Bitrix24
   (воронка «Закупки»), на горизонте 1С:УТ.
-- **HeroGraph** — перекрасить/переименовать узлы: Накладная, Прайс, PDF, Скан, XLSX, Поставщик,
-  Артикул, Каталог, Цена → импульсы в центральный хаб **Bitrix24 / Сделка «Закупки»**. Параметризация
-  `rgb`/`photo` уже заложена в эталоне.
+- **Hero-анимация** — вместо node-graph `HeroGraph` сделан `HeroParticles.vue`: сдержанное
+  parallax-поле точек с редкими вспышками связей (владелец просил «совсем другую», не хаб-граф).
+  Canvas, cyan, reduced-motion/пауза/троттлинг/aria-hidden.
 - **OG/бренд** — свой заголовок/сабтайтл и, при необходимости, партнёрский бейдж (ИП/интегратор).
 - **Промо `CustomDevCard`** — ссылка на бриф/партнёра (как в экосистеме `bx-shef`), тексты вшиты.
 - **`AppInBitrixCard` — центральный CTA** (не второстепенный, как в эталоне): ссылка на **листинг
@@ -79,7 +87,7 @@
 
 1. Порт `landing.vue` + `main.css` (`.landing-shell` токены) + шрифты.
 2. Порт `landing.ts` → переписать контент под закупки; подключить SEO в `app.vue`.
-3. Порт `HeroGraph.vue` → перекрасить/переименовать узлы.
+3. Hero-анимация `HeroParticles.vue` (parallax-поле; вместо node-graph эталона).
 4. Порт `BriefForm.vue` + `b24Form.ts` + `public/b24-form.html` + nginx form-scoped CSP.
 5. Порт промо (`CustomDevCard`, `AppInBitrixCard`) + визитка (если нужна).
 6. Метрика (`nuxt.config.ts` инлайн + `useMetrikaGoal`) + CSP-hashing.
