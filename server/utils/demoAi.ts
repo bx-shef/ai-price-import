@@ -44,6 +44,23 @@ export function extractedToDemoResult(doc: ExtractedDocument): DemoResult {
   // reporting "Итого: 0" there would be misleading, so omit the total instead.
   const anySum = items.some(i => i.sum !== undefined)
   const totalSum = items.reduce((a, i) => a + (i.sum ?? 0), 0)
+  // VAT / grand total from per-line vatRate — the deterministic path surfaces «НДС» and
+  // «Всего к оплате», so the AI path must too (same document, same output). If prices
+  // already include VAT, extract it from the gross line sum; else add it on top.
+  const srcItems = doc.items ?? []
+  let vatAcc = 0
+  let anyVat = false
+  items.forEach((it, i) => {
+    const rate = srcItems[i]?.vatRate
+    if (it.sum === undefined || !Number.isFinite(rate)) return
+    anyVat = true
+    const r = (rate as number) / 100
+    vatAcc += doc.priceIncludesVat ? it.sum - it.sum / (1 + r) : it.sum * r
+  })
+  const vat = anyVat && anySum ? round2(vatAcc) : undefined
+  const total = vat !== undefined
+    ? round2(doc.priceIncludesVat ? totalSum : totalSum + vat)
+    : undefined
   const s = doc.supplier
   const taxIdKind = s?.taxIdKind ? TAX_KIND_MAP[s.taxIdKind] : undefined
   const supplier = s && (s.name || s.taxId)
@@ -62,7 +79,7 @@ export function extractedToDemoResult(doc: ExtractedDocument): DemoResult {
     docTypeLabel: label,
     supplier,
     items,
-    totals: { sum: anySum ? round2(totalSum) : undefined },
+    totals: { sum: anySum ? round2(totalSum) : undefined, vat, total },
     currency,
     language: 'unknown',
     warnings: []
