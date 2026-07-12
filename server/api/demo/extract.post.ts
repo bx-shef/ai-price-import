@@ -23,6 +23,12 @@ const RATE_MAX = 3
 const RATE_WINDOW_MS = 10 * 60 * 1000
 const limiter = createRateLimiter(RATE_MAX, RATE_WINDOW_MS)
 
+// Global cap on concurrent AI extractions (each spawns poppler/libreoffice/OCR + the
+// agent). The per-IP rate limit doesn't bound aggregate load from many IPs, so cap the
+// in-flight heavy jobs process-wide and shed load with 503 when saturated (DoS guard).
+const AI_MAX_CONCURRENCY = Math.max(1, Number(process.env.DEMO_AI_MAX_CONCURRENCY) || 2)
+let aiInFlight = 0
+
 const DEMO_NOTICE = 'Демо-режим: файл обрабатывается публично и не сохраняется. Не загружайте конфиденциальные документы.'
 
 // Live AI deps (backend image: poppler/libreoffice/tesseract + agent binary + DeepSeek
@@ -100,7 +106,19 @@ export default defineEventHandler(async (event) => {
   // AI path: PDF / scan / Word → extract text (poppler/libreoffice/OCR) → DeepSeek
   // agent → structured result or an honest error (never a 500 for a bad document).
   if (DEMO_AI_EXT.includes(e)) {
-    const out = await runDemoAiExtract(file.data, file.filename, demoAiDeps)
+    // Shed load when too many heavy extractions are already running (global DoS guard).
+    if (aiInFlight >= AI_MAX_CONCURRENCY) {
+      setResponseStatus(event, 503)
+      event.node.res.setHeader('Retry-After', '30')
+      return { error: 'Демо сейчас перегружено разбором. Попробуйте через минуту.' }
+    }
+    aiInFlight++
+    let out
+    try {
+      out = await runDemoAiExtract(file.data, file.filename, demoAiDeps)
+    } finally {
+      aiInFlight--
+    }
     if (out.error || !out.result) {
       setResponseStatus(event, 422)
       return { error: out.error || 'Не удалось разобрать документ.' }

@@ -42,6 +42,32 @@ describe('extractedToDemoResult', () => {
     expect(r.totals.sum).toBe(722)
     expect(r.currency).toBe('Br') // doc.currency 'BYN' → Br
   })
+  it('computes НДС and «Всего» from per-line vatRate (net prices)', () => {
+    const r = extractedToDemoResult({
+      priceIncludesVat: false,
+      items: [
+        { name: 'A', quantity: 10, price: 100, vatRate: 20 }, // 1000 → vat 200
+        { name: 'B', quantity: 2, price: 50, vatRate: 20 } // 100 → vat 20
+      ]
+    })
+    expect(r.totals.sum).toBe(1100)
+    expect(r.totals.vat).toBe(220)
+    expect(r.totals.total).toBe(1320)
+  })
+  it('extracts embedded НДС when prices include VAT (total == sum)', () => {
+    const r = extractedToDemoResult({
+      priceIncludesVat: true,
+      items: [{ name: 'A', quantity: 1, price: 120, vatRate: 20 }] // gross 120 → vat 20
+    })
+    expect(r.totals.sum).toBe(120)
+    expect(r.totals.vat).toBe(20)
+    expect(r.totals.total).toBe(120)
+  })
+  it('omits НДС/total when no line carries a vatRate', () => {
+    const r = extractedToDemoResult({ items: [{ name: 'A', quantity: 1, price: 2 }] })
+    expect(r.totals.vat).toBeUndefined()
+    expect(r.totals.total).toBeUndefined()
+  })
   it('uses the agent currency code when present', () => {
     const r = extractedToDemoResult({ currency: 'KZT', items: [{ name: 'X', quantity: 1, price: 2 }] })
     expect(r.currency).toBe('₸')
