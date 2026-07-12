@@ -1,6 +1,6 @@
 # Стек технологий (редизайн procure-ai)
 
-> Last reviewed: 2026-07-09
+> Last reviewed: 2026-07-12
 
 Целевой стек взят из эталона `client-bank-alfa-by` (проверенная на проде раскладка Bitrix24-приложения)
 и дополнен слоем AI-агента из старого procure-ai. Версии — ориентир на момент фиксации; при инициализации
@@ -62,8 +62,8 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 | Что | Технология | Роль |
 |---|---|---|
 | Контейнеры | **Docker multi-stage / multi-target** | `runner` (nginx-unprivileged + статика), `backend` (node:22-alpine + Nitro), `mcp`, `worker` |
-| Веб-сервер | **`nginxinc/nginx-unprivileged`** (:8080) | статика + прокси `/api/*` → backend; CSP без `unsafe-inline` |
-| CSP | `scripts/csp-hashes.mjs` (sha256 инлайн-скриптов на сборке) | строгий CSP + allowlist доменов Б24 |
+| Веб-сервер | **`nginxinc/nginx-unprivileged`** (:8080) | прокси `/` и `/api/*` → backend (Nitro); security-заголовки + CSP |
+| CSP | заголовок в `nginx.conf` (allowlist доменов Б24) | `script-src` с `'unsafe-inline'`: страницы отдаёт Nitro, инлайн `__NUXT__.config` пере-инъектится из `NUXT_PUBLIC_*` в рантайме, поэтому sha256-хэш со сборки не совпал бы |
 | Реестр/CD | **GHCR + Watchtower** за общим nginx-proxy + acme (Let's Encrypt) | авто-pull `:latest` |
 | CI | **GitHub Actions** — `ci` (install→prepare→lint→test→typecheck→generate) + `docker-build` + `deploy` | required-check `ci` |
 | Зависимости | **Dependabot** (npm/actions/docker, группировка), сторонние actions пиним на SHA | supply-chain |

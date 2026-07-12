@@ -6,7 +6,8 @@
 > блоках, акцент cyan. **Расхождения с планом ниже** (план был написан до сборки): hero-анимация —
 > `HeroParticles.vue` (parallax-поле точек, не node-graph `HeroGraph`); тёмная тема лендинга — через
 > `bodyAttrs`/классы в `app/pages/index.vue` (без отдельного layout `landing`/`.landing-shell`/
-> `data-force-dark`); CSP — на **sha256-хэшах** (`scripts/csp-hashes.mjs`, без `unsafe-inline`);
+> `data-force-dark`); CSP — заголовком в `nginx.conf` со `script-src 'unsafe-inline'` (хэши sha256
+> несовместимы с рантайм-инъекцией `__NUXT__.config` из `NUXT_PUBLIC_*` — Nitro отдаёт страницы сам);
 > промо-карточки `CustomDevCard`/`AppInBitrixCard` из эталона не портировались — рынок-CTA сделан
 > своей карточкой + ссылками; форма — `BriefForm` (встроенная CRM-форма Б24, задать env `NUXT_PUBLIC_B24_FORM_*`).
 
@@ -67,9 +68,12 @@
 - **Форс-dark только на `/`** через `htmlAttrs data-force-dark` + `.landing-shell`; in-portal
   страницы (`/app`,`/import`,`/install`,`/metrics`) остаются light/dark-auto. FOUC-гард — `theme-init`
   в `app.vue` до первого рендера.
-- **CSP строгий**, без `script-src 'unsafe-inline'`: инлайн-скрипты (theme-init, `__NUXT__.config`,
-  сниппет Метрики) разрешаются по sha256, которые `scripts/csp-hashes.mjs` считает на сборке.
-  `frame-ancestors`/`connect-src` разрешают облачные домены Б24 + `mc.yandex.ru`.
+- **CSP** — заголовком в `nginx.conf`. `script-src` держит `'unsafe-inline'`: страницы отдаёт
+  backend Nitro (nginx проксирует `/`), а Nuxt пере-инъектит `runtimeConfig.public` в инлайн
+  `window.__NUXT__.config` **в рантайме** из `NUXT_PUBLIC_*` контейнера — поэтому sha256-хэш,
+  посчитанный на сборке, на отданном скрипте не совпадёт, браузер заблокирует бут Nuxt, гидратация
+  не пройдёт и client-only компоненты (демо) не смонтируются. Инлайн-хэши несовместимы с рантайм-
+  инъекцией конфига здесь. `frame-ancestors`/`connect-src` разрешают облачные домены Б24.
 - **Форма Б24 — только через `public/b24-form.html`** с form-scoped CSP (`location = /b24-form.html`),
   чтобы официальный загрузчик работал, а строгий CSP страницы не ослаблялся. URL строит чистый
   `b24Form.ts` (allowlist хостов + валидация id/secret; тесты). Пустой конфиг ⇒ слот-плейсхолдер.
@@ -90,6 +94,6 @@
 3. Hero-анимация `HeroParticles.vue` (parallax-поле; вместо node-graph эталона).
 4. Порт `BriefForm.vue` + `b24Form.ts` + `public/b24-form.html` + nginx form-scoped CSP.
 5. Порт промо (`CustomDevCard`, `AppInBitrixCard`) + визитка (если нужна).
-6. Метрика (`nuxt.config.ts` инлайн + `useMetrikaGoal`) + CSP-hashing.
+6. Метрика (`nuxt.config.ts` инлайн + `useMetrikaGoal`); CSP — заголовком в `nginx.conf`.
 7. OG-генерация (`make-og.mjs`) под свой бренд.
 8. Скриншоты, пиксель-ревью, обновить `Last reviewed`.
