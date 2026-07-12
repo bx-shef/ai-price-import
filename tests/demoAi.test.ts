@@ -40,6 +40,19 @@ describe('extractedToDemoResult', () => {
     expect(r.items[0]).toMatchObject({ name: 'Перчатки рабочие', article: 'ART-1', quantity: 300, unit: 'шт', price: 1.1, sum: 330 })
     expect(r.items[1]).toMatchObject({ name: 'Каска защитная', sum: 392 })
     expect(r.totals.sum).toBe(722)
+    expect(r.currency).toBe('Br') // doc.currency 'BYN' → Br
+  })
+  it('uses the agent currency code when present', () => {
+    const r = extractedToDemoResult({ currency: 'KZT', items: [{ name: 'X', quantity: 1, price: 2 }] })
+    expect(r.currency).toBe('₸')
+  })
+  it('infers currency from the tax-id kind when the agent gives no currency', () => {
+    const unp = extractedToDemoResult({ supplier: { taxId: '191234567', taxIdKind: 'UNP' }, items: [{ name: 'X', quantity: 1, price: 2 }] })
+    expect(unp.currency).toBe('Br') // UNP → BYN → Br (fallback, no doc.currency)
+    const inn = extractedToDemoResult({ supplier: { taxId: '7701234561', taxIdKind: 'INN' }, items: [{ name: 'X', quantity: 1, price: 2 }] })
+    expect(inn.currency).toBe('₽') // INN → RUB → ₽
+    const bin = extractedToDemoResult({ supplier: { taxId: '041050001234', taxIdKind: 'BIN' }, items: [{ name: 'X', quantity: 1, price: 2 }] })
+    expect(bin.currency).toBe('₸') // BIN → KZT → ₸
   })
   it('omits the grand total for a price list (items but no per-line sums)', () => {
     const r = extractedToDemoResult({ items: [
