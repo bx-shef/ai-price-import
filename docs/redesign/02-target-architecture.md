@@ -1,6 +1,6 @@
 # Целевая архитектура (редизайн procure-ai)
 
-> Last reviewed: 2026-07-11
+> Last reviewed: 2026-07-12
 
 Как должно быть после редизайна. Синтез двух референсов: раскладка/дисциплина/лендинг/деплой —
 из эталона `client-bank-alfa-by` (облачное приложение Маркета Б24); слой «изолированный MCP + агент
@@ -143,7 +143,7 @@ Claude Code» — из методологии репозитория `ai-agent` 
 app/                      # Nuxt (авто-импорт)
   pages/                  # /, /app, /import, /install, /settings, /metrics, /queues, /login
   layouts/                # landing.vue (тёмная бренд-оболочка), clear.vue (in-portal)
-  components/             # UI; лендинг (HeroGraph, BriefForm, BusinessCardModal, AppInBitrixCard)
+  components/             # UI; лендинг (HeroParticles, BriefForm, BusinessCardModal, AppInBitrixCard)
   composables/            # useB24, useAppSettings/useMapping, useMetrikaGoal, useUpload, useJobStatus
   utils/                  # ЧИСТОЕ ЯДРО + тесты: классификация, нормализация, homoglyph, распознавание
                           #   идентификаторов, сборка deal-payload по маппингу, landing.ts, b24Form
@@ -411,7 +411,7 @@ REST, эта модель авторизации) — этап 6.
 | Форма | 2 образа (app+mcp) + отдельный UI | монолит Nuxt (лендинг+UI+Nitro) + mcp + worker |
 | Состояние задач | in-process + Redis | очередь BullMQ, идемпотентные джобы |
 | MCP | вендоренный git-subtree + overlay, тесты мимо | первоклассный MCP-пакет, тесты в общем прогоне |
-| Лендинг/маркетинг | нет | тёмная оболочка, HeroGraph, BriefForm, Метрика, OG, листинг Маркета |
+| Лендинг/маркетинг | нет | тёмная оболочка, HeroParticles, BriefForm, Метрика, OG, листинг Маркета |
 | Мёртвый код | бот, выключенный OAuth | бот выкинут; **OAuth оживает** (мультитенант) |
 
 ## 6. Что остаётся неизменным (сознательно)
