@@ -5,26 +5,27 @@ import {
   LANDING_FEATURES,
   LANDING_FORMATS,
   LANDING_HERO_NOTE,
+  LANDING_HOW_SUBTITLE,
   LANDING_INTEGRATORS,
+  LANDING_MARKET_PROMO,
   LANDING_MARKET_URL,
-  LANDING_PAIN_RESULT,
   LANDING_PUBLISHER,
   LANDING_STEPS,
   LANDING_SUBTITLE,
-  LANDING_TITLE
+  LANDING_WHY_SUBTITLE
 } from '~/utils/landing'
+import { B24_BOOKING_URL } from '~/utils/booking'
 
-// Public marketing landing (dark vibecode shell). Hero layout ported from
-// client-bank (two-column: text + owner photo, PartnerBadge, dual CTA, tech-string),
-// reworked for this product. Background is the parallax particle field (HeroParticles).
+// Public marketing landing. Composition + look mirror the sibling client-bank
+// landing (dark vibecode shell, mouse-glow cards, left-aligned section headers,
+// two-column hero), reusing this project's blocks and content; accent stays cyan.
 useHead({
-  title: LANDING_TITLE,
+  title: 'AI-импорт документов в Bitrix24',
   bodyAttrs: { class: 'bg-[#05010f]' }
 })
 
+useCardGlow()
 const { reachGoal } = useMetrikaGoal()
-
-// Owner's business card: opened from the header «Визитка» and the hero photo.
 const cardOpen = ref(false)
 </script>
 
@@ -40,7 +41,7 @@ const cardOpen = ref(false)
       id="top"
       class="landing-root relative min-h-screen bg-[#05010f] text-slate-200"
     >
-      <!-- radial brand glow (clip blurred blobs here, not on <main>, so the sticky header stays) -->
+      <!-- radial brand glow (clip blurred blobs here, not on <main>, for the sticky header) -->
       <div
         class="pointer-events-none absolute inset-0 overflow-hidden"
         aria-hidden="true"
@@ -53,7 +54,7 @@ const cardOpen = ref(false)
         <!-- HERO -->
         <section
           id="hero"
-          class="relative overflow-hidden px-6 pb-16 pt-20 sm:pt-24 lg:px-8"
+          class="relative overflow-hidden px-[22px] pb-[64px] pt-[80px] sm:pb-[96px] sm:pt-[120px] lg:px-8"
         >
           <div class="pointer-events-none absolute inset-0 opacity-60">
             <ClientOnly>
@@ -61,7 +62,7 @@ const cardOpen = ref(false)
             </ClientOnly>
           </div>
 
-          <div class="relative z-10 mx-auto max-w-5xl">
+          <div class="relative z-10 mx-auto max-w-[1080px]">
             <div class="flex flex-col gap-10 lg:flex-row lg:items-center lg:gap-12">
               <!-- Photo: first on mobile, right column on desktop -->
               <div class="order-first flex shrink-0 justify-start lg:order-last lg:justify-end">
@@ -76,7 +77,7 @@ const cardOpen = ref(false)
                     alt="Игорь Шевчик"
                     width="240"
                     height="240"
-                    class="size-40 rounded-full object-cover shadow-[0_0_64px_rgba(34,211,238,0.20)] ring-2 ring-cyan-400/45 sm:size-48 lg:size-56"
+                    class="size-44 rounded-full object-cover shadow-[0_0_64px_rgba(34,211,238,0.20)] ring-2 ring-cyan-400/45 sm:size-52 lg:size-60"
                     loading="eager"
                   >
                 </button>
@@ -86,7 +87,7 @@ const cardOpen = ref(false)
               <div class="flex flex-1 flex-col items-start gap-5 lg:max-w-[620px]">
                 <PartnerBadge />
 
-                <h1 class="text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
+                <h1 class="text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-6xl lg:text-7xl">
                   AI-импорт документов в <span class="text-cyan-400">Bitrix24</span>
                 </h1>
 
@@ -111,10 +112,19 @@ const cardOpen = ref(false)
                     ><path d="M5 12h14m0 0l-6-6m6 6l-6 6" /></svg>
                   </a>
                   <a
-                    :href="LANDING_MARKET_URL"
+                    :href="B24_BOOKING_URL"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="inline-flex items-center rounded-xl border border-white/15 px-6 py-3 text-base font-semibold text-white transition hover:border-cyan-400/50 hover:bg-white/5"
+                    @click="reachGoal('booking_click')"
+                  >
+                    Назначить созвон
+                  </a>
+                  <a
+                    :href="LANDING_MARKET_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center rounded-xl px-6 py-3 text-base font-semibold text-white/70 transition hover:text-white"
                     @click="reachGoal('market_click')"
                   >
                     {{ LANDING_CTA_MARKET }}
@@ -149,33 +159,41 @@ const cardOpen = ref(false)
         </section>
 
         <!-- БОЛЬ → РЕЗУЛЬТАТ -->
-        <section class="px-6 py-14 lg:px-8">
-          <div class="mx-auto grid max-w-5xl gap-5 md:grid-cols-2">
-            <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-7">
+        <section class="px-[22px] py-[56px] sm:py-[72px] lg:px-8">
+          <div class="mx-auto grid max-w-[1080px] gap-5 md:grid-cols-2">
+            <div
+              data-glow-card
+              class="rounded-2xl border border-white/10 bg-white/[0.03] p-7"
+            >
               <div class="mb-3 font-mono text-xs uppercase tracking-[0.14em] text-white/45">
                 Было
               </div>
               <p class="text-base leading-relaxed text-white/80 sm:text-lg">
-                {{ LANDING_PAIN_RESULT.before }}
+                Позиции из счёта или накладной вбивают в CRM руками — по строке за раз.
+                Ошибки в суммах и НДС, потерянные строки, часы на сверку.
               </p>
             </div>
-            <div class="rounded-2xl border border-cyan-400/30 bg-cyan-400/[0.06] p-7">
+            <div
+              data-glow-card
+              class="rounded-2xl border border-cyan-400/30 bg-cyan-400/[0.06] p-7"
+            >
               <div class="mb-3 font-mono text-xs uppercase tracking-[0.14em] text-cyan-300">
                 Стало
               </div>
               <p class="text-base leading-relaxed text-white/90 sm:text-lg">
-                {{ LANDING_PAIN_RESULT.after }}
+                Загрузили документ — AI распознал контрагента и все позиции и создал
+                сделку/счёт/КП с товарами 1-в-1. Сверять нечего.
               </p>
             </div>
           </div>
         </section>
 
-        <!-- ЖИВОЕ ДЕМО — визуально выделенный блок (карточка с рамкой + эйброу) -->
+        <!-- ЖИВОЕ ДЕМО — визуально выделенный блок -->
         <section
           id="demo"
-          class="scroll-mt-16 px-6 py-14 lg:px-8"
+          class="scroll-mt-16 px-[22px] py-[56px] sm:py-[72px] lg:px-8"
         >
-          <div class="mx-auto max-w-4xl rounded-3xl border border-cyan-400/20 bg-gradient-to-b from-cyan-500/[0.07] to-white/[0.02] p-6 shadow-[0_0_80px_rgba(34,211,238,0.06)] sm:p-10">
+          <div class="mx-auto max-w-[1080px] rounded-3xl border border-cyan-400/20 bg-gradient-to-b from-cyan-500/[0.07] to-white/[0.02] p-6 shadow-[0_0_80px_rgba(34,211,238,0.06)] sm:p-10">
             <div class="mb-2 flex justify-center">
               <span class="inline-flex items-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300">
                 <span class="relative flex size-2">
@@ -201,27 +219,33 @@ const cardOpen = ref(false)
         <!-- КАК ЭТО РАБОТАЕТ -->
         <section
           id="how"
-          class="scroll-mt-16 px-6 py-14 lg:px-8"
+          class="scroll-mt-16 px-[22px] py-[56px] sm:py-[72px] lg:px-8"
         >
-          <div class="mx-auto max-w-5xl">
-            <h2 class="mb-10 text-center text-2xl font-bold text-white sm:text-3xl">
-              Как это работает
-            </h2>
-            <div class="grid gap-5 sm:grid-cols-3">
+          <div class="mx-auto max-w-[1080px]">
+            <div class="mb-12 max-w-[720px] sm:mb-14">
+              <h2 class="mb-4 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                Как это работает
+              </h2>
+              <p class="text-lg text-white/65">
+                {{ LANDING_HOW_SUBTITLE }}
+              </p>
+            </div>
+            <div class="grid grid-cols-1 gap-5 sm:grid-cols-3">
               <div
                 v-for="s in LANDING_STEPS"
                 :key="s.n"
-                class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur transition-colors hover:border-white/25"
+                data-glow-card
+                class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition-colors hover:border-white/25"
               >
                 <div class="font-mono text-3xl font-bold leading-none text-cyan-400">
                   {{ s.n }}
                 </div>
-                <h3 class="mt-4 font-semibold text-white">
+                <div class="mt-3 text-lg font-bold text-white">
                   {{ s.title }}
-                </h3>
-                <p class="mt-1.5 text-sm leading-relaxed text-white/60">
+                </div>
+                <div class="mt-2 text-sm leading-relaxed text-white/60">
                   {{ s.text }}
-                </p>
+                </div>
               </div>
             </div>
           </div>
@@ -230,22 +254,28 @@ const cardOpen = ref(false)
         <!-- ПОЧЕМУ МЫ -->
         <section
           id="why"
-          class="scroll-mt-16 px-6 py-14 lg:px-8"
+          class="scroll-mt-16 px-[22px] py-[56px] sm:py-[72px] lg:px-8"
         >
-          <div class="mx-auto max-w-5xl">
-            <h2 class="mb-10 text-center text-2xl font-bold text-white sm:text-3xl">
-              Почему мы
-            </h2>
-            <div class="grid gap-5 sm:grid-cols-2">
+          <div class="mx-auto max-w-[1080px]">
+            <div class="mb-12 max-w-[720px] sm:mb-14">
+              <h2 class="mb-4 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                Почему мы
+              </h2>
+              <p class="text-lg text-white/65">
+                {{ LANDING_WHY_SUBTITLE }}
+              </p>
+            </div>
+            <div class="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <div
                 v-for="f in LANDING_FEATURES"
                 :key="f.title"
+                data-glow-card
                 class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition-colors hover:border-white/25"
               >
-                <h3 class="font-semibold text-cyan-300">
+                <h3 class="text-xl font-bold leading-tight text-white">
                   {{ f.title }}
                 </h3>
-                <p class="mt-1.5 text-sm leading-relaxed text-white/65">
+                <p class="mt-2 text-sm leading-relaxed text-white/65 sm:text-base">
                   {{ f.text }}
                 </p>
               </div>
@@ -253,28 +283,80 @@ const cardOpen = ref(false)
           </div>
         </section>
 
+        <!-- ПРИЛОЖЕНИЕ В МАРКЕТЕ — бесплатная точка входа (вторичный вес) -->
+        <section class="px-[22px] pb-[56px] pt-[8px] sm:pb-[72px] lg:px-8">
+          <div class="mx-auto max-w-[600px]">
+            <div
+              data-glow-card
+              class="rounded-2xl border border-cyan-400/40 bg-cyan-400/[0.06] p-6 sm:p-7"
+            >
+              <div class="mb-2 font-mono text-[11px] font-medium uppercase tracking-wide text-cyan-300/80">
+                {{ LANDING_MARKET_PROMO.eyebrow }}
+              </div>
+              <h2 class="mb-1.5 text-lg font-semibold text-white">
+                {{ LANDING_MARKET_PROMO.title }}
+              </h2>
+              <p class="mb-4 text-sm leading-relaxed text-white/65">
+                {{ LANDING_MARKET_PROMO.text }}
+              </p>
+              <a
+                :href="LANDING_MARKET_URL"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-2 rounded-lg border border-cyan-400/50 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/10"
+                @click="reachGoal('market_card_click')"
+              >
+                {{ LANDING_MARKET_PROMO.cta }}
+                <svg
+                  class="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  aria-hidden="true"
+                ><path d="M5 12h14m0 0l-6-6m6 6l-6 6" /></svg>
+              </a>
+            </div>
+          </div>
+        </section>
+
         <!-- ИНТЕГРАТОРАМ -->
-        <section class="px-6 py-14 lg:px-8">
-          <div class="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-gradient-to-br from-indigo-500/[0.12] to-cyan-500/[0.06] p-8 sm:p-10">
-            <h2 class="mb-4 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+        <section class="px-[22px] py-[56px] sm:py-[72px] lg:px-8">
+          <div class="mx-auto max-w-[1080px] rounded-3xl border border-white/10 bg-gradient-to-br from-indigo-500/[0.14] to-cyan-500/[0.07] p-8 sm:p-10">
+            <h2 class="mb-4 text-2xl font-bold tracking-tight text-white sm:text-4xl">
               Интеграторам Bitrix24
             </h2>
-            <p class="max-w-3xl text-base leading-relaxed text-white/75 sm:text-lg">
+            <p class="mb-6 max-w-3xl text-base leading-relaxed text-white/75 sm:text-lg">
               {{ LANDING_INTEGRATORS }}
             </p>
+            <a
+              href="#brief"
+              class="inline-flex items-center gap-2 rounded-lg border border-white/15 px-5 py-2.5 text-sm font-semibold text-white transition hover:border-cyan-400/50 hover:bg-white/5"
+              @click="reachGoal('partners_brief')"
+            >
+              Обсудить сотрудничество
+              <svg
+                class="h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                aria-hidden="true"
+              ><path d="M5 12h14m0 0l-6-6m6 6l-6 6" /></svg>
+            </a>
           </div>
         </section>
 
         <!-- ФОРМА — «Обсудить индивидуальную интеграцию» -->
         <section
           id="brief"
-          class="scroll-mt-16 px-6 py-14 lg:px-8"
+          class="scroll-mt-16 px-[22px] py-[56px] sm:py-[80px] lg:px-8"
         >
-          <div class="mx-auto max-w-3xl rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-500/[0.10] to-indigo-500/[0.06] p-6 sm:p-10">
-            <h2 class="mb-3 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+          <div class="mx-auto max-w-[900px] rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-500/[0.10] to-indigo-500/[0.06] p-6 sm:p-12">
+            <h2 class="mb-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
               Обсудить индивидуальную интеграцию
             </h2>
-            <p class="mb-8 text-base text-white/70 sm:text-lg">
+            <p class="mb-8 text-lg text-white/70">
               Свои поля, свои сущности, свой источник документов — доработаем и развернём
               под ваш процесс. Ответим в течение рабочего дня.
             </p>
@@ -283,7 +365,7 @@ const cardOpen = ref(false)
         </section>
 
         <!-- Footer -->
-        <footer class="mx-auto max-w-5xl border-t border-white/10 px-6 py-8 lg:px-8">
+        <footer class="mx-auto max-w-[1080px] border-t border-white/10 px-[22px] py-8 lg:px-8">
           <div class="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-center">
             <SiteFooter />
             <a

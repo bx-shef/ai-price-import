@@ -1,2 +1,28 @@
 @import "tailwindcss" theme(static);
 @import "@bitrix24/b24ui-nuxt";
+
+/* Cursor-following glow for landing cards (coords injected by useCardGlow).
+   Add [data-glow-card] to any card; the ::after radial follows the mouse on hover. */
+@layer components {
+  [data-glow-card] {
+    position: relative;
+    isolation: isolate;
+  }
+  [data-glow-card]::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 2;
+    background: radial-gradient(
+      300px circle at var(--glow-x, -200px) var(--glow-y, -200px),
+      rgba(34, 211, 238, 0.14),
+      transparent 70%
+    );
+    mix-blend-mode: plus-lighter;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  [data-glow-card]:hover::after { opacity: 1; }
+}
