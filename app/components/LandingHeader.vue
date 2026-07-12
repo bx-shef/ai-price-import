@@ -4,6 +4,8 @@ import { LANDING_CTA } from '~/utils/landing'
 // Sticky landing navigation (L3). Asset-free text wordmark + section anchors + a
 // persistent "open app" CTA. Dark brand shell (vibecode) — landing only; in-portal
 // pages keep their own chrome. Anchor targets carry scroll-mt so they clear the bar.
+// `openCard` opens the owner's BusinessCardModal (L2), owned by the page.
+const emit = defineEmits<{ openCard: [] }>()
 const NAV = [
   { href: '#demo', label: 'Демо' },
   { href: '#how', label: 'Как это работает' },
@@ -31,6 +33,13 @@ const NAV = [
           :href="n.href"
           class="text-sm text-slate-300 transition hover:text-white"
         >{{ n.label }}</a>
+        <button
+          type="button"
+          class="text-sm text-slate-300 transition hover:text-white"
+          @click="emit('openCard')"
+        >
+          Визитка
+        </button>
       </nav>
       <NuxtLink
         to="/app"

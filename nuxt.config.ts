@@ -26,7 +26,9 @@ export default defineNuxtConfig({
     public: {
       // Client-exposed; correctly overridden by NUXT_PUBLIC_-prefixed env at runtime.
       siteUrl: '',
-      commitSha: 'dev'
+      commitSha: 'dev',
+      // Yandex.Metrika id (empty → useMetrikaGoal no-ops; landing analytics optional).
+      metrikaId: ''
     }
   },
   future: { compatibilityVersion: 4 },
