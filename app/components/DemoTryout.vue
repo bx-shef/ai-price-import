@@ -101,7 +101,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
   <div class="mx-auto max-w-3xl">
     <!-- Samples -->
     <p class="mb-3 text-sm text-slate-400">
-      Попробуйте на примере (РФ / РБ / Казахстан) — можно и скачать:
+      Попробуйте на примере (РФ / РБ / Казахстан) — или скачайте PDF и загрузите его:
     </p>
     <div class="mb-6 flex flex-wrap gap-2">
       <span
@@ -117,11 +117,11 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
           {{ s.label }} <span class="text-slate-500">{{ s.lang }}</span>
         </button>
         <a
-          :href="`/demo/${s.id}.txt`"
-          :download="`${s.id}.txt`"
+          :href="`/demo/${s.id}.pdf`"
+          :download="`${s.id}.pdf`"
           class="flex items-center border-l border-white/10 px-2 text-slate-500 transition hover:bg-cyan-400/10 hover:text-cyan-300"
-          :aria-label="`Скачать пример: ${s.label} (${s.lang})`"
-          :title="`Скачать пример (${s.lang})`"
+          :aria-label="`Скачать пример PDF: ${s.label} (${s.lang})`"
+          :title="`Скачать пример PDF (${s.lang})`"
         >
           <svg
             class="h-4 w-4"
