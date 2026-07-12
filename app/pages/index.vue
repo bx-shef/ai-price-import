@@ -47,7 +47,7 @@ const cardOpen = ref(false)
         <section class="relative mx-auto max-w-4xl px-6 pt-24 pb-16 text-center">
           <div class="pointer-events-none absolute inset-0 opacity-60">
             <ClientOnly>
-              <HeroDocFlow />
+              <HeroDocMagnet />
             </ClientOnly>
           </div>
           <div class="relative z-10">
