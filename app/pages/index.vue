@@ -23,11 +23,19 @@ const year = copyrightYears(2026, 2026)
 const { public: { commitSha } } = useRuntimeConfig()
 const buildSha = shortSha(commitSha as string) || 'dev'
 const buildHref = commitUrl(commitSha as string)
+
+// Owner's business card (L2/L4): opened from the header «Визитка» button and the
+// hero photo; rendered once here as a fixed overlay.
+const cardOpen = ref(false)
 </script>
 
 <template>
   <div>
-    <LandingHeader />
+    <LandingHeader @open-card="cardOpen = true" />
+    <BusinessCardModal
+      :open="cardOpen"
+      @close="cardOpen = false"
+    />
 
     <main
       id="top"
@@ -69,6 +77,26 @@ const buildHref = commitUrl(commitSha as string)
                 {{ LANDING_CTA }}
               </NuxtLink>
             </div>
+
+            <!-- Author photo (L4) → opens the business card (L2) -->
+            <button
+              type="button"
+              class="mx-auto mt-9 flex w-fit items-center gap-3 rounded-full border border-white/10 bg-white/[0.03] py-1.5 pr-5 pl-1.5 text-left transition hover:border-cyan-400/40 hover:bg-white/[0.06]"
+              aria-label="Открыть визитку автора"
+              @click="cardOpen = true"
+            >
+              <img
+                src="/igor.jpg"
+                alt="Игорь Шевчик"
+                width="44"
+                height="44"
+                class="h-11 w-11 rounded-full object-cover ring-1 ring-white/15"
+              >
+              <span class="leading-tight">
+                <span class="block text-sm font-medium text-white">Игорь Шевчик</span>
+                <span class="block text-xs text-slate-400">Издатель · открыть визитку</span>
+              </span>
+            </button>
           </div>
         </section>
 
