@@ -23,6 +23,9 @@ export const LANDING_FEATURES: LandingFeature[] = [
 export const LANDING_CTA = 'Открыть приложение'
 export const LANDING_PUBLISHER = 'Издатель: ИП Шевчик И.С.'
 
+/** Bitrix24 Marketplace listing of this app (owner-provided slug `shef.priceimport`). */
+export const LANDING_MARKET_URL = 'https://www.bitrix24.ru/apps/app/shef.priceimport/'
+
 /** Copyright year range string: "2026" or "2024–2026". */
 export function copyrightYears(from: number, current: number): string {
   return from >= current ? String(current) : `${from}–${current}`
