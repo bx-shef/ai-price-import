@@ -26,31 +26,32 @@ describe('parseNum', () => {
 })
 
 describe('extractDemo — Russian samples', () => {
-  it('КП: type, supplier, УНП, items, totals', () => {
+  it('КП: type, supplier, ИНН, items, totals', () => {
     const r = extractDemo(demo('kp-ru.txt'))
     expect(r.docType).toBe('quote')
     expect(r.language).toBe('ru')
     expect(r.number).toBe('КП-2026-014')
     expect(r.supplier?.name).toContain('СтройМатериалы')
-    expect(r.supplier?.taxIdKind).toBe('УНП')
-    expect(r.supplier?.taxId).toBe('191234567')
+    expect(r.supplier?.taxIdKind).toBe('ИНН')
+    expect(r.supplier?.taxId).toBe('7715234562')
     expect(r.items).toHaveLength(4)
     expect(r.items[0]).toMatchObject({ article: 'CEM500-50', quantity: 100, unit: 'шт', price: 18.5, sum: 1850 })
-    expect(r.totals.total).toBe(9796.8)
-    expect(r.totals.vat).toBe(1632.8)
+    expect(r.totals.total).toBe(9960.08)
+    expect(r.totals.vat).toBe(1796.08)
     expect(r.warnings).toHaveLength(0)
   })
   it('счёт-фактура → invoice', () => {
     const r = extractDemo(demo('invoice-ru.txt'))
     expect(r.docType).toBe('invoice')
-    expect(r.supplier?.taxId).toBe('100345678')
+    expect(r.supplier?.taxIdKind).toBe('ИНН')
+    expect(r.supplier?.taxId).toBe('7701234561')
     expect(r.items).toHaveLength(4)
   })
   it('ТТН → waybill', () => {
     const r = extractDemo(demo('ttn-ru.txt'))
     expect(r.docType).toBe('waybill')
     expect(r.items).toHaveLength(3)
-    expect(r.totals.vat).toBe(815.5)
+    expect(r.totals.vat).toBe(1794.1)
   })
 })
 
@@ -75,6 +76,8 @@ describe('extractDemo — Belarus samples (Russian-language, per RB practice)', 
     const r = extractDemo(demo('ttn-be.txt'))
     expect(r.docType).toBe('waybill')
     expect(r.items).toHaveLength(3)
+    expect(r.supplier?.taxIdKind).toBe('УНП')
+    expect(r.totals.vat).toBe(1631) // RB standard rate 20%
   })
 })
 
@@ -197,7 +200,7 @@ describe('extractDemo — robustness', () => {
 describe('extractDemo — invoice/waybill totals across languages', () => {
   it('invoice-ru totals', () => {
     const r = extractDemo(demo('invoice-ru.txt'))
-    expect(r.totals).toMatchObject({ sum: 1172, vat: 234.4, total: 1406.4 })
+    expect(r.totals).toMatchObject({ sum: 1172, vat: 257.84, total: 1429.84 })
   })
   it('РБ grand-total label «Всего к оплате»', () => {
     expect(extractDemo(demo('invoice-be.txt')).totals.total).toBe(1190.4)
