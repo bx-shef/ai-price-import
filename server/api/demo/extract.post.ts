@@ -1,19 +1,51 @@
 import { extractDemo } from '~/utils/demoExtract'
 import { createRateLimiter, clientKey } from '../../utils/demoRateLimit'
-import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, MAX_DEMO_BYTES } from '../../utils/demoUpload'
+import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, DEMO_AI_EXT, MAX_DEMO_BYTES } from '../../utils/demoUpload'
 import { xlsxToText, XlsxTooLargeError } from '../../utils/demoXlsx'
+import { runDemoAiExtract, type DemoAiDeps } from '../../utils/demoAi'
+import { extractText } from '../../utils/textExtract'
+import { liveExtractRunners } from '../../utils/extractRunners'
+import { runAgent } from '../../agent/runAgent'
+import { makeAgentSpawn } from '../../agent/spawn'
+import { buildExtractionPrompt } from '../../../prompts/extract'
+import { mkdir, writeFile, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 // POST /api/demo/extract — PUBLIC landing tryout. NO auth, NO Bitrix24, NO storage.
-// Accepts a small text document (txt/csv), runs the deterministic extractor, returns
-// the parsed result. Rate-limited 3 files / 10 min per client IP — but only a
-// successfully-validated file consumes a slot (bad drops don't burn the quota).
-// Files are parsed in-memory and dropped. Users are warned about publicity in the UI.
+// Routes by format: text/csv/xlsx → deterministic extractor (instant, free); PDF /
+// scan / Word → REAL AI pipeline (poppler/libreoffice/OCR → DeepSeek agent) so a
+// client sees товары/контрагент/тип OR an honest error (P5-b). Rate-limited 3 files /
+// 10 min per client IP — only a successfully-validated file consumes a slot. Files are
+// processed in-memory / a temp file that is deleted; nothing is persisted.
 
 const RATE_MAX = 3
 const RATE_WINDOW_MS = 10 * 60 * 1000
-
-// Process-wide limiter (best-effort; the demo does not need cross-instance accuracy).
 const limiter = createRateLimiter(RATE_MAX, RATE_WINDOW_MS)
+
+const DEMO_NOTICE = 'Демо-режим: файл обрабатывается публично и не сохраняется. Не загружайте конфиденциальные документы.'
+
+// Live AI deps (backend image: poppler/libreoffice/tesseract + agent binary + DeepSeek
+// env). Constructed once; runs only when a PDF/scan/office file is uploaded.
+const DEMO_TMP = process.env.DEMO_TMP_DIR || '/tmp/procure-demo'
+const agentSpawn = makeAgentSpawn()
+const demoAiDeps: DemoAiDeps = {
+  writeTemp: async (bytes, e) => {
+    await mkdir(DEMO_TMP, { recursive: true })
+    const p = join(DEMO_TMP, `${randomUUID()}.${e}`)
+    await writeFile(p, bytes)
+    return p
+  },
+  extractText: (path, fileName) => extractText(path, fileName, liveExtractRunners),
+  runAgent: async (documentText) => {
+    const out = await runAgent(
+      { documentText, instructions: buildExtractionPrompt() },
+      { spawn: agentSpawn, sleep: ms => new Promise(r => setTimeout(r, ms)), random: () => Math.random() }
+    )
+    return { ok: out.ok, document: out.document, error: out.error }
+  },
+  cleanup: p => unlink(p).then(() => {}, () => {})
+}
 
 export default defineEventHandler(async (event) => {
   // Require a Content-Length: browsers set it for FormData uploads. Refusing chunked
@@ -25,7 +57,7 @@ export default defineEventHandler(async (event) => {
   }
   if (declared > MAX_DEMO_BYTES + 100_000) {
     setResponseStatus(event, 413)
-    return { error: 'Файл слишком большой для демо (до 1 МБ текста).' }
+    return { error: 'Файл слишком большой для демо (до 5 МБ).' }
   }
 
   const form = await readMultipartFormData(event)
@@ -55,11 +87,23 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // Spreadsheet → tab-separated text (row/col-capped); text file → decode. Then the
-  // same deterministic extractor. A zip/XML bomb over the budget is a 413; any other
-  // xlsx parse failure is a 422, not a 500.
+  const e = ext(file.filename)
+
+  // AI path: PDF / scan / Word → extract text (poppler/libreoffice/OCR) → DeepSeek
+  // agent → structured result or an honest error (never a 500 for a bad document).
+  if (DEMO_AI_EXT.includes(e)) {
+    const out = await runDemoAiExtract(file.data, file.filename, demoAiDeps)
+    if (out.error || !out.result) {
+      setResponseStatus(event, 422)
+      return { error: out.error || 'Не удалось разобрать документ.' }
+    }
+    return { result: out.result, notice: DEMO_NOTICE, remaining: decision.remaining }
+  }
+
+  // Deterministic path: spreadsheet → tab-separated text (row/col-capped); text file →
+  // decode. Then the deterministic extractor. A zip/XML bomb over budget is a 413.
   let text: string
-  if (DEMO_XLSX_EXT.includes(ext(file.filename))) {
+  if (DEMO_XLSX_EXT.includes(e)) {
     try {
       text = await xlsxToText(file.data)
     } catch (err) {
@@ -74,10 +118,5 @@ export default defineEventHandler(async (event) => {
     text = decodeText(file.data)
   }
 
-  const result = extractDemo(text)
-  return {
-    result,
-    notice: 'Демо-режим: файл обрабатывается публично и не сохраняется. Не загружайте конфиденциальные документы.',
-    remaining: decision.remaining
-  }
+  return { result: extractDemo(text), notice: DEMO_NOTICE, remaining: decision.remaining }
 })
