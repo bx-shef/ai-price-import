@@ -15,7 +15,10 @@ let raf = 0
 let running = false
 let last = 0
 let io: IntersectionObserver | null = null
-let visible = true
+// Two independent pause conditions — kept in separate flags so neither clobbers the
+// other (a shared boolean would let a tab-refocus re-enable drawing while off-screen).
+let onScreen = true
+let tabVisible = true
 let clock = 0
 
 const CYAN = '34,211,238'
@@ -165,7 +168,7 @@ function draw(w: number, h: number, animate: boolean) {
 
 function frame(now: number) {
   if (!running) return
-  if (now - last >= 33 && visible) { // ~30fps
+  if (now - last >= 33 && onScreen && tabVisible) { // ~30fps
     const dt = last ? (now - last) / 1000 : 0
     last = now
     clock = (clock + dt * 0.12) % 1 // ~8.3s per document loop
@@ -184,7 +187,7 @@ function size() {
 }
 
 function onVis() {
-  visible = document.visibilityState === 'visible'
+  tabVisible = document.visibilityState === 'visible'
 }
 
 onMounted(() => {
@@ -201,7 +204,7 @@ onMounted(() => {
   window.addEventListener('resize', size)
   document.addEventListener('visibilitychange', onVis)
   io = new IntersectionObserver((entries) => {
-    visible = !!entries[0]?.isIntersecting
+    onScreen = !!entries[0]?.isIntersecting
   }, { threshold: 0 })
   io.observe(canvas.value)
 })
