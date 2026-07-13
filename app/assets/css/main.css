@@ -1,6 +1,16 @@
 @import "tailwindcss" theme(static);
 @import "@bitrix24/b24ui-nuxt";
 
+/* Brand accent tokens (cyan) used by the dark landing shell and the teleported
+   BusinessCardModal (QR container glow, CTA button fill, fingerprint button).
+   Declared on :root — plain CSS vars; in-portal pages (/app, /settings, /login)
+   don't reference them, so global scope is safe. Without these the card's cyan
+   accents (and the QR container glow) render as nothing. */
+:root {
+  --color-accent-primary-ch: 34 211 238;   /* #22d3ee cyan-400 (our accent) */
+  --color-accent-partner-ch: 99 102 241;   /* #6366f1 indigo-500 (brand blue) */
+}
+
 /* Cursor-following glow for landing cards (coords injected by useCardGlow).
    Add [data-glow-card] to any card; the ::after radial follows the mouse on hover. */
 @layer components {

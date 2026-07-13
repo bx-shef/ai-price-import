@@ -33,6 +33,8 @@ export interface DemoResult {
   totals: { sum?: number, vat?: number, total?: number }
   /** Display currency symbol for the amounts (₽ / Br / ₸ / …), when recognised. */
   currency?: string
+  /** ISO 4217 code (RUB / BYN / KZT / …) so the UI can pick a glyph (BYN has no Unicode sign). */
+  currencyCode?: string
   language: DemoLang
   warnings: string[]
 }
@@ -252,9 +254,10 @@ export function extractDemo(input: string): DemoResult {
   if (!supplier?.name && !supplier?.taxId) warnings.push('Поставщик не распознан')
   if (!items.length) warnings.push('Позиции не распознаны')
 
-  const currency = currencySymbol(detectCurrencyCode(text, supplier?.taxIdKind))
+  const currencyCode = detectCurrencyCode(text, supplier?.taxIdKind)
+  const currency = currencySymbol(currencyCode)
 
-  return { docType, docTypeLabel, number, date, supplier, items, totals, currency, language: detectLang(text), warnings }
+  return { docType, docTypeLabel, number, date, supplier, items, totals, currency, currencyCode, language: detectLang(text), warnings }
 }
 
 function pick(cells: string[], idx: number | undefined): string {

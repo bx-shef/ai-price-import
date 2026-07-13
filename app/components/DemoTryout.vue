@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { extractDemo, type DemoResult } from '~/utils/demoExtract'
 
 // Public landing tryout: attach a document → see who the supplier is + goods table.
@@ -60,6 +60,25 @@ async function onFile(e: Event) {
   input.value = '' // allow re-selecting the same file
 }
 
+// Rate-limit state: once the demo quota (3 files / 10 min) is spent, hide the upload
+// form and tell the user when to retry. Samples stay available (client-side, no quota).
+const rateLimited = ref(false)
+const retrySec = ref(0)
+let retryTimer: ReturnType<typeof setTimeout> | undefined
+function blockUploads(sec: number) {
+  rateLimited.value = true
+  retrySec.value = sec
+  if (retryTimer) clearTimeout(retryTimer)
+  if (sec > 0) {
+    retryTimer = setTimeout(() => {
+      rateLimited.value = false
+    }, sec * 1000)
+  }
+}
+onUnmounted(() => {
+  if (retryTimer) clearTimeout(retryTimer)
+})
+
 async function upload(file: File) {
   error.value = ''
   notice.value = ''
@@ -68,7 +87,7 @@ async function upload(file: File) {
   try {
     const fd = new FormData()
     fd.append('file', file)
-    const res = await $fetch<{ result?: DemoResult, notice?: string, error?: string }>(
+    const res = await $fetch<{ result?: DemoResult, notice?: string, error?: string, remaining?: number }>(
       '/api/demo/extract',
       { method: 'POST', body: fd }
     )
@@ -78,10 +97,14 @@ async function upload(file: File) {
       result.value = res.result
       notice.value = res.notice || ''
       sourceName.value = file.name
+      // Last allowed file used up → hide the upload form until the window resets.
+      if (res.remaining === 0) blockUploads(0)
     }
   } catch (err: unknown) {
-    const data = (err as { data?: { error?: string } })?.data
+    const data = (err as { data?: { error?: string, retryAfterSec?: number } })?.data
     error.value = data?.error || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx), PDF, скан (.png/.jpg) или Word (.docx).'
+    // 429 → quota spent: hide the upload form and show the retry countdown.
+    if (data?.retryAfterSec !== undefined) blockUploads(data.retryAfterSec)
   } finally {
     loading.value = false
   }
@@ -94,76 +117,94 @@ async function onDrop(e: DragEvent) {
   if (file) await upload(file)
 }
 
-const cur = computed(() => result.value?.currency || '')
+/** Human retry hint for the rate-limit block («через ~N минут», or a generic line). */
+const retryHint = computed(() => {
+  if (retrySec.value <= 0) return 'Попробуйте позже.'
+  const min = Math.ceil(retrySec.value / 60)
+  return `Попробуйте примерно через ${min} мин.`
+})
+
+// ISO currency code drives the glyph (BYN has no Unicode sign → rendered via CurrencySign).
+const code = computed(() => result.value?.currencyCode || '')
 const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-/** Amount with the recognised currency symbol appended (space-separated). */
-const amount = (n: number) => (cur.value ? `${money(n)} ${cur.value}` : money(n))
-/** Column headers carry the currency so per-row cells stay uncluttered. */
-const priceHeader = computed(() => (cur.value ? `Цена, ${cur.value}` : 'Цена'))
-const sumHeader = computed(() => (cur.value ? `Сумма, ${cur.value}` : 'Сумма'))
 </script>
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <!-- Samples -->
-    <p class="mb-3 text-sm text-slate-400">
-      Попробуйте на примере (РФ / РБ / Казахстан) — или скачайте PDF и загрузите его:
-    </p>
-    <div class="mb-6 flex flex-wrap gap-2">
-      <span
-        v-for="s in SAMPLES"
-        :key="s.id"
-        class="inline-flex items-stretch overflow-hidden rounded-lg border border-white/10 bg-white/[0.04]"
-      >
-        <button
-          type="button"
-          class="px-3 py-1.5 text-sm text-slate-200 transition hover:bg-cyan-400/10"
-          @click="runSample(s)"
+    <!-- Samples — hidden while a document is being parsed (no concurrent runs) -->
+    <div v-if="!loading">
+      <p class="mb-3 text-sm text-slate-400">
+        Попробуйте на примере (РФ / РБ / Казахстан) — или скачайте PDF и загрузите его:
+      </p>
+      <div class="mb-6 flex flex-wrap gap-2">
+        <span
+          v-for="s in SAMPLES"
+          :key="s.id"
+          class="inline-flex items-stretch overflow-hidden rounded-lg border border-white/10 bg-white/[0.04]"
         >
-          {{ s.label }} <span class="text-slate-500">{{ s.lang }}</span>
-        </button>
-        <a
-          :href="`/demo/${s.id}.pdf`"
-          :download="`${s.id}.pdf`"
-          class="flex items-center border-l border-white/10 px-2 text-slate-500 transition hover:bg-cyan-400/10 hover:text-cyan-300"
-          :aria-label="`Скачать пример PDF: ${s.label} (${s.lang})`"
-          :title="`Скачать пример PDF (${s.lang})`"
-        >
-          <svg
-            class="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"
+          <button
+            type="button"
+            class="px-3 py-1.5 text-sm text-slate-200 transition hover:bg-cyan-400/10"
+            @click="runSample(s)"
           >
-            <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />
-          </svg>
-        </a>
-      </span>
+            {{ s.label }} <span class="text-slate-500">{{ s.lang }}</span>
+          </button>
+          <a
+            :href="`/demo/${s.id}.pdf`"
+            :download="`${s.id}.pdf`"
+            class="flex items-center border-l border-white/10 px-2 text-slate-500 transition hover:bg-cyan-400/10 hover:text-cyan-300"
+            :aria-label="`Скачать пример PDF: ${s.label} (${s.lang})`"
+            :title="`Скачать пример PDF (${s.lang})`"
+          >
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              aria-hidden="true"
+            >
+              <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />
+            </svg>
+          </a>
+        </span>
+      </div>
     </div>
 
-    <!-- Dropzone -->
-    <label
-      class="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition"
-      :class="dragOver ? 'border-cyan-400 bg-cyan-400/10' : 'border-white/15 bg-white/[0.02] hover:border-cyan-400/40'"
-      @dragover.prevent="dragOver = true"
-      @dragleave.prevent="dragOver = false"
-      @drop.prevent="onDrop"
-    >
-      <span class="text-slate-300">Перетащите файл сюда или нажмите, чтобы выбрать</span>
-      <span class="mt-1 text-xs text-slate-500">Текст, Excel, PDF, скан (фото) или Word · до 5 МБ. PDF/сканы разбирает AI (пара секунд).</span>
-      <input
-        type="file"
-        accept=".txt,.csv,.tsv,.xlsx,.pdf,.png,.jpg,.jpeg,.docx,.doc,text/plain,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        class="hidden"
-        @change="onFile"
+    <!-- Upload form — hidden while parsing (no concurrent runs) and when the quota is spent -->
+    <div v-if="!loading && !rateLimited">
+      <!-- Dropzone -->
+      <label
+        class="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition"
+        :class="dragOver ? 'border-cyan-400 bg-cyan-400/10' : 'border-white/15 bg-white/[0.02] hover:border-cyan-400/40'"
+        @dragover.prevent="dragOver = true"
+        @dragleave.prevent="dragOver = false"
+        @drop.prevent="onDrop"
       >
-    </label>
+        <span class="text-slate-300">Перетащите файл сюда или нажмите, чтобы выбрать</span>
+        <span class="mt-1 text-xs text-slate-500">Текст, Excel, PDF, скан (фото) или Word · до 5 МБ. PDF/сканы разбирает AI (пара секунд).</span>
+        <input
+          type="file"
+          accept=".txt,.csv,.tsv,.xlsx,.pdf,.png,.jpg,.jpeg,.docx,.doc,text/plain,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          class="hidden"
+          @change="onFile"
+        >
+      </label>
 
-    <p class="mt-3 text-xs text-amber-300/80">
-      ⚠️ Демо публичное: не загружайте конфиденциальные документы. Ограничение — 3 файла за 10 минут.
-    </p>
+      <p class="mt-3 text-xs text-amber-300/80">
+        ⚠️ Демо публичное: не загружайте конфиденциальные документы. Ограничение — 3 файла за 10 минут.
+      </p>
+    </div>
+
+    <!-- Quota spent: upload form hidden, samples above still work (client-side, no quota) -->
+    <div
+      v-else-if="rateLimited && !loading"
+      class="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-5 text-center text-sm text-amber-200"
+      role="status"
+    >
+      Лимит демо-загрузок исчерпан — 3 файла за 10 минут. {{ retryHint }}
+      <span class="mt-1 block text-xs text-amber-200/70">Примеры выше по-прежнему доступны без ограничений.</span>
+    </div>
 
     <!-- Result -->
     <div
@@ -238,10 +279,14 @@ const sumHeader = computed(() => (cur.value ? `Сумма, ${cur.value}` : 'Су
                 Кол-во
               </th>
               <th class="py-1.5 pr-3 font-medium">
-                {{ priceHeader }}
+                <span>Цена</span><template v-if="code">
+                  <span>,&nbsp;</span><CurrencySign :code="code" />
+                </template>
               </th>
               <th class="py-1.5 font-medium">
-                {{ sumHeader }}
+                <span>Сумма</span><template v-if="code">
+                  <span>,&nbsp;</span><CurrencySign :code="code" />
+                </template>
               </th>
             </tr>
           </thead>
@@ -283,7 +328,7 @@ const sumHeader = computed(() => (cur.value ? `Сумма, ${cur.value}` : 'Су
           :key="p.k"
         >
           <span class="text-slate-500">{{ p.k }}:</span>
-          <span class="ml-1 text-slate-100">{{ amount(p.v) }}</span>
+          <span class="ml-1 text-slate-100"><span>{{ money(p.v) }}</span><template v-if="code"><span>&nbsp;</span><CurrencySign :code="code" /></template></span>
         </div>
       </div>
 
