@@ -27,6 +27,23 @@ useHead({
 useCardGlow()
 const { reachGoal } = useMetrikaGoal()
 const cardOpen = ref(false)
+
+// Desktop QR of the Marketplace listing. `qrcode` is lazy-imported on mount so the
+// (~50KB) chunk stays off the eager landing bundle; mobile uses HoldRevealQr instead.
+const marketQr = ref('')
+onMounted(async () => {
+  try {
+    const QRCode = (await import('qrcode')).default
+    marketQr.value = await QRCode.toDataURL(LANDING_MARKET_URL, {
+      width: 208,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#0a1220', light: '#ffffff' }
+    })
+  } catch {
+    // QR stays '' → skeleton shown; non-critical.
+  }
+})
 </script>
 
 <template>
@@ -288,34 +305,68 @@ const cardOpen = ref(false)
           <div class="mx-auto max-w-[600px]">
             <div
               data-glow-card
-              class="rounded-2xl border border-cyan-400/40 bg-cyan-400/[0.06] p-6 sm:p-7"
+              class="relative overflow-hidden rounded-2xl border border-cyan-400/40 bg-cyan-400/[0.06] p-6 sm:p-7"
             >
-              <div class="mb-2 font-mono text-[11px] font-medium uppercase tracking-wide text-cyan-300/80">
-                {{ LANDING_MARKET_PROMO.eyebrow }}
+              <div class="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0">
+                  <div class="mb-2 font-mono text-[11px] font-medium uppercase tracking-wide text-cyan-300/80">
+                    {{ LANDING_MARKET_PROMO.eyebrow }}
+                  </div>
+                  <h2 class="mb-1.5 text-lg font-semibold text-white">
+                    {{ LANDING_MARKET_PROMO.title }}
+                  </h2>
+                  <p class="mb-4 text-sm leading-relaxed text-white/65">
+                    {{ LANDING_MARKET_PROMO.text }}
+                  </p>
+                  <a
+                    :href="LANDING_MARKET_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-2 rounded-lg border border-cyan-400/50 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/10"
+                    @click="reachGoal('market_card_click')"
+                  >
+                    {{ LANDING_MARKET_PROMO.cta }}
+                    <svg
+                      class="h-4 w-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      aria-hidden="true"
+                    ><path d="M5 12h14m0 0l-6-6m6 6l-6 6" /></svg>
+                  </a>
+                </div>
+
+                <!-- Desktop: a scannable QR of the Marketplace listing (open on a phone) -->
+                <ClientOnly>
+                  <div class="hidden shrink-0 flex-col items-center gap-1.5 sm:flex">
+                    <div class="rounded-xl bg-white p-2.5 shadow-lg">
+                      <img
+                        v-if="marketQr"
+                        :src="marketQr"
+                        alt="QR-код: приложение в Маркете Bitrix24"
+                        class="block size-[104px]"
+                      >
+                      <div
+                        v-else
+                        class="size-[104px] animate-pulse rounded bg-black/5"
+                      />
+                    </div>
+                    <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-white/40">Сканируйте</span>
+                  </div>
+                </ClientOnly>
               </div>
-              <h2 class="mb-1.5 text-lg font-semibold text-white">
-                {{ LANDING_MARKET_PROMO.title }}
-              </h2>
-              <p class="mb-4 text-sm leading-relaxed text-white/65">
-                {{ LANDING_MARKET_PROMO.text }}
-              </p>
-              <a
-                :href="LANDING_MARKET_URL"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex items-center gap-2 rounded-lg border border-cyan-400/50 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/10"
-                @click="reachGoal('market_card_click')"
-              >
-                {{ LANDING_MARKET_PROMO.cta }}
-                <svg
-                  class="h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  aria-hidden="true"
-                ><path d="M5 12h14m0 0l-6-6m6 6l-6 6" /></svg>
-              </a>
+
+              <!-- Mobile: hold-to-reveal QR (fingerprint), parity with client-bank -->
+              <div class="mt-4 sm:hidden">
+                <HoldRevealQr
+                  :url="LANDING_MARKET_URL"
+                  goal="market_qr_reveal"
+                  caption="Маркет Bitrix24"
+                  hint="QR Маркета"
+                  dark
+                />
+              </div>
             </div>
           </div>
         </section>

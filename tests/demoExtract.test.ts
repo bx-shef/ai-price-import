@@ -142,6 +142,14 @@ describe('extractDemo — robustness', () => {
   it('language unknown when no locale hint present', () => {
     expect(extractDemo('Just a plain english note.').language).toBe('unknown')
   })
+  it('reads the seller from a waybill «Грузоотправитель» / «Жүк жөнелтуші» field', () => {
+    // Real ТТН-1 / 1-Т / жүкқұжат name the seller as consignor, not «Поставщик».
+    expect(extractDemo('Грузоотправитель: ЧУП «АгроПоставка»').supplier?.name).toBe('ЧУП «АгроПоставка»')
+    expect(extractDemo('Жүк жөнелтуші: «АграЖеткізу» ЖК').supplier?.name).toBe('«АграЖеткізу» ЖК')
+    // The consignee line must NOT be picked as the seller.
+    const r = extractDemo('Грузоотправитель: Продавец ООО\nГрузополучатель: Покупатель ООО')
+    expect(r.supplier?.name).toBe('Продавец ООО')
+  })
   it('recognizes alternative name-column words (Продукция/Позиция/Услуга)', () => {
     for (const head of ['Продукция', 'Позиция', 'Услуга', 'Тауар']) {
       const r = extractDemo(`${head} | Кол-во | Цена | Сумма\nНечто | 2 | 5.00 | 10.00`)

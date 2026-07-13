@@ -71,9 +71,9 @@ export function extractedToDemoResult(doc: ExtractedDocument): DemoResult {
       }
     : undefined
   // Currency from the agent's ISO code when present, else inferred from the tax-id kind.
-  const currency = currencySymbol(doc.currency) ?? currencySymbol(
-    taxIdKind === 'ИНН' ? 'RUB' : taxIdKind === 'УНП' ? 'BYN' : taxIdKind ? 'KZT' : undefined
-  )
+  const currencyCode = (doc.currency || '').toUpperCase()
+    || (taxIdKind === 'ИНН' ? 'RUB' : taxIdKind === 'УНП' ? 'BYN' : taxIdKind ? 'KZT' : '')
+  const currency = currencySymbol(currencyCode || undefined)
   return {
     docType: type,
     docTypeLabel: label,
@@ -81,6 +81,7 @@ export function extractedToDemoResult(doc: ExtractedDocument): DemoResult {
     items,
     totals: { sum: anySum ? round2(totalSum) : undefined, vat, total },
     currency,
+    currencyCode: currencyCode || undefined,
     language: 'unknown',
     warnings: []
   }
