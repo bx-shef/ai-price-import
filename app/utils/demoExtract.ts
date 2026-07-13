@@ -75,7 +75,9 @@ const DOC_TYPES: Array<{ type: DemoDocType, label: string, re: RegExp }> = [
   { type: 'invoice', label: 'Счёт', re: /сч[её]т[-\s]?фактур[\p{L}]*|(?<![\p{L}])сч[её]т(?![\p{L}])|рахун[\p{L}]*|шот[-\s]?фактур[\p{L}]*|(?<![\p{L}])шот(?![\p{L}])/iu }
 ]
 
-const SUPPLIER_LABELS = /^(?:поставщик|пастаўшчык|жеткізуші|продавец|прадавец|сатушы)\s*[:：]?\s*(.+)$/i
+// Real waybills (ТТН-1 / 1-Т / жүкқұжат) name the seller in a «Грузоотправитель» /
+// «Жүк жөнелтуші» field, not «Поставщик» — accept those too so demo forms parse.
+const SUPPLIER_LABELS = /^(?:поставщик|пастаўшчык|жеткізуші|продавец|прадавец|сатушы|грузоотправитель|грузаадпраўшчык|адпраўнік|жүк\s+жөнелтуші)\s*[:：]?\s*(.+)$/i
 const TAX_ID_RE = /(?<![\p{L}\d])(УНП|ИНН|БИН|БСН|ИИН|ЖСН)(?![\p{L}])\s*[:№]?\s*(\d{6,14})/iu
 const NUMBER_RE = /(?:№|N|#)\s*([\p{L}0-9][\p{L}0-9\-/]*)/u
 const DATE_RE = /(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})/
