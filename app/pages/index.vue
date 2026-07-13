@@ -403,11 +403,13 @@ onMounted(async () => {
           id="brief"
           class="scroll-mt-16 px-[22px] py-[56px] sm:py-[80px] lg:px-8"
         >
-          <div class="mx-auto max-w-[900px] rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-500/[0.10] to-indigo-500/[0.06] p-6 sm:p-12">
-            <h2 class="mb-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+          <!-- Card: only vertical padding on mobile so the embedded form spans edge-to-edge
+               (client-bank parity); the heading/copy carry their own px-8, form stays full-width. -->
+          <div class="mx-auto max-w-[900px] rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-500/[0.10] to-indigo-500/[0.06] py-8 sm:p-12">
+            <h2 class="mb-3 px-8 text-3xl font-bold tracking-tight text-white sm:px-0 sm:text-4xl">
               Обсудить индивидуальную интеграцию
             </h2>
-            <p class="mb-8 text-lg text-white/70">
+            <p class="mb-8 px-8 text-lg text-white/70 sm:px-0">
               Свои поля, свои сущности, свой источник документов — доработаем и развернём
               под ваш процесс. Ответим в течение рабочего дня.
             </p>
