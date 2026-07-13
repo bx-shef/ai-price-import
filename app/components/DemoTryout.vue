@@ -26,21 +26,27 @@ const loading = ref(false)
 const notice = ref('')
 const sourceName = ref('')
 
-// After a parse completes, bring the result card to the top of the viewport — on mobile
-// the reappearing samples/dropzone push the result below the fold. Skip when it's already
-// comfortably in view (desktop) so we don't yank the page; honour prefers-reduced-motion.
 const resultCard = ref<HTMLElement | null>(null)
+
+// Scroll an element to the top of the viewport, but skip when it's already comfortably in
+// view (desktop) so we don't yank the page; honour prefers-reduced-motion.
+function smoothScrollTo(el: Element | null | undefined) {
+  if (!el) return
+  const top = el.getBoundingClientRect().top
+  if (top >= 0 && top < window.innerHeight * 0.5) return
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+}
+// On START of processing: bring the demo block to the top so the progress is visible
+// (on mobile the tapped sample may be well down the page).
+function scrollToBlockStart() {
+  nextTick(() => smoothScrollTo(document.getElementById('demo')))
+}
+// On COMPLETION: bring the result card to the top (the reappearing samples/dropzone push
+// it below the fold on mobile).
 function scrollToResult() {
   if (!result.value) return
-  nextTick(() => {
-    const el = resultCard.value
-    if (!el) return
-    const top = el.getBoundingClientRect().top
-    // Already in the upper half of the viewport → no scroll needed.
-    if (top >= 0 && top < window.innerHeight * 0.5) return
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
-  })
+  nextTick(() => smoothScrollTo(resultCard.value))
 }
 
 const totalPairs = computed(() => {
@@ -54,6 +60,8 @@ const totalPairs = computed(() => {
 })
 
 async function runSample(s: Sample) {
+  // Samples parse client-side instantly — no progress phase to scroll to, so only the
+  // completion scroll runs (chaining a start+finish scroll here would visibly bounce).
   error.value = ''
   notice.value = ''
   loading.value = true
@@ -102,6 +110,7 @@ async function upload(file: File) {
   notice.value = ''
   loading.value = true
   result.value = null
+  scrollToBlockStart()
   try {
     const fd = new FormData()
     fd.append('file', file)
@@ -151,7 +160,10 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
 <template>
   <div class="mx-auto max-w-3xl">
     <!-- Samples — hidden while a document is being parsed (no concurrent runs) -->
-    <div v-if="!loading">
+    <div
+      v-if="!loading"
+      class="px-4 sm:px-0"
+    >
       <p class="mb-3 text-sm text-slate-400">
         Попробуйте на примере (РФ / РБ / Казахстан) — или скачайте PDF и загрузите его:
       </p>
@@ -191,7 +203,10 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     </div>
 
     <!-- Upload form — hidden while parsing (no concurrent runs) and when the quota is spent -->
-    <div v-if="!loading && !rateLimited">
+    <div
+      v-if="!loading && !rateLimited"
+      class="px-4 sm:px-0"
+    >
       <!-- Dropzone -->
       <label
         class="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition"
@@ -218,7 +233,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     <!-- Quota spent: upload form hidden, samples above still work (client-side, no quota) -->
     <div
       v-else-if="rateLimited && !loading"
-      class="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-5 text-center text-sm text-amber-200"
+      class="mx-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-5 text-center text-sm text-amber-200 sm:mx-0"
       role="status"
     >
       Лимит демо-загрузок исчерпан — 3 файла за 10 минут. {{ retryHint }}
@@ -228,7 +243,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     <!-- Result -->
     <div
       v-if="loading"
-      class="mt-6"
+      class="mt-6 px-4 sm:px-0"
       role="status"
       aria-live="polite"
     >
@@ -244,7 +259,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     </div>
     <div
       v-else-if="error"
-      class="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"
+      class="mx-4 mt-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200 sm:mx-0"
     >
       {{ error }}
     </div>
@@ -285,16 +300,64 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
         </div>
       </div>
 
+      <!-- Mobile: stacked rows (name + «кол-во × цена» sub-line + sum) — no side scroll -->
+      <ul
+        v-if="result.items.length"
+        class="sm:hidden"
+      >
+        <li
+          v-for="(it, i) in result.items"
+          :key="i"
+          class="flex items-start justify-between gap-3 border-b border-white/5 py-2.5 last:border-0"
+        >
+          <div class="min-w-0">
+            <div class="break-words text-sm text-slate-200">
+              {{ it.name }}<span
+                v-if="it.article"
+                class="text-slate-500"
+              > · {{ it.article }}</span>
+            </div>
+            <div
+              v-if="it.quantity !== undefined || it.price !== undefined"
+              class="mt-0.5 text-xs text-slate-500"
+            >
+              <template v-if="it.quantity !== undefined">
+                {{ it.quantity }}<template v-if="it.unit">
+                  &nbsp;{{ it.unit }}
+                </template>
+              </template>
+              <template v-if="it.quantity !== undefined && it.price !== undefined">
+                ×
+              </template>
+              <template v-if="it.price !== undefined">
+                {{ money(it.price) }}<template v-if="code">
+                  &nbsp;<CurrencySign :code="code" />
+                </template>
+              </template>
+            </div>
+          </div>
+          <div
+            v-if="it.sum !== undefined"
+            class="shrink-0 whitespace-nowrap text-sm tabular-nums text-slate-100"
+          >
+            {{ money(it.sum) }}<template v-if="code">
+              &nbsp;<CurrencySign :code="code" />
+            </template>
+          </div>
+        </li>
+      </ul>
+
+      <!-- Desktop: table (room for all columns) -->
       <div
         v-if="result.items.length"
-        class="overflow-x-auto"
+        class="hidden overflow-x-auto sm:block"
       >
-        <table class="w-full table-fixed text-xs sm:text-sm">
+        <table class="w-full table-fixed text-sm">
           <colgroup>
-            <col style="width: 40%">
-            <col style="width: 18%">
-            <col style="width: 21%">
-            <col style="width: 21%">
+            <col style="width: 46%">
+            <col style="width: 16%">
+            <col style="width: 19%">
+            <col style="width: 19%">
           </colgroup>
           <thead>
             <tr class="border-b border-white/10 text-left align-bottom text-slate-500">

@@ -210,8 +210,10 @@ onMounted(async () => {
           id="demo"
           class="scroll-mt-16 px-[22px] py-[56px] sm:py-[72px] lg:px-8"
         >
-          <div class="mx-auto max-w-[1080px] rounded-3xl border border-cyan-400/20 bg-gradient-to-b from-cyan-500/[0.07] to-white/[0.02] p-4 shadow-[0_0_80px_rgba(34,211,238,0.06)] sm:p-10">
-            <div class="mb-2 flex justify-center">
+          <!-- Card: vertical padding only on mobile (client-bank form parity) so the demo
+               content (esp. the result) spans edge-to-edge; heading/copy carry their own px-4. -->
+          <div class="mx-auto max-w-[1080px] rounded-3xl border border-cyan-400/20 bg-gradient-to-b from-cyan-500/[0.07] to-white/[0.02] py-6 shadow-[0_0_80px_rgba(34,211,238,0.06)] sm:p-10">
+            <div class="mb-2 flex justify-center px-4 sm:px-0">
               <span class="inline-flex items-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300">
                 <span class="relative flex size-2">
                   <span class="absolute inline-flex size-full animate-ping rounded-full bg-cyan-400/70" />
@@ -220,10 +222,10 @@ onMounted(async () => {
                 Живое демо
               </span>
             </div>
-            <h2 class="mb-3 text-center text-2xl font-bold text-white sm:text-3xl">
+            <h2 class="mb-3 px-4 text-center text-2xl font-bold text-white sm:px-0 sm:text-3xl">
               Попробуйте на своём документе
             </h2>
-            <p class="mx-auto mb-8 max-w-2xl text-center text-sm text-white/60">
+            <p class="mx-auto mb-8 max-w-2xl px-4 text-center text-sm text-white/60 sm:px-0">
               Прикрепите PDF, скан, Excel или Word — покажем, что распознаём: контрагента,
               таблицу товаров, суммы и НДС. Демо разбирает документ и ничего не сохраняет.
             </p>
