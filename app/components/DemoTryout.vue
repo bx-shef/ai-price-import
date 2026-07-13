@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { extractDemo, type DemoResult } from '~/utils/demoExtract'
 
 // Public landing tryout: attach a document → see who the supplier is + goods table.
@@ -26,6 +26,23 @@ const loading = ref(false)
 const notice = ref('')
 const sourceName = ref('')
 
+// After a parse completes, bring the result card to the top of the viewport — on mobile
+// the reappearing samples/dropzone push the result below the fold. Skip when it's already
+// comfortably in view (desktop) so we don't yank the page; honour prefers-reduced-motion.
+const resultCard = ref<HTMLElement | null>(null)
+function scrollToResult() {
+  if (!result.value) return
+  nextTick(() => {
+    const el = resultCard.value
+    if (!el) return
+    const top = el.getBoundingClientRect().top
+    // Already in the upper half of the viewport → no scroll needed.
+    if (top >= 0 && top < window.innerHeight * 0.5) return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+  })
+}
+
 const totalPairs = computed(() => {
   const t = result.value?.totals
   if (!t) return [] as Array<{ k: string, v: number }>
@@ -49,6 +66,7 @@ async function runSample(s: Sample) {
     result.value = null
   } finally {
     loading.value = false
+    scrollToResult()
   }
 }
 
@@ -107,6 +125,7 @@ async function upload(file: File) {
     if (data?.retryAfterSec !== undefined) blockUploads(data.retryAfterSec)
   } finally {
     loading.value = false
+    scrollToResult()
   }
 }
 
@@ -231,7 +250,8 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     </div>
     <div
       v-else-if="result"
-      class="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left sm:p-5"
+      ref="resultCard"
+      class="mt-6 scroll-mt-20 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left sm:p-5"
     >
       <div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
