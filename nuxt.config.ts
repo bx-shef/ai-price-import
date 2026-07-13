@@ -29,11 +29,12 @@ export default defineNuxtConfig({
       commitSha: 'dev',
       // Yandex.Metrika id (empty → useMetrikaGoal no-ops; landing analytics optional).
       metrikaId: '',
-      // Embedded Bitrix24 CRM web-form (BriefForm). Empty id/secret → placeholder slot;
-      // owner sets NUXT_PUBLIC_B24_FORM_ID / _SECRET / _SCRIPT_URL to embed the real form.
-      b24FormId: process.env.NUXT_PUBLIC_B24_FORM_ID || '',
-      b24FormSecret: process.env.NUXT_PUBLIC_B24_FORM_SECRET || '',
-      b24FormScriptUrl: process.env.NUXT_PUBLIC_B24_FORM_SCRIPT_URL || ''
+      // Embedded Bitrix24 CRM web-form (BriefForm) — client & partner enquiries.
+      // Defaults = the shared bx-shef brief form (public embed token, same as client-bank);
+      // override via NUXT_PUBLIC_B24_FORM_* to point at a product-specific form.
+      b24FormId: process.env.NUXT_PUBLIC_B24_FORM_ID || '1',
+      b24FormSecret: process.env.NUXT_PUBLIC_B24_FORM_SECRET || '3c735r',
+      b24FormScriptUrl: process.env.NUXT_PUBLIC_B24_FORM_SCRIPT_URL || 'https://cdn-ru.bitrix24.by/b37817748/crm/form/loader_1.js'
     }
   },
   future: { compatibilityVersion: 4 },

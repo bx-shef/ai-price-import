@@ -231,7 +231,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
     </div>
     <div
       v-else-if="result"
-      class="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-left"
+      class="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left sm:p-5"
     >
       <div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
@@ -269,21 +269,27 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
         v-if="result.items.length"
         class="overflow-x-auto"
       >
-        <table class="w-full text-sm">
+        <table class="w-full table-fixed text-xs sm:text-sm">
+          <colgroup>
+            <col style="width: 40%">
+            <col style="width: 18%">
+            <col style="width: 21%">
+            <col style="width: 21%">
+          </colgroup>
           <thead>
-            <tr class="border-b border-white/10 text-left text-slate-500">
-              <th class="py-1.5 pr-3 font-medium">
+            <tr class="border-b border-white/10 text-left align-bottom text-slate-500">
+              <th class="py-1.5 pr-2 font-medium">
                 Наименование
               </th>
-              <th class="py-1.5 pr-3 font-medium">
+              <th class="whitespace-nowrap py-1.5 pr-2 font-medium">
                 Кол-во
               </th>
-              <th class="py-1.5 pr-3 font-medium">
+              <th class="whitespace-nowrap py-1.5 pr-2 font-medium">
                 <span>Цена</span><template v-if="code">
                   <span>,&nbsp;</span><CurrencySign :code="code" />
                 </template>
               </th>
-              <th class="py-1.5 font-medium">
+              <th class="whitespace-nowrap py-1.5 font-medium">
                 <span>Сумма</span><template v-if="code">
                   <span>,&nbsp;</span><CurrencySign :code="code" />
                 </template>
@@ -294,24 +300,24 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
             <tr
               v-for="(it, i) in result.items"
               :key="i"
-              class="border-b border-white/5"
+              class="border-b border-white/5 align-top"
             >
-              <td class="py-1.5 pr-3 text-slate-200">
+              <td class="break-words py-1.5 pr-2 text-slate-200">
                 {{ it.name }}<span
                   v-if="it.article"
                   class="ml-1 text-slate-500"
                 >· {{ it.article }}</span>
               </td>
-              <td class="py-1.5 pr-3 text-slate-300">
+              <td class="whitespace-nowrap py-1.5 pr-2 text-slate-300">
                 {{ it.quantity ?? '—' }}<span
                   v-if="it.unit"
                   class="text-slate-500"
                 >&nbsp;{{ it.unit }}</span>
               </td>
-              <td class="py-1.5 pr-3 text-slate-300">
+              <td class="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-300">
                 {{ it.price !== undefined ? money(it.price) : '—' }}
               </td>
-              <td class="py-1.5 text-slate-200">
+              <td class="whitespace-nowrap py-1.5 tabular-nums text-slate-200">
                 {{ it.sum !== undefined ? money(it.sum) : '—' }}
               </td>
             </tr>
