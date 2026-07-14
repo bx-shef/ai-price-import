@@ -15,6 +15,7 @@ describe('validateDemoFile', () => {
     expect(validateDemoFile('doc.txt', 100)).toEqual({ ok: true })
     expect(validateDemoFile('data.csv', 100).ok).toBe(true)
     expect(validateDemoFile('price.xlsx', 100).ok).toBe(true)
+    expect(validateDemoFile('1c-export.xls', 100).ok).toBe(true) // GH #64: legacy .xls via office path
     expect(validateDemoFile('invoice.pdf', 100).ok).toBe(true) // P5-b: PDF via AI path
     expect(validateDemoFile('scan.jpg', 100).ok).toBe(true)
     expect(validateDemoFile('doc.docx', 100).ok).toBe(true)

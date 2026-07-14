@@ -6,8 +6,10 @@ export const MAX_DEMO_BYTES = 5 * 1024 * 1024 // 5 MB — fits a scanned-invoice
 export const DEMO_TEXT_EXT = ['txt', 'csv', 'tsv', 'text']
 /** Extensions parsed as a spreadsheet (vs. decoded as text). */
 export const DEMO_XLSX_EXT = ['xlsx']
-/** AI formats (P5-b): extracted via poppler/libreoffice/OCR → DeepSeek agent. */
-export const DEMO_AI_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'doc']
+/** AI formats (P5-b): extracted via poppler/libreoffice/OCR → DeepSeek agent. `.xls` is
+ *  the legacy binary Excel (1C exports) — exceljs can't read it, so it goes through the
+ *  libreoffice office path like .doc, not the deterministic xlsx reader (GH #64). */
+export const DEMO_AI_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'doc', 'xls']
 export const DEMO_ALLOWED_EXT = [...DEMO_TEXT_EXT, ...DEMO_XLSX_EXT, ...DEMO_AI_EXT]
 
 /** Lower-case extension without the dot, or '' when the name has none. */
@@ -31,7 +33,7 @@ export function validateDemoFile(name: string, size: number): DemoFileVerdict {
     return {
       ok: false,
       status: 415,
-      error: 'Демо понимает текст (.txt/.csv), Excel (.xlsx), PDF, сканы (.png/.jpg) и Word (.doc/.docx).'
+      error: 'Демо понимает текст (.txt/.csv), Excel (.xlsx/.xls), PDF, сканы (.png/.jpg) и Word (.doc/.docx).'
     }
   }
   return { ok: true }

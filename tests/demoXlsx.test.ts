@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
-import { xlsxToText, zipUncompressedTotal, XlsxTooLargeError, MAX_XLSX_ENTRIES } from '../server/utils/demoXlsx'
+import { xlsxToText, xlsxToTextFallback, zipUncompressedTotal, XlsxTooLargeError, MAX_XLSX_ENTRIES } from '../server/utils/demoXlsx'
 import { extractDemo } from '../app/utils/demoExtract'
 
 async function buildXlsx(rows: Array<Array<string | number>>): Promise<Uint8Array> {
@@ -78,6 +78,48 @@ describe('xlsxToText', () => {
     const r = extractDemo(await xlsxToText(bytes))
     expect(r.items).toHaveLength(2)
     expect(r.items[0]).toMatchObject({ name: 'Перчатки рабочие', price: 1.1 })
+  })
+})
+
+// The exceljs-free fallback (GH #65): exceljs crashes on some real workbooks (e.g. a
+// header/footer logo → "reading 'anchors'"); xlsxToText catches and re-reads with this.
+// We can't easily synthesise a crashing workbook, so we test the parser directly against
+// exceljs-authored xlsx and assert it yields the SAME cell text the happy path would.
+describe('xlsxToTextFallback (exceljs-free reader)', () => {
+  it('reads shared strings + numbers into the same TAB-separated shape', async () => {
+    const bytes = await buildXlsx([
+      ['Наименование', 'Кол-во', 'Цена', 'Сумма'],
+      ['Перчатки рабочие', 300, 1.1, 330],
+      ['Каска защитная', 40, 9.8, 392]
+    ])
+    const text = xlsxToTextFallback(Buffer.from(bytes))
+    expect(text.split('\n')).toHaveLength(3)
+    expect(text).toContain('Наименование\tКол-во\tЦена\tСумма')
+    expect(text).toContain('Перчатки рабочие\t300\t1.1\t330')
+  })
+
+  it('output feeds the deterministic extractor into items + supplier', async () => {
+    const bytes = await buildXlsx([
+      ['СЧЁТ № 501'],
+      ['Поставщик: ООО «Пример»'],
+      ['УНП: 191234567'],
+      ['Наименование', 'Кол-во', 'Цена', 'Сумма'],
+      ['Перчатки рабочие', 300, 1.1, 330],
+      ['Каска защитная', 40, 9.8, 392]
+    ])
+    const r = extractDemo(xlsxToTextFallback(Buffer.from(bytes)))
+    expect(r.items).toHaveLength(2)
+    expect(r.supplier?.taxId).toBe('191234567')
+  })
+
+  it('decodes XML entities in cell text (& < >)', async () => {
+    const bytes = await buildXlsx([['Болт «М6» <усилен> & гайка', 5]])
+    const text = xlsxToTextFallback(Buffer.from(bytes))
+    expect(text).toContain('Болт «М6» <усилен> & гайка\t5')
+  })
+
+  it('non-zip bytes → empty string', () => {
+    expect(xlsxToTextFallback(Buffer.from('not a zip'))).toBe('')
   })
 })
 
