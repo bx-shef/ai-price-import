@@ -105,6 +105,26 @@ onUnmounted(() => {
   if (retryTimer) clearTimeout(retryTimer)
 })
 
+// The AI path is async (GH #70): submit returns a jobId, we poll until done/error so a
+// slow OCR never holds the request open (no 504). Poll every 2s up to the server's TTL.
+const POLL_INTERVAL_MS = 2000
+const POLL_TIMEOUT_MS = 5 * 60 * 1000
+async function pollJob(jobId: string): Promise<DemoResult> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
+    const r = await $fetch<{ status?: string, result?: DemoResult, error?: string }>(
+      `/api/demo/result/${jobId}`,
+      { ignoreResponseError: true }
+    )
+    if (r.status === 'done' && r.result) return r.result
+    if (r.status === 'error') throw new Error(r.error || 'Не удалось разобрать документ.')
+    if (r.error) throw new Error(r.error) // 404 — job expired
+    // status === 'pending' → keep polling
+  }
+  throw new Error('Разбор занял слишком долго. Попробуйте файл меньшего размера.')
+}
+
 async function upload(file: File) {
   error.value = ''
   notice.value = ''
@@ -114,22 +134,24 @@ async function upload(file: File) {
   try {
     const fd = new FormData()
     fd.append('file', file)
-    const res = await $fetch<{ result?: DemoResult, notice?: string, error?: string, remaining?: number }>(
+    const res = await $fetch<{ result?: DemoResult, jobId?: string, notice?: string, error?: string, remaining?: number }>(
       '/api/demo/extract',
       { method: 'POST', body: fd }
     )
-    if (res.error || !res.result) {
-      error.value = res.error || 'Не удалось разобрать файл.'
+    if (res.error) {
+      error.value = res.error
     } else {
-      result.value = res.result
       notice.value = res.notice || ''
       sourceName.value = file.name
+      // Deterministic path returns the result inline; the AI path returns a jobId to poll.
+      result.value = res.result ?? (res.jobId ? await pollJob(res.jobId) : null)
+      if (!result.value) error.value = 'Не удалось разобрать файл.'
       // Last allowed file used up → hide the upload form until the window resets.
       if (res.remaining === 0) blockUploads(0)
     }
   } catch (err: unknown) {
     const data = (err as { data?: { error?: string, retryAfterSec?: number } })?.data
-    error.value = data?.error || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx), PDF, скан (.png/.jpg) или Word (.docx).'
+    error.value = data?.error || (err as Error)?.message || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx), PDF, скан (.png/.jpg) или Word (.docx).'
     // 429 → quota spent: hide the upload form and show the retry countdown.
     if (data?.retryAfterSec !== undefined) blockUploads(data.retryAfterSec)
   } finally {
