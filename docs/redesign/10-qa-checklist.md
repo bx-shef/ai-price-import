@@ -300,6 +300,7 @@
 | compose dev-стек | `docker compose up -d` | Поднимаются backend (`mem_limit 2g`, том uploads), db (postgres:16), redis:7; логи `[db] schema ensured`, `[queue] started N workers` | [вручную/бинарями] |
 | compose без Redis/БД | Старт без `REDIS_URL`/`DATABASE_URL` | Очередь отключена (аплоады→503), хранилище no-op, процесс поднимается, health/лендинг работают | [вручную] |
 | compose mem_limit vs бомба | zip/XML/image-бомба через libreoffice/tesseract | `mem_limit: 2g` не даёт OOM хоста, контейнер убивается | [вручную] |
+| Ресурсы/OCR-таймаут на минимуме | 2 vCPU, несколько тяжёлых сканов разом | Конкуренция воркера (`server/queue/worker.ts`) ≤ числу ядер и/или `OMP_THREAD_LIMIT` выставлен — иначе OCR ложно упирается в `RUN_TIMEOUT_MS` 90с. См. `09-deploy §Ресурсы воркера` | [вручную/нужен прод] |
 | CI job `ci` | PR/пуш в `main` | Порядок install→lint→typecheck→test→generate, Node 22, pnpm-кэш; имя job `ci` (required-check) | [авто/CI] |
 | CI job `docker-build` | Тот же триггер | `docker build --target backend` без push, gha-кэш scope=backend | [авто/CI] |
 | CI pin actions | Ревизия workflow | Все сторонние actions на commit SHA; `permissions: contents: read` | [вручную] |
