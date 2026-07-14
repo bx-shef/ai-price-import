@@ -34,6 +34,11 @@ describe('extractText', () => {
     expect(await extractText('/data/abc123.bin', 'Прайс.xls', r)).toBe('OFFICE')
     expect(r.officeToText).toHaveBeenCalledWith('/data/abc123.bin', 'Прайс.xls')
   })
+  it('office text doc (.docx) at a .bin path also passes the real fileName', async () => {
+    const r = runners()
+    expect(await extractText('/data/xyz.bin', 'Договор.docx', r)).toBe('OFFICE')
+    expect(r.officeToText).toHaveBeenCalledWith('/data/xyz.bin', 'Договор.docx')
+  })
   it('image → ocr', async () => {
     expect(await extractText('/f.png', 'f.png', runners())).toBe('OCR')
   })
