@@ -45,7 +45,7 @@ CMD ["node", ".output/server/index.mjs"]
 # ── app: the front reverse proxy (behind the shared nginx-proxy) ──────────────
 # Non-root nginx (listens :8080). Adds login rate-limit, internal-endpoint deny,
 # CSP/security headers for the B24 iframe, body-size caps. Proxies to backend:3000.
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS app
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS app
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY proxy_common.conf /etc/nginx/proxy_common.conf
 # Fail the build on a bad config (proxy_pass hostnames resolve at runtime, not here).
