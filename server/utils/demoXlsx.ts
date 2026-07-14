@@ -4,16 +4,19 @@ import ExcelJS from 'exceljs'
 // Read the first worksheet of an .xlsx as TAB-separated text so the deterministic demo
 // parser (detects \t/;/,/| tables) can extract it. PUBLIC endpoint → hardened against a
 // zip/XML decompression bomb: an xlsx is a zip of XML and a ~1MB file can inflate to
-// hundreds of MB. The row/col caps only trim the OUTPUT and run AFTER exceljs has
-// materialised the whole workbook — so they are NOT the bomb guard. Two real guards:
-//  1) zipUncompressedTotal() sums the central-directory uncompressed sizes WITHOUT
-//     decompressing, and we reject before exceljs.load() if it exceeds the budget;
-//  2) a hard parse timeout bounds CPU. No formulas are evaluated.
+// hundreds of MB. Guards, both for the exceljs path AND the exceljs-free fallback:
+//  1) zipUncompressedTotal() rejects before parsing if the DECLARED sizes exceed budget;
+//  2) every inflate is bounded by maxOutputLength (the declared size is untrusted, so we
+//     never rely on it alone — a forged-small size still can't expand past the cap);
+//  3) the fallback parser scans XML with indexOf only (no backtracking regex) → O(n), and
+//     caps rows/cols/cell-length, so it can't wedge the single JS thread. No formulas run.
 
 export const MAX_XLSX_ROWS = 500
 export const MAX_XLSX_COLS = 40
 export const MAX_XLSX_UNCOMPRESSED = 40 * 1024 * 1024 // 40 MB expanded — reject bombs
 export const MAX_XLSX_ENTRIES = 128
+/** Cap a single cell's text so one giant cell can't blow up the output line. */
+const MAX_CELL_CHARS = 32_768
 const PARSE_TIMEOUT_MS = 5000
 
 /** Thrown when the xlsx would expand past the demo budget (endpoint → 413). */
@@ -24,12 +27,15 @@ export class XlsxTooLargeError extends Error {
   }
 }
 
+interface CdRecord { name: string, method: number, compSize: number, uncompSize: number, localOffset: number }
+
 /**
- * Sum uncompressed sizes from the zip End-of-Central-Directory + Central Directory,
- * WITHOUT decompressing anything, so a highly-compressible bomb is caught pre-parse.
- * Returns null when the bytes don't parse as a zip (let exceljs reject it under timeout).
+ * Walk the zip End-of-Central-Directory + Central Directory WITHOUT decompressing.
+ * Returns the declared entry count and one record per entry (empty records when the count
+ * exceeds the cap — we refuse to walk a suspicious archive). Null when it's not a zip.
+ * Shared by zipUncompressedTotal (bomb budget) and the fallback reader (entry lookup).
  */
-export function zipUncompressedTotal(buf: Buffer): { total: number, entries: number } | null {
+function readCentralDirectory(buf: Buffer): { entryCount: number, records: CdRecord[] } | null {
   const EOCD_SIG = 0x06054b50
   const CDR_SIG = 0x02014b50
   const floor = Math.max(0, buf.length - 22 - 0xffff)
@@ -41,17 +47,42 @@ export function zipUncompressedTotal(buf: Buffer): { total: number, entries: num
     }
   }
   if (eocd < 0 || eocd + 20 > buf.length) return null
-  const entries = buf.readUInt16LE(eocd + 10)
-  if (entries > MAX_XLSX_ENTRIES) return { total: Infinity, entries }
+  const entryCount = buf.readUInt16LE(eocd + 10)
+  if (entryCount > MAX_XLSX_ENTRIES) return { entryCount, records: [] }
   let off = buf.readUInt32LE(eocd + 16)
-  let total = 0
-  for (let n = 0; n < entries; n++) {
+  const records: CdRecord[] = []
+  for (let n = 0; n < entryCount; n++) {
     if (off + 46 > buf.length || buf.readUInt32LE(off) !== CDR_SIG) return null
-    total += buf.readUInt32LE(off + 24) // uncompressed size (uint32 LE)
-    if (total > MAX_XLSX_UNCOMPRESSED) return { total, entries }
-    off += 46 + buf.readUInt16LE(off + 28) + buf.readUInt16LE(off + 30) + buf.readUInt16LE(off + 32)
+    const method = buf.readUInt16LE(off + 10)
+    const compSize = buf.readUInt32LE(off + 20)
+    const uncompSize = buf.readUInt32LE(off + 24)
+    const nameLen = buf.readUInt16LE(off + 28)
+    const extraLen = buf.readUInt16LE(off + 30)
+    const commentLen = buf.readUInt16LE(off + 32)
+    const localOffset = buf.readUInt32LE(off + 42)
+    const name = buf.toString('utf8', off + 46, off + 46 + nameLen)
+    records.push({ name, method, compSize, uncompSize, localOffset })
+    off += 46 + nameLen + extraLen + commentLen
   }
-  return { total, entries }
+  return { entryCount, records }
+}
+
+/**
+ * Sum uncompressed sizes from the central directory so a highly-compressible bomb is
+ * caught pre-parse. NB: these sizes are DECLARED (untrusted) — this is a fast pre-filter,
+ * not the only guard; every actual inflate is separately capped (see readZipEntry).
+ * Returns null when the bytes don't parse as a zip.
+ */
+export function zipUncompressedTotal(buf: Buffer): { total: number, entries: number } | null {
+  const cd = readCentralDirectory(buf)
+  if (!cd) return null
+  if (cd.entryCount > MAX_XLSX_ENTRIES) return { total: Infinity, entries: cd.entryCount }
+  let total = 0
+  for (const r of cd.records) {
+    total += r.uncompSize
+    if (total > MAX_XLSX_UNCOMPRESSED) return { total, entries: cd.entryCount }
+  }
+  return { total, entries: cd.entryCount }
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -63,7 +94,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 /** Collapse intra-cell whitespace (a multiline cell would otherwise split a row). */
 function clean(s: string): string {
-  return s.replace(/[\t\r\n]+/g, ' ').trim()
+  return s.replace(/[\t\r\n]+/g, ' ').trim().slice(0, MAX_CELL_CHARS)
 }
 
 /** One cell → plain text (rich text, hyperlinks, formula results incl. errors, dates). */
@@ -107,64 +138,60 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
     if (err instanceof XlsxTooLargeError) throw err
     // exceljs crashes on some valid workbooks — notably a header/footer drawing
     // (`vmlDrawingHF*.vml`, a logo in the print header) trips "Cannot read properties of
-    // undefined (reading 'anchors')" during load. Common on real invoice templates. Fall
+    // undefined (reading 'anchors')" during load. Also catches its parse timeout. Fall
     // back to a minimal, dependency-free reader that only needs the cell text (GH #65).
+    // The fallback is O(n) and inflate-capped, so it's safe to run on untrusted input.
     return xlsxToTextFallback(buf)
   }
 }
 
 // ── Minimal xlsx → text fallback (no exceljs) ────────────────────────────────────────
 // An .xlsx is a zip of XML. We read only sharedStrings + the first worksheet, resolve
-// cell values, and emit the same TAB-separated shape as the exceljs path. This sidesteps
-// exceljs bugs (e.g. header/footer drawings) for the demo's text-only needs. Guarded by
-// the same pre-parse bomb budget in xlsxToText; here we inflate just two entries.
+// cell values, and emit the same TAB-separated shape as the exceljs path. XML is scanned
+// with indexOf only (NOT backtracking regex like /([\s\S]*?)<\/tag>/, which is O(n²) and
+// a DoS vector on a public endpoint) → linear time. Every inflate is length-capped.
 
-interface ZipEntry { method: number, compSize: number, localOffset: number }
-
-/** Map every zip entry name → its central-directory record. Null if not a zip. */
-function zipIndex(buf: Buffer): Record<string, ZipEntry> | null {
-  const EOCD_SIG = 0x06054b50
-  const CDR_SIG = 0x02014b50
-  const floor = Math.max(0, buf.length - 22 - 0xffff)
-  let eocd = -1
-  for (let i = buf.length - 22; i >= floor; i--) {
-    if (i + 4 <= buf.length && buf.readUInt32LE(i) === EOCD_SIG) {
-      eocd = i
-      break
-    }
-  }
-  if (eocd < 0 || eocd + 20 > buf.length) return null
-  const entries = buf.readUInt16LE(eocd + 10)
-  let off = buf.readUInt32LE(eocd + 16)
-  const index: Record<string, ZipEntry> = {}
-  for (let n = 0; n < entries; n++) {
-    if (off + 46 > buf.length || buf.readUInt32LE(off) !== CDR_SIG) return null
-    const method = buf.readUInt16LE(off + 10)
-    const compSize = buf.readUInt32LE(off + 20)
-    const nameLen = buf.readUInt16LE(off + 28)
-    const extraLen = buf.readUInt16LE(off + 30)
-    const commentLen = buf.readUInt16LE(off + 32)
-    const localOffset = buf.readUInt32LE(off + 42)
-    const name = buf.toString('utf8', off + 46, off + 46 + nameLen)
-    index[name] = { method, compSize, localOffset }
-    off += 46 + nameLen + extraLen + commentLen
-  }
-  return index
-}
-
-/** Inflate one zip entry (stored or raw-deflate) to a UTF-8 string. */
-function readZipEntry(buf: Buffer, e: ZipEntry): string {
-  // Local file header: 30 fixed bytes + name + extra (its own lengths, not the CDR's).
+/** Inflate one zip entry (stored or raw-deflate) to a UTF-8 string, output length-capped. */
+function readZipEntry(buf: Buffer, e: CdRecord): string {
+  // Local file header: 30 fixed bytes + name + extra (its OWN lengths, not the CDR's).
   const nameLen = buf.readUInt16LE(e.localOffset + 26)
   const extraLen = buf.readUInt16LE(e.localOffset + 28)
   const start = e.localOffset + 30 + nameLen + extraLen
   const raw = buf.subarray(start, start + e.compSize)
-  const out = e.method === 0 ? raw : inflateRawSync(raw)
+  // maxOutputLength: the declared size is untrusted, so cap the inflate itself. Over the
+  // cap → throws (bubbles to the caller's catch → honest error), never fills memory.
+  const out = e.method === 0
+    ? raw.subarray(0, MAX_XLSX_UNCOMPRESSED)
+    : inflateRawSync(raw, { maxOutputLength: MAX_XLSX_UNCOMPRESSED })
   return out.toString('utf8')
 }
 
-/** Decode the five predefined XML entities (+ numeric refs). */
+/** Strip CDATA wrappers (their content is literal), keeping the inner text. O(n), indexOf. */
+function stripCdata(s: string): string {
+  if (s.indexOf('<![CDATA[') < 0) return s
+  let out = ''
+  let i = 0
+  while (i < s.length) {
+    const open = s.indexOf('<![CDATA[', i)
+    if (open < 0) {
+      out += s.slice(i)
+      break
+    }
+    out += s.slice(i, open)
+    const close = s.indexOf(']]>', open + 9)
+    if (close < 0) {
+      out += s.slice(open + 9)
+      break
+    }
+    out += s.slice(open + 9, close)
+    i = close + 3
+  }
+  return out
+}
+
+/** Decode the five predefined XML entities (+ numeric refs). Runs after CDATA stripping. */
 function decodeXmlEntities(s: string): string {
+  if (s.indexOf('&') < 0) return s
   return s
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, '\'')
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
@@ -172,17 +199,52 @@ function decodeXmlEntities(s: string): string {
     .replace(/&amp;/g, '&') // last, so "&amp;lt;" → "&lt;" not "<"
 }
 
+/** Concatenate every <t>…</t> run inside xml[start,end). O(n), indexOf-based (no regex). */
+function collectRunText(xml: string, start: number, end: number): string {
+  let text = ''
+  let i = start
+  while (i < end && text.length < MAX_CELL_CHARS) {
+    const open = xml.indexOf('<t', i)
+    if (open < 0 || open >= end) break
+    const nextChar = xml[open + 2]
+    if (nextChar !== '>' && nextChar !== ' ' && nextChar !== '/') {
+      i = open + 2 // <table>, not <t>
+      continue
+    }
+    const gt = xml.indexOf('>', open)
+    if (gt < 0 || gt >= end) break
+    if (xml[gt - 1] === '/') {
+      i = gt + 1 // self-closed <t/>
+      continue
+    }
+    const closeT = xml.indexOf('</t>', gt + 1)
+    if (closeT < 0 || closeT > end) break
+    text += xml.slice(gt + 1, closeT)
+    i = closeT + 4
+  }
+  return decodeXmlEntities(stripCdata(text))
+}
+
+/** Read the content of the first <v>…</v> inside a cell body. O(n), indexOf-based. */
+function firstValue(body: string): string | null {
+  const open = body.indexOf('<v>')
+  if (open < 0) return null
+  const close = body.indexOf('</v>', open + 3)
+  if (close < 0) return null
+  return body.slice(open + 3, close)
+}
+
 /** Parse sharedStrings.xml into an index → text array (concatenating rich-text runs). */
 function parseSharedStrings(xml: string): string[] {
   const out: string[] = []
-  const siRe = /<si>([\s\S]*?)<\/si>/g
-  let si: RegExpExecArray | null
-  while ((si = siRe.exec(xml))) {
-    let text = ''
-    const tRe = /<t[^>]*>([\s\S]*?)<\/t>/g
-    let t: RegExpExecArray | null
-    while ((t = tRe.exec(si[1] ?? ''))) text += t[1] ?? ''
-    out.push(decodeXmlEntities(text))
+  let i = 0
+  while (out.length < 4 * MAX_XLSX_ROWS * MAX_XLSX_COLS) {
+    const open = xml.indexOf('<si>', i)
+    if (open < 0) break
+    const close = xml.indexOf('</si>', open + 4)
+    if (close < 0) break
+    out.push(collectRunText(xml, open + 4, close))
+    i = close + 5
   }
   return out
 }
@@ -196,59 +258,92 @@ function columnIndex(ref: string): number {
   return n - 1
 }
 
-/** Parse the worksheet XML into TAB-separated rows, resolving shared strings. */
+/** Resolve one cell (attrs + optional body) to plain text. */
+function cellValue(attrs: string, body: string, shared: string[]): string {
+  const type = /t="([^"]+)"/.exec(attrs)?.[1] ?? 'n'
+  if (type === 's') {
+    const v = firstValue(body)
+    return v == null ? '' : (shared[Number(v)] ?? '')
+  }
+  if (type === 'inlineStr') return collectRunText(body, 0, body.length)
+  if (type === 'e') return '' // error cell (#N/A, #REF!) → blank
+  const v = firstValue(body)
+  return v == null ? '' : decodeXmlEntities(v) // number / date-serial / boolean / str result
+}
+
+/** Parse one <row> inner XML into a TAB-joined line. O(n), indexOf-based (no regex). */
+function parseRow(rowXml: string, shared: string[]): string {
+  const cells: string[] = []
+  let i = 0
+  let seq = 0
+  while (seq <= MAX_XLSX_COLS * 4) {
+    const open = rowXml.indexOf('<c', i)
+    if (open < 0) break
+    const nextChar = rowXml[open + 2]
+    if (nextChar !== '>' && nextChar !== ' ' && nextChar !== '/') {
+      i = open + 2 // <col>, not <c>
+      continue
+    }
+    const gt = rowXml.indexOf('>', open)
+    if (gt < 0) break
+    const selfClosed = rowXml[gt - 1] === '/'
+    const attrs = rowXml.slice(open + 2, selfClosed ? gt - 1 : gt)
+    let body = ''
+    if (selfClosed) {
+      i = gt + 1
+    } else {
+      const close = rowXml.indexOf('</c>', gt + 1)
+      if (close < 0) break
+      body = rowXml.slice(gt + 1, close)
+      i = close + 4
+    }
+    const ref = /r="([^"]+)"/.exec(attrs)?.[1] ?? ''
+    const col = ref ? columnIndex(ref) : seq
+    const at = col >= 0 ? col : seq
+    if (at < MAX_XLSX_COLS) cells[at] = clean(cellValue(attrs, body, shared))
+    seq++
+  }
+  for (let k = 0; k < cells.length; k++) if (cells[k] == null) cells[k] = ''
+  return cells.join('\t')
+}
+
+/** Parse the worksheet XML into TAB-separated rows. O(n), indexOf-based (no regex). */
 function parseSheet(xml: string, shared: string[]): string {
   const lines: string[] = []
-  const rowRe = /<row[^>]*>([\s\S]*?)<\/row>/g
-  let row: RegExpExecArray | null
-  let rowCount = 0
-  while ((row = rowRe.exec(xml))) {
-    if (rowCount >= MAX_XLSX_ROWS) break
-    rowCount++
-    const cells: string[] = []
-    // Match both empty (<c .../>) and valued (<c ...>…</c>) cells.
-    const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g
-    let c: RegExpExecArray | null
-    let seq = 0
-    while ((c = cellRe.exec(row[1] ?? ''))) {
-      const attrs = c[1] ?? ''
-      const body = c[2] ?? ''
-      const ref = /r="([^"]+)"/.exec(attrs)?.[1] ?? ''
-      const type = /t="([^"]+)"/.exec(attrs)?.[1] ?? 'n'
-      const vMatch = /<v>([\s\S]*?)<\/v>/.exec(body)
-      let value = ''
-      if (type === 's') {
-        if (vMatch) value = shared[Number(vMatch[1] ?? '')] ?? ''
-      } else if (type === 'inlineStr') {
-        const t = /<t[^>]*>([\s\S]*?)<\/t>/.exec(body)?.[1]
-        if (t) value = decodeXmlEntities(t)
-      } else if (type === 'e') {
-        value = '' // error cell (#N/A, #REF!) → blank
-      } else if (vMatch) {
-        value = decodeXmlEntities(vMatch[1] ?? '') // number / date-serial / boolean / formula result
-      }
-      const col = ref ? columnIndex(ref) : seq
-      const at = col >= 0 ? col : seq
-      if (at < MAX_XLSX_COLS) cells[at] = clean(value)
-      seq++
+  let i = 0
+  while (lines.length < MAX_XLSX_ROWS) {
+    const open = xml.indexOf('<row', i)
+    if (open < 0) break
+    const gt = xml.indexOf('>', open)
+    if (gt < 0) break
+    if (xml[gt - 1] === '/') {
+      i = gt + 1 // empty <row/>
+      continue
     }
-    for (let i = 0; i < cells.length; i++) if (cells[i] == null) cells[i] = ''
-    lines.push(cells.join('\t'))
+    const close = xml.indexOf('</row>', gt + 1)
+    if (close < 0) break
+    lines.push(parseRow(xml.slice(gt + 1, close), shared))
+    i = close + 6
   }
   return lines.join('\n').trim()
 }
 
 /** exceljs-free reader: first worksheet of an .xlsx → TAB-separated text. */
 export function xlsxToTextFallback(buf: Buffer): string {
-  const index = zipIndex(buf)
-  if (!index) return ''
-  const shared = index['xl/sharedStrings.xml']
-    ? parseSharedStrings(readZipEntry(buf, index['xl/sharedStrings.xml']))
+  const cd = readCentralDirectory(buf)
+  if (!cd || cd.entryCount > MAX_XLSX_ENTRIES) return ''
+  const byName: Record<string, CdRecord> = {}
+  for (const r of cd.records) byName[r.name] = r
+  const shared = byName['xl/sharedStrings.xml']
+    ? parseSharedStrings(readZipEntry(buf, byName['xl/sharedStrings.xml']))
     : []
-  const sheetName = Object.keys(index)
+  // Lowest sheetN.xml = first worksheet. Sort NUMERICALLY (string sort puts sheet10
+  // before sheet2), so the first sheet is picked even on a workbook that starts at sheet2.
+  const sheetName = cd.records
+    .map(r => r.name)
     .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
-    .sort()[0]
-  const sheet = sheetName ? index[sheetName] : undefined
+    .sort((a, b) => Number(a.match(/(\d+)\.xml$/)![1]) - Number(b.match(/(\d+)\.xml$/)![1]))[0]
+  const sheet = sheetName ? byName[sheetName] : undefined
   if (!sheet) return ''
   return parseSheet(readZipEntry(buf, sheet), shared)
 }

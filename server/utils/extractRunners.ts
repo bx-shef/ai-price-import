@@ -64,18 +64,31 @@ async function decodeText(path: string): Promise<string> {
 /** Spreadsheet office formats — export as CSV (tabular), not the Writer text filter. */
 const SPREADSHEET_EXT = new Set(['xls', 'xlsx', 'xlsm', 'ods', 'fods'])
 
+// CSV export with PINNED FilterOptions so the output is deterministic regardless of the
+// container's locale (a locale-default decimal comma would corrupt prices). Tokens:
+// 9 = TAB field separator (never collides with a decimal comma, and the downstream demo
+// parser detects TAB tables), 34 = '"' text delimiter, 76 = UTF-8. See the StarCalc CSV
+// filter docs. Uses TAB, not comma, on purpose.
+const CSV_FILTER = 'csv:Text - txt - csv (StarCalc):9,34,76'
+
 /**
- * Office document → text via libreoffice. Spreadsheets (xls/ods/…) export to CSV so the
- * cell grid survives; text documents (doc/docx/odt/rtf) use the plain-text filter. The
- * output file is named after the input base with the filter's extension.
+ * Pick the libreoffice `--convert-to` target for an office file. Spreadsheets export to
+ * CSV (tab-separated, UTF-8) so the cell grid survives; text documents (doc/docx/odt/rtf)
+ * use the plain-text filter. Pure → unit-tested (the subprocess/IO in officeToText is
+ * not). `outExt` is the extension libreoffice gives the produced file.
  */
+export function officeConvertTarget(path: string): { filter: string, outExt: string } {
+  const ext = (path.split('.').pop() ?? '').toLowerCase()
+  return SPREADSHEET_EXT.has(ext)
+    ? { filter: CSV_FILTER, outExt: 'csv' }
+    : { filter: 'txt:Text', outExt: 'txt' }
+}
+
+/** Office document → text via libreoffice (into a temp dir), filter chosen by format. */
 async function officeToText(path: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-office-'))
   try {
-    const inExt = (path.split('.').pop() ?? '').toLowerCase()
-    const spreadsheet = SPREADSHEET_EXT.has(inExt)
-    const filter = spreadsheet ? 'csv' : 'txt:Text'
-    const outExt = spreadsheet ? 'csv' : 'txt'
+    const { filter, outExt } = officeConvertTarget(path)
     await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path])
     const base = (path.split('/').pop() ?? 'out').replace(/\.[^.]+$/, '')
     return await decodeText(join(dir, `${base}.${outExt}`))
