@@ -39,6 +39,10 @@ export interface DemoResult {
   warnings: string[]
 }
 
+// Plain-text symbols for the `currency` field of DemoResult (logs / JSON). BYN has no
+// Unicode sign, so its plain-text fallback is the common «Br» abbreviation; the UI does
+// NOT use this value for BYN — it renders the official regulator glyph via CurrencySign
+// keyed by ISO code. Keep them distinct on purpose: «Br» is text, the glyph is the sign.
 const CURRENCY_SYMBOL: Record<string, string> = {
   RUB: '₽', BYN: 'Br', KZT: '₸', USD: '$', EUR: '€', UAH: '₴'
 }
