@@ -20,4 +20,13 @@ describe('officeConvertTarget', () => {
   it('is case-insensitive on the extension', () => {
     expect(officeConvertTarget('/tmp/EXPORT.XLS').outExt).toBe('csv')
   })
+
+  it('picks the filter from the fileName, so a spreadsheet works even from a .bin path (GH #74)', () => {
+    // officeToText passes the real fileName (not the extension-less <jobId>.bin on disk).
+    expect(officeConvertTarget('Прайс.xls')).toEqual({ filter: 'csv:Text - txt - csv (StarCalc):9,34,76', outExt: 'csv' })
+  })
+
+  it('falls back to the text filter for a name without an extension', () => {
+    expect(officeConvertTarget('noext')).toEqual({ filter: 'txt:Text', outExt: 'txt' })
+  })
 })

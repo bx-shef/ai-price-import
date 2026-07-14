@@ -84,11 +84,16 @@ export function officeConvertTarget(path: string): { filter: string, outExt: str
     : { filter: 'txt:Text', outExt: 'txt' }
 }
 
-/** Office document → text via libreoffice (into a temp dir), filter chosen by format. */
-async function officeToText(path: string): Promise<string> {
+/**
+ * Office document → text via libreoffice (into a temp dir). The filter is chosen from
+ * `fileName` (its real extension) — `path` is the file libreoffice reads and may be an
+ * extension-less temp (`<jobId>.bin`) whose format libreoffice sniffs from content. The
+ * output is named after the INPUT path's base, so read `<pathBase>.<outExt>`.
+ */
+async function officeToText(path: string, fileName: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-office-'))
   try {
-    const { filter, outExt } = officeConvertTarget(path)
+    const { filter, outExt } = officeConvertTarget(fileName)
     await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path])
     const base = (path.split('/').pop() ?? 'out').replace(/\.[^.]+$/, '')
     return await decodeText(join(dir, `${base}.${outExt}`))
