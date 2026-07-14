@@ -14,7 +14,12 @@ const EXT_KIND: Record<string, ExtractKind> = {
   png: 'image', jpg: 'image', jpeg: 'image', tif: 'image', tiff: 'image', bmp: 'image', webp: 'image'
 }
 
-/** Below this many non-space chars a PDF is treated as scanned → OCR fallback. */
+/** Below this many non-space chars a PDF is treated as scanned → OCR fallback.
+ *  LIMITATION: the decision is all-or-nothing on the WHOLE document's pdftotext output.
+ *  A mixed PDF (some digital pages + some scanned pages) whose digital text already clears
+ *  this threshold is taken as "digital" → the scanned pages get NO OCR and their content is
+ *  silently absent. Acceptable for the common case (docs are wholly digital or wholly scans);
+ *  per-page routing would be the fix if mixed PDFs become a real need. */
 export const MIN_PDF_TEXT = 32
 
 /** Route a file to an extraction strategy by its extension (lower-cased). */
