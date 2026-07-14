@@ -90,27 +90,33 @@ PROXY_VHOST ?= price-import.bx-shef.by
 proxy-tune:
 	@test -n "$(PROXY_CONTAINER)" || { echo "Не найден фронт-прокси (:443). Задай PROXY_CONTAINER=<имя> (см. docker ps)"; exit 1; }
 	@echo "Front proxy: $(PROXY_CONTAINER)"
-	docker cp deploy/vhost.d/$(PROXY_VHOST) $(PROXY_CONTAINER):/etc/nginx/vhost.d/$(PROXY_VHOST)
-	docker exec $(PROXY_CONTAINER) nginx -t
-	@if docker exec $(PROXY_CONTAINER) grep -qsF "/etc/nginx/vhost.d/$(PROXY_VHOST)" /etc/nginx/conf.d/default.conf; then \
+	docker cp deploy/vhost.d/$(PROXY_VHOST) "$(PROXY_CONTAINER)":/etc/nginx/vhost.d/$(PROXY_VHOST)
+	@# Валидируем СОДЕРЖИМОЕ нового vhost.d-файла в server-контексте ДО reload/restart. Обычный
+	@# `nginx -t` ниже проверяет действующий конфиг, где нашего include ещё нет (первое применение),
+	@# т.е. синтаксис файла остаётся непроверенным — а битый файл уронил бы ОБЩИЙ прокси при рестарте.
+	@# Собираем минимальный тест-конфиг, который include-ит наш файл в server{}, и гоняем `nginx -t -c`.
+	docker exec "$(PROXY_CONTAINER)" sh -c 'printf "events{}\nhttp{server{\ninclude /etc/nginx/vhost.d/$(PROXY_VHOST);\n}}\n" > /tmp/procure-vhost-test.conf && nginx -t -c /tmp/procure-vhost-test.conf; rc=$$?; rm -f /tmp/procure-vhost-test.conf; exit $$rc'
+	docker exec "$(PROXY_CONTAINER)" nginx -t
+	@if docker exec "$(PROXY_CONTAINER)" grep -qsF "/etc/nginx/vhost.d/$(PROXY_VHOST)" /etc/nginx/conf.d/default.conf; then \
 		echo "include уже в конфиге → reload (без простоя)"; \
-		docker exec $(PROXY_CONTAINER) nginx -s reload; \
+		docker exec "$(PROXY_CONTAINER)" nginx -s reload; \
 	else \
-		echo "include отсутствует (первое применение) → рестарт прокси для регенерации конфига"; \
-		docker restart $(PROXY_CONTAINER); \
+		echo "⚠ include отсутствует (первое применение) → РЕСТАРТ прокси для регенерации конфига."; \
+		echo "⚠ Затронет ВСЕ vhost этого хоста (соседние проекты) на ~1–2с. Запускай в окно низкого трафика."; \
+		docker restart "$(PROXY_CONTAINER)"; \
 	fi
 
 ## Откат тюнинга: удалить per-vhost файл и перечитать конфиг (413/504 вернутся к дефолтам прокси).
 proxy-untune:
 	@test -n "$(PROXY_CONTAINER)" || { echo "Не найден фронт-прокси (:443). Задай PROXY_CONTAINER=<имя> (см. docker ps)"; exit 1; }
-	docker exec $(PROXY_CONTAINER) rm -f /etc/nginx/vhost.d/$(PROXY_VHOST)
+	docker exec "$(PROXY_CONTAINER)" rm -f /etc/nginx/vhost.d/$(PROXY_VHOST)
 	@# Симметрично proxy-tune: пока файл существовал, docker-gen вставил `include …/$(PROXY_VHOST)`
 	@# в конфиг. После rm этот include указывает на несуществующий файл → `nginx -t`/reload
 	@# упадут. Если строка ещё в конфиге → форсим регенерацию рестартом (docker-gen уберёт
 	@# include, т.к. файла больше нет). Если её уже нет → достаточно reload.
-	@if docker exec $(PROXY_CONTAINER) grep -qsF "/etc/nginx/vhost.d/$(PROXY_VHOST)" /etc/nginx/conf.d/default.conf; then \
+	@if docker exec "$(PROXY_CONTAINER)" grep -qsF "/etc/nginx/vhost.d/$(PROXY_VHOST)" /etc/nginx/conf.d/default.conf; then \
 		echo "include ещё в конфиге → рестарт прокси для регенерации (уберёт ссылку на удалённый файл)"; \
-		docker restart $(PROXY_CONTAINER); \
+		docker restart "$(PROXY_CONTAINER)"; \
 	else \
-		docker exec $(PROXY_CONTAINER) nginx -t && docker exec $(PROXY_CONTAINER) nginx -s reload; \
+		docker exec "$(PROXY_CONTAINER)" nginx -t && docker exec "$(PROXY_CONTAINER)" nginx -s reload; \
 	fi
