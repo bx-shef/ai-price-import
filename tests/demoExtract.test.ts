@@ -246,3 +246,84 @@ describe('currency', () => {
     expect(extractDemo(demo('invoice-kk.txt')).currency).toBe('₸')
   })
 })
+
+// Quality fixes from the 42-file import analysis (GH #66).
+describe('extractDemo — real-invoice quality (GH #66)', () => {
+  it('detects a soft-wrapped «Коли- чество» header as the quantity column', () => {
+    const text = [
+      'Счёт № 7',
+      'Наименование\tКоли- чество\tЦена\tСумма',
+      'Доска террасная\t145.2\t68.5\t9946.2'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]!.quantity).toBe(145.2)
+  })
+
+  it('drops a footer/signature row («Ответственный») from the goods table', () => {
+    const text = [
+      'Счёт № 8',
+      '№\tНаименование\tЦена',
+      '1\tБолт М6\t5',
+      '\tОтветственный\t'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]!.name).toBe('Болт М6')
+  })
+
+  it('extracts a supplier stated without a «Поставщик:» label (company at top)', () => {
+    const text = [
+      'ООО "Смартон", УНП 190635842',
+      'Счёт № 9',
+      'Наименование\tЦена',
+      'Мешки для мусора\t3.56'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.supplier?.name).toBe('ООО "Смартон"')
+    expect(r.supplier?.taxId).toBe('190635842')
+  })
+
+  it('does not misread a legal-form word inside a product name as the supplier', () => {
+    // No company-at-top and no label → supplier name stays undefined (only tax id may set).
+    const text = 'Прайс\nНаименование\tЦена\nКронштейн ОАО-типа\t10'
+    const r = extractDemo(text)
+    expect(r.supplier?.name).toBeUndefined()
+  })
+
+  it('does not take the BUYER as the supplier when it is printed first', () => {
+    const text = [
+      'Заказчик: ООО «Клиент»',
+      'ОАО "Продавец"',
+      'Наименование\tЦена',
+      'Товар\t10'
+    ].join('\n')
+    expect(extractDemo(text).supplier?.name).toBe('ОАО "Продавец"')
+  })
+
+  it('recognises a company in typographic quotes “…”', () => {
+    const text = 'ООО “Ромашка”\nНаименование\tЦена\nБолт\t5'
+    expect(extractDemo(text).supplier?.name).toBe('ООО “Ромашка”')
+  })
+
+  it('keeps a footer row with a stray date but no qty/price/sum out of items', () => {
+    const text = [
+      'Счёт № 10',
+      '№\tНаименование\tКол-во\tЦена\tСумма',
+      '1\tБолт М6\t10\t5\t50',
+      '\tОтветственный: Иванов, 01.07.2026\t\t\t'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]!.name).toBe('Болт М6')
+  })
+
+  it('does not join a hyphen used as a separator in a header («Товар - описание»)', () => {
+    // The soft-wrap fix must only join hyphens BETWEEN letters, not a « - » separator:
+    // «Товар - описание» must still match the name column, not become «Товаописание».
+    const text = 'Прайс\nТовар - описание\tЦена\nБолт М6\t5'
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]!.name).toBe('Болт М6')
+  })
+})

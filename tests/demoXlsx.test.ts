@@ -69,6 +69,34 @@ describe('xlsxToText', () => {
     expect(text).not.toContain('[object Object]')
   })
 
+  it('emits a merged range value ONCE, not repeated across spanned columns (GH #66)', async () => {
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('S')
+    ws.mergeCells('A1:D1')
+    ws.getCell('A1').value = 'ООО «Пример»'
+    ws.addRow(['Наименование', 'Кол-во', 'Цена', 'Сумма'])
+    ws.addRow(['Болт', 10, 5, 50])
+    const bytes = new Uint8Array(await wb.xlsx.writeBuffer() as ArrayBuffer)
+    const text = await xlsxToText(bytes)
+    const firstLine = text.split('\n')[0]!
+    // The company name appears once, not «ООО «Пример»\tООО «Пример»\t…» across B/C/D.
+    expect(firstLine.match(/ООО «Пример»/g)).toHaveLength(1)
+  })
+
+  it('de-duplicates multiple merged ranges, including a vertical merge', async () => {
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('S')
+    ws.mergeCells('A1:C1') // horizontal
+    ws.getCell('A1').value = 'ШАПКА'
+    ws.mergeCells('A2:A3') // vertical
+    ws.getCell('A2').value = 'ВЕРТ'
+    ws.getCell('B2').value = 'x'
+    const bytes = new Uint8Array(await wb.xlsx.writeBuffer() as ArrayBuffer)
+    const text = await xlsxToText(bytes)
+    expect(text.match(/ШАПКА/g)).toHaveLength(1)
+    expect(text.match(/ВЕРТ/g)).toHaveLength(1) // not repeated into A3
+  })
+
   it('parses a real xlsx into a 2-column price list end-to-end', async () => {
     const bytes = await buildXlsx([
       ['Наименование', 'Цена'],

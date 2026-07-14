@@ -150,7 +150,11 @@ function detectDelimiter(lines: string[]): string | null {
 function mapHeader(cells: string[]): Partial<Record<keyof typeof COL, number>> | null {
   const roles: Partial<Record<keyof typeof COL, number>> = {}
   cells.forEach((cell, i) => {
-    const c = cell.trim()
+    // Undo soft line-wrap hyphenation in a header cell: Excel wraps «Количество» as
+    // «Коли-\nчество», which our reader flattens to «Коли- чество» — the hyphen+space
+    // then hides «колич» from the qty matcher. Only join a hyphen that sits BETWEEN
+    // letters (a broken word), so a real «Артикул - производитель» separator is kept.
+    const c = cell.trim().replace(/(?<=\p{L})-\s+(?=\p{L})/gu, '')
     for (const key of Object.keys(COL) as Array<keyof typeof COL>) {
       if (roles[key] === undefined && COL[key].test(c)) roles[key] = i
     }
@@ -197,6 +201,18 @@ export function extractDemo(input: string): DemoResult {
       break
     }
   }
+  // No «Поставщик:» label — fall back to a company printed at the top (first ~10 lines),
+  // scanning line by line and SKIPPING buyer/payer lines so we don't grab the buyer.
+  if (!supplier?.name) {
+    for (const l of lines.slice(0, 10)) {
+      if (BUYER_LABEL.test(l)) continue
+      const m = COMPANY_AT_TOP.exec(l)
+      if (m) {
+        supplier = { ...supplier, name: m[1]!.replace(/\s+/g, ' ').trim() }
+        break
+      }
+    }
+  }
   const taxM = TAX_ID_RE.exec(text)
   if (taxM) {
     supplier = supplier ?? {}
@@ -230,6 +246,11 @@ export function extractDemo(input: string): DemoResult {
       const quantity = parseNum(pick(cells, roles.qty))
       const price = parseNum(pick(cells, roles.price))
       const sum = parseNum(pick(cells, roles.sum))
+      // A footer/signature label with no figures in the qty/price/sum columns (even if it
+      // carries a stray date/number elsewhere, e.g. «Ответственный … 01.07.2026») is noise.
+      // Match the name cell, or the whole row when the label sits outside the name column.
+      if (quantity === undefined && price === undefined && sum === undefined
+        && NOISE_ROW.test((name || joined).trim())) continue
       // A blank name cell on an otherwise numeric row = real data we must not silently
       // drop (wrapped/continuation line). Keep it with a placeholder + one warning.
       // A blank row with no numbers is just noise → skip.
@@ -267,6 +288,19 @@ export function extractDemo(input: string): DemoResult {
 function pick(cells: string[], idx: number | undefined): string {
   return idx === undefined ? '' : (cells[idx] ?? '').trim()
 }
+
+// Footer / signature lines that leak into the goods table when a template puts them below
+// the items (esp. after merged-cell flattening). Only used to drop a row that ALSO has no
+// numbers — a real product with these words in its name keeps its figures and stays.
+const NOISE_ROW = /^(?:ответственн|исполнител|руководител|директор|гл(?:авный|\.)?\s*бухгалтер|бухгалтер|товар[ы]?\s+(?:отпустил|получил|принял)|отпуск\s+разрешил|отпустил|принял|сдал|груз\s+(?:получил|принял|сдал)|грузополучател|грузоотправител|изготовител|менеджер|м\.?\s*п\.?(?:\s|$)|подпис|по\s+доверенности|выписал|адпуск|адказн)/iu
+
+// A supplier stated without a «Поставщик:» label — most templates just print the company
+// at the top: «ООО "Смартон", УНП …» / «ОАО Речицадрев». Capture the legal-form + name,
+// stopping before a comma/УНП/'(' so the address/tax tail is dropped. Applied line-by-line
+// (skipping buyer lines) so the buyer is never mistaken for the supplier.
+const COMPANY_AT_TOP = /(?:^|\s)((?:ООО|ОАО|ЗАО|ОДО|ПАО|АО|УП|ЧУП|ЧТУП|СООО|ИП|ТОО|АТ|ТДА|ТАА|Общество\s+с\s+ограниченной\s+ответственностью|Открытое\s+акционерное\s+общество|Закрытое\s+акционерное\s+общество|Индивидуальный\s+предприниматель)\s+(?:«[^»]+»|"[^"]+"|“[^”]+”|[A-ZА-ЯЁ][^,\n(]{0,60}?))(?=\s*(?:,|\(|УНП|ИНН|БИН|БСН|р\/с|р\/сч|$))/u
+// Lines naming the buyer/payer, so COMPANY_AT_TOP doesn't grab them as the supplier.
+const BUYER_LABEL = /(?:покупател|плательщик|заказчик|заказчык|грузополучател|атрымальн|пакупн|сатып\s*алушы)/iu
 
 function classifyTotal(s: string): 'vat' | 'total' | 'sum' | null {
   // «Всего к оплате» / «Барлығы төлеуге» is the grand total — check it before the
