@@ -37,4 +37,10 @@ describe('CurrencySign', () => {
     expect(wrapper.find('svg').exists()).toBe(false)
     expect(wrapper.text()).toBe('')
   })
+
+  it('renders nothing for an empty-string code (falsy, same as absent)', async () => {
+    const wrapper = await mountSuspended(CurrencySign, { props: { code: '' } })
+    expect(wrapper.find('svg').exists()).toBe(false)
+    expect(wrapper.text()).toBe('')
+  })
 })
