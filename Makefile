@@ -1,6 +1,6 @@
 .PHONY: dev build-local check \
         prod-up prod-down prod-pull prod-redeploy logs ps \
-        server-up server-down watchtower-up watchtower-down
+        server-up server-down watchtower-up watchtower-down proxy-tune
 
 # Обёртки над командами разработки и деплоя. Подробности — docs/redesign/09-deploy.md.
 # Прод-цели читают переменные из ./.env (см. .env.example: NUXT_PUBLIC_SITE_URL,
@@ -68,3 +68,12 @@ watchtower-up:
 
 watchtower-down:
 	docker compose -f docker-compose.watchtower.yml down
+
+## Применить per-vhost тюнинг к живому общему nginx-proxy (лимит тела + таймаут OCR).
+## Безопасно для других приложений — файл скоупится только на наш vhost. См. GH #63,
+## docs/redesign/09-deploy.md. Прокси-контейнер по умолчанию `nginx-proxy`.
+PROXY_CONTAINER ?= nginx-proxy
+proxy-tune:
+	docker cp deploy/vhost.d/price-import.bx-shef.by $(PROXY_CONTAINER):/etc/nginx/vhost.d/price-import.bx-shef.by
+	docker exec $(PROXY_CONTAINER) nginx -t
+	docker exec $(PROXY_CONTAINER) nginx -s reload

@@ -1,0 +1,19 @@
+# Per-vhost tuning for the SHARED front nginx-proxy (nginxproxy/nginx-proxy), injected
+# into the server{} block for price-import.bx-shef.by ONLY — other apps on the same proxy
+# are untouched. nginx-proxy includes /etc/nginx/vhost.d/<host> inside that vhost.
+#
+# Why: the shared proxy runs on nginx defaults (client_max_body_size 1m,
+# proxy_read_timeout 60s). That defeats the app: the app-level nginx.conf already allows
+# 25m (and 6m on the demo route) and 180s, but the FRONT proxy rejected every upload
+# >~1MB with 413 and cut OCR-heavy demo extractions at 60s with 504 (see GH #63).
+#
+# Apply/refresh: `make proxy-tune` (docs/redesign/09-deploy.md). Reload picks it up.
+
+# In-portal document uploads reach ~20MB; keep parity with the app-level nginx.conf cap.
+client_max_body_size 25m;
+
+# The demo AI path OCRs scans/photos (poppler/tesseract) then calls the extraction agent —
+# a single heavy document can take well over the 60s nginx default. Give the front proxy
+# the same headroom the app grants the demo route.
+proxy_read_timeout 300s;
+proxy_send_timeout 300s;

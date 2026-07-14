@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-11
+> Last reviewed: 2026-07-14
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -41,13 +41,14 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
   `server`/`letsencrypt`/`…watchtower` из стека currency-converter) — второй раз не запускаем (конфликт
   портов 80/443 и имён). Эти два файла нужны только при развёртывании **чистого** хоста.
 
-  **Развёртывание на общем сервере** (инфра уже есть → шаги 1–4):
+  **Развёртывание на общем сервере** (инфра уже есть → шаги 1–5):
   1. A-запись `price-import.bx-shef.by → <IP>` (общий сервер).
   2. `.env` рядом с `docker-compose.prod.yml` (секреты; см. ниже; `DOMAIN`=`price-import.bx-shef.by`) — в git не коммитим.
   3. `make prod-up` (`docker compose -f docker-compose.prod.yml up -d`) → acme выпустит TLS автоматически.
-  4. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
+  4. `make proxy-tune` — применить per-vhost тюнинг фронт-прокси (лимит тела + таймаут OCR; см. секцию nginx).
+  5. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
 
-  **Чистый хост** (инфры ещё нет → сначала): `make server-up` → `make watchtower-up` → затем шаги 2–4.
+  **Чистый хост** (инфры ещё нет → сначала): `make server-up` → `make watchtower-up` → затем шаги 2–5.
 
 ## Env (полный список — `.env.example`)
 
@@ -72,6 +73,27 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
   (iframe `/app`,`/settings`); backend — тот же origin (`'self'`).
 - **Память:** контейнер backend с `mem_limit` (в compose — 2g): извлечение гоняет недоверенные файлы
   через libreoffice/tesseract — лимит памяти защищает от zip/XML/image-бомбы (таймаут ограничивает CPU, не RAM).
+
+### Тюнинг общего фронт-`nginx-proxy` (обязательно для загрузок/OCR)
+
+Есть **два** слоя nginx: app-level (`nginx.conf` в образе `app`) и **общий фронт-`nginx-proxy`**
+(терминирует TLS, один на хост). App-level уже разрешает тело до 25m (demo-роут 6m) и таймаут 300s
+на `/api/demo/extract`, **но фронт-прокси работает на nginx-дефолтах** (`client_max_body_size 1m`,
+`proxy_read_timeout 60s`). Без тюнинга он отбивает загрузки >~1 МБ (**413**) и рвёт OCR-тяжёлые
+разборы на 60s (**504**) — раньше, чем запрос дойдёт до app. Найдено на живом тесте (**GH #63**).
+
+Фикс скоупится **только на наш vhost** (другие приложения на прокси не затрагиваются) — файл
+`deploy/vhost.d/price-import.bx-shef.by` (`client_max_body_size 25m` + `proxy_read_timeout/send_timeout 300s`).
+Применить в живой прокси:
+
+```bash
+make proxy-tune          # docker cp файла в nginx-proxy → nginx -t → nginx -s reload
+# (PROXY_CONTAINER=<имя>, если контейнер прокси называется иначе)
+```
+
+⚠️ Файл лежит в **томе** `vhost` фронт-прокси и **переживает** рестарт/пере-деплой приложения, но
+на **чистом** хосте (пересоздан том) шаг нужно повторить. Проверка: загрузка PDF >1 МБ не даёт 413,
+тяжёлый скан — 200 вместо 504.
 
 ## Здоровье и миграции
 
