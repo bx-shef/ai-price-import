@@ -246,3 +246,48 @@ describe('currency', () => {
     expect(extractDemo(demo('invoice-kk.txt')).currency).toBe('₸')
   })
 })
+
+// Quality fixes from the 42-file import analysis (GH #66).
+describe('extractDemo — real-invoice quality (GH #66)', () => {
+  it('detects a soft-wrapped «Коли- чество» header as the quantity column', () => {
+    const text = [
+      'Счёт № 7',
+      'Наименование\tКоли- чество\tЦена\tСумма',
+      'Доска террасная\t145.2\t68.5\t9946.2'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]!.quantity).toBe(145.2)
+  })
+
+  it('drops a footer/signature row («Ответственный») from the goods table', () => {
+    const text = [
+      'Счёт № 8',
+      '№\tНаименование\tЦена',
+      '1\tБолт М6\t5',
+      '\tОтветственный\t'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]!.name).toBe('Болт М6')
+  })
+
+  it('extracts a supplier stated without a «Поставщик:» label (company at top)', () => {
+    const text = [
+      'ООО "Смартон", УНП 190635842',
+      'Счёт № 9',
+      'Наименование\tЦена',
+      'Мешки для мусора\t3.56'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.supplier?.name).toBe('ООО "Смартон"')
+    expect(r.supplier?.taxId).toBe('190635842')
+  })
+
+  it('does not misread a legal-form word inside a product name as the supplier', () => {
+    // No company-at-top and no label → supplier name stays undefined (only tax id may set).
+    const text = 'Прайс\nНаименование\tЦена\nКронштейн ОАО-типа\t10'
+    const r = extractDemo(text)
+    expect(r.supplier?.name).toBeUndefined()
+  })
+})

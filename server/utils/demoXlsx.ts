@@ -130,8 +130,19 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
     ws.eachRow({ includeEmpty: false }, (row) => {
       if (count >= MAX_XLSX_ROWS) return
       count++
-      const vals = Array.isArray(row.values) ? row.values.slice(1, MAX_XLSX_COLS + 1) : []
-      lines.push(vals.map(cellText).join('\t'))
+      // Emit a merged range's value ONCE (in its master cell), not repeated across every
+      // spanned column — exceljs fills every slave with the master's value, which would
+      // otherwise duplicate a header/supplier line dozens of times and wreck table
+      // detection. Slaves → blank; the master keeps the value. (The fallback reader never
+      // duplicates, so this only fixes the exceljs path.)
+      const vals: string[] = []
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
+        if (col > MAX_XLSX_COLS) return
+        const slave = cell.isMerged && cell.master && cell.master.address !== cell.address
+        vals[col - 1] = slave ? '' : cellText(cell.value)
+      })
+      for (let k = 0; k < vals.length; k++) if (vals[k] == null) vals[k] = ''
+      lines.push(vals.join('\t'))
     })
     return lines.join('\n').trim()
   } catch (err) {
