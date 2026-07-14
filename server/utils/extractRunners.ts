@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ExtractRunners } from './textExtract'
@@ -16,9 +16,12 @@ import type { ExtractRunners } from './textExtract'
 
 const RUN_TIMEOUT_MS = 90_000
 
-function run(bin: string, args: string[]): Promise<string> {
+function run(bin: string, args: string[], env?: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(bin, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(env ? { env: { ...process.env, ...env } } : {})
+    })
     let out = ''
     let err = ''
     const timer = setTimeout(() => {
@@ -69,7 +72,12 @@ const SPREADSHEET_EXT = new Set(['xls', 'xlsx', 'xlsm', 'ods', 'fods'])
 // 9 = TAB field separator (never collides with a decimal comma, and the downstream demo
 // parser detects TAB tables), 34 = '"' text delimiter, 76 = UTF-8. See the StarCalc CSV
 // filter docs. Uses TAB, not comma, on purpose.
-const CSV_FILTER = 'csv:Text - txt - csv (StarCalc):9,34,76'
+// Trailing `,,,,,,,,,-1` = the "sheet to export" token set to -1 → export EVERY sheet
+// (one CSV per sheet), not just the active/first one. Without it a multi-sheet workbook
+// loses non-first sheets — e.g. a ТТН whose goods live on an «Приложение» sheet extracted
+// to 0 items (GH #76). The 3 leading tokens (9,34,76) keep their exact prior meaning; the
+// empty middle tokens hold libreoffice defaults, so quoting/format is unchanged.
+const CSV_FILTER = 'csv:Text - txt - csv (StarCalc):9,34,76,,,,,,,,,-1'
 
 /**
  * Pick the libreoffice `--convert-to` target for an office file. Spreadsheets export to
@@ -94,7 +102,21 @@ async function officeToText(path: string, fileName: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-office-'))
   try {
     const { filter, outExt } = officeConvertTarget(fileName)
-    await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path])
+    // LANG=C.UTF-8 so libreoffice writes multi-byte (Cyrillic) per-sheet filenames as valid
+    // UTF-8 — otherwise a non-UTF-8 container locale mangles «Приложение».csv and readdir
+    // can't reopen it. Harmless for the txt path.
+    await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path],
+      { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
+    if (outExt === 'csv') {
+      // All-sheets export (see CSV_FILTER) → one `<base>-<sheet>.csv` per sheet. Read + join
+      // ALL of them (sheet-sorted for determinism) so goods on a non-first sheet survive.
+      const files = (await readdir(dir)).filter(f => f.toLowerCase().endsWith('.csv')).sort()
+      if (files.length) {
+        const parts = await Promise.all(files.map(f => decodeText(join(dir, f))))
+        return parts.join('\n')
+      }
+      // Fallback (single-sheet / older libreoffice ignored the token): the base-named file.
+    }
     const base = (path.split('/').pop() ?? 'out').replace(/\.[^.]+$/, '')
     return await decodeText(join(dir, `${base}.${outExt}`))
   } finally {

@@ -7,7 +7,7 @@ describe('officeConvertTarget', () => {
       const t = officeConvertTarget(p)
       expect(t.outExt).toBe('csv')
       // TAB field separator (9) — never collides with a decimal comma; UTF-8 (76).
-      expect(t.filter).toBe('csv:Text - txt - csv (StarCalc):9,34,76')
+      expect(t.filter).toBe('csv:Text - txt - csv (StarCalc):9,34,76,,,,,,,,,-1')
     }
   })
 
@@ -23,7 +23,7 @@ describe('officeConvertTarget', () => {
 
   it('picks the filter from the fileName, so a spreadsheet works even from a .bin path (GH #74)', () => {
     // officeToText passes the real fileName (not the extension-less <jobId>.bin on disk).
-    expect(officeConvertTarget('Прайс.xls')).toEqual({ filter: 'csv:Text - txt - csv (StarCalc):9,34,76', outExt: 'csv' })
+    expect(officeConvertTarget('Прайс.xls')).toEqual({ filter: 'csv:Text - txt - csv (StarCalc):9,34,76,,,,,,,,,-1', outExt: 'csv' })
   })
 
   it('falls back to the text filter for a name without an extension', () => {
