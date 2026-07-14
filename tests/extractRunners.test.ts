@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { officeConvertTarget } from '../server/utils/extractRunners'
+import { officeConvertTarget, parseOfficeCsvOutputs } from '../server/utils/extractRunners'
 
 describe('officeConvertTarget', () => {
   it('exports spreadsheets as CSV with PINNED tab/UTF-8 options so the grid + prices survive (GH #64)', () => {
@@ -28,5 +28,39 @@ describe('officeConvertTarget', () => {
 
   it('falls back to the text filter for a name without an extension', () => {
     expect(officeConvertTarget('noext')).toEqual({ filter: 'txt:Text', outExt: 'txt' })
+  })
+})
+
+describe('parseOfficeCsvOutputs (workbook sheet order, GH #76)', () => {
+  it('keeps multi-sheet paths in the order libreoffice printed (NOT alphabetical)', () => {
+    // libreoffice prints sheets in workbook index order; the header sheet «ТТН» must stay
+    // first even though it sorts LAST alphabetically.
+    const stdout = [
+      'convert /tmp/x/f.xls as a Calc document using filter : Text - txt - csv (StarCalc):9,34,76,,,,,,,,,-1',
+      'Writing sheet ТТН -> /tmp/x/f-ТТН.csv',
+      'Writing sheet Приложение -> /tmp/x/f-Приложение.csv',
+      'Writing sheet ИнформационныйЛист -> /tmp/x/f-ИнформационныйЛист.csv'
+    ].join('\n')
+    expect(parseOfficeCsvOutputs(stdout)).toEqual([
+      '/tmp/x/f-ТТН.csv', '/tmp/x/f-Приложение.csv', '/tmp/x/f-ИнформационныйЛист.csv'
+    ])
+  })
+
+  it('parses the single-sheet "convert … -> …csv using filter :…" line shape', () => {
+    const stdout = 'convert /tmp/x/f.xls -> /tmp/x/f.csv using filter : Text - txt - csv (StarCalc):9,34,76'
+    expect(parseOfficeCsvOutputs(stdout)).toEqual(['/tmp/x/f.csv'])
+  })
+
+  it('handles a sheet name with spaces and ignores non-csv / noise lines', () => {
+    const stdout = [
+      'Warning: failed to launch javaldx',
+      'Writing sheet Лист 1 -> /tmp/x/f-Лист 1.csv',
+      'some unrelated -> /tmp/x/thing.txt'
+    ].join('\n')
+    expect(parseOfficeCsvOutputs(stdout)).toEqual(['/tmp/x/f-Лист 1.csv'])
+  })
+
+  it('returns [] when nothing matches (caller falls back to readdir/base file)', () => {
+    expect(parseOfficeCsvOutputs('nothing here\njust logs')).toEqual([])
   })
 })

@@ -93,29 +93,67 @@ export function officeConvertTarget(path: string): { filter: string, outExt: str
 }
 
 /**
+ * Fail-fast cap on how many per-sheet CSVs we read into memory. A crafted workbook can
+ * carry thousands of (tiny) sheets → the all-sheets export makes one CSV each; without a
+ * bound we would `readFile` them all at once BEFORE the downstream MAX_DOCUMENT_TEXT cap.
+ * A loud throw (not silent truncation) is the contract, like MAX_DOCUMENT_TEXT.
+ */
+export const MAX_SHEET_CSVS = 64
+
+/**
+ * Parse libreoffice CSV `--convert-to` stdout into the produced `.csv` paths IN WORKBOOK
+ * SHEET ORDER. libreoffice prints one line per sheet in sheet-index order — either
+ * `Writing sheet <name> -> <path>.csv` (multi-sheet) or `convert <in> -> <path>.csv using
+ * filter :…` (single). Preserving this order keeps the document HEADER sheet (supplier /
+ * contractor) first, which a filename `.sort()` would break (alphabetical, and "Лист10"
+ * before "Лист2"). Pure → unit-tested.
+ */
+export function parseOfficeCsvOutputs(stdout: string): string[] {
+  const paths: string[] = []
+  for (const line of stdout.split('\n')) {
+    const arrow = line.indexOf('-> ')
+    if (arrow < 0) continue
+    let rest = line.slice(arrow + 3)
+    const uf = rest.indexOf(' using filter')
+    if (uf >= 0) rest = rest.slice(0, uf)
+    rest = rest.trim()
+    if (rest.toLowerCase().endsWith('.csv')) paths.push(rest)
+  }
+  return paths
+}
+
+/**
  * Office document → text via libreoffice (into a temp dir). The filter is chosen from
  * `fileName` (its real extension) — `path` is the file libreoffice reads and may be an
- * extension-less temp (`<jobId>.bin`) whose format libreoffice sniffs from content. The
- * output is named after the INPUT path's base, so read `<pathBase>.<outExt>`.
+ * extension-less temp (`<jobId>.bin`) whose format libreoffice sniffs from content.
+ * Spreadsheets export EVERY sheet (CSV_FILTER `-1`) → we join all sheets, in workbook
+ * order, so goods on a non-first sheet (e.g. a ТТН «Приложение») aren't lost (GH #76).
  */
 async function officeToText(path: string, fileName: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-office-'))
   try {
     const { filter, outExt } = officeConvertTarget(fileName)
     // LANG=C.UTF-8 so libreoffice writes multi-byte (Cyrillic) per-sheet filenames as valid
-    // UTF-8 — otherwise a non-UTF-8 container locale mangles «Приложение».csv and readdir
-    // can't reopen it. Harmless for the txt path.
-    await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path],
+    // UTF-8 — otherwise a non-UTF-8 container locale FAILS to write «Приложение».csv at all
+    // (verified: dir stays empty). Harmless for the txt path.
+    const stdout = await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path],
       { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
     if (outExt === 'csv') {
-      // All-sheets export (see CSV_FILTER) → one `<base>-<sheet>.csv` per sheet. Read + join
-      // ALL of them (sheet-sorted for determinism) so goods on a non-first sheet survive.
-      const files = (await readdir(dir)).filter(f => f.toLowerCase().endsWith('.csv')).sort()
-      if (files.length) {
-        const parts = await Promise.all(files.map(f => decodeText(join(dir, f))))
-        return parts.join('\n')
+      // Primary: read the produced CSVs in workbook sheet order (from stdout). Fallback to a
+      // readdir (order not guaranteed → sorted) only if stdout parsing yields nothing.
+      let csvPaths = parseOfficeCsvOutputs(stdout)
+      if (!csvPaths.length) {
+        csvPaths = (await readdir(dir)).filter(f => f.toLowerCase().endsWith('.csv')).sort()
+          .map(f => join(dir, f))
       }
-      // Fallback (single-sheet / older libreoffice ignored the token): the base-named file.
+      if (csvPaths.length) {
+        if (csvPaths.length > MAX_SHEET_CSVS) {
+          throw new Error(`слишком много листов в книге (${csvPaths.length} > ${MAX_SHEET_CSVS})`)
+        }
+        const parts = await Promise.all(csvPaths.map(p => decodeText(p)))
+        return parts.map(p => p.trim()).filter(Boolean).join('\n') // drop empty sheets
+      }
+      // No CSV at all (token ignored + empty dir): fall through to the base-named file.
     }
     const base = (path.split('/').pop() ?? 'out').replace(/\.[^.]+$/, '')
     return await decodeText(join(dir, `${base}.${outExt}`))
