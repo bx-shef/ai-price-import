@@ -28,8 +28,9 @@ export interface ExtractRunners {
   readText: (path: string) => Promise<string>
   /** pdftotext → layout text. */
   pdfToText: (path: string) => Promise<string>
-  /** Office/spreadsheet → text (libreoffice --convert-to txt or equivalent). */
-  officeToText: (path: string) => Promise<string>
+  /** Office/spreadsheet → text (libreoffice). `fileName` (with its real extension) chooses
+   *  the export filter — `path` may be an extension-less temp file (e.g. `<jobId>.bin`). */
+  officeToText: (path: string, fileName: string) => Promise<string>
   /** OCR an image / scanned PDF (tesseract rus+bel+kaz+eng). */
   ocr: (path: string) => Promise<string>
 }
@@ -49,7 +50,7 @@ export async function extractText(path: string, fileName: string, runners: Extra
       return text.replace(/\s/g, '').length >= MIN_PDF_TEXT ? text : runners.ocr(path)
     }
     case 'office':
-      return runners.officeToText(path)
+      return runners.officeToText(path, fileName)
     case 'image':
       return runners.ocr(path)
     default:

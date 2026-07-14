@@ -27,8 +27,12 @@ describe('extractText', () => {
   it('text → readText', async () => {
     expect(await extractText('/f.txt', 'f.txt', runners())).toBe('TXT')
   })
-  it('office → officeToText', async () => {
-    expect(await extractText('/f.xlsx', 'f.xlsx', runners())).toBe('OFFICE')
+  it('office → officeToText, passing BOTH the (bin) path and the real fileName (GH #74)', async () => {
+    const r = runners()
+    // In-portal the stored file is extension-less (<jobId>.bin); the fileName carries the
+    // real extension used to pick the export filter.
+    expect(await extractText('/data/abc123.bin', 'Прайс.xls', r)).toBe('OFFICE')
+    expect(r.officeToText).toHaveBeenCalledWith('/data/abc123.bin', 'Прайс.xls')
   })
   it('image → ocr', async () => {
     expect(await extractText('/f.png', 'f.png', runners())).toBe('OCR')
