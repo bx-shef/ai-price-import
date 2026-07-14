@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { officeConvertTarget, orderPdfPageImages, parseOfficeCsvOutputs } from '../server/utils/extractRunners'
+import { hasPdfMagic, officeConvertTarget, orderPdfPageImages, parseOfficeCsvOutputs } from '../server/utils/extractRunners'
 
 describe('officeConvertTarget', () => {
   it('exports spreadsheets as CSV with PINNED tab/UTF-8 options so the grid + prices survive (GH #64)', () => {
@@ -77,5 +77,19 @@ describe('orderPdfPageImages (scanned-PDF OCR page order, GH #100)', () => {
   it('handles zero-padded pdftoppm names', () => {
     expect(orderPdfPageImages(['p-03.png', 'p-01.png', 'p-02.png']))
       .toEqual(['p-01.png', 'p-02.png', 'p-03.png'])
+  })
+})
+
+describe('hasPdfMagic (scanned-PDF sniff, GH #100)', () => {
+  const enc = (s: string) => new TextEncoder().encode(s)
+  it('detects %PDF- at offset 0', () => {
+    expect(hasPdfMagic(enc('%PDF-1.7\n...'))).toBe(true)
+  })
+  it('detects %PDF- after leading junk (spec allows up to ~1KiB)', () => {
+    expect(hasPdfMagic(enc('﻿   garbage bytes here %PDF-1.4'))).toBe(true)
+  })
+  it('rejects a PNG header and short buffers', () => {
+    expect(hasPdfMagic(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toBe(false)
+    expect(hasPdfMagic(enc('JVBER'))).toBe(false) // base64-of-PDF is NOT a raw PDF
   })
 })

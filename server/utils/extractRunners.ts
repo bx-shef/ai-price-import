@@ -181,13 +181,19 @@ export function orderPdfPageImages(names: string[]): string[] {
     .map(x => x.n)
 }
 
-/** True when the file starts with the PDF magic `%PDF-` (reads only the first 5 bytes). */
+/** True when a header buffer carries the PDF magic `%PDF-`. The spec allows up to ~1024
+ *  bytes of junk BEFORE the header, so we search the window, not just offset 0. Pure. */
+export function hasPdfMagic(head: Uint8Array): boolean {
+  return Buffer.from(head).toString('latin1').includes('%PDF-')
+}
+
+/** Sniff whether `path` is a PDF by scanning its first 1 KiB for the `%PDF-` magic. */
 async function isPdfFile(path: string): Promise<boolean> {
   const fh = await open(path, 'r')
   try {
-    const buf = Buffer.alloc(5)
-    const { bytesRead } = await fh.read(buf, 0, 5, 0)
-    return bytesRead === 5 && buf.toString('latin1') === '%PDF-'
+    const buf = Buffer.alloc(1024)
+    const { bytesRead } = await fh.read(buf, 0, 1024, 0)
+    return hasPdfMagic(buf.subarray(0, bytesRead))
   } finally {
     await fh.close()
   }
@@ -199,15 +205,26 @@ async function isPdfFile(path: string): Promise<boolean> {
  * cannot read a PDF directly — the scanned-PDF fallback used to hand it the `.pdf` and got
  * «Pdf reading is not supported», so scanned invoices extracted nothing (GH #100). Pages are
  * joined in numeric page order.
+ *
+ * DoS bounds are enforced INSIDE pdftoppm (before anything hits disk): `-l` caps how many
+ * pages get rendered (a crafted 1000-page scan can't fill the disk), `-scale-to` caps each
+ * PNG's long edge in pixels (a giant MediaBox × high DPI can't OOM tesseract). Worst case is
+ * bounded to MAX_OCR_PDF_PAGES pages processed one-by-one — a single document can still hold
+ * a worker slot for a while (per-page tesseract is seconds; the RUN_TIMEOUT_MS cap is
+ * per-process, not per-doc), acceptable on the "stable, not fast" profile (09-deploy).
  */
 async function ocrPdf(path: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-ocrpdf-'))
   try {
-    await run('pdftoppm', ['-r', '200', '-png', path, join(dir, 'p')])
+    // `-l MAX+1` renders at most MAX_OCR_PDF_PAGES+1 pages → the check below can still detect
+    // "too many" without pdftoppm rasterizing the whole crafted document first. `-scale-to`
+    // (long edge px) bounds output size regardless of page DPI/dimensions.
+    await run('pdftoppm', ['-png', '-scale-to', '3000', '-f', '1', '-l', String(MAX_OCR_PDF_PAGES + 1),
+      path, join(dir, 'p')])
     const pages = orderPdfPageImages(await readdir(dir))
     if (!pages.length) throw new Error('pdftoppm: страницы не получены')
     if (pages.length > MAX_OCR_PDF_PAGES) {
-      throw new Error(`слишком много страниц для OCR (${pages.length} > ${MAX_OCR_PDF_PAGES})`)
+      throw new Error(`слишком много страниц для OCR (> ${MAX_OCR_PDF_PAGES})`)
     }
     const texts: string[] = []
     for (const p of pages) {
