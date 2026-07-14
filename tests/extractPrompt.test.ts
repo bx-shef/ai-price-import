@@ -17,7 +17,7 @@ describe('buildExtractionPrompt', () => {
 
   it('states VAT uniformity + 1-to-1 no-loss + Kazakh letter preservation', () => {
     expect(p).toMatch(/priceIncludesVat/)
-    expect(p).toMatch(/единый по всему документу/)
+    expect(p).toMatch(/ОДНО значение priceIncludesVat/)
     expect(p).toMatch(/1-в-1/)
     expect(p).toContain('ә, ғ, қ, ң, ө, ұ, ү, һ, і')
   })
