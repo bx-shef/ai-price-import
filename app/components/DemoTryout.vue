@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { extractDemo, type DemoResult } from '~/utils/demoExtract'
+import { pollDemoJob, type DemoPollResponse } from '~/utils/demoPoll'
 
 // Public landing tryout: attach a document → see who the supplier is + goods table.
 // Built-in samples parse client-side (instant, no rate-limit) via the same pure core;
@@ -106,23 +107,16 @@ onUnmounted(() => {
 })
 
 // The AI path is async (GH #70): submit returns a jobId, we poll until done/error so a
-// slow OCR never holds the request open (no 504). Poll every 2s up to the server's TTL.
-const POLL_INTERVAL_MS = 2000
-const POLL_TIMEOUT_MS = 5 * 60 * 1000
-async function pollJob(jobId: string): Promise<DemoResult> {
-  const deadline = Date.now() + POLL_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
-    const r = await $fetch<{ status?: string, result?: DemoResult, error?: string }>(
-      `/api/demo/result/${jobId}`,
-      { ignoreResponseError: true }
-    )
-    if (r.status === 'done' && r.result) return r.result
-    if (r.status === 'error') throw new Error(r.error || 'Не удалось разобрать документ.')
-    if (r.error) throw new Error(r.error) // 404 — job expired
-    // status === 'pending' → keep polling
-  }
-  throw new Error('Разбор занял слишком долго. Попробуйте файл меньшего размера.')
+// slow OCR never holds the request open (no 504). pollDemoJob is a pure app/utils fn; we
+// inject the real fetch/sleep/clock here.
+function pollJob(jobId: string): Promise<DemoResult> {
+  return pollDemoJob(jobId, {
+    // Explicit generic + string cast: without them Nuxt tries to resolve the dynamic URL
+    // against its typed route table and blows the type-checker's recursion depth.
+    fetchResult: id => $fetch<DemoPollResponse>(`/api/demo/result/${id}` as string, { ignoreResponseError: true }),
+    sleep: ms => new Promise(r => setTimeout(r, ms)),
+    now: () => Date.now()
+  })
 }
 
 async function upload(file: File) {

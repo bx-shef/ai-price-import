@@ -69,4 +69,30 @@ describe('createDemoJobStore', () => {
     s.fail(id, 'late', 2000) // id already expired (TTL 1000) → ignored
     expect(s.get(id, 2000)).toBeNull()
   })
+
+  it('a second complete overwrites the first (last write wins)', () => {
+    const s = store()
+    const id = s.create(0)!
+    const first = { ...RESULT, docTypeLabel: 'первый' } as DemoResult
+    const second = { ...RESULT, docTypeLabel: 'второй' } as DemoResult
+    s.complete(id, first, 10)
+    s.complete(id, second, 20)
+    expect(s.get(id, 20)).toEqual({ status: 'done', result: second })
+  })
+
+  it('complete after fail wins (both keep the job alive; last write wins)', () => {
+    const s = store()
+    const id = s.create(0)!
+    s.fail(id, 'boom', 10)
+    s.complete(id, RESULT, 20)
+    expect(s.get(id, 20)).toEqual({ status: 'done', result: RESULT })
+  })
+
+  it('sweep keeps still-live jobs', () => {
+    const s = store(100, 1000)
+    const id = s.create(0)!
+    s.sweep(500) // before TTL
+    expect(s.size()).toBe(1)
+    expect(s.get(id, 500)).toEqual({ status: 'pending' })
+  })
 })

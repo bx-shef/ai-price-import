@@ -111,20 +111,19 @@ export default defineEventHandler(async (event) => {
   // AI path: PDF / scan / Word → extract text (poppler/libreoffice/OCR) → DeepSeek
   // agent → structured result or an honest error (never a 500 for a bad document).
   if (DEMO_AI_EXT.includes(e)) {
-    // Shed load when too many heavy extractions are already running (global DoS guard).
-    if (aiInFlight >= AI_MAX_CONCURRENCY) {
+    const shed503 = () => {
       setResponseStatus(event, 503)
       event.node.res.setHeader('Retry-After', '30')
       return { error: 'Демо сейчас перегружено разбором. Попробуйте через минуту.' }
     }
+    // Shed load when too many heavy extractions are already running, or the job store is
+    // full (both = global DoS guards). NB: no `await` between this check and aiInFlight++
+    // below — keep it that way, or the counter could exceed the cap under concurrency.
+    if (aiInFlight >= AI_MAX_CONCURRENCY) return shed503()
     // Register a job and process it in the BACKGROUND — return the id immediately so the
     // HTTP request is short (no 504 on a slow scan); the client polls the result endpoint.
     const jobId = demoJobStore.create(now)
-    if (!jobId) {
-      setResponseStatus(event, 503)
-      event.node.res.setHeader('Retry-After', '30')
-      return { error: 'Демо сейчас перегружено разбором. Попробуйте через минуту.' }
-    }
+    if (!jobId) return shed503()
     aiInFlight++
     const bytes = file.data
     const fileName = file.filename
