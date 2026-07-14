@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-11
+> Last reviewed: 2026-07-14
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -41,13 +41,14 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
   `server`/`letsencrypt`/`…watchtower` из стека currency-converter) — второй раз не запускаем (конфликт
   портов 80/443 и имён). Эти два файла нужны только при развёртывании **чистого** хоста.
 
-  **Развёртывание на общем сервере** (инфра уже есть → шаги 1–4):
+  **Развёртывание на общем сервере** (инфра уже есть → шаги 1–5):
   1. A-запись `price-import.bx-shef.by → <IP>` (общий сервер).
   2. `.env` рядом с `docker-compose.prod.yml` (секреты; см. ниже; `DOMAIN`=`price-import.bx-shef.by`) — в git не коммитим.
   3. `make prod-up` (`docker compose -f docker-compose.prod.yml up -d`) → acme выпустит TLS автоматически.
-  4. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
+  4. `make proxy-tune` — применить per-vhost тюнинг фронт-прокси (лимит тела + таймаут OCR; см. секцию nginx).
+  5. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
 
-  **Чистый хост** (инфры ещё нет → сначала): `make server-up` → `make watchtower-up` → затем шаги 2–4.
+  **Чистый хост** (инфры ещё нет → сначала): `make server-up` → `make watchtower-up` → затем шаги 2–5.
 
 ## Env (полный список — `.env.example`)
 
@@ -72,6 +73,45 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
   (iframe `/app`,`/settings`); backend — тот же origin (`'self'`).
 - **Память:** контейнер backend с `mem_limit` (в compose — 2g): извлечение гоняет недоверенные файлы
   через libreoffice/tesseract — лимит памяти защищает от zip/XML/image-бомбы (таймаут ограничивает CPU, не RAM).
+
+### Тюнинг общего фронт-`nginx-proxy` (обязательно для загрузок/OCR)
+
+Есть **два** слоя nginx: app-level (`nginx.conf` в образе `app`) и **общий фронт-`nginx-proxy`**
+(терминирует TLS, один на хост). App-level разрешает тело до 25m (demo-роут 6m); таймаут на demo-роуте
+поднят до 300s **этим же фиксом** (было 180s из `proxy_common.conf`). **Но фронт-прокси работает на
+nginx-дефолтах** (`client_max_body_size 1m`, `proxy_read_timeout 60s`): без тюнинга он отбивает загрузки
+>~1 МБ (**413**) и рвёт OCR-тяжёлые разборы на 60s (**504**) — раньше, чем запрос дойдёт до app. Найдено
+на живом тесте (**GH #63**).
+
+Фикс скоупится **только на наш vhost** (другие приложения на прокси не затрагиваются) — файл
+`deploy/vhost.d/price-import.bx-shef.by` (`client_max_body_size 25m` + `proxy_read/send_timeout 300s` +
+`client_body_timeout 60s` от медленной заливки). ⚠️ nginx-proxy включает файл в **весь** `server{}`
+нашего vhost — таймаут 300s действует на все роуты домена (не только demo); это осознанный компромисс
+(per-location гранулярности на этом слое нет), app-level держит не-demo роуты на 180s.
+
+Применить в живой прокси:
+
+```bash
+make proxy-tune     # авто-определяет контейнер прокси (публикует :443) → docker cp → nginx -t → reload
+# на этом сервере прокси поднят чужим стеком (currency-converter) и зовётся НЕ `nginx-proxy`;
+# авто-детект по :443 это решает. Переопределить вручную: PROXY_CONTAINER=<имя> make proxy-tune
+make proxy-untune   # откат: удалить файл + reload (413/504 вернутся к дефолтам прокси)
+```
+
+**Проверка после применения** (не по «работает же», а фактом):
+
+```bash
+docker exec "$(docker ps --filter publish=443 --format '{{.Names}}' | head -1)" \
+  cat /etc/nginx/vhost.d/price-import.bx-shef.by            # файл на месте
+curl -sS -o /dev/null -w '%{http_code}\n' -F file=@big-2mb.pdf \
+  https://price-import.bx-shef.by/api/demo/extract          # НЕ 413
+# тяжёлый скан (обработка 60–300s) → 200, НЕ 504
+# smoke соседей: curl -I на 1–2 других домена того же прокси → без 5xx (общий reload)
+```
+
+⚠️ Файл лежит в **томе** `vhost` фронт-прокси и **переживает** рестарт/пере-деплой приложения, но
+на **чистом** хосте (пересоздан том) шаг нужно повторить. Автоматизация (чтобы не терялось при
+пересоздании тома) — вынесена в ISSUE.
 
 ## Здоровье и миграции
 
