@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { extractDemo, type DemoResult } from '~/utils/demoExtract'
+import { pollDemoJob, type DemoPollResponse } from '~/utils/demoPoll'
 
 // Public landing tryout: attach a document → see who the supplier is + goods table.
 // Built-in samples parse client-side (instant, no rate-limit) via the same pure core;
@@ -105,6 +106,19 @@ onUnmounted(() => {
   if (retryTimer) clearTimeout(retryTimer)
 })
 
+// The AI path is async (GH #70): submit returns a jobId, we poll until done/error so a
+// slow OCR never holds the request open (no 504). pollDemoJob is a pure app/utils fn; we
+// inject the real fetch/sleep/clock here.
+function pollJob(jobId: string): Promise<DemoResult> {
+  return pollDemoJob(jobId, {
+    // Explicit generic + string cast: without them Nuxt tries to resolve the dynamic URL
+    // against its typed route table and blows the type-checker's recursion depth.
+    fetchResult: id => $fetch<DemoPollResponse>(`/api/demo/result/${id}` as string, { ignoreResponseError: true }),
+    sleep: ms => new Promise(r => setTimeout(r, ms)),
+    now: () => Date.now()
+  })
+}
+
 async function upload(file: File) {
   error.value = ''
   notice.value = ''
@@ -114,22 +128,24 @@ async function upload(file: File) {
   try {
     const fd = new FormData()
     fd.append('file', file)
-    const res = await $fetch<{ result?: DemoResult, notice?: string, error?: string, remaining?: number }>(
+    const res = await $fetch<{ result?: DemoResult, jobId?: string, notice?: string, error?: string, remaining?: number }>(
       '/api/demo/extract',
       { method: 'POST', body: fd }
     )
-    if (res.error || !res.result) {
-      error.value = res.error || 'Не удалось разобрать файл.'
+    if (res.error) {
+      error.value = res.error
     } else {
-      result.value = res.result
       notice.value = res.notice || ''
       sourceName.value = file.name
+      // Deterministic path returns the result inline; the AI path returns a jobId to poll.
+      result.value = res.result ?? (res.jobId ? await pollJob(res.jobId) : null)
+      if (!result.value) error.value = 'Не удалось разобрать файл.'
       // Last allowed file used up → hide the upload form until the window resets.
       if (res.remaining === 0) blockUploads(0)
     }
   } catch (err: unknown) {
     const data = (err as { data?: { error?: string, retryAfterSec?: number } })?.data
-    error.value = data?.error || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx), PDF, скан (.png/.jpg) или Word (.docx).'
+    error.value = data?.error || (err as Error)?.message || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx), PDF, скан (.png/.jpg) или Word (.docx).'
     // 429 → quota spent: hide the upload form and show the retry countdown.
     if (data?.retryAfterSec !== undefined) blockUploads(data.retryAfterSec)
   } finally {

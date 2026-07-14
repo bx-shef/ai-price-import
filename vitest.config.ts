@@ -26,7 +26,11 @@ export default defineConfig(async () => ({
         test: {
           name: 'nuxt',
           include: ['tests/nuxt/**/*.test.ts'],
-          environment: 'nuxt'
+          environment: 'nuxt',
+          // Booting the Nuxt test environment cold (alongside the unit project) can exceed
+          // the 10s default and flake the whole run — give the setup hook headroom.
+          hookTimeout: 60_000,
+          testTimeout: 30_000
         }
       })
     ]

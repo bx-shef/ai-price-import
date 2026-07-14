@@ -3,6 +3,7 @@ import { createRateLimiter, clientKey } from '../../utils/demoRateLimit'
 import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, DEMO_AI_EXT, MAX_DEMO_BYTES } from '../../utils/demoUpload'
 import { xlsxToText, XlsxTooLargeError } from '../../utils/demoXlsx'
 import { runDemoAiExtract, type DemoAiDeps } from '../../utils/demoAi'
+import { demoJobStore } from '../../utils/demoJobs'
 import { extractText } from '../../utils/textExtract'
 import { liveExtractRunners } from '../../utils/extractRunners'
 import { runAgent } from '../../agent/runAgent'
@@ -28,6 +29,10 @@ const limiter = createRateLimiter(RATE_MAX, RATE_WINDOW_MS)
 // in-flight heavy jobs process-wide and shed load with 503 when saturated (DoS guard).
 const AI_MAX_CONCURRENCY = Math.max(1, Number(process.env.DEMO_AI_MAX_CONCURRENCY) || 2)
 let aiInFlight = 0
+
+// Async AI path (GH #70): submit returns a jobId immediately, the client polls
+// GET /api/demo/result/:jobId. A long synchronous OCR would otherwise hold the connection
+// past the gateway timeout → 504. The shared job store lives in ../../utils/demoJobs.
 
 const DEMO_NOTICE = 'Демо-режим: файл обрабатывается публично и не сохраняется. Не загружайте конфиденциальные документы.'
 
@@ -106,24 +111,35 @@ export default defineEventHandler(async (event) => {
   // AI path: PDF / scan / Word → extract text (poppler/libreoffice/OCR) → DeepSeek
   // agent → structured result or an honest error (never a 500 for a bad document).
   if (DEMO_AI_EXT.includes(e)) {
-    // Shed load when too many heavy extractions are already running (global DoS guard).
-    if (aiInFlight >= AI_MAX_CONCURRENCY) {
+    const shed503 = () => {
       setResponseStatus(event, 503)
       event.node.res.setHeader('Retry-After', '30')
       return { error: 'Демо сейчас перегружено разбором. Попробуйте через минуту.' }
     }
+    // Shed load when too many heavy extractions are already running, or the job store is
+    // full (both = global DoS guards). NB: no `await` between this check and aiInFlight++
+    // below — keep it that way, or the counter could exceed the cap under concurrency.
+    if (aiInFlight >= AI_MAX_CONCURRENCY) return shed503()
+    // Register a job and process it in the BACKGROUND — return the id immediately so the
+    // HTTP request is short (no 504 on a slow scan); the client polls the result endpoint.
+    const jobId = demoJobStore.create(now)
+    if (!jobId) return shed503()
     aiInFlight++
-    let out
-    try {
-      out = await runDemoAiExtract(file.data, file.filename, demoAiDeps)
-    } finally {
-      aiInFlight--
-    }
-    if (out.error || !out.result) {
-      setResponseStatus(event, 422)
-      return { error: out.error || 'Не удалось разобрать документ.' }
-    }
-    return { result: out.result, notice: DEMO_NOTICE, remaining: decision.remaining }
+    const bytes = file.data
+    const fileName = file.filename
+    void (async () => {
+      try {
+        const out = await runDemoAiExtract(bytes, fileName, demoAiDeps)
+        if (out.error || !out.result) demoJobStore.fail(jobId, out.error || 'Не удалось разобрать документ.', Date.now())
+        else demoJobStore.complete(jobId, out.result, Date.now())
+      } catch {
+        demoJobStore.fail(jobId, 'Ошибка обработки документа.', Date.now())
+      } finally {
+        aiInFlight--
+      }
+    })()
+    setResponseStatus(event, 202)
+    return { jobId, status: 'pending', notice: DEMO_NOTICE, remaining: decision.remaining }
   }
 
   // Deterministic path: spreadsheet → tab-separated text (row/col-capped); text file →
