@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, open, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ExtractRunners } from './textExtract'
@@ -162,9 +162,69 @@ async function officeToText(path: string, fileName: string): Promise<string> {
   }
 }
 
+/** Fail-fast cap on scanned-PDF pages rasterized + OCR'd (memory/CPU bound on minimal infra). */
+export const MAX_OCR_PDF_PAGES = 30
+
+const OCR_LANGS = 'rus+bel+kaz+eng'
+
+/**
+ * Order pdftoppm page PNGs by their NUMERIC page index (`p-2.png` before `p-10.png`) — a
+ * plain `.sort()` is lexicographic and would interleave pages wrong. Non-PNG / unnumbered
+ * names are dropped. Pure → unit-tested.
+ */
+export function orderPdfPageImages(names: string[]): string[] {
+  return names
+    .filter(n => n.toLowerCase().endsWith('.png'))
+    .map(n => ({ n, i: Number((n.match(/-(\d+)\.png$/i) ?? [])[1] ?? NaN) }))
+    .filter(x => Number.isFinite(x.i))
+    .sort((a, b) => a.i - b.i)
+    .map(x => x.n)
+}
+
+/** True when the file starts with the PDF magic `%PDF-` (reads only the first 5 bytes). */
+async function isPdfFile(path: string): Promise<boolean> {
+  const fh = await open(path, 'r')
+  try {
+    const buf = Buffer.alloc(5)
+    const { bytesRead } = await fh.read(buf, 0, 5, 0)
+    return bytesRead === 5 && buf.toString('latin1') === '%PDF-'
+  } finally {
+    await fh.close()
+  }
+}
+
+/**
+ * OCR a SCANNED PDF: rasterize each page to PNG (pdftoppm) then run tesseract per page,
+ * SEQUENTIALLY (one page at a time keeps CPU/RAM bounded on the minimal profile). tesseract
+ * cannot read a PDF directly — the scanned-PDF fallback used to hand it the `.pdf` and got
+ * «Pdf reading is not supported», so scanned invoices extracted nothing (GH #100). Pages are
+ * joined in numeric page order.
+ */
+async function ocrPdf(path: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'procure-ocrpdf-'))
+  try {
+    await run('pdftoppm', ['-r', '200', '-png', path, join(dir, 'p')])
+    const pages = orderPdfPageImages(await readdir(dir))
+    if (!pages.length) throw new Error('pdftoppm: страницы не получены')
+    if (pages.length > MAX_OCR_PDF_PAGES) {
+      throw new Error(`слишком много страниц для OCR (${pages.length} > ${MAX_OCR_PDF_PAGES})`)
+    }
+    const texts: string[] = []
+    for (const p of pages) {
+      texts.push(await run('tesseract', [join(dir, p), 'stdout', '-l', OCR_LANGS]))
+    }
+    return texts.map(t => t.trim()).filter(Boolean).join('\n')
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export const liveExtractRunners: ExtractRunners = {
   readText: decodeText,
   pdfToText: path => run('pdftotext', ['-layout', '-enc', 'UTF-8', path, '-']),
   officeToText,
-  ocr: path => run('tesseract', [path, 'stdout', '-l', 'rus+bel+kaz+eng'])
+  // OCR handles both images and SCANNED PDFs: a PDF (magic `%PDF-`) is rasterized first,
+  // because tesseract can't read PDF. The routing (textExtract) calls this for image files
+  // AND as the scanned-PDF fallback, so the sniff — not the caller — picks the path.
+  ocr: async path => (await isPdfFile(path)) ? ocrPdf(path) : run('tesseract', [path, 'stdout', '-l', OCR_LANGS])
 }

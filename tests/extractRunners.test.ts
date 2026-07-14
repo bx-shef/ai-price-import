@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { officeConvertTarget, parseOfficeCsvOutputs } from '../server/utils/extractRunners'
+import { officeConvertTarget, orderPdfPageImages, parseOfficeCsvOutputs } from '../server/utils/extractRunners'
 
 describe('officeConvertTarget', () => {
   it('exports spreadsheets as CSV with PINNED tab/UTF-8 options so the grid + prices survive (GH #64)', () => {
@@ -62,5 +62,20 @@ describe('parseOfficeCsvOutputs (workbook sheet order, GH #76)', () => {
 
   it('returns [] when nothing matches (caller falls back to readdir/base file)', () => {
     expect(parseOfficeCsvOutputs('nothing here\njust logs')).toEqual([])
+  })
+})
+
+describe('orderPdfPageImages (scanned-PDF OCR page order, GH #100)', () => {
+  it('sorts by NUMERIC page index, not lexicographically (p-2 before p-10)', () => {
+    expect(orderPdfPageImages(['p-10.png', 'p-2.png', 'p-1.png', 'p-11.png']))
+      .toEqual(['p-1.png', 'p-2.png', 'p-10.png', 'p-11.png'])
+  })
+  it('drops non-png and unnumbered names', () => {
+    expect(orderPdfPageImages(['p-1.png', 'notes.txt', 'cover.png', 'p-2.png']))
+      .toEqual(['p-1.png', 'p-2.png'])
+  })
+  it('handles zero-padded pdftoppm names', () => {
+    expect(orderPdfPageImages(['p-03.png', 'p-01.png', 'p-02.png']))
+      .toEqual(['p-01.png', 'p-02.png', 'p-03.png'])
   })
 })
