@@ -24,6 +24,42 @@ describe('makeRestCall (injected fetch)', () => {
     const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ error: 'QUERY_LIMIT', error_description: 'too many' }) }))
     await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn)('m')).rejects.toThrow(/too many/)
   })
+  it('passes an AbortSignal and aborts a hung call (headers phase) as a typed TIMEOUT', async () => {
+    // fetch never resolves on its own; it only settles when the injected signal aborts.
+    const fetchFn = vi.fn((_url: string, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+    }) as Promise<{ ok: boolean, status: number, json: () => Promise<unknown> }>)
+    await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn, 5)('m')).rejects.toThrow(/TIMEOUT/)
+    expect(fetchFn.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal)
+  })
+  it('aborts a stalled response BODY as TIMEOUT (headers arrive, res.json() hangs)', async () => {
+    // Real fetch resolves on headers; a dribbled/stalled body must still hit the timeout.
+    const fetchFn = vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => ({
+      ok: true, status: 200,
+      json: () => new Promise<unknown>((_res, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    }))
+    await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn, 5)('m')).rejects.toThrow(/TIMEOUT/)
+  })
+  it('rethrows a non-timeout transport error as-is (not mislabeled TIMEOUT)', async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error('ECONNREFUSED')
+    })
+    const p = makeRestCall('p.bitrix24.ru', 't', fetchFn, 10_000)('m')
+    await expect(p).rejects.toThrow('ECONNREFUSED')
+    await expect(p).rejects.not.toThrow(/TIMEOUT/)
+  })
+  it('clears the abort timer on a fast call (no timer left pending)', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ result: 'ok' }) }))
+      await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn, 10_000)('m')).resolves.toBe('ok')
+      expect(vi.getTimerCount()).toBe(0) // proves clearTimeout ran — fails if removed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('restUrl + SSRF guard', () => {

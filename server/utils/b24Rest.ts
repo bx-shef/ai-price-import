@@ -1,10 +1,13 @@
 // Pure Bitrix24 REST helpers. Transport (fetch) is injected — no ambient I/O.
 
 /** Minimal fetch-like signature we depend on. */
-export type FetchFn = (url: string, init?: { method?: string, headers?: Record<string, string>, body?: string }) => Promise<{ ok: boolean, status: number, json: () => Promise<unknown> }>
+export type FetchFn = (url: string, init?: { method?: string, headers?: Record<string, string>, body?: string, signal?: AbortSignal }) => Promise<{ ok: boolean, status: number, json: () => Promise<unknown> }>
 
 /** A bound REST caller for one portal (domain + access token). */
 export type RestCall = (method: string, params?: Record<string, unknown>) => Promise<unknown>
+
+/** Default per-call REST timeout (ms). A hung portal must not pin a worker/request forever. */
+export const REST_TIMEOUT_MS = 15_000
 
 /** Normalise a portal domain to a bare host. */
 export function normaliseHost(domain: string): string {
@@ -55,20 +58,41 @@ export function unwrap(raw: unknown, status = 0): unknown {
   return o?.result
 }
 
-/** Make a bound RestCall for a portal using an injected fetch. */
-export function makeRestCall(domain: string, accessToken: string, fetchFn: FetchFn): RestCall {
+/** Make a bound RestCall for a portal using an injected fetch. The whole call — headers AND
+ * body read — is bounded by `timeoutMs` (default {@link REST_TIMEOUT_MS}) via one AbortController.
+ * A hung upstream aborts as a typed `TIMEOUT` error instead of pinning the caller forever. The
+ * timer spans `res.json()` deliberately: `fetch` resolves on headers, so a stalled/dribbled body
+ * would otherwise escape the timeout entirely. */
+export function makeRestCall(domain: string, accessToken: string, fetchFn: FetchFn, timeoutMs = REST_TIMEOUT_MS): RestCall {
   return async (method, params = {}) => {
-    const res = await fetchFn(restUrl(domain, method), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...params, auth: accessToken })
-    })
-    let json: unknown
+    const url = restUrl(domain, method) // throws on unsafe host BEFORE any timer/fetch
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      json = await res.json()
-    } catch {
-      throw new B24RestError('INVALID_RESPONSE', `non-JSON body (HTTP ${res.status})`, res.status)
+      const res = await fetchFn(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...params, auth: accessToken }),
+        signal: controller.signal
+      })
+      let json: unknown
+      try {
+        json = await res.json()
+      } catch {
+        // Tell an aborted body read (timeout) apart from a genuinely non-JSON body.
+        if (controller.signal.aborted) throw new B24RestError('TIMEOUT', `no response within ${timeoutMs}ms`)
+        throw new B24RestError('INVALID_RESPONSE', `non-JSON body (HTTP ${res.status})`, res.status)
+      }
+      return unwrap(json, res.status)
+    } catch (err) {
+      // A signal abort (from fetch OR the body read) surfaces here — normalise to TIMEOUT,
+      // unless we already produced a typed error (INVALID_RESPONSE / a B24 error body / TIMEOUT).
+      if (controller.signal.aborted && !(err instanceof B24RestError)) {
+        throw new B24RestError('TIMEOUT', `no response within ${timeoutMs}ms`)
+      }
+      throw err
+    } finally {
+      clearTimeout(timer)
     }
-    return unwrap(json, res.status)
   }
 }
