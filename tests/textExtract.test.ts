@@ -5,6 +5,7 @@ describe('planExtraction', () => {
   it('routes by extension (case-insensitive)', () => {
     expect(planExtraction('a.PDF').kind).toBe('pdf')
     expect(planExtraction('invoice.xlsx').kind).toBe('office')
+    expect(planExtraction('1c-export.xls').kind).toBe('office') // GH #64: legacy binary Excel
     expect(planExtraction('scan.JPEG').kind).toBe('image')
     expect(planExtraction('data.csv').kind).toBe('text')
     expect(planExtraction('archive.zip').kind).toBe('unsupported')

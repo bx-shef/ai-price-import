@@ -61,14 +61,24 @@ async function decodeText(path: string): Promise<string> {
   return decodeBytes(await readFile(path))
 }
 
-/** Office/spreadsheet → text via libreoffice convert-to-txt (into a temp dir). */
+/** Spreadsheet office formats — export as CSV (tabular), not the Writer text filter. */
+const SPREADSHEET_EXT = new Set(['xls', 'xlsx', 'xlsm', 'ods', 'fods'])
+
+/**
+ * Office document → text via libreoffice. Spreadsheets (xls/ods/…) export to CSV so the
+ * cell grid survives; text documents (doc/docx/odt/rtf) use the plain-text filter. The
+ * output file is named after the input base with the filter's extension.
+ */
 async function officeToText(path: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-office-'))
   try {
-    await run('libreoffice', ['--headless', '--convert-to', 'txt:Text', '--outdir', dir, path])
-    // libreoffice names the output after the input base name with a .txt extension.
+    const inExt = (path.split('.').pop() ?? '').toLowerCase()
+    const spreadsheet = SPREADSHEET_EXT.has(inExt)
+    const filter = spreadsheet ? 'csv' : 'txt:Text'
+    const outExt = spreadsheet ? 'csv' : 'txt'
+    await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path])
     const base = (path.split('/').pop() ?? 'out').replace(/\.[^.]+$/, '')
-    return await decodeText(join(dir, `${base}.txt`))
+    return await decodeText(join(dir, `${base}.${outExt}`))
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
