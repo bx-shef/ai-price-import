@@ -13,7 +13,15 @@
 client_max_body_size 25m;
 
 # The demo AI path OCRs scans/photos (poppler/tesseract) then calls the extraction agent —
-# a single heavy document can take well over the 60s nginx default. Give the front proxy
-# the same headroom the app grants the demo route.
+# a single heavy document can take well over the 60s nginx default. NOTE: nginx-proxy
+# includes this file in the whole server{} block, so these timeouts apply vhost-wide, not
+# only to /api/demo/extract (vhost.d has no per-location granularity here). That is a
+# deliberate, accepted trade-off — the app-level nginx.conf still caps non-demo routes at
+# 180s (proxy_common.conf), so this only extends the ceiling for the long OCR path.
 proxy_read_timeout 300s;
 proxy_send_timeout 300s;
+
+# A longer read/send timeout widens the window for a slow-body upload. Bound how long the
+# CLIENT may take to send the request body independently of the upstream response timeout,
+# so a trickle upload can't hold a connection for the full 300s.
+client_body_timeout 60s;

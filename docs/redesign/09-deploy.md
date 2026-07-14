@@ -77,23 +77,41 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 ### Тюнинг общего фронт-`nginx-proxy` (обязательно для загрузок/OCR)
 
 Есть **два** слоя nginx: app-level (`nginx.conf` в образе `app`) и **общий фронт-`nginx-proxy`**
-(терминирует TLS, один на хост). App-level уже разрешает тело до 25m (demo-роут 6m) и таймаут 300s
-на `/api/demo/extract`, **но фронт-прокси работает на nginx-дефолтах** (`client_max_body_size 1m`,
-`proxy_read_timeout 60s`). Без тюнинга он отбивает загрузки >~1 МБ (**413**) и рвёт OCR-тяжёлые
-разборы на 60s (**504**) — раньше, чем запрос дойдёт до app. Найдено на живом тесте (**GH #63**).
+(терминирует TLS, один на хост). App-level разрешает тело до 25m (demo-роут 6m); таймаут на demo-роуте
+поднят до 300s **этим же фиксом** (было 180s из `proxy_common.conf`). **Но фронт-прокси работает на
+nginx-дефолтах** (`client_max_body_size 1m`, `proxy_read_timeout 60s`): без тюнинга он отбивает загрузки
+>~1 МБ (**413**) и рвёт OCR-тяжёлые разборы на 60s (**504**) — раньше, чем запрос дойдёт до app. Найдено
+на живом тесте (**GH #63**).
 
 Фикс скоупится **только на наш vhost** (другие приложения на прокси не затрагиваются) — файл
-`deploy/vhost.d/price-import.bx-shef.by` (`client_max_body_size 25m` + `proxy_read_timeout/send_timeout 300s`).
+`deploy/vhost.d/price-import.bx-shef.by` (`client_max_body_size 25m` + `proxy_read/send_timeout 300s` +
+`client_body_timeout 60s` от медленной заливки). ⚠️ nginx-proxy включает файл в **весь** `server{}`
+нашего vhost — таймаут 300s действует на все роуты домена (не только demo); это осознанный компромисс
+(per-location гранулярности на этом слое нет), app-level держит не-demo роуты на 180s.
+
 Применить в живой прокси:
 
 ```bash
-make proxy-tune          # docker cp файла в nginx-proxy → nginx -t → nginx -s reload
-# (PROXY_CONTAINER=<имя>, если контейнер прокси называется иначе)
+make proxy-tune     # авто-определяет контейнер прокси (публикует :443) → docker cp → nginx -t → reload
+# на этом сервере прокси поднят чужим стеком (currency-converter) и зовётся НЕ `nginx-proxy`;
+# авто-детект по :443 это решает. Переопределить вручную: PROXY_CONTAINER=<имя> make proxy-tune
+make proxy-untune   # откат: удалить файл + reload (413/504 вернутся к дефолтам прокси)
+```
+
+**Проверка после применения** (не по «работает же», а фактом):
+
+```bash
+docker exec "$(docker ps --filter publish=443 --format '{{.Names}}' | head -1)" \
+  cat /etc/nginx/vhost.d/price-import.bx-shef.by            # файл на месте
+curl -sS -o /dev/null -w '%{http_code}\n' -F file=@big-2mb.pdf \
+  https://price-import.bx-shef.by/api/demo/extract          # НЕ 413
+# тяжёлый скан (обработка 60–300s) → 200, НЕ 504
+# smoke соседей: curl -I на 1–2 других домена того же прокси → без 5xx (общий reload)
 ```
 
 ⚠️ Файл лежит в **томе** `vhost` фронт-прокси и **переживает** рестарт/пере-деплой приложения, но
-на **чистом** хосте (пересоздан том) шаг нужно повторить. Проверка: загрузка PDF >1 МБ не даёт 413,
-тяжёлый скан — 200 вместо 504.
+на **чистом** хосте (пересоздан том) шаг нужно повторить. Автоматизация (чтобы не терялось при
+пересоздании тома) — вынесена в ISSUE.
 
 ## Здоровье и миграции
 

@@ -1,6 +1,6 @@
 .PHONY: dev build-local check \
         prod-up prod-down prod-pull prod-redeploy logs ps \
-        server-up server-down watchtower-up watchtower-down proxy-tune
+        server-up server-down watchtower-up watchtower-down proxy-tune proxy-untune
 
 # Обёртки над командами разработки и деплоя. Подробности — docs/redesign/09-deploy.md.
 # Прод-цели читают переменные из ./.env (см. .env.example: NUXT_PUBLIC_SITE_URL,
@@ -71,9 +71,21 @@ watchtower-down:
 
 ## Применить per-vhost тюнинг к живому общему nginx-proxy (лимит тела + таймаут OCR).
 ## Безопасно для других приложений — файл скоупится только на наш vhost. См. GH #63,
-## docs/redesign/09-deploy.md. Прокси-контейнер по умолчанию `nginx-proxy`.
-PROXY_CONTAINER ?= nginx-proxy
+## docs/redesign/09-deploy.md.
+## Имя контейнера прокси НЕ хардкодим: на этом сервере общий прокси поднят чужим стеком
+## (currency-converter) и называется НЕ `nginx-proxy`. Определяем его автоматически как
+## контейнер, публикующий :443; переопредели `PROXY_CONTAINER=<имя>` при нужде.
+PROXY_CONTAINER ?= $(shell docker ps --filter publish=443 --format '{{.Names}}' | head -n1)
 proxy-tune:
+	@test -n "$(PROXY_CONTAINER)" || { echo "Не найден фронт-прокси (:443). Задай PROXY_CONTAINER=<имя> (см. docker ps)"; exit 1; }
+	@echo "Front proxy: $(PROXY_CONTAINER)"
 	docker cp deploy/vhost.d/price-import.bx-shef.by $(PROXY_CONTAINER):/etc/nginx/vhost.d/price-import.bx-shef.by
+	docker exec $(PROXY_CONTAINER) nginx -t
+	docker exec $(PROXY_CONTAINER) nginx -s reload
+
+## Откат тюнинга: удалить per-vhost файл и перечитать конфиг (413/504 вернутся к дефолтам прокси).
+proxy-untune:
+	@test -n "$(PROXY_CONTAINER)" || { echo "Не найден фронт-прокси (:443). Задай PROXY_CONTAINER=<имя> (см. docker ps)"; exit 1; }
+	docker exec $(PROXY_CONTAINER) rm -f /etc/nginx/vhost.d/price-import.bx-shef.by
 	docker exec $(PROXY_CONTAINER) nginx -t
 	docker exec $(PROXY_CONTAINER) nginx -s reload
