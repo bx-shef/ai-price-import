@@ -505,4 +505,17 @@ describe('extractDemo — descriptive/requisite rows leaking into the table (GH 
     const r = extractDemo(text)
     expect(r.items.map(i => i.name)).toEqual(['Адресная табличка металлическая'])
   })
+
+  it('keeps a service line item referencing a contract («Услуги по договору № …»)', () => {
+    // «Договор №»/«Контракт №» drop only when the ROW STARTS with it (a basis line) — a
+    // service described by its contract is a real line item and must stay.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Услуги по договору № 44-ФЗ|1|1000|1000',
+      'Работы по контракту № 7|2|500|1000',
+      'Договор № 44-ФЗ от 01.07.2026|—|—|—' // basis line at row start → dropped
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Услуги по договору № 44-ФЗ', 'Работы по контракту № 7'])
+  })
 })
