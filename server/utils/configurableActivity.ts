@@ -29,8 +29,15 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
       icon: { code: 'document' },
       header: { title: input.title.slice(0, 255) },
       body: {
+        // `logo` (LogoDto) is REQUIRED by B24 — a missing logo fails with «Поле logo в
+        // BodyDto должно быть заполнено» (verified live on an OAuth portal; the webhook
+        // path never reached this because configurable.add returns ERROR_WRONG_CONTEXT
+        // over a webhook). `document` is a valid system logo code (crm.timeline.logo.list);
+        // clicking it opens the created entity, same as the footer button.
+        logo: { code: 'document', action: { type: 'redirect', uri: safeRelativePath(input.openPath) } },
+        // B24 requires 1..20 blocks — guarantee at least one so an empty `lines` can't 400.
         blocks: Object.fromEntries(
-          input.lines.slice(0, 10).map((text, i) => [
+          (input.lines.length ? input.lines : ['—']).slice(0, 10).map((text, i) => [
             `line${i}`,
             { type: 'text', properties: { value: String(text).slice(0, 500) } }
           ])
