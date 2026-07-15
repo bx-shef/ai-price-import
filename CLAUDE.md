@@ -37,8 +37,11 @@ AI-импорт документов с табличной частью в Bitri
     у SDK встроенный **RestrictionManager** (пер-портальный leaky-bucket лимитер + auto-retry на
     `QUERY_LIMIT_EXCEEDED`/429/5xx) — решает REST-бюджет при scale-out. Один `B24OAuth` на портал на
     джобу = пер-портальный лимит + bind-once; рефреш SDK сам, `setCallbackRefreshAuth` → персист
-    (`updateTokensOnRefresh`, UPDATE-only). **Opt-in** через `B24_SDK_TRANSPORT=1` (дефолт off —
-    свап с ручного `makePortalRestCall` включаем после live-смоука на портале). Чистые мапперы +
+    (`updateTokensOnRefresh`, UPDATE-only). **Opt-in** через `B24_SDK_TRANSPORT=1` (дефолт off).
+    **Live-верифицирован** на `bel.bitrix24.by` (`pnpm sdk:smoke`: profile+crm.item.list+burst 30 без
+    `QUERY_LIMIT_EXCEEDED`, лимитер троттлит ~12 req/s) — распаковка `getData().result` и лимитер
+    работают; SDK-путь строится **per-job** (не мемоизируется, иначе заклинит на устаревшем токене
+    после ротации соседом/кроном). Чистые мапперы +
     `makeSdkRestCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` — compile-time
     drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
   - **Keep-alive рефреш токенов** (`utils/tokenKeepAlive.runTokenKeepAlive`, #175): на cron-инстансе
