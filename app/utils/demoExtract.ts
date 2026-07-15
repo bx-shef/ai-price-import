@@ -255,6 +255,13 @@ export function extractDemo(input: string): DemoResult {
         if (val !== undefined) totals[totalKind] = val
         continue
       }
+      // Bank / address / contract / requisite lines that leak into the goods table (esp.
+      // after merged-cell flattening) CARRY numbers — an account no., postal index, contract
+      // no. — so the numeric-guarded NOISE_ROW below can't catch them and «Р/с 3012…» would
+      // surface as a product (GH #76). Drop them by strong descriptive markers that are never
+      // product names (boundary-guarded so «Бикарбонат»/«Банка»/«Основание кровати»/«Телефон»
+      // stay). Checked on the whole joined row — the marker may sit in any flattened cell.
+      if (DESCRIPTIVE_ROW.test(joined)) continue
       const name = pick(cells, roles.name)
       const quantity = parseNum(pick(cells, roles.qty))
       const price = parseNum(pick(cells, roles.price))
@@ -306,6 +313,14 @@ function pick(cells: string[], idx: number | undefined): string {
 // the items (esp. after merged-cell flattening). Only used to drop a row that ALSO has no
 // numbers — a real product with these words in its name keeps its figures and stays.
 const NOISE_ROW = /^(?:ответственн|исполнител|руководител|директор|гл(?:авный|\.)?\s*бухгалтер|бухгалтер|товар[ы]?\s+(?:отпустил|получил|принял)|отпуск\s+разрешил|отпустил|принял|сдал|груз\s+(?:получил|принял|сдал)|грузополучател|грузоотправител|изготовител|менеджер|м\.?\s*п\.?(?:\s|$)|подпис|по\s+доверенности|выписал|адпуск|адказн)/iu
+
+// Banking / address / contract / requisite markers of a NON-product line that leaked into
+// the table WITH numbers (account no. / postal index / contract no.) — so, unlike NOISE_ROW,
+// this drops the row regardless of figures (GH #76). Every marker is a phrase or code that
+// is never a product name; boundary lookarounds `(?<![\p{L}\d])…(?![\p{L}])` keep real goods
+// safe: «БИК»≠«Бикарбонат», «банк:»≠«Банка стеклянная», we never list bare «основание»/
+// «телефон»/«факс»/«банк» (all valid product words). Longer variants precede shorter ones.
+const DESCRIPTIVE_ROW = /(?<![\p{L}\d])(?:р\/сч(?:[её]т)?|р\/с|р\/р|к\/сч(?:[её]т)?|к\/с|л\/сч(?:[её]т)?|л\/с|корр?\.?\s*сч[её]т|расч[её]тн\p{L}*\s+сч[её]т|корреспондентск\p{L}*\s+сч[её]т|IBAN|SWIFT|БИК|(?:УНП|БИН|ИНН)\s+банка|наименован\p{L}*\s+банка|банковск\p{L}*\s+реквизит|реквизит\p{L}*\s+сторон|юридическ\p{L}*\s+адрес|почтов\p{L}*\s+адрес|фактическ\p{L}*\s+адрес|юр\.?\s*адрес|договор\s*№|контракт\s*№)(?![\p{L}])/iu
 
 // A supplier stated without a «Поставщик:» label — most templates just print the company
 // at the top: «ООО "Смартон", УНП …» / «ОАО Речицадрев». Capture the legal-form + name,

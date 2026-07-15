@@ -432,3 +432,47 @@ describe('extractDemo — two tables with shifted columns (GH #76)', () => {
     expect(r.totals.sum).toBe(40) // last block's total wins (single-totals demo shape)
   })
 })
+
+describe('extractDemo — descriptive/requisite rows leaking into the table (GH #76)', () => {
+  it('drops bank / address / contract rows that carry numbers', () => {
+    // These leak below the goods (esp. after merged-cell flattening) WITH numbers, so the
+    // numeric-guarded NOISE_ROW can't catch them — they must be dropped by their markers.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт М6|10|5|50',
+      'Р/с|3012000000000|в ОАО Банк|BIC',
+      'Расчётный счёт: BY13 0000 0000|1234|5678|9012',
+      'Юридический адрес:|г. Минск, ул. Ленина 1|220000|—',
+      'БИК|153001|—|—',
+      'Договор № 44-ФЗ от 01.07.2026|—|—|—'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт М6'])
+  })
+
+  it('keeps real products whose names merely resemble requisite markers', () => {
+    // Boundary guards must not drop legitimate goods: «БИК»≠«Бикарбонат», «банк»≠«Банка»,
+    // and we never blanket-drop «основание»/«телефон»/«факс».
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Бикарбонат натрия|5|10|50',
+      'Банка стеклянная 0.5 л|100|1|100',
+      'Основание кровати 160х200|2|150|300',
+      'Телефон IP настольный|3|200|600',
+      'Факс-модем|1|80|80'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual([
+      'Бикарбонат натрия', 'Банка стеклянная 0.5 л', 'Основание кровати 160х200',
+      'Телефон IP настольный', 'Факс-модем'
+    ])
+    expect(r.items).toHaveLength(5)
+  })
+
+  it('does not drop a product that contains «адрес» without the requisite phrase', () => {
+    // Only «юридический/почтовый/фактический/юр. адрес» are dropped, not bare «адрес».
+    const text = ['Наименование|Цена', 'Адресная табличка металлическая|12.50'].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Адресная табличка металлическая'])
+  })
+})
