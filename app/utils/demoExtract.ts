@@ -232,12 +232,17 @@ export function extractDemo(input: string): DemoResult {
       // Header row. The FIRST one starts the table; a LATER one is a SECOND table with its
       // own column layout (GH #76: счёт + «Спецификация»/«Протокол согласования» ниже, где
       // колонки сдвинуты) — re-map roles so the new block doesn't inherit the first table's
-      // positions (quantity/price/sum would misalign). Data rows can't match mapHeader (it
-      // needs a name keyword AND a qty/price/sum keyword — those are header words), so this
-      // never fires on products; a repeated page-header just re-maps to the same roles
-      // (harmless, and stops the header line itself leaking in as a junk «(без наименования)»).
+      // positions (quantity/price/sum would misalign).
+      //   Re-detection (roles already set) is GUARDED to ≥3 distinct column roles. A single
+      // product/service/totals row can coincidentally hit TWO keywords in its VALUES — e.g.
+      // «Услуга доставки | Цена по запросу» (name+price), «Итого сумма товаров | 200»
+      // (name+sum), «Услуга | Количество мест: 2 | …» (name+qty) — and would otherwise be
+      // mistaken for a header, dropping the row AND corrupting the in-progress table. A real
+      // second-table header lists the full column set (name + qty/price/sum → ≥3 roles), which
+      // ambiguous data/totals rows don't reach. First-header detection stays unguarded (the
+      // opening header has no prior data to protect, and a 2-column price list is valid there).
       const header = mapHeader(cells)
-      if (header) {
+      if (header && (!roles || Object.keys(header).length >= 3)) {
         roles = header
         continue
       }

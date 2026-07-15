@@ -375,4 +375,60 @@ describe('extractDemo — two tables with shifted columns (GH #76)', () => {
     expect(r.items).toHaveLength(2)
     expect(r.items[0]).toMatchObject({ name: 'Товар хозяйственный', quantity: 3, price: 10, sum: 30 })
   })
+
+  // ── False-positive guards: a data/totals row that coincidentally hits TWO column
+  // keywords in its VALUES must NOT be mistaken for a second-table header (≥3-role guard). ──
+
+  it('keeps a service row whose cells hit name+qty keywords («Услуга … | Количество мест: 2 | …»)', () => {
+    const text = [
+      'Наименование|Характеристика|Кол-во|Цена|Сумма',
+      'Услуга доставки|Количество мест: 2|1|5000|5000',
+      'Погрузо-разгрузочные работы|бригада|4|800|3200'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(2)
+    expect(r.items[0]).toMatchObject({ name: 'Услуга доставки', quantity: 1, price: 5000, sum: 5000 })
+    expect(r.items[1]).toMatchObject({ name: 'Погрузо-разгрузочные работы', quantity: 4, price: 800, sum: 3200 })
+  })
+
+  it('keeps a КП row with a textual price hitting name+price keywords («Услуга … | Цена по запросу»)', () => {
+    const text = ['Наименование|Цена', 'Услуга доставки|Цена по запросу', 'Перчатки|1.10'].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Услуга доставки', 'Перчатки'])
+    expect(r.items[0]).toMatchObject({ name: 'Услуга доставки', price: undefined })
+  })
+
+  it('classifies a totals row hitting name+sum keywords («Итого сумма товаров | 200») as a total, not a header', () => {
+    const text = ['Наименование|Кол-во|Цена|Сумма', 'Насос|2|100|200', 'Итого сумма товаров|200'].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.totals.sum).toBe(200)
+  })
+
+  it('a re-mapped second header with fewer columns clears the dropped role (no stale sum index)', () => {
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт|10|5|50',
+      'Наименование|Кол-во|Цена', // spec block without a «Сумма» column
+      'Гвоздь|5|3'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items[1]).toMatchObject({ name: 'Гвоздь', quantity: 5, price: 3 })
+    expect(r.items[1]!.sum).toBeUndefined() // must not read a stale «Сумма» index
+  })
+
+  it('handles totals in BOTH the счёт block and the spec block', () => {
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт|10|5|50',
+      'Итого|50',
+      '№|Наименование|Кол-во|Цена|Сумма',
+      '1|Гайка|20|2|40',
+      'Итого|40'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт', 'Гайка'])
+    expect(r.items.some(i => /Итого/.test(i.name))).toBe(false)
+    expect(r.totals.sum).toBe(40) // last block's total wins (single-totals demo shape)
+  })
 })
