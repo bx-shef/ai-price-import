@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-09
+> Last reviewed: 2026-07-14
 
 AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -16,6 +16,18 @@ AI-импорт документов с табличной частью в Bitri
 - `app/` — Nuxt (авто-импорт): `utils` (чистое ядро + тесты) / `composables` / `config` / `types` /
   `components` / `pages` / `layouts`.
 - `server/` — Nitro backend: `api` / `utils` (чистые с DI) / `queue` (BullMQ) / `db` / `plugins` / `agent`.
+  - **Событие install/uninstall — через очередь** `b24-events` (порт из client-bank): роут
+    `api/b24/events.post.ts` верифицирует и **кладёт в очередь**, консьюмер (`queue/handlers.handleEventJob`)
+    — **единственный писатель** `portal_tokens`; при недоступности Redis роут пишет **синхронным
+    фолбэком** (B24 online-события не ретраит). Порядок событий защищает **тумбстоун** `portal_tombstone`
+    (#77): stale/out-of-order install не воскрешает удалённый портал (гард в `tokenStore.saveToken/deletePortal`
+    по `eventTs` = top-level `ts` вебхука). Тумбстоун неатомарен, но TOCTOU-free — событийный воркер
+    **single-instance**.
+  - **Роль-сплит воркеров** (`queue/runtime.ts`, scale-out): роли `QUEUE_WORKERS`/`QUEUE_CRON`.
+    `startEventWorker` (события) идёт **только на primary/cron-инстансе**; `startThroughputWorkers`
+    (extract/agent/crm-sync) масштабируется на N реплик (`worker`-контейнер, `QUEUE_CRON=0`). Гейтинг — в
+    `plugins/queue.ts`. Per-queue concurrency — отдельно (`QUEUE_EXTRACT/AGENT/CRM_CONCURRENCY`,
+    `worker.queueConcurrency`, #95).
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
 - `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).
@@ -46,6 +58,9 @@ pnpm check        # lint + typecheck + test
   (в этой сессии — по явному разрешению, если уверен, что не ломаешь).
 - Живой тест-портал Б24 доступен через вебхук в env `B24_HOOK` (в репозиторий не коммитим).
   Скоупы: `crm, catalog, disk, im, placement`. Проверять REST-факты вживую, а не по памяти.
+- **Родственный репозиторий `bx-shef/client-bank-alfa-by` разрешён к чтению** (только чтение —
+  правки/пуши туда не делаем) как источник платформенных паттернов для порта (события/токены/
+  очереди). Трекер портов — issue #89; событийный механизм — #97. Разрешение владельца, 2026-07-14.
 
 ## GitHub API Rate Limits
 

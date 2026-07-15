@@ -1,4 +1,4 @@
-import type { AgentJob, CrmSyncJob, ExtractJob } from './topology'
+import type { AgentJob, CrmSyncJob, EventJob, ExtractJob } from './topology'
 import type { CrmSyncDeps, CrmSyncResult } from './crmSyncCore'
 import { runCrmSync } from './crmSyncCore'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
@@ -12,6 +12,35 @@ import type { RoutingSignals } from '~/utils/routing'
 export const MAX_ROUTING_TEXT = 131_072 // 128 KiB — routing keywords sit near the top
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : 'ошибка')
+
+// ── b24-events (install/uninstall) — the consumer is the SINGLE writer of portal_tokens ──
+
+export interface EventHandlerDeps {
+  /** Register a portal (ONAPPINSTALL). Returns false when refused by the event-ordering
+   *  tombstone guard (a stale/redelivered install after an uninstall). */
+  savePortal: (job: EventJob) => Promise<boolean>
+  /** Unregister a portal (ONAPPUNINSTALL) — always purge all portal data; writes a tombstone. */
+  deletePortal: (memberId: string, eventTs: number) => Promise<void>
+  /** Best-effort purge of on-disk uploaded bytes for the portal (data minimisation). */
+  purgeFiles?: (memberId: string) => Promise<void>
+}
+
+/**
+ * Apply a verified install/uninstall packet. Pure orchestration (DI) so BOTH the queue
+ * consumer AND the route's synchronous fallback share one code path — no drift.
+ * Verification (application_token / access_token TOFU) happens UPSTREAM in the route;
+ * this only writes. Unknown event types are ignored. See docs / CLAUDE.md (ported from client-bank).
+ */
+export async function handleEventJob(job: EventJob, deps: EventHandlerDeps): Promise<void> {
+  if (job.event === 'ONAPPUNINSTALL') {
+    await deps.deletePortal(job.memberId, job.ts)
+    if (deps.purgeFiles) await deps.purgeFiles(job.memberId)
+    return
+  }
+  if (job.event === 'ONAPPINSTALL') {
+    await deps.savePortal(job) // tombstone guard lives inside savePortal (eventTs = job.ts)
+  }
+}
 
 export interface HandlerDeps {
   /** Load the portal mapping (from app.option) for a portal. */

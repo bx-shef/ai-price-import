@@ -2,9 +2,9 @@ import { Worker } from 'bullmq'
 import { unlink } from 'node:fs/promises'
 import { connectionOptions } from './connection'
 import { QUEUES } from './topology'
-import type { AgentJob, CrmSyncJob, ExtractJob } from './topology'
-import { handleAgentRunJob, handleCrmSyncJob, handleFileExtractJob } from './handlers'
-import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveFileExtractDeps, type LiveInfra } from './liveDeps'
+import type { AgentJob, CrmSyncJob, EventJob, ExtractJob } from './topology'
+import { handleAgentRunJob, handleCrmSyncJob, handleEventJob, handleFileExtractJob } from './handlers'
+import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveEventDeps, liveFileExtractDeps, type LiveInfra } from './liveDeps'
 import { setJobStatus } from '../utils/jobStore'
 import { query } from '../db/client'
 import { makeAgentSpawn } from '../agent/spawn'
@@ -60,15 +60,40 @@ export function buildLiveInfra(): LiveInfra {
   }
 }
 
-/** Start the extract/agent/crm-sync workers. Returns [] when Redis is not configured. */
-export function startWorkers(infra: LiveInfra = buildLiveInfra()): Worker[] {
+/** The `b24-events` worker (install/uninstall). MUST run on a SINGLE instance: it stays
+ *  at the default concurrency 1 for per-portal ordering, but that only holds within ONE
+ *  process — the plugin runs it on the primary (cron) instance ONLY, NEVER on scaled
+ *  throughput replicas (else ONAPPINSTALL/ONAPPUNINSTALL for one portal could reorder
+ *  across replicas and leave a live token after an uninstall). Returns null without Redis. */
+export function startEventWorker(infra: LiveInfra = buildLiveInfra()): Worker | null {
+  const connection = connectionOptions()
+  if (!connection) return null
+  const eventDeps = liveEventDeps(infra)
+  const events = new Worker(QUEUES.events, async (job) => {
+    await handleEventJob(job.data as EventJob, eventDeps)
+  }, { connection })
+  // A permanently-failed event (all attempts exhausted) stays in the failed set — B24
+  // does not redeliver online events, so surface it loudly for an operator to replay.
+  events.on('failed', (job, err) => {
+    if (job && (job.attemptsMade ?? 0) >= (job.opts?.attempts ?? 1)) {
+      console.error('[queue] b24-events job permanently failed (needs replay):', job.id, (err as Error)?.message)
+    }
+  })
+  return events
+}
+
+/** The throughput workers (extract/agent/crm-sync) — safe to run on N scaled replicas
+ *  (Redis hands each job to exactly one). `concurrency` overrides ALL three when set; when
+ *  undefined each keeps its built-in default (they differ: the agent/LLM step is heavier).
+ *  Returns [] when Redis is not configured. */
+export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Worker[] {
   const connection = connectionOptions()
   if (!connection) return []
 
   const fileExtract = liveFileExtractDeps(infra)
   const agentRun = liveAgentRunDeps(infra)
   const crmSync = liveCrmSyncHandlerDeps(infra)
-  const cc = queueConcurrency()
+  const cc = queueConcurrency() // per-queue env overrides (defaults 4/2/4), #95
 
   const extract = new Worker(QUEUES.extract, async (job) => {
     // Handled failures set 'error' and return; only an infra throw propagates (→ retry).

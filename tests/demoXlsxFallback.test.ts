@@ -128,12 +128,13 @@ describe('xlsxToTextFallback — XML shapes exceljs never authors', () => {
     expect(xlsxToTextFallback(buf).split('\n')).toHaveLength(500)
   })
 
-  it('picks the first worksheet numerically (sheet2 before sheet10)', () => {
+  it('reads ALL worksheets in NUMERIC file order (sheet2 before sheet10), GH #76', () => {
     const buf = storedZip({
       'xl/worksheets/sheet10.xml': sheet('<row><c r="A1" t="inlineStr"><is><t>ДЕСЯТЫЙ</t></is></c></row>'),
       'xl/worksheets/sheet2.xml': sheet('<row><c r="A1" t="inlineStr"><is><t>ВТОРОЙ</t></is></c></row>')
     })
-    expect(xlsxToTextFallback(buf)).toBe('ВТОРОЙ')
+    // All sheets are joined; numeric file order (sheet2 before sheet10, not lexicographic).
+    expect(xlsxToTextFallback(buf)).toBe('ВТОРОЙ\nДЕСЯТЫЙ')
   })
 
   it('a merged cell keeps its value once (in the top-left), others stay blank', () => {
