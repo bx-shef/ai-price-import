@@ -97,13 +97,21 @@ describe('makePortalSdkCall', () => {
 describe('makeSdkListCall', () => {
   const ok: SdkAjaxResult = { isSuccess: true, getData: () => ({ result: [] }), getErrorMessages: () => [] }
 
-  it('returns the SDK-collected full row array and passes method+params through', async () => {
+  it('returns the SDK-collected full row array (no opts → plain method+params)', async () => {
     const client = fakeClient(ok, { getData: () => [{ ID: '1' }, { ID: '2' }] })
-    const listCall = makeSdkListCall(client)
-    const rows = await listCall('crm.vat.list', { filter: { ACTIVE: 'Y' } })
+    const rows = await makeSdkListCall(client)('crm.vat.list', { filter: { ACTIVE: 'Y' } })
     expect(rows).toEqual([{ ID: '1' }, { ID: '2' }])
     expect((client.actions.v2.callList.make as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toEqual({
       method: 'crm.vat.list', params: { filter: { ACTIVE: 'Y' } }
+    })
+  })
+
+  it('maps idKey/listKey opts → SDK idKey/customKeyForResult (grouped methods)', async () => {
+    const client = fakeClient(ok, { getData: () => [{ id: 93 }] })
+    const rows = await makeSdkListCall(client)('catalog.productProperty.list', { filter: { iblockId: 25 } }, { idKey: 'id', listKey: 'productProperties' })
+    expect(rows).toEqual([{ id: 93 }])
+    expect((client.actions.v2.callList.make as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toEqual({
+      method: 'catalog.productProperty.list', params: { filter: { iblockId: 25 } }, idKey: 'id', customKeyForResult: 'productProperties'
     })
   })
 

@@ -47,20 +47,21 @@ AI-импорт документов с табличной частью в Bitri
     `setCallbackRefreshAuth` → персист (`updateTokensOnRefresh`, UPDATE-only). **Live-верифицирован**
     на `bel.bitrix24.by` (`pnpm sdk:smoke`: profile+crm.item.list+burst 30 без `QUERY_LIMIT_EXCEEDED`,
     лимитер троттлит ~12 req/s). SDK-путь строится **per-job** (не мемоизируется, иначе заклинит на
-    устаревшем токене после ротации соседом/кроном). Ручной `makePortalRestCall` удалён; синхронные
-    frame-token API-роуты (`settings`/`catalog-properties`) остаются на `b24Rest.makeRestCall` (другой
-    механизм — фрейм-access-токен, не OAuth). Чистые мапперы +
-    `makeSdkRestCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` — compile-time
-    drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
+    устаревшем токене после ротации соседом/кроном). Ручной `makePortalRestCall` удалён. Общий билдер
+    `sdkPortalDeps(SdkInfra)` связывает `SdkPortalDeps` со стором/env — им пользуются и `liveDeps.restResolver`
+    (crm-sync), и frame-token роут `catalog-properties` (читает по OAuth-токену портала: `resolveFrameMember`
+    верифицирует фрейм-токен → `member_id`, дальше SDK). Роут `settings` остаётся на `b24Rest.makeRestCall`
+    (фрейм-access-токен пишет `app.option`). Чистые мапперы +
+    `makeSdkRestCall`/`makeSdkListCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` —
+    compile-time drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
   - **Пагинация enumerate-all списков** (#87): find-one lookup'ы (`findCompanyByTaxId`/`findProduct`)
-    берут первый id и в пагинации не нуждаются, но три **enumerate-all** чтения молча обрезались на
-    дефолтной странице B24 (50). Разведены по транспорту:
-    - **crm-sync (SDK/OAuth):** `fetchVatRates` (`crm.vat.list`) ходит через `SdkListCall` — **SDK сам
-      пагинирует** (`callList.make`, keyset по `ID`); ручной пейджер тут не нужен.
-    - **frame-token роуты (`makeRestCall`, SDK-клиента нет):** `searchCatalogProperties`
-      (`catalog.productProperty.list`) листает `utils/restPaginate.fetchAllPages` — по `start`-оффсету
-      (RestCall отдаёт **unwrapped** `result`, envelope `next`/`total` не виден), стоп на короткой/пустой
-      странице, кап `MAX_PAGES=200` не молчит (`console.warn`).
+    берут первый id и в пагинации не нуждаются, но enumerate-all чтения молча обрезались на дефолтной
+    странице B24 (50). Оба таких чтения теперь на **SDK full-list** (`SdkListCall`→`callList.make`, SDK сам
+    пагинирует keyset-ом; ручной пейджер удалён):
+    - `fetchVatRates` (`crm.vat.list`) — дефолтный keyset по `ID`.
+    - `searchCatalogProperties` (`catalog.productProperty.list`) — grouped-ключ `productProperties` + keyset
+      `id` (opts `listKey`/`idKey`). Пикер артикула переведён на OAuth-токен портала (`resolveFrameMember`
+      → `makePortalSdkCall`), поэтому SDK-клиент ему доступен.
     - `fetchCurrencies` (`crm.currency.list`) **НЕ** паджинируется намеренно — метод отдаёт все валюты
       за один вызов (`total:0`, игнорит `start`, у строк нет `ID` для keyset; live+docs).
   - **Keep-alive рефреш токенов** (`utils/tokenKeepAlive.runTokenKeepAlive`, #175): на cron-инстансе

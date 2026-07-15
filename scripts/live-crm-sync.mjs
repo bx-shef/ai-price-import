@@ -15,7 +15,6 @@ import { runCrmSync } from '../server/queue/crmSyncCore.ts'
 import { findCompanyByTaxId } from '../server/utils/companyLookup.ts'
 import { findProduct } from '../server/utils/productLookup.ts'
 import { fetchVatRates } from '../server/utils/portalVat.ts'
-import { fetchAllPages } from '../server/utils/restPaginate.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, setProductRows } from '../server/utils/crmWrite.ts'
 
@@ -39,10 +38,14 @@ const call = async (method, params = {}) => {
   return j.result
 }
 
-// fetchVatRates now takes an SdkListCall (full-list fetch). This dev script talks to the
-// portal over a webhook, not the SDK, so adapt `call` to that signature via fetchAllPages
-// (the same generic offset pager the frame-token routes use) — pages the full vat list.
-const listCall = (method, params) => fetchAllPages(call, method, params, r => (Array.isArray(r) ? r : []))
+// fetchVatRates takes an SdkListCall (full-list fetch). This dev script talks to the portal
+// over a webhook, not the SDK, so adapt `call` to that signature. crm.vat.list returns all
+// rates in one page (the seeded test portal has a handful), so a single call is complete
+// here — production pages via the SDK's callList.make.
+const listCall = async (method, params) => {
+  const r = await call(method, params)
+  return Array.isArray(r) ? r : []
+}
 
 // A supplier taxId that exists in the seeded portal (crm.requisite RQ_INN) so the
 // company match succeeds; adjust to a value present on your portal.

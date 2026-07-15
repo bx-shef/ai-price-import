@@ -8,7 +8,7 @@ import { ensureFreshToken } from '../utils/ensureAccessToken'
 import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
-import { makePortalSdkCall, type SdkTransport } from '../utils/b24Sdk'
+import { makePortalSdkCall, sdkPortalDeps, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { setJobStatus } from '../utils/jobStore'
@@ -90,15 +90,8 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
  * job re-reads the current DB token, so a rotation is observed next job. `loadToken` is one
  * cheap query; refresh-persist is UPDATE-only (never resurrects a purged portal). */
 function restResolver(infra: LiveInfra): (memberId: string) => Promise<SdkTransport | null> {
-  const sdkDeps = {
-    loadToken: (m: string) => getToken(m, infra.query),
-    saveToken: (input: Parameters<typeof updateTokensOnRefresh>[0]) => updateTokensOnRefresh(input, infra.query),
-    creds: { clientId: infra.clientId, clientSecret: infra.clientSecret },
-    now: infra.now,
-    decrypt: (enc: string) => (enc ? decryptSecret(enc, infra.encKey) : ''),
-    encrypt: (plain: string) => encryptSecret(plain, infra.encKey)
-  }
-  return memberId => makePortalSdkCall(memberId, sdkDeps)
+  const deps = sdkPortalDeps(infra)
+  return memberId => makePortalSdkCall(memberId, deps)
 }
 
 /** Load the portal mapping via server-side REST (falls back to defaults). */
