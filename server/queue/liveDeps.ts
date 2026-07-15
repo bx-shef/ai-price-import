@@ -20,6 +20,7 @@ import { readMapping } from '../utils/appSettings'
 import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
 import { findProduct } from '../utils/productLookup'
+import { createProductViaRest } from '../utils/productCreate'
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
@@ -174,10 +175,10 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
 
 /**
  * crm-sync deps bound to one portal+job+mapping (deterministic lookups via portal REST).
- * NOTE: `createProduct` is intentionally NOT provided yet — so `mapping.product.onMissing
- * === 'create'` degrades to a freeform product line + an explicit warning in
- * `runCrmSync` (never silent). Wiring real `crm.product.add` is a follow-up (needs the
- * catalog/section policy); until then 'create' behaves like 'freeform'.
+ * `createProduct` (mapping.product.onMissing === 'create') creates a catalog product via
+ * crm.product.add and, when matching by article, writes the supplier-article property so
+ * the product is re-found next import (no duplicate). Returns null on failure ⇒ runCrmSync
+ * degrades to a freeform line + a warning (never silent).
  */
 function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: string) => Promise<SdkTransport | null>, infra: LiveInfra): CrmSyncDeps {
   const need = async (): Promise<SdkTransport> => {
@@ -189,6 +190,7 @@ function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: str
     getExisting: jobId => getExistingResult(memberId, jobId, infra.query),
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
     findProduct: async item => findProduct(item, mapping, (await need()).call),
+    createProduct: async item => createProductViaRest(item, mapping, (await need()).call),
     // VAT rates: full-list fetch via the SDK's built-in pagination (SdkListCall).
     portalVatRates: async () => fetchVatRates((await need()).list),
     portalCurrencies: async () => fetchCurrencies((await need()).call),
