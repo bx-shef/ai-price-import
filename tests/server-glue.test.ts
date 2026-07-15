@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { deletePortal, getApplicationToken, getToken, saveToken } from '../server/utils/tokenStore'
+import { deletePortal, getApplicationToken, getToken, saveToken, updateTokensOnRefresh } from '../server/utils/tokenStore'
 import type { PortalToken } from '../server/utils/tokenStore'
 import { ensureFreshToken } from '../server/utils/ensureAccessToken'
 import { makePortalRestCall } from '../server/utils/portalRest'
@@ -41,6 +41,53 @@ describe('tokenStore', () => {
       ['portal_tokens', 'job_result', 'metrics_counter', 'import_job', 'import_text', 'import_doc']
     )
     for (const c of calls) expect(c.params).toEqual(['m1'])
+  })
+
+  describe('event-ordering tombstone guard (#77 port)', () => {
+    it('saveToken with eventTs=0 skips the guard (no tombstone SQL)', async () => {
+      const { q, calls } = fakeQuery()
+      expect(await saveToken({ memberId: 'm1', domain: 'p.bitrix24.ru' }, q)).toBe(true)
+      expect(calls.every(c => !c.sql.includes('portal_tombstone'))).toBe(true)
+    })
+    it('saveToken REFUSES a stale install (tombstone deleted_ts >= eventTs), writes nothing', async () => {
+      const { q, calls } = fakeQuery([{ x: 1 }]) // SELECT 1 returns a row → blocked
+      expect(await saveToken({ memberId: 'm1', domain: 'p.bitrix24.ru' }, q, 50)).toBe(false)
+      expect(calls).toHaveLength(1)
+      expect(calls[0]!.sql).toContain('SELECT 1 FROM portal_tombstone')
+      expect(calls[0]!.params).toEqual(['m1', 50])
+    })
+    it('saveToken proceeds on a newer reinstall and clears the stale tombstone', async () => {
+      const { q, calls } = fakeQuery([]) // SELECT returns no row → not blocked
+      expect(await saveToken({ memberId: 'm1', domain: 'p.bitrix24.ru' }, q, 500)).toBe(true)
+      expect(calls[0]!.sql).toContain('SELECT 1 FROM portal_tombstone')
+      expect(calls[1]!.sql).toContain('ON CONFLICT (member_id)') // token upsert
+      expect(calls[2]!.sql).toContain('DELETE FROM portal_tombstone')
+      expect(calls[2]!.params).toEqual(['m1', 500])
+    })
+    it('deletePortal writes a GREATEST tombstone before purging when eventTs > 0', async () => {
+      const { q, calls } = fakeQuery()
+      await deletePortal('m1', q, 777)
+      expect(calls[0]!.sql).toContain('INSERT INTO portal_tombstone')
+      expect(calls[0]!.sql).toContain('GREATEST')
+      expect(calls[0]!.params).toEqual(['m1', 777])
+      expect(calls.slice(1).map(c => c.sql.match(/FROM (\w+)/)![1])).toEqual(
+        ['portal_tokens', 'job_result', 'metrics_counter', 'import_job', 'import_text', 'import_doc']
+      )
+    })
+    it('deletePortal with eventTs=0 writes NO tombstone (pre-guard behaviour)', async () => {
+      const { q, calls } = fakeQuery()
+      await deletePortal('m1', q)
+      expect(calls.every(c => !c.sql.includes('portal_tombstone'))).toBe(true)
+    })
+    it('updateTokensOnRefresh is UPDATE-only (no INSERT) — cannot resurrect a purged portal', async () => {
+      const { q, calls } = fakeQuery()
+      await updateTokensOnRefresh({ memberId: 'm1', domain: 'p.bitrix24.ru', accessToken: 'new', refreshTokenEnc: 'ENC2' }, q)
+      expect(calls[0]!.sql).toMatch(/^\s*UPDATE portal_tokens SET/)
+      expect(calls[0]!.sql).not.toContain('INSERT')
+      expect(calls[0]!.sql).toContain('WHERE member_id = $1')
+      expect(calls[0]!.sql).not.toContain('application_token') // write-once; refresh must not touch it
+      expect(calls[0]!.params![0]).toBe('m1')
+    })
   })
 })
 
