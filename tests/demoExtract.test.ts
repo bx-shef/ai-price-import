@@ -452,21 +452,47 @@ describe('extractDemo — descriptive/requisite rows leaking into the table (GH 
 
   it('keeps real products whose names merely resemble requisite markers', () => {
     // Boundary guards must not drop legitimate goods: «БИК»≠«Бикарбонат», «банк»≠«Банка»,
-    // and we never blanket-drop «основание»/«телефон»/«факс».
+    // «Ibanez»≠«IBAN», and we never blanket-drop «основание»/«телефон»/«факс».
     const text = [
       'Наименование|Кол-во|Цена|Сумма',
       'Бикарбонат натрия|5|10|50',
       'Банка стеклянная 0.5 л|100|1|100',
       'Основание кровати 160х200|2|150|300',
       'Телефон IP настольный|3|200|600',
-      'Факс-модем|1|80|80'
+      'Факс-модем|1|80|80',
+      'Гитара Ibanez GRX70|1|9000|9000'
     ].join('\n')
     const r = extractDemo(text)
     expect(r.items.map(i => i.name)).toEqual([
       'Бикарбонат натрия', 'Банка стеклянная 0.5 л', 'Основание кровати 160х200',
-      'Телефон IP настольный', 'Факс-модем'
+      'Телефон IP настольный', 'Факс-модем', 'Гитара Ibanez GRX70'
     ])
-    expect(r.items).toHaveLength(5)
+    expect(r.items).toHaveLength(6)
+  })
+
+  it('keeps products whose UNIT column uses slash-abbreviations (л/с, к/с) — not bank accounts', () => {
+    // «л/с» = L/s & лошадиных сил, «к/с» = кадр/с — real units. They collide with the bank
+    // abbreviations, so the filter drops «р/с»/«к/с» ONLY before an account-length digit run.
+    const text = [
+      'Наименование|Кол-во|Ед.|Цена|Сумма',
+      'Насос центробежный 10 л/с|2|шт|15000|30000',
+      'Камера 60 к/с|3|шт|200|600',
+      'Двигатель 100 л/с|1|шт|5000|5000'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(3)
+    expect(r.items.map(i => i.name)).toEqual([
+      'Насос центробежный 10 л/с', 'Камера 60 к/с', 'Двигатель 100 л/с'
+    ])
+  })
+
+  it('does not drop a «р/с»/«к/с» token unless a long account number follows', () => {
+    // A short trailing number (a quantity/spec) is not an account → row kept.
+    const kept = extractDemo(['Наименование|Цена', 'Клапан р/с 3 хода|120'].join('\n'))
+    expect(kept.items.map(i => i.name)).toEqual(['Клапан р/с 3 хода'])
+    // A long digit run after «р/с» IS an account → dropped.
+    const dropped = extractDemo(['Наименование|Цена|Прочее', 'Болт|5|р/с 3012000000000'].join('\n'))
+    expect(dropped.items).toHaveLength(0)
   })
 
   it('does not drop a product that contains «адрес» without the requisite phrase', () => {
