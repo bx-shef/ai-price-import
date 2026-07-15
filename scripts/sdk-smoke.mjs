@@ -61,8 +61,9 @@ const ms = t => `${t.toFixed(0)}ms`
 
 async function main() {
   console.log(`\n▶ SDK smoke against ${domain} (member ${memberId.slice(0, 8)}…)\n`)
-  const call = await makePortalSdkCall(memberId, deps)
-  if (!call) throw new Error('makePortalSdkCall returned null (no token)')
+  const transport = await makePortalSdkCall(memberId, deps)
+  if (!transport) throw new Error('makePortalSdkCall returned null (no token)')
+  const { call, list } = transport
 
   // 1) profile — proves the envelope unwrap (result present).
   const profile = await call('profile')
@@ -72,6 +73,10 @@ async function main() {
   const items = await call('crm.item.list', { entityTypeId: 2, select: ['id', 'title'], start: 0 })
   const arr = items?.items ?? items ?? []
   console.log(`✓ crm.item.list(deal) → ${Array.isArray(arr) ? arr.length : '?'} item(s) on this page`)
+
+  // 2b) full-list fetch via the SDK's built-in pagination (SdkListCall) — crm.vat.list.
+  const vat = await list('crm.vat.list', { filter: { ACTIVE: 'Y' }, select: ['ID', 'NAME', 'RATE'] })
+  console.log(`✓ list(crm.vat.list) → ${vat.length} rate(s) (SDK paged the full list)`)
 
   // 3) burst — the RestrictionManager should self-throttle (no QUERY_LIMIT_EXCEEDED).
   const N = 30

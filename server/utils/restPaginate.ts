@@ -1,14 +1,15 @@
-// Fetch ALL pages of a Bitrix24 list method over our `RestCall`.
+// Fetch ALL pages of a Bitrix24 list method over our generic `RestCall`.
+//
+// Use this ONLY on the frame-access-token transport (makeRestCall) — the in-portal
+// admin routes (e.g. the supplier-article catalog-property picker). The crm-sync /
+// OAuth transport does NOT use this: it has the SDK client, whose built-in full-list
+// fetch (b24Sdk.SdkListCall → actions.v2.callList.make) already pages everything.
 //
 // Our RestCall returns the UNWRAPPED `result`, so the envelope's `next`/`total`
 // pagination fields are invisible. Instead we page by the classic `start` offset:
 // request start=0, 50, 100, … and stop when a page returns fewer than the page size
-// (the last page) — this needs no envelope access and is correct for every crm.*/
-// catalog.* list method whose page size is 50.
-//
-// NOT every list method paginates: crm.currency.list returns ALL rows in one call and
-// reports total:0 (verified live + docs) — do NOT wrap those, they'd loop once and stop
-// on the short page anyway, but the intent is clearer if the caller reads them directly.
+// (the last page) — this needs no envelope access and is correct for every crm and
+// catalog list method whose page size is 50.
 
 import type { RestCall } from './b24Rest'
 

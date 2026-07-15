@@ -29,7 +29,15 @@ const B24_SERVER_ENDPOINT = 'https://oauth.bitrix.info/rest/'
 /** The slice of a B24 OAuth client this adapter uses — structural so tests inject a fake
  *  and the real `B24OAuth` satisfies it (checked where the client is constructed). */
 export interface OAuthCallClient {
-  actions: { v2: { call: { make: (o: { method: string, params?: Record<string, unknown> }) => Promise<SdkAjaxResult> } } }
+  actions: {
+    v2: {
+      call: { make: (o: { method: string, params?: Record<string, unknown> }) => Promise<SdkAjaxResult> }
+      // Full-list fetch: the SDK pages through EVERY row (keyset pagination by ID) and
+      // hands back the concatenated array via getData(). We use this instead of a
+      // hand-rolled pager for list reads on the OAuth transport.
+      callList: { make: (o: { method: string, params?: Record<string, unknown> }) => Promise<SdkListResult> }
+    }
+  }
   setCallbackRefreshAuth: (cb: CallbackRefreshAuth) => void
 }
 
@@ -39,6 +47,21 @@ export interface SdkAjaxResult {
   isSuccess: boolean
   getData: () => Record<string, unknown> | null | undefined
   getErrorMessages: () => string[]
+}
+
+/** The SDK's `callList.make` Result — `getData()` is the ALREADY-collected row array. */
+export interface SdkListResult {
+  getData: () => unknown
+}
+
+/** Fetch EVERY row of a B24 list method — the SDK handles pagination (keyset by ID). */
+export type SdkListCall = (method: string, params?: Record<string, unknown>) => Promise<unknown[]>
+
+/** A portal-bound SDK transport: single-call `RestCall` PLUS a full-list `list` fetcher,
+ *  both backed by the same per-portal `B24OAuth` (one rate-limiter bucket for the job). */
+export interface SdkTransport {
+  call: RestCall
+  list: SdkListCall
 }
 
 /** Map our stored `PortalToken` → the SDK's `B24OAuthParams`. The refresh token is
@@ -100,6 +123,17 @@ export function makeSdkRestCall(client: OAuthCallClient): RestCall {
   }
 }
 
+/** Wrap a B24 OAuth client's `callList.make` as our `SdkListCall`: page through ALL rows
+ *  (the SDK's built-in pagination, keyset by ID) and return the flat array. Non-array data
+ *  (empty portal) → `[]`. */
+export function makeSdkListCall(client: OAuthCallClient): SdkListCall {
+  return async (method, params) => {
+    const res = await client.actions.v2.callList.make({ method, params })
+    const data = res.getData()
+    return Array.isArray(data) ? data : []
+  }
+}
+
 /** I/O the portal-bound factory needs, injected for testability. The SDK client itself is
  *  NOT injected — this module owns `new B24OAuth(...)`; only its inputs come from the caller. */
 export interface SdkPortalDeps {
@@ -112,13 +146,14 @@ export interface SdkPortalDeps {
   scope?: string
 }
 
-/** Build a `RestCall` bound to one portal, backed by a per-portal `B24OAuth` instance (its
- *  own rate-limiter bucket) with refresh-persistence wired. `null` when the portal has no
- *  stored token. This is THE crm-sync portal transport (see liveDeps.restResolver).
+/** Build the per-portal transport (single-call `.call` + full-list `.list`), backed by one
+ *  `B24OAuth` instance (its own rate-limiter bucket) with refresh-persistence wired. `null`
+ *  when the portal has no stored token. This is THE crm-sync portal transport (see
+ *  liveDeps.restResolver).
  *  NB: the SDK refreshes REACTIVELY — one extra round-trip on the first call after
  *  access-token expiry; the daily keep-alive cron (#175) still proactively refreshes idle
  *  near-expiry portals via ensureFreshToken (advisory lock, #35). */
-export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): Promise<RestCall | null> {
+export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): Promise<SdkTransport | null> {
   const token = await deps.loadToken(memberId)
   if (!token) return null
   // Typing the instance as OAuthCallClient is the drift guard (see file header).
@@ -127,5 +162,5 @@ export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): 
     deps.creds
   )
   client.setCallbackRefreshAuth(buildRefreshPersist(deps.saveToken, { now: deps.now, encrypt: deps.encrypt }))
-  return makeSdkRestCall(client)
+  return { call: makeSdkRestCall(client), list: makeSdkListCall(client) }
 }
