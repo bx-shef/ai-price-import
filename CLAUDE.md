@@ -94,6 +94,25 @@ pnpm check        # lint + typecheck + test
   правки/пуши туда не делаем) как источник платформенных паттернов для порта (события/токены/
   очереди). Трекер портов — issue #89; событийный механизм — #97. Разрешение владельца, 2026-07-14.
 
+## Обратная связь (feedback-triage)
+
+Разбор отзывов в чистый инженерный бэклог — портированный «feedback-triage kit» (PR #118).
+**Статус:** триаж-сторона готова (доки + скрипты); ingestion-канал в редизайне ещё не пересобран
+(legacy `legacy/backend/feedback.js`; `.env.example` без `GITHUB_FEEDBACK_*`) — #122.
+
+- [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — **ingestion**: три канала #182 (сотрудник 👍/👎, агент
+  `feedback[]`, MCP-матчинг) → issue в репо-приёмнике (`GITHUB_FEEDBACK_REPO`).
+- [`docs/FEEDBACK_TRIAGE_AGENT.md`](docs/FEEDBACK_TRIAGE_AGENT.md) — **роль ИИ-агента триажа**:
+  группирует по корню, заводит **обезличенные** issue в `bx-shef/ai-price-import`, закрывает
+  разобранное со связкой. **Privacy-guard нагружен:** код-репо **публичный** (`private:false`) →
+  клиентский контекст (jobId/файл/№ сделки/УНП) в issue не переносится, только ссылка на приватный отзыв.
+- Скрипты — `scripts/feedback-triage.sh` (REST-fallback, `GH_WRITE_TOKEN`; токен через `curl --config`,
+  не argv; privacy fail-closed `_assert_feedback_target`) + офлайн-валидатор `scripts/validate-docs.sh` /
+  `.ps1`. Валидатор **CI-gated** через `tests/feedbackTriageValidate.test.ts` (спавнит `.sh`, ждёт exit 0
+  → входит в `pnpm test`/`pnpm check`, без правки `ci.yml`).
+- Репо-координаты — через ENV (`PROJECT_REPO`/`FEEDBACK_REPO`/`GITHUB_FEEDBACK_REPO`), не хардкод;
+  `FEEDBACK_REPO` fail-closed (не дефолтится на публичный репо).
+
 ## GitHub API Rate Limits
 
 Квоты раздельные: REST-core (5000 запросов/час) и GraphQL (5000 очков/час). MCP-инструменты записи/
