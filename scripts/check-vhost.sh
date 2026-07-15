@@ -33,15 +33,16 @@ for f in "$DIR"/*; do
   abs="$(pwd)/$f"
   printf 'validating %s ... ' "$f"
   if [ "$have_nginx" = 1 ]; then
-    # error_log/pid → /tmp so `nginx -t` works as a non-root CI user.
+    # error_log/pid → /tmp and access_log off so `nginx -t` doesn't touch the default
+    # /var/log/nginx/*.log paths (unwritable for a non-root CI user).
     tmp="$(mktemp)"
-    printf 'error_log /tmp/vhost-err.log;\npid /tmp/vhost.pid;\nevents {}\nhttp { server { include %s; } }\n' "$abs" > "$tmp"
+    printf 'error_log /tmp/vhost-err.log;\npid /tmp/vhost.pid;\nevents {}\nhttp { access_log off; server { include %s; } }\n' "$abs" > "$tmp"
     if nginx -t -c "$tmp" >/tmp/vhost-check.log 2>&1; then echo ok; else echo FAILED; cat /tmp/vhost-check.log; rc=1; fi
     rm -f "$tmp"
   else
     if docker run --rm --entrypoint sh \
         -v "$abs:/etc/nginx/vhost.d/candidate:ro" "$IMAGE" \
-        -c 'printf "events{}\nhttp{server{ include /etc/nginx/vhost.d/candidate; }}\n" > /tmp/t.conf && nginx -t -c /tmp/t.conf' >/tmp/vhost-check.log 2>&1; then
+        -c 'printf "error_log /tmp/e.log;\npid /tmp/n.pid;\nevents{}\nhttp{ access_log off; server{ include /etc/nginx/vhost.d/candidate; }}\n" > /tmp/t.conf && nginx -t -c /tmp/t.conf' >/tmp/vhost-check.log 2>&1; then
       echo ok
     else
       echo FAILED; cat /tmp/vhost-check.log; rc=1
