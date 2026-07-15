@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS portal_tokens (
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS portal_tombstone (
+  member_id  TEXT PRIMARY KEY,
+  deleted_ts BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS job_result (
   member_id    TEXT NOT NULL,
   job_id       TEXT NOT NULL,

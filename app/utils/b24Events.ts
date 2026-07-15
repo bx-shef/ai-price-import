@@ -9,6 +9,10 @@ export interface ParsedB24Event {
   memberId: string
   applicationToken: string
   domain: string
+  /** B24 event timestamp (top-level `ts`, unix seconds — live-confirmed present on the
+   *  real outgoing webhook). 0 when absent; the event-ordering tombstone guard engages
+   *  only when > 0. */
+  ts: number
   data: Record<string, unknown>
   auth: Record<string, unknown>
 }
@@ -65,11 +69,13 @@ function assignPath(root: Record<string, unknown>, path: string[], value: string
 export function extractEvent(parsed: Record<string, unknown>): ParsedB24Event {
   const auth = (parsed.auth ?? {}) as Record<string, unknown>
   const data = (parsed.data ?? {}) as Record<string, unknown>
+  const tsNum = Number(parsed.ts ?? 0)
   return {
     event: String(parsed.event ?? ''),
     memberId: String(auth.member_id ?? ''),
     applicationToken: String(auth.application_token ?? parsed.application_token ?? ''),
     domain: String(auth.domain ?? parsed.domain ?? ''),
+    ts: Number.isFinite(tsNum) && tsNum > 0 ? Math.floor(tsNum) : 0,
     data,
     auth
   }

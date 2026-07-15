@@ -6,6 +6,9 @@ import { purgePortalFiles } from '../../utils/nodeFileIO'
 import { encryptSecret } from '../../utils/secretCrypto'
 import { verifyInstallToken } from '../../utils/verifyInstallToken'
 import { normaliseHost, type FetchFn } from '../../utils/b24Rest'
+import { enqueueEvent } from '../../queue/producers'
+import { queueEnabled } from '../../queue/connection'
+import { eventJobToSaveInput, type EventJob } from '../../queue/topology'
 
 // B24 outgoing-event webhook: ONAPPINSTALL / ONAPPUNINSTALL.
 // Verifies application_token (fail-closed) then applies register/unregister.
@@ -53,35 +56,59 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  if (decision.action === 'unregister') {
-    await deletePortal(ev.memberId, query) // DB rows (tokens, jobs, text, docs, metrics)
-    await purgePortalFiles(ev.memberId) // on-disk uploaded bytes (best-effort)
-    return { ok: true }
-  }
-
-  // register: persist tokens (refresh encrypted at rest).
+  // Build the verified packet. Refresh is encrypted HERE — plaintext never reaches Redis.
   // KNOWN LIMITATION (low-sev, tracked): verifyInstallToken proves control of ev.domain,
-  // but we store under the client-supplied ev.memberId without binding member_id↔domain.
-  // An attacker who controls any real portal could pre-seed a row for a NOT-YET-installed
-  // victim's member_id (with their own application_token, write-once), so the victim's
-  // later genuine install 403s on the known-portal branch — a targeted install-poisoning
-  // DoS (no hijack/data-theft; needs the victim's member_id + un-installed state). Full
-  // fix = authenticate member_id from a trusted source (OAuth token exchange returns
-  // member_id) instead of trusting the event field. Deferred — not a deploy blocker.
+  // but we store under the client-supplied ev.memberId without binding member_id↔domain
+  // (targeted install-poisoning DoS; no hijack/data-theft). Full fix = authenticate
+  // member_id from the OAuth token exchange. Deferred — not a deploy blocker.
   const refresh = String(auth.refresh_token ?? '')
-  const now = Date.now()
-  await saveToken({
+  const job: EventJob = {
     memberId: ev.memberId,
+    event: ev.event,
     // Normalised (bare lower-case host) so the frame-auth lookup (resolveFrameMember,
     // also normalised) matches regardless of case/scheme differences.
     domain: normaliseHost(ev.domain || String(auth.domain ?? '')),
-    clientEndpoint: String(auth.client_endpoint ?? ''),
-    accessToken: String(auth.access_token ?? ''),
-    refreshTokenEnc: refresh ? encryptSecret(refresh, process.env.B24_TOKEN_ENC_KEY ?? '') : '',
+    ts: ev.ts,
     applicationToken: ev.applicationToken,
-    expiresIn: Number(auth.expires_in ?? 3600),
-    issuedAtMs: now,
-    refreshedAtMs: now
-  }, query)
+    ...(decision.action === 'register'
+      ? {
+          accessToken: String(auth.access_token ?? ''),
+          refreshTokenEnc: refresh ? encryptSecret(refresh, process.env.B24_TOKEN_ENC_KEY ?? '') : '',
+          clientEndpoint: String(auth.client_endpoint ?? ''),
+          expiresIn: Number(auth.expires_in ?? 3600),
+          issuedAtMs: Date.now()
+        }
+      : {})
+  }
+
+  // Prefer the queue — the CONSUMER (single-instance b24-events worker) is the single
+  // writer of portal_tokens. B24 does NOT retry online events, so if Redis is unavailable
+  // (or the enqueue throws) we MUST NOT drop the event: fall back to a synchronous write.
+  if (queueEnabled()) {
+    try {
+      await enqueueEvent(job, ev.ts)
+      return { ok: true, queued: true }
+    } catch (e) {
+      console.error('[events] enqueue failed — applying synchronously:', e instanceof Error ? e.message : e)
+    }
+  }
+  const saved = await applyEventSync(job)
+  // register refused ⇒ stale install after a newer uninstall (tombstone): don't resurrect.
+  if (saved === false) return { ok: true, skipped: 'stale-install-after-uninstall' }
   return { ok: true }
 })
+
+/** Synchronous fallback writer (no Redis / enqueue failed) — the SAME token store the
+ * consumer uses (server/queue/liveDeps.liveEventDeps), so the write is identical; only the
+ * transport differs. Returns the register verdict (false = refused by the tombstone guard). */
+async function applyEventSync(job: EventJob): Promise<boolean | undefined> {
+  if (job.event === 'ONAPPUNINSTALL') {
+    await deletePortal(job.memberId, query, job.ts) // DB rows + tombstone
+    await purgePortalFiles(job.memberId) // on-disk bytes (best-effort)
+    return undefined
+  }
+  if (job.event === 'ONAPPINSTALL') {
+    return await saveToken(eventJobToSaveInput(job), query, job.ts)
+  }
+  return undefined
+}
