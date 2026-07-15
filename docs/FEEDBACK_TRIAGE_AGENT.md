@@ -272,9 +272,13 @@ close_transferred "$FEEDBACK_REPO" 43
 ```
 
 ### 8.3 Валидация (без вызовов GitHub)
-Оффлайн-проверка доков и скрипта (синтаксис, shellcheck, dry-run с моком curl, согласованность правил, наличие privacy-guard):
+Оффлайн-проверка доков и скриптов, **9 шагов**: (1) `bash -n`, (2) shellcheck, (3) поведенческий прогон
+реального `_api` через мок `curl` (happy-path + 8 guard-кейсов: токен/HTTP/privacy/slug/num), (4) согласованность
+правила лимитов CLAUDE.md↔дока, (5) анкорный privacy-guard, (6) шапка `> Last reviewed`, (7) консистентность
+репо-координат doc↔script, (8) не битые внутренние md-ссылки, (9) паритет числа шагов `.sh`↔`.ps1`:
 - **Linux/macOS/WSL:** `bash scripts/validate-docs.sh`
 - **Windows:** `pwsh scripts/validate-docs.ps1` (шаги с bash требуют Git Bash/WSL, иначе SKIP)
+- **CI:** гейтится автоматически через `tests/feedbackTriageValidate.test.ts` (в `pnpm test`).
 
 ---
 

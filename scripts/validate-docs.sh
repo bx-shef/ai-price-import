@@ -6,8 +6,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 DOC="docs/FEEDBACK_TRIAGE_AGENT.md"
+CHANNEL_DOC="docs/FEEDBACK.md"
 CLAUDE_MD="CLAUDE.md"
 SH="scripts/feedback-triage.sh"
+SELF="scripts/validate-docs.sh"
+PS="scripts/validate-docs.ps1"
 fail=0
 note() { printf '%s\n' "$*"; }
 
@@ -89,6 +92,44 @@ if grep -qE '^> Last reviewed: [0-9]{4}-[0-9]{2}-[0-9]{2}' "$DOC"; then
   note "OK: шапка Last reviewed есть"
 else
   note "FAIL: нет шапки '> Last reviewed: YYYY-MM-DD'"; fail=1
+fi
+
+note "== 7. Репо-координаты консистентны (doc <-> script) =="
+# Общие ENV-координаты должны встречаться и в доке, и в скрипте — иначе они разъедутся
+# (переименовали переменную в одном месте, забыли в другом).
+miss=""
+for tok in "GITHUB_FEEDBACK_REPO" "bx-shef/ai-price-import"; do
+  for f in "$DOC" "$SH"; do
+    grep -qF "$tok" "$f" || miss="$miss $f:$tok"
+  done
+done
+if [ -z "$miss" ]; then
+  note "OK: координаты (GITHUB_FEEDBACK_REPO, PROJECT_REPO) совпадают в доке и скрипте"
+else
+  note "FAIL: координата отсутствует/разошлась:$miss"; fail=1
+fi
+
+note "== 8. Внутренние markdown-ссылки не битые =="
+broken=""
+for src in "$DOC" "$CHANNEL_DOC"; do
+  while IFS= read -r target; do
+    [ -z "$target" ] && continue
+    if [ -f "$target" ] || [ -f "docs/$target" ]; then :; else broken="$broken $src->$target"; fi
+  done < <(grep -oE '\]\(([A-Za-z0-9_./-]+\.md)\)' "$src" | sed -E 's/^\]\(//; s/\)$//')
+done
+if [ -z "$broken" ]; then
+  note "OK: внутренние .md-ссылки существуют"
+else
+  note "FAIL: битые ссылки:$broken"; fail=1
+fi
+
+note "== 9. Паритет проверок .sh/.ps1 (одинаковое число шагов) =="
+sh_steps=$(grep -cE '^[[:space:]]*note "== [0-9]+\.' "$SELF")
+ps_steps=$(grep -cE 'Write-Host "== [0-9]+\.' "$PS")
+if [ "$sh_steps" -eq "$ps_steps" ]; then
+  note "OK: $sh_steps шагов в .sh и .ps1"
+else
+  note "FAIL: паритет .sh($sh_steps)/.ps1($ps_steps) разошёлся"; fail=1
 fi
 
 if [ "$fail" -eq 0 ]; then note "== ИТОГ: OK =="; else note "== ИТОГ: ЕСТЬ ОШИБКИ =="; fi

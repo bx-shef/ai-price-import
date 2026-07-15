@@ -5,9 +5,11 @@ $ErrorActionPreference = "Continue"
 Set-Location (Join-Path $PSScriptRoot "..")
 
 $Doc = "docs/FEEDBACK_TRIAGE_AGENT.md"
+$ChannelDoc = "docs/FEEDBACK.md"
 $ClaudeMd = "CLAUDE.md"
 $Sh = "scripts/feedback-triage.sh"
 $Self = "scripts/validate-docs.sh"
+$PsSelf = "scripts/validate-docs.ps1"
 $fail = 0
 $bash = Get-Command bash -ErrorAction SilentlyContinue
 
@@ -88,6 +90,34 @@ Write-Host "== 6. Конвенция: '> Last reviewed: YYYY-MM-DD' под H1 ==
 if (Select-String -Path $Doc -Pattern '^> Last reviewed: \d{4}-\d{2}-\d{2}' -Quiet) {
   Write-Host "OK: шапка Last reviewed есть"
 } else { Write-Host "FAIL: нет шапки '> Last reviewed: YYYY-MM-DD'"; $fail = 1 }
+
+Write-Host "== 7. Репо-координаты консистентны (doc <-> script) =="
+$miss = @()
+foreach ($tok in @("GITHUB_FEEDBACK_REPO", "bx-shef/ai-price-import")) {
+  foreach ($f in @($Doc, $Sh)) {
+    if (-not (Select-String -Path $f -Pattern ([regex]::Escape($tok)) -Quiet)) { $miss += "${f}:${tok}" }
+  }
+}
+if ($miss.Count -eq 0) { Write-Host "OK: координаты совпадают в доке и скрипте" }
+else { Write-Host "FAIL: координата отсутствует/разошлась: $($miss -join ' ')"; $fail = 1 }
+
+Write-Host "== 8. Внутренние markdown-ссылки не битые =="
+$broken = @()
+foreach ($src in @($Doc, $ChannelDoc)) {
+  $targets = Select-String -Path $src -Pattern '\]\(([A-Za-z0-9_./-]+\.md)\)' -AllMatches |
+    ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value }
+  foreach ($t in $targets) {
+    if (-not (Test-Path $t) -and -not (Test-Path (Join-Path 'docs' $t))) { $broken += "${src}->${t}" }
+  }
+}
+if ($broken.Count -eq 0) { Write-Host "OK: внутренние .md-ссылки существуют" }
+else { Write-Host "FAIL: битые ссылки: $($broken -join ' ')"; $fail = 1 }
+
+Write-Host "== 9. Паритет проверок .sh/.ps1 (одинаковое число шагов) =="
+$shSteps = (Select-String -Path $Self -Pattern '^\s*note "== \d+\.').Count
+$psSteps = (Select-String -Path $PsSelf -Pattern 'Write-Host "== \d+\.').Count
+if ($shSteps -eq $psSteps) { Write-Host "OK: $shSteps шагов в .sh и .ps1" }
+else { Write-Host "FAIL: паритет .sh($shSteps)/.ps1($psSteps) разошёлся"; $fail = 1 }
 
 if ($fail -eq 0) { Write-Host "== ИТОГ: OK ==" } else { Write-Host "== ИТОГ: ЕСТЬ ОШИБКИ ==" }
 exit $fail
