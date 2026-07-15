@@ -33,6 +33,14 @@ AI-импорт документов с табличной частью в Bitri
     не гоняясь на ротации refresh-token. Персист — `updateTokensOnRefresh` (UPDATE-only, не воскрешает
     удалённый портал); строка исчезла под локом ⇒ рефреш не делаем. Рефреш-POST ограничен таймаутом
     (`AbortSignal`), чтобы зависший OAuth не запинил лок + соединение пула.
+  - **REST-транспорт к порталу — `@bitrix24/b24jssdk`** (`utils/b24Sdk.ts`, адаптер `B24OAuth`→`RestCall`):
+    у SDK встроенный **RestrictionManager** (пер-портальный leaky-bucket лимитер + auto-retry на
+    `QUERY_LIMIT_EXCEEDED`/429/5xx) — решает REST-бюджет при scale-out. Один `B24OAuth` на портал на
+    джобу = пер-портальный лимит + bind-once; рефреш SDK сам, `setCallbackRefreshAuth` → персист
+    (`updateTokensOnRefresh`, UPDATE-only). **Opt-in** через `B24_SDK_TRANSPORT=1` (дефолт off —
+    свап с ручного `makePortalRestCall` включаем после live-смоука на портале). Чистые мапперы +
+    `makeSdkRestCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` — compile-time
+    drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
   - **Keep-alive рефреш токенов** (`utils/tokenKeepAlive.runTokenKeepAlive`, #175): на cron-инстансе
     суточный крон рефрешит **только** порталы у истечения (`selectTokensNearExpiry` по `updated_at`,
     порог ~3 д, батч-кап 50) — иначе простаивающий портал теряет refresh_token на 180-й день. Гейт на

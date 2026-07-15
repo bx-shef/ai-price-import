@@ -8,6 +8,7 @@ import { ensureFreshToken } from '../utils/ensureAccessToken'
 import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
+import { makePortalSdkCall } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { makePortalRestCall } from '../utils/portalRest'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
@@ -80,13 +81,36 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
   }
 }
 
-/** Memoised per-portal RestCall resolver. Caches only a RESOLVED, non-null RestCall:
- * a null (no token yet) or a rejected promise (transient DB blip on first touch) is
- * evicted, so a portal isn't poisoned for the worker's lifetime — the next job (or
- * BullMQ retry) re-resolves against current state. */
+/** Per-portal RestCall resolver.
+ *
+ * Hand-rolled path (default): MEMOISED — the cached closure calls `ensureFreshToken`
+ * (advisory-lock + DB re-read, #35) on EVERY call, so a process-lifetime cache is safe
+ * (it always picks up a peer/cron token rotation).
+ *
+ * SDK path (`B24_SDK_TRANSPORT=1`): NOT memoised — a `B24OAuth` reads+decrypts the refresh
+ * token ONCE at construction and holds it in memory (reactive refresh). A process-lifetime
+ * cache would wedge on a STALE refresh token after any external rotation (a peer replica or
+ * the keep-alive cron rotates it → this instance's cached client fails invalid_grant forever),
+ * defeating the very #35 cross-instance coordination the SDK swap is meant to provide. So we
+ * build a FRESH client per job (one B24OAuth per portal per crm-sync job) — each job re-reads
+ * the current DB token, so a rotation is observed next job. loadToken is one cheap query. */
 function restResolver(infra: LiveInfra): (memberId: string) => Promise<RestCall | null> {
-  const cache = new Map<string, Promise<RestCall | null>>()
   const deps = { ...ensureDeps(infra), fetchFn: infra.fetchFn }
+  // Opt-in @bitrix24/b24jssdk transport (built-in per-portal rate limiter). Default OFF —
+  // the hand-rolled makePortalRestCall stays default until the SDK path is verified live.
+  if (/^(1|true|yes|on)$/i.test(process.env.B24_SDK_TRANSPORT?.trim() ?? '')) {
+    const sdkDeps = {
+      loadToken: (m: string) => getToken(m, infra.query),
+      saveToken: (input: Parameters<typeof updateTokensOnRefresh>[0]) => updateTokensOnRefresh(input, infra.query),
+      creds: { clientId: infra.clientId, clientSecret: infra.clientSecret },
+      now: infra.now,
+      decrypt: (enc: string) => (enc ? decryptSecret(enc, infra.encKey) : ''),
+      encrypt: (plain: string) => encryptSecret(plain, infra.encKey)
+    }
+    return memberId => makePortalSdkCall(memberId, sdkDeps) // fresh per job (NOT cached)
+  }
+
+  const cache = new Map<string, Promise<RestCall | null>>()
   return async (memberId) => {
     const cached = cache.get(memberId)
     if (cached) return cached
