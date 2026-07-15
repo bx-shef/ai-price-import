@@ -15,7 +15,11 @@ export const MAX_XLSX_ROWS = 500
 export const MAX_XLSX_COLS = 40
 export const MAX_XLSX_UNCOMPRESSED = 40 * 1024 * 1024 // 40 MB expanded — reject bombs
 export const MAX_XLSX_ENTRIES = 128
-export const MAX_XLSX_SHEETS = 32 // read at most this many worksheets (GH #76; DoS bound)
+// Process at most this many worksheets (GH #76). In the FALLBACK this is a real DoS bound —
+// `slice` happens BEFORE `readZipEntry`, so extra sheets are never inflated. In the exceljs
+// path exceljs has already parsed the whole workbook (zipUncompressedTotal/PARSE_TIMEOUT are
+// the guards there), so this only bounds how many sheets we ITERATE, not the load cost.
+export const MAX_XLSX_SHEETS = 32
 /** Cap a single cell's text so one giant cell can't blow up the output line. */
 const MAX_CELL_CHARS = 32_768
 const PARSE_TIMEOUT_MS = 5000
@@ -326,10 +330,10 @@ function parseRow(rowXml: string, shared: string[]): string {
 }
 
 /** Parse the worksheet XML into TAB-separated rows. O(n), indexOf-based (no regex). */
-function parseSheet(xml: string, shared: string[]): string {
+function parseSheet(xml: string, shared: string[], maxRows: number = MAX_XLSX_ROWS): string {
   const lines: string[] = []
   let i = 0
-  while (lines.length < MAX_XLSX_ROWS) {
+  while (lines.length < maxRows) {
     const open = xml.indexOf('<row', i)
     if (open < 0) break
     const gt = xml.indexOf('>', open)
@@ -355,20 +359,28 @@ export function xlsxToTextFallback(buf: Buffer): string {
   const shared = byName['xl/sharedStrings.xml']
     ? parseSharedStrings(readZipEntry(buf, byName['xl/sharedStrings.xml']))
     : []
-  // ALL sheetN.xml, sorted NUMERICALLY (string sort puts sheet10 before sheet2). Reading
-  // every sheet (not just the lowest) so goods on a non-first sheet survive (GH #76); joined
-  // in sheet order, empty sheets dropped, sheet count capped (DoS bound).
+  // ALL worksheets (not just the lowest) so goods on a non-first sheet survive (GH #76);
+  // joined, empty sheets dropped, sheet COUNT capped BEFORE inflate (slice → no wasted work).
+  // NB order is by the `sheetN.xml` FILE number (sheet CREATION order), which is USUALLY but
+  // not always the tab order in workbook.xml (Excel doesn't renumber files on tab reorder).
+  // Good enough for the demo fallback (the exceljs primary path uses true tab order); resolving
+  // workbook.xml→rels would fix it if ever needed.
   const sheetNames = cd.records
     .map(r => r.name)
     .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
     .sort((a, b) => Number(a.match(/(\d+)\.xml$/)![1]) - Number(b.match(/(\d+)\.xml$/)![1]))
     .slice(0, MAX_XLSX_SHEETS)
   const parts: string[] = []
+  let budget = MAX_XLSX_ROWS // SHARED row budget across sheets (parity with the exceljs path)
   for (const name of sheetNames) {
+    if (budget <= 0) break
     const rec = byName[name]
     if (!rec) continue
-    const text = parseSheet(readZipEntry(buf, rec), shared).trim()
-    if (text) parts.push(text)
+    const text = parseSheet(readZipEntry(buf, rec), shared, budget).trim()
+    if (text) {
+      parts.push(text)
+      budget -= text.split('\n').length
+    }
   }
   return parts.join('\n')
 }
