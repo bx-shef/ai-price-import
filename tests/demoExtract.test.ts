@@ -432,3 +432,132 @@ describe('extractDemo — two tables with shifted columns (GH #76)', () => {
     expect(r.totals.sum).toBe(40) // last block's total wins (single-totals demo shape)
   })
 })
+
+describe('extractDemo — descriptive/requisite rows leaking into the table (GH #76)', () => {
+  it('drops bank / address / contract rows that carry numbers', () => {
+    // These leak below the goods (esp. after merged-cell flattening) WITH numbers, so the
+    // numeric-guarded NOISE_ROW can't catch them — they must be dropped by their markers.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт М6|10|5|50',
+      'Р/с|3012000000000|в ОАО Банк|BIC',
+      'Расчётный счёт: BY13 0000 0000|1234|5678|9012',
+      'Юридический адрес:|г. Минск, ул. Ленина 1|220000|—',
+      'БИК|153001|—|—',
+      'Договор № 44-ФЗ от 01.07.2026|—|—|—'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт М6'])
+  })
+
+  it('keeps real products whose names merely resemble requisite markers', () => {
+    // Boundary guards must not drop legitimate goods: «БИК»≠«Бикарбонат», «банк»≠«Банка»,
+    // «Ibanez»≠«IBAN», and we never blanket-drop «основание»/«телефон»/«факс».
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Бикарбонат натрия|5|10|50',
+      'Банка стеклянная 0.5 л|100|1|100',
+      'Основание кровати 160х200|2|150|300',
+      'Телефон IP настольный|3|200|600',
+      'Факс-модем|1|80|80',
+      'Гитара Ibanez GRX70|1|9000|9000',
+      'Фильтр Suzuki Swift масляный|4|300|1200', // «Swift» without a «:» → not a SWIFT code
+      'Фреза БИК-твердосплавная|2|450|900', // «БИК-» not followed by a digit
+      'Труба IBAN 20мм|10|50|500' // «IBAN» not followed by a country code
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual([
+      'Бикарбонат натрия', 'Банка стеклянная 0.5 л', 'Основание кровати 160х200',
+      'Телефон IP настольный', 'Факс-модем', 'Гитара Ibanez GRX70',
+      'Фильтр Suzuki Swift масляный', 'Фреза БИК-твердосплавная', 'Труба IBAN 20мм'
+    ])
+    expect(r.items).toHaveLength(9)
+  })
+
+  it('keeps products whose UNIT column uses slash-abbreviations (л/с, к/с) — not bank accounts', () => {
+    // «л/с» = L/s & лошадиных сил, «к/с» = кадр/с — real units. They collide with the bank
+    // abbreviations, so the filter drops «р/с»/«к/с» ONLY before an account-length digit run.
+    const text = [
+      'Наименование|Кол-во|Ед.|Цена|Сумма',
+      'Насос центробежный 10 л/с|2|шт|15000|30000',
+      'Камера 60 к/с|3|шт|200|600',
+      'Двигатель 100 л/с|1|шт|5000|5000'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(3)
+    expect(r.items.map(i => i.name)).toEqual([
+      'Насос центробежный 10 л/с', 'Камера 60 к/с', 'Двигатель 100 л/с'
+    ])
+  })
+
+  it('does not drop a «р/с»/«к/с» token unless a long account number follows', () => {
+    // A short trailing number (a quantity/spec) is not an account → row kept.
+    const kept = extractDemo(['Наименование|Цена', 'Клапан р/с 3 хода|120'].join('\n'))
+    expect(kept.items.map(i => i.name)).toEqual(['Клапан р/с 3 хода'])
+    // A long digit run after «р/с» IS an account → dropped.
+    const dropped = extractDemo(['Наименование|Цена|Прочее', 'Болт|5|р/с 3012000000000'].join('\n'))
+    expect(dropped.items).toHaveLength(0)
+  })
+
+  it('does not drop a product that contains «адрес» without the requisite phrase', () => {
+    // Only «юридический/почтовый/фактический/юр. адрес» are dropped, not bare «адрес».
+    const text = ['Наименование|Цена', 'Адресная табличка металлическая|12.50'].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Адресная табличка металлическая'])
+  })
+
+  it('keeps a service line item referencing a contract («Услуги по договору № …»)', () => {
+    // «Договор №»/«Контракт №» drop only when the ROW STARTS with it (a basis line) — a
+    // service described by its contract is a real line item and must stay.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Услуги по договору № 44-ФЗ|1|1000|1000',
+      'Работы по контракту № 7|2|500|1000',
+      'Договор № 44-ФЗ от 01.07.2026|—|—|—' // basis line at row start → dropped
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Услуги по договору № 44-ФЗ', 'Работы по контракту № 7'])
+  })
+
+  it('drops Belarusian / Kazakh requisite rows (parity with be/kk scope)', () => {
+    const be = [
+      'Найменне|Кошт',
+      'Цвік будаўнічы|3.20',
+      'Разлiковы рахунак BY13 0000|—',
+      'Юрыдычны адрас: г. Мінск|—',
+      'Дагавор № 5 ад 01.07.2026|—'
+    ].join('\n')
+    expect(extractDemo(be).items.map(i => i.name)).toEqual(['Цвік будаўнічы'])
+    const kk = [
+      'Атауы|Бағасы',
+      'Кабель ВВГ|4.50',
+      'Есеп-шоты: KZ75 0000|—',
+      'Мекенжай: Алматы қ.|—',
+      'Шарт № 7|—'
+    ].join('\n')
+    expect(extractDemo(kk).items.map(i => i.name)).toEqual(['Кабель ВВГ'])
+  })
+
+  it('drops a requisite row INSIDE the second table and keeps the product after it', () => {
+    // Cross-feature: header re-detection (≥3 roles) + descriptive filter together, and the
+    // filter skips only the one row (a valid product right after is still captured).
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт|10|5|50',
+      '№|Наименование|Кол-во|Цена|Сумма', // second table header (4 roles → re-map)
+      '1|Гайка|20|2|40',
+      'Р/с 3012000000000 в ОАО Банк|—|—|—|—', // requisite inside the 2nd table
+      '2|Шайба|100|1|100'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт', 'Гайка', 'Шайба'])
+  })
+
+  it('applies the filter regardless of delimiter (tab / semicolon)', () => {
+    for (const d of ['\t', ';']) {
+      const text = [`Наименование${d}Цена`, `Болт${d}5`, `Р/с 3012000000000${d}в банке`].join('\n')
+      const r = extractDemo(text)
+      expect(r.items.map(i => i.name)).toEqual(['Болт'])
+    }
+  })
+})

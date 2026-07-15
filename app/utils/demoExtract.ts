@@ -255,6 +255,9 @@ export function extractDemo(input: string): DemoResult {
         if (val !== undefined) totals[totalKind] = val
         continue
       }
+      // Drop a leaked bank/address/contract/requisite line (see DESCRIPTIVE_ROW). Checked on
+      // the whole joined row — the marker may sit in any flattened cell.
+      if (DESCRIPTIVE_ROW.test(joined)) continue
       const name = pick(cells, roles.name)
       const quantity = parseNum(pick(cells, roles.qty))
       const price = parseNum(pick(cells, roles.price))
@@ -306,6 +309,41 @@ function pick(cells: string[], idx: number | undefined): string {
 // the items (esp. after merged-cell flattening). Only used to drop a row that ALSO has no
 // numbers — a real product with these words in its name keeps its figures and stays.
 const NOISE_ROW = /^(?:ответственн|исполнител|руководител|директор|гл(?:авный|\.)?\s*бухгалтер|бухгалтер|товар[ы]?\s+(?:отпустил|получил|принял)|отпуск\s+разрешил|отпустил|принял|сдал|груз\s+(?:получил|принял|сдал)|грузополучател|грузоотправител|изготовител|менеджер|м\.?\s*п\.?(?:\s|$)|подпис|по\s+доверенности|выписал|адпуск|адказн)/iu
+
+// Banking / address / contract / requisite markers of a NON-product line that leaked into
+// the table WITH numbers (account no. / postal index / contract no.) — so, unlike NOISE_ROW,
+// this drops the row regardless of figures (GH #76). Every marker is a phrase or code that
+// is never a product name; boundary lookarounds `(?<![\p{L}\d])…(?![\p{L}])` keep real goods
+// safe: «БИК»≠«Бикарбонат», «Ibanez»/«л/сут» kept, we never list bare «основание»/«телефон»/
+// «факс»/«банк» (all valid product words).
+//   The bare slash-forms «р/с» and «к/с» collide with measurement units (л/с = L/s & л.с.,
+// к/с = кадр/с), so they only match when FOLLOWED by an account-length digit run (IBAN
+// «BY13…» or ≥5 digits) — a settlement/correspondent account always is; a unit isn't. The
+// ambiguous «л/с», «к/с»(fps), «р/р»(раствор) are NOT listed — a leaked account line is
+// already caught by «р/сч»/«расчётный счёт»/IBAN/БИК. Longer variants precede shorter ones.
+const ACCT_AHEAD = /(?=\s*[№:]?\s*(?:[A-Z]{2}\d|\d{5,}))/ // lookahead: IBAN prefix or long digit run
+const DESCRIPTIVE_ROW = new RegExp(
+  '(?<![\\p{L}\\d])(?:'
+  + 'р\\/сч(?:[её]т)?|р\\/с' + ACCT_AHEAD.source
+  + '|к\\/сч(?:[её]т)?|к\\/с' + ACCT_AHEAD.source
+  + '|корр?\\.?\\s*сч[её]т|расч[её]тн\\p{L}*\\s+сч[её]т|корреспондентск\\p{L}*\\s+сч[её]т'
+  // IBAN/SWIFT/БИК gated to a code/digit context so brand/product tokens survive
+  // («Suzuki Swift фильтр», «Труба IBAN», «БИК-фреза») — a requisite always has the code.
+  + '|IBAN(?=\\s*[:№]?\\s*[A-Z]{2}\\d)|SWIFT(?=\\s*[:/])|БИК(?=\\s*[:№]?\\s*\\d)'
+  + '|(?:УНП|БИН|ИНН)\\s+банка|наименован\\p{L}*\\s+банка'
+  + '|банковск\\p{L}*\\s+реквизит|реквизит\\p{L}*\\s+сторон'
+  + '|юридическ\\p{L}*\\s+адрес|почтов\\p{L}*\\s+адрес|фактическ\\p{L}*\\s+адрес|юр\\.?\\s*адрес'
+  // Belarusian / Kazakh requisites (parity with the ru/be/kk product scope). Full phrases,
+  // never product names: «разлiковы рахунак» (bare «рахунак» = the invoice title, excluded),
+  // «есеп(-)шот(ы)» account, «мекенжай» address, «юрыдычны/паштовы/фактычны адрас».
+  + '|разл[іi]\\p{L}*\\s+рахун\\p{L}*|есеп[-\\s]?шот\\p{L}*|мекен[-\\s]?жай\\p{L}*'
+  + '|юрыдычн\\p{L}*\\s+адрас|паштов\\p{L}*\\s+адрас|фактычн\\p{L}*\\s+адрас'
+  // «Договор/Дагавор/Шарт/Пагадненне №» ONLY when the row STARTS with it (a leaked
+  // «основание» line) — a service item «Услуги по договору № 44» has it mid-name and stays.
+  + '|^\\s*(?:договор|контракт|дагавор|пагадненн|шарт)(?![\\p{L}])\\s*№'
+  + ')(?![\\p{L}])',
+  'iu'
+)
 
 // A supplier stated without a «Поставщик:» label — most templates just print the company
 // at the top: «ООО "Смартон", УНП …» / «ОАО Речицадрев». Capture the legal-form + name,
