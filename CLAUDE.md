@@ -31,7 +31,12 @@ AI-импорт документов с табличной частью в Bitri
   - **Рефреш OAuth-токена сериализован per-portal** (`utils/dbLock.withAdvisoryLock`, `ensureAccessToken`,
     #35): при scale-out N воркеров рефрешат один портал ровно раз (advisory-lock + re-read внутри лока),
     не гоняясь на ротации refresh-token. Персист — `updateTokensOnRefresh` (UPDATE-only, не воскрешает
-    удалённый портал); строка исчезла под локом ⇒ рефреш не делаем.
+    удалённый портал); строка исчезла под локом ⇒ рефреш не делаем. Рефреш-POST ограничен таймаутом
+    (`AbortSignal`), чтобы зависший OAuth не запинил лок + соединение пула.
+  - **Keep-alive рефреш токенов** (`utils/tokenKeepAlive.runTokenKeepAlive`, #175): на cron-инстансе
+    суточный крон рефрешит **только** порталы у истечения (`selectTokensNearExpiry` по `updated_at`,
+    порог ~3 д, батч-кап 50) — иначе простаивающий портал теряет refresh_token на 180-й день. Гейт на
+    `B24_CLIENT_ID/SECRET`, каденция `TOKEN_KEEPALIVE_HOURS` (дефолт 24, кламп [1h,168h]).
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
 - `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).

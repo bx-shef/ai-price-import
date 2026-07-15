@@ -4,6 +4,8 @@ import { REST_TIMEOUT_MS } from '../utils/b24Rest'
 import type { AgentSpawn } from '../agent/runAgent'
 import type { ExtractRunners } from '../utils/textExtract'
 import type { EnsureDeps } from '../utils/ensureAccessToken'
+import { ensureFreshToken } from '../utils/ensureAccessToken'
+import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
 import { purgePortalFiles } from '../utils/nodeFileIO'
@@ -109,6 +111,31 @@ async function loadMapping(memberId: string, rest: (m: string) => Promise<RestCa
     return await readMapping(call)
   } catch {
     return defaultMapping()
+  }
+}
+
+/** Keep-alive deps (#175): select near-expiry portals + force-refresh each under the
+ *  per-portal lock (reuses ensureFreshToken → advisory lock + UPDATE-only persist). */
+export function liveKeepAliveDeps(infra: LiveInfra): KeepAliveDeps {
+  const ens = ensureDeps(infra)
+  return {
+    now: infra.now,
+    selectNearExpiry: nowMs => selectTokensNearExpiry(infra.query, nowMs),
+    refreshPortal: async (memberId) => {
+      const tok = await getToken(memberId, infra.query)
+      if (!tok) return 'skipped' // vanished (uninstalled) — nothing to keep alive
+      try {
+        await ensureFreshToken(memberId, ens, true) // force → rotates; throws on a dead grant
+        return 'refreshed'
+      } catch (e) {
+        // Uninstalled between the read and acquiring the lock → the row vanished under the
+        // lock (ensureFreshToken throws "no token"). That is a benign skip, NOT a dead grant.
+        if ((e as { message?: string })?.message?.includes('no token')) return 'skipped'
+        throw e
+      }
+    },
+    log: msg => console.info(msg),
+    warn: msg => console.warn(msg)
   }
 }
 
