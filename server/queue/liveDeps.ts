@@ -24,6 +24,7 @@ import { createProductViaRest } from '../utils/productCreate'
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
+import { buildConfigurableActivity, entityOpenPath } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { extractText } from '../utils/textExtract'
 import { uploadPath } from '../utils/fileStore'
@@ -213,6 +214,18 @@ function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: str
       if (!mapping.notifyChatId) return
       const t = await need()
       await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary), t.call)
+    },
+    // Configurable timeline activity on the created entity (crm.activity.configurable.add,
+    // OAuth app context — verified live). Best-effort; runCrmSync swallows failures.
+    writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount }) => {
+      const params = buildConfigurableActivity({
+        entityTypeId,
+        ownerId: entityId,
+        title: `Импорт: ${supplierName ?? 'документ'}`,
+        lines: [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : [])],
+        openPath: entityOpenPath(entityTypeId, entityId)
+      })
+      await (await need()).call('crm.activity.configurable.add', params)
     }
   }
 }

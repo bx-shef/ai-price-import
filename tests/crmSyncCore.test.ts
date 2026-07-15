@@ -69,6 +69,41 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.warnings).toContain('Уведомление в чат не отправлено')
   })
 
+  it('writeActivity records a configurable дело on the created entity', async () => {
+    const writeActivity = vi.fn(async () => {})
+    await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
+    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, supplierName: 'ООО Ромашка', rowCount: 1 })
+  })
+
+  it('does NOT write a дело on an idempotent resume (already-processed job)', async () => {
+    const writeActivity = vi.fn(async () => {})
+    const deps = baseDeps({ writeActivity, getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 900 })) })
+    const r = await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(r.idempotent).toBe(true)
+    expect(writeActivity).not.toHaveBeenCalled()
+  })
+
+  it('a failing writeActivity adds a warning but does not fail the import', async () => {
+    const writeActivity = vi.fn(() => Promise.reject(new Error('timeline down')))
+    const r = await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
+    expect(r.created).toBe(true)
+    expect(r.warnings).toContain('Дело в таймлайне не создано')
+  })
+
+  it('writeActivity rowCount is WRITTEN rows, not document item count (skip-warn divergence)', async () => {
+    const writeActivity = vi.fn(async () => {})
+    const m = mapping()
+    m.product.onMissing = 'skip-warn'
+    const twoItems: ExtractedDocument = { ...doc, items: [
+      { name: 'A', price: 10, quantity: 1, unit: 'шт', vatRate: 22 },
+      { name: 'B', price: 20, quantity: 1, unit: 'шт', vatRate: 22 }
+    ] }
+    // Only A matches → B is skip-warned → 1 row written though the doc has 2 items.
+    const findProduct = vi.fn(async (it: ExtractedDocument['items'][number]) => it.name === 'A' ? 111 : null)
+    await runCrmSync('job1', twoItems, m, {}, baseDeps({ writeActivity, findProduct }))
+    expect(writeActivity).toHaveBeenCalledWith(expect.objectContaining({ rowCount: 1 }))
+  })
+
   it('idempotent resume → does NOT re-notify (created=false path stays silent)', async () => {
     const notifySuccess = vi.fn(async () => {})
     const deps = baseDeps({ getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 999 })), notifySuccess })
