@@ -9,10 +9,12 @@
 //   - catalog.productProperty.list filter[iblockId] → result.productProperties[] with
 //     { id, code, name, propertyType }.
 // Normalized to one shape ({ value: code, label: name }). The query is applied
-// in-memory (the REST list has no name-substring filter) — catalogs carry few
-// properties, so a single page + client-side filter is robust.
+// in-memory (the REST list has no name-substring filter). We page through ALL
+// properties (catalog.productProperty.list is paginated, 50/page, #87) so a large B2B
+// catalog with >50 product properties doesn't silently drop the tail from the picker.
 
 import type { RestCall } from './b24Rest'
+import { fetchAllPages } from './restPaginate'
 
 /** One pickable property: `value` is the stored code (or PROPERTY_<id> fallback),
  *  `label` the human name. `id`/`code` are carried for callers that need them. */
@@ -75,14 +77,19 @@ export function filterProperties(props: PropertyOption[], q: string): PropertyOp
 }
 
 /**
- * Compose: resolve the main iblockId → list its product properties → normalize →
- * filter by query. Single page (catalogs have few properties), so `hasMore` is always
- * false. Empty list when no catalog is found (never throws for that — the route maps
- * transport failures to 502).
+ * Compose: resolve the main iblockId → page through ALL its product properties →
+ * normalize → filter by query. `hasMore` is always false because we already fetched
+ * every page (not because we assume one page). Empty list when no catalog is found
+ * (never throws for that — the route maps transport failures to 502).
  */
 export async function searchCatalogProperties(call: RestCall, q: string): Promise<PropertySearchPage> {
   const iblockId = await resolveMainIblockId(call)
   if (!iblockId) return { items: [], hasMore: false }
-  const resp = await call('catalog.productProperty.list', { filter: { iblockId } })
-  return { items: filterProperties(normalizeProperties(resp), q), hasMore: false }
+  const rows = await fetchAllPages(
+    call,
+    'catalog.productProperty.list',
+    { filter: { iblockId } },
+    r => (r as { productProperties?: unknown[] })?.productProperties
+  )
+  return { items: filterProperties(normalizeProperties({ productProperties: rows }), q), hasMore: false }
 }

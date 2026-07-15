@@ -49,6 +49,13 @@ AI-импорт документов с табличной частью в Bitri
     механизм — фрейм-access-токен, не OAuth). Чистые мапперы +
     `makeSdkRestCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` — compile-time
     drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
+  - **Пагинация enumerate-all списков** (`utils/restPaginate.fetchAllPages`, #87): find-one lookup'ы
+    (`findCompanyByTaxId`/`findProduct`) берут первый id и в пагинации не нуждаются, но три **enumerate-all**
+    чтения молча обрезались на дефолтной странице B24 (50). RestCall отдаёт **unwrapped** `result` (envelope
+    `next`/`total` не виден), поэтому `fetchAllPages` листает по `start`-оффсету и стопается на короткой/пустой
+    странице; кап `MAX_PAGES=200` не молчит (`console.warn`). Подключены `fetchVatRates` (`crm.vat.list`) и
+    `searchCatalogProperties` (`catalog.productProperty.list`). `fetchCurrencies` (`crm.currency.list`) **НЕ**
+    паджинируется намеренно — метод отдаёт все валюты за один вызов (`total:0`, игнорит `start`; live+docs).
   - **Keep-alive рефреш токенов** (`utils/tokenKeepAlive.runTokenKeepAlive`, #175): на cron-инстансе
     суточный крон рефрешит **только** порталы у истечения (`selectTokensNearExpiry` по `updated_at`,
     порог ~3 д, батч-кап 50) — иначе простаивающий портал теряет refresh_token на 180-й день. Гейт на
