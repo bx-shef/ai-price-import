@@ -49,4 +49,12 @@ describe('checkBackendEnv', () => {
     // no operator password → no operator warnings at all
     expect(checkBackendEnv({ ...base, OPERATOR_SESSION_SECRET: 'short' }).warnings.some(w => /OPERATOR/.test(w))).toBe(false)
   })
+
+  it('warns on an invalid QUEUE_*_CONCURRENCY, stays quiet when unset or valid (GH #95)', () => {
+    const base = { B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_CLIENT_ID: 'i', B24_CLIENT_SECRET: 's', REDIS_URL: 'r' }
+    expect(checkBackendEnv({ ...base, QUEUE_EXTRACT_CONCURRENCY: 'abc' }).warnings.some(w => /QUEUE_EXTRACT_CONCURRENCY/.test(w))).toBe(true)
+    expect(checkBackendEnv({ ...base, QUEUE_AGENT_CONCURRENCY: '0' }).warnings.some(w => /QUEUE_AGENT_CONCURRENCY/.test(w))).toBe(true)
+    expect(checkBackendEnv({ ...base }).warnings.some(w => /CONCURRENCY/.test(w))).toBe(false) // unset = fine
+    expect(checkBackendEnv({ ...base, QUEUE_CRM_CONCURRENCY: '2' }).warnings.some(w => /CONCURRENCY/.test(w))).toBe(false) // valid
+  })
 })

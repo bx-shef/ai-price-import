@@ -117,3 +117,11 @@
   `liveExtractRunners.ocr` определяет `%PDF-` и растеризует `pdftoppm` постранично → OCR каждой
   страницы последовательно (CPU/RAM-бюджет), числовой порядок, кап `MAX_OCR_PDF_PAGES=30`. Проверено:
   скан «Керамика» (Счёт-фактура №1280, УНП 300000303) — было падение, стало 1472 симв. извлечено.
+- 2026-07-14 — GH #95 + #99 (воркер/безопасность): (#95) конкуренция очередей extract/agent/crm
+  вынесена в env `QUEUE_*_CONCURRENCY` (дефолты 4/2/4, кап `MAX_QUEUE_CONCURRENCY=64`, envCheck
+  предупреждает о мусоре); `OMP_THREAD_LIMIT`/`OMP_NUM_THREADS` в `.env.example`. (#99) `run()` всегда
+  передаёт урезанный env (allow-list `subprocessEnv`) — libreoffice/pdftotext/tesseract/pdftoppm не
+  видят секретов бэкенда; libreoffice запускается `--safe-mode` (макросы off) + per-job профиль
+  (`-env:UserInstallation`, не дерутся за lock под конкуренцией). Чистые функции + тесты (в т.ч.
+  интеграция `run()`→spawn: секреты исключены). Проверено вживую: все 3 бинаря работают с урезанным
+  env, много-листовой xls извлекается с safe-mode+профилем.

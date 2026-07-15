@@ -125,6 +125,7 @@
 | Нормализация `validateExtractedDocument` | `tests/extractedDocument.test.ts` | Коэрция чисел ru/be/kk и `20%`; сохранение `vatRate:0`; отклонение 4+-буквенной валюты; digits-only taxId; drop supplier без name; DoS-клампы; cap `MAX_ITEMS` | [авто] |
 | Промпт | `tests/extractPrompt.test.ts` | «РОВНО ОДИН JSON» без markdown; метки налогов 3 стран; единый НДС + 1-в-1 + казахские буквы; пример проходит валидатор | [авто] |
 | Санитайз env `agentSpawnEnv` | `tests/agent.test.ts` | Пропускает LLM-ключи/PATH, вырезает `DATABASE_URL`/`B24_TOKEN_ENC_KEY`/`B24_CLIENT_SECRET`; extractor-mode: пустой `--allowedTools`, полный `--disallowedTools`, нет `--mcp-config`; per-job bearer в `buildMcpConfig` | [авто] |
+| Санитайз env субпроцессов `subprocessEnv` (GH #99) | `tests/extractRunners.test.ts` + `tests/runnerEnvIntegration.test.ts` | libreoffice/pdftotext/tesseract/pdftoppm видят только allow-list (PATH/HOME/локаль/OMP/шрифты), НЕ `DATABASE_URL`/`B24_TOKEN_ENC_KEY`/`B24_CLIENT_SECRET`; `run()`→spawn реально режет env; libreoffice `--safe-mode` (макросы off) + per-job профиль | [авто] |
 | `extractJson` | `tests/agent.test.ts` | Последний сбалансированный объект; скобки/кавычки в строках; null на битом/пустом/оверсайз >2МБ | [авто] |
 | `spawn` (`makeAgentSpawn`) | `tests/agentSpawn.test.ts` | Сбор stdout/stderr, санитайз-env; дедлайн→SIGKILL code 124; резолв один раз; error→terminal | [авто] |
 | Retry-политика | `tests/agentRetry.test.ts` | `classifyAgentError` transient на 429/5xx/ECONNRESET/overloaded, terminal на своём timeout/пустом; `nextBackoffMs` экспонента+джиттер кап 30с | [авто] |
@@ -187,7 +188,7 @@
 | `handleCrmSyncJob` | `tests/queueHandlers.test.ts` | Норм→`done`; нет документа→`error` без run; жёсткая ошибка→`error`; идемпотентный→`done` `created:false`; сбой `deleteDocument` не роняет | [авто] |
 | Детерминизм `makeJobId` и др. | — | Прямого юнит-теста нет — предложить добавить | [вручную] |
 | Без `REDIS_URL` | `pnpm dev`, дёрнуть продюсер | `queueEnabled()`=false, `getQueue()`→null, продюсеры no-op, воркеры не стартуют | [вручную] |
-| Redis поднят | `docker compose up redis`, старт бэкенда | Лог `[queue] started 3 pipeline workers`; concurrency extract=4/agent=2/crm=4 | [вручную] |
+| Redis поднят | `docker compose up redis`, старт бэкенда | Лог `[queue] started 3 pipeline workers`; concurrency extract=4/agent=2/crm=4 (конфигурируется QUEUE_*_CONCURRENCY, GH #95) | [вручную] |
 | Ретраи инфра-сбоя | Джоба с падающим транспортом | `attempts:3`, backoff 5000ms; после — `onExhausted`: `setJobStatus 'error'` + extract `cleanupUpload` | [вручную] |
 | Джоба без memberId/jobId | — | `onExhausted` тихо выходит, не бросает | [вручную] |
 | Дедуп повторной доставки | enqueue дважды с тем же ключом | Вторая не создаёт дубль | [вручную] |
@@ -301,7 +302,7 @@
 | compose dev-стек | `docker compose up -d` | Поднимаются backend (`mem_limit 2g`, том uploads), db (postgres:16), redis:7; логи `[db] schema ensured`, `[queue] started N workers` | [вручную/бинарями] |
 | compose без Redis/БД | Старт без `REDIS_URL`/`DATABASE_URL` | Очередь отключена (аплоады→503), хранилище no-op, процесс поднимается, health/лендинг работают | [вручную] |
 | compose mem_limit vs бомба | zip/XML/image-бомба через libreoffice/tesseract | `mem_limit: 2g` не даёт OOM хоста, контейнер убивается | [вручную] |
-| Ресурсы/OCR-таймаут на минимуме | 2 vCPU, несколько тяжёлых сканов разом | Конкуренция воркера (`server/queue/worker.ts`) ≤ числу ядер и/или `OMP_THREAD_LIMIT` выставлен — иначе OCR ложно упирается в `RUN_TIMEOUT_MS` 90с. См. `09-deploy §Ресурсы воркера` | [вручную/нужен прод] |
+| Ресурсы/OCR-таймаут на минимуме | 2 vCPU, несколько тяжёлых сканов разом | Конкуренция воркера (`QUEUE_*_CONCURRENCY`, конфигурируется — GH #95) ≤ числу ядер и/или `OMP_THREAD_LIMIT` выставлен — иначе OCR ложно упирается в `RUN_TIMEOUT_MS` 90с. См. `09-deploy §Ресурсы воркера` | [вручную/нужен прод] |
 | CI job `ci` | PR/пуш в `main` | Порядок install→lint→typecheck→test→generate, Node 22, pnpm-кэш; имя job `ci` (required-check) | [авто/CI] |
 | CI job `docker-build` | Тот же триггер | `docker build --target backend` без push, gha-кэш scope=backend | [авто/CI] |
 | CI pin actions | Ревизия workflow | Все сторонние actions на commit SHA; `permissions: contents: read` | [вручную] |
