@@ -255,12 +255,8 @@ export function extractDemo(input: string): DemoResult {
         if (val !== undefined) totals[totalKind] = val
         continue
       }
-      // Bank / address / contract / requisite lines that leak into the goods table (esp.
-      // after merged-cell flattening) CARRY numbers — an account no., postal index, contract
-      // no. — so the numeric-guarded NOISE_ROW below can't catch them and «Р/с 3012…» would
-      // surface as a product (GH #76). Drop them by strong descriptive markers that are never
-      // product names (boundary-guarded so «Бикарбонат»/«Банка»/«Основание кровати»/«Телефон»
-      // stay). Checked on the whole joined row — the marker may sit in any flattened cell.
+      // Drop a leaked bank/address/contract/requisite line (see DESCRIPTIVE_ROW). Checked on
+      // the whole joined row — the marker may sit in any flattened cell.
       if (DESCRIPTIVE_ROW.test(joined)) continue
       const name = pick(cells, roles.name)
       const quantity = parseNum(pick(cells, roles.qty))
