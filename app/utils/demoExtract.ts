@@ -229,11 +229,24 @@ export function extractDemo(input: string): DemoResult {
     for (const raw of lines) {
       if (!raw.includes(delim)) continue
       const cells = raw.split(delim).map(c => c.trim())
-      if (!roles) {
-        const mapped = mapHeader(cells)
-        if (mapped) roles = mapped
+      // Header row. The FIRST one starts the table; a LATER one is a SECOND table with its
+      // own column layout (GH #76: счёт + «Спецификация»/«Протокол согласования» ниже, где
+      // колонки сдвинуты) — re-map roles so the new block doesn't inherit the first table's
+      // positions (quantity/price/sum would misalign).
+      //   Re-detection (roles already set) is GUARDED to ≥3 distinct column roles. A single
+      // product/service/totals row can coincidentally hit TWO keywords in its VALUES — e.g.
+      // «Услуга доставки | Цена по запросу» (name+price), «Итого сумма товаров | 200»
+      // (name+sum), «Услуга | Количество мест: 2 | …» (name+qty) — and would otherwise be
+      // mistaken for a header, dropping the row AND corrupting the in-progress table. A real
+      // second-table header lists the full column set (name + qty/price/sum → ≥3 roles), which
+      // ambiguous data/totals rows don't reach. First-header detection stays unguarded (the
+      // opening header has no prior data to protect, and a 2-column price list is valid there).
+      const header = mapHeader(cells)
+      if (header && (!roles || Object.keys(header).length >= 3)) {
+        roles = header
         continue
       }
+      if (!roles) continue // lines with the delimiter before any header → pre-table noise
       // Totals lines (Итого / Усяго / Барлығы / НДС / ПДВ / ҚҚС / Всего)
       const joined = cells.join(' ')
       const totalKind = classifyTotal(joined)

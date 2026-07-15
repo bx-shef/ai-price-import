@@ -327,3 +327,108 @@ describe('extractDemo — real-invoice quality (GH #66)', () => {
     expect(r.items[0]!.name).toBe('Болт М6')
   })
 })
+
+describe('extractDemo — two tables with shifted columns (GH #76)', () => {
+  it('re-maps roles for a second table whose columns are shifted', () => {
+    // Счёт (name|qty|price|sum) followed by a «Спецификация» with an extra leading «№»
+    // column (num|name|qty|price|sum). Without re-detection the spec rows would inherit
+    // the first table's positions → quantity/price/sum shift by one column.
+    const text = [
+      'Счёт № 76',
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт М6|10|5|50',
+      'Гайка М6|20|2|40',
+      'Спецификация',
+      '№|Наименование|Кол-во|Цена|Сумма',
+      '1|Шайба М6|100|1|100'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт М6', 'Гайка М6', 'Шайба М6'])
+    // The spec row parsed under ITS OWN header, not the first table's columns.
+    expect(r.items[2]).toMatchObject({ name: 'Шайба М6', quantity: 100, price: 1, sum: 100 })
+  })
+
+  it('does not leak a repeated page-header in as a «(без наименования)» item', () => {
+    // A multi-page export repeats the header. Previously it was parsed as a data row
+    // (name = «Наименование», no numbers) → a junk item; now it re-maps the same roles.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт М6|10|5|50',
+      'Наименование|Кол-во|Цена|Сумма', // repeated header on «page 2»
+      'Гайка М6|20|2|40'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт М6', 'Гайка М6'])
+    expect(r.items.some(i => i.name === 'Наименование')).toBe(false)
+    expect(r.items.some(i => i.name === '(без наименования)')).toBe(false)
+  })
+
+  it('a data row containing a name-column keyword does NOT reset the table', () => {
+    // «Товар» matches the name-column regex, but a real product row lacks a second header
+    // keyword (qty/price/sum are numbers), so mapHeader returns null → no false re-map.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Товар хозяйственный|3|10|30',
+      'Гайка|20|2|40'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(2)
+    expect(r.items[0]).toMatchObject({ name: 'Товар хозяйственный', quantity: 3, price: 10, sum: 30 })
+  })
+
+  // ── False-positive guards: a data/totals row that coincidentally hits TWO column
+  // keywords in its VALUES must NOT be mistaken for a second-table header (≥3-role guard). ──
+
+  it('keeps a service row whose cells hit name+qty keywords («Услуга … | Количество мест: 2 | …»)', () => {
+    const text = [
+      'Наименование|Характеристика|Кол-во|Цена|Сумма',
+      'Услуга доставки|Количество мест: 2|1|5000|5000',
+      'Погрузо-разгрузочные работы|бригада|4|800|3200'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(2)
+    expect(r.items[0]).toMatchObject({ name: 'Услуга доставки', quantity: 1, price: 5000, sum: 5000 })
+    expect(r.items[1]).toMatchObject({ name: 'Погрузо-разгрузочные работы', quantity: 4, price: 800, sum: 3200 })
+  })
+
+  it('keeps a КП row with a textual price hitting name+price keywords («Услуга … | Цена по запросу»)', () => {
+    const text = ['Наименование|Цена', 'Услуга доставки|Цена по запросу', 'Перчатки|1.10'].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Услуга доставки', 'Перчатки'])
+    expect(r.items[0]).toMatchObject({ name: 'Услуга доставки', price: undefined })
+  })
+
+  it('classifies a totals row hitting name+sum keywords («Итого сумма товаров | 200») as a total, not a header', () => {
+    const text = ['Наименование|Кол-во|Цена|Сумма', 'Насос|2|100|200', 'Итого сумма товаров|200'].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.totals.sum).toBe(200)
+  })
+
+  it('a re-mapped second header with fewer columns clears the dropped role (no stale sum index)', () => {
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт|10|5|50',
+      'Наименование|Кол-во|Цена', // spec block without a «Сумма» column
+      'Гвоздь|5|3'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items[1]).toMatchObject({ name: 'Гвоздь', quantity: 5, price: 3 })
+    expect(r.items[1]!.sum).toBeUndefined() // must not read a stale «Сумма» index
+  })
+
+  it('handles totals in BOTH the счёт block and the spec block', () => {
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт|10|5|50',
+      'Итого|50',
+      '№|Наименование|Кол-во|Цена|Сумма',
+      '1|Гайка|20|2|40',
+      'Итого|40'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт', 'Гайка'])
+    expect(r.items.some(i => /Итого/.test(i.name))).toBe(false)
+    expect(r.totals.sum).toBe(40) // last block's total wins (single-totals demo shape)
+  })
+})
