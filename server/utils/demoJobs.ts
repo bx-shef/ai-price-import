@@ -33,6 +33,12 @@ export function buildDemoJobStore(env: NodeJS.ProcessEnv = process.env): AsyncDe
       { ttlMs: JOB_TTL_MS, keyPrefix: REDIS_KEY_PREFIX, genId: randomUUID }
     )
   }
+  // Misconfiguration guard: DEMO_JOBSTORE=redis was requested but REDIS_URL is unset, so we
+  // fall back to the per-process memory store. On a multi-replica deploy that silently
+  // reintroduces the exact cross-replica 404 this feature fixes → make it observable.
+  if (wantRedis && !conn) {
+    console.warn('[demo-jobstore] DEMO_JOBSTORE=redis but REDIS_URL is unset — falling back to in-memory (single-instance) store')
+  }
   return toAsyncDemoJobStore(createDemoJobStore({ ttlMs: JOB_TTL_MS, maxJobs: JOB_MAX, genId: randomUUID }))
 }
 

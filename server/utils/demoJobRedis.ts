@@ -16,10 +16,13 @@ export function createIoredisRedisLike(conn: RedisOptions): RedisLike {
     ...(conn.password ? { password: conn.password } : {}),
     ...(conn.username ? { username: conn.username } : {}),
     lazyConnect: true,
-    // Do not queue commands forever if Redis is down — fail fast so the route falls through
-    // to a clean 404/"pending" rather than hanging the poll.
+    // Fail fast when Redis is down so the poll route degrades to a clean 404 instead of
+    // hanging: bound per-command retries AND refuse to buffer commands while disconnected
+    // (enableOfflineQueue:false → a command against a down client rejects at once, caught
+    // below). Without this, offline commands queue behind the connect timeout/backoff and
+    // add seconds of latency to the public route.
     maxRetriesPerRequest: 2,
-    enableOfflineQueue: true
+    enableOfflineQueue: false
   })
   // A connection error must not take down the process; the store methods below swallow
   // per-call errors (a failed poll just reads as "gone").

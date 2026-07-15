@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createDemoJobStore,
   toAsyncDemoJobStore,
@@ -7,6 +7,7 @@ import {
   parseJobState,
   type RedisLike
 } from '../server/utils/demoJobStore'
+import { buildDemoJobStore } from '../server/utils/demoJobs'
 import type { DemoResult } from '../app/utils/demoExtract'
 
 const RESULT = { docType: 'invoice', docTypeLabel: 'счёт', items: [], totals: {}, language: 'ru', warnings: [] } as unknown as DemoResult
@@ -26,6 +27,32 @@ describe('serializeJobState / parseJobState', () => {
     expect(parseJobState('not json')).toBeNull()
     expect(parseJobState('{"status":"bogus"}')).toBeNull()
     expect(parseJobState('{}')).toBeNull()
+  })
+})
+
+// ── backend selection (buildDemoJobStore) ────────────────────────────────────
+// Note: connectionOptions() memoizes process.env.REDIS_URL at module load; unit tests run
+// with REDIS_URL unset, so both branches below resolve to the in-memory backend. The Redis
+// branch itself is covered by createRedisDemoJobStore above.
+describe('buildDemoJobStore selection', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('defaults to a working in-memory store when DEMO_JOBSTORE is unset', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const s = buildDemoJobStore({})
+    const id = await s.create(0)
+    expect(id).toBeTruthy()
+    expect(await s.get(id!, 0)).toEqual({ status: 'pending' })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('warns and falls back to in-memory when DEMO_JOBSTORE=redis but REDIS_URL is unset', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const s = buildDemoJobStore({ DEMO_JOBSTORE: ' Redis ' }) // trimmed + case-insensitive
+    const id = await s.create(0)
+    expect(id).toBeTruthy() // memory store still works
+    expect(warn).toHaveBeenCalledOnce()
+    expect(warn.mock.calls[0]?.[0]).toContain('REDIS_URL is unset')
   })
 })
 
