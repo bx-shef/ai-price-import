@@ -72,7 +72,7 @@ export async function findProduct(item: DocumentItem, mapping: PortalMapping, ca
  * WHOLE catalog), which would fetch everything and then silently miss. The settings
  * property-picker supplies the numeric id.
  */
-function normalizePropertyKey(field: string): string | null {
+export function normalizePropertyKey(field: string): string | null {
   const f = (field ?? '').trim().replace(/^PROPERTY_/i, '')
   return /^\d+$/.test(f) ? `PROPERTY_${f}` : null
 }
