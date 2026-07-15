@@ -57,6 +57,15 @@ describe('configurableActivity', () => {
     expect(params.ownerId).toBe(5)
     const layout = params.layout as Record<string, Record<string, Record<string, unknown>>>
     expect(layout.footer.buttons.open).toMatchObject({ action: { type: 'redirect', uri: '/crm/deal/details/5/' } })
+    // body.logo is REQUIRED by B24 (verified live: missing → «Поле logo в BodyDto должно быть заполнено»).
+    expect(layout.body.logo).toMatchObject({ code: 'document', action: { type: 'redirect', uri: '/crm/deal/details/5/' } })
+    expect(Object.keys(layout.body.blocks as object)).toEqual(['line0', 'line1'])
+  })
+
+  it('guarantees at least one body block when lines is empty (B24 needs 1..20)', () => {
+    const params = buildConfigurableActivity({ entityTypeId: 2, ownerId: 5, title: 'x', lines: [], openPath: '/crm/deal/details/5/' }) as Record<string, Record<string, unknown>>
+    const blocks = ((params.layout as Record<string, Record<string, Record<string, unknown>>>).body.blocks) as Record<string, unknown>
+    expect(Object.keys(blocks).length).toBeGreaterThanOrEqual(1)
   })
   it('safeRelativePath rejects absolute/scheme URLs', () => {
     expect(safeRelativePath('/crm/deal/details/5/')).toBe('/crm/deal/details/5/')
