@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { handleCrmSyncJob } from '../server/queue/handlers'
+import { handleCrmSyncJob, handleEventJob } from '../server/queue/handlers'
+import { eventJobToSaveInput, type EventJob } from '../server/queue/topology'
 import { defaultMapping } from '../app/utils/portalSettings'
 import type { ExtractedDocument } from '../app/types/document'
 
@@ -133,5 +134,55 @@ describe('handleCrmSyncJob', () => {
     const d = deps({ getDocument: vi.fn(async () => null), deleteDocument })
     await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
     expect(deleteDocument).not.toHaveBeenCalled()
+  })
+})
+
+const evJob = (over: Partial<EventJob> = {}): EventJob => ({
+  memberId: 'm1', event: 'ONAPPINSTALL', domain: 'p.bitrix24.ru', ts: 100,
+  applicationToken: 'app', accessToken: 'ac', refreshTokenEnc: 'ENC', clientEndpoint: 'https://p.bitrix24.ru/rest/',
+  expiresIn: 3600, issuedAtMs: 5, ...over
+})
+
+describe('handleEventJob (single-writer consumer)', () => {
+  it('ONAPPINSTALL → savePortal(job); never deletePortal', async () => {
+    const savePortal = vi.fn(async () => true)
+    const deletePortal = vi.fn(async () => {})
+    await handleEventJob(evJob(), { savePortal, deletePortal })
+    expect(savePortal).toHaveBeenCalledWith(expect.objectContaining({ memberId: 'm1', ts: 100 }))
+    expect(deletePortal).not.toHaveBeenCalled()
+  })
+  it('ONAPPUNINSTALL → deletePortal(memberId, ts) + purgeFiles; never savePortal', async () => {
+    const savePortal = vi.fn(async () => true)
+    const deletePortal = vi.fn(async () => {})
+    const purgeFiles = vi.fn(async () => {})
+    await handleEventJob(evJob({ event: 'ONAPPUNINSTALL', ts: 200 }), { savePortal, deletePortal, purgeFiles })
+    expect(deletePortal).toHaveBeenCalledWith('m1', 200)
+    expect(purgeFiles).toHaveBeenCalledWith('m1')
+    expect(savePortal).not.toHaveBeenCalled()
+  })
+  it('a refused (stale) install does not throw', async () => {
+    const savePortal = vi.fn(async () => false)
+    await expect(handleEventJob(evJob(), { savePortal, deletePortal: vi.fn(async () => {}) })).resolves.toBeUndefined()
+  })
+  it('unknown event type is ignored (no writes)', async () => {
+    const savePortal = vi.fn(async () => true)
+    const deletePortal = vi.fn(async () => {})
+    await handleEventJob(evJob({ event: 'ONSOMETHINGELSE' }), { savePortal, deletePortal })
+    expect(savePortal).not.toHaveBeenCalled()
+    expect(deletePortal).not.toHaveBeenCalled()
+  })
+})
+
+describe('eventJobToSaveInput', () => {
+  it('maps register creds (refreshedAtMs mirrors issuedAtMs; refresh stays encrypted)', () => {
+    expect(eventJobToSaveInput(evJob())).toEqual({
+      memberId: 'm1', domain: 'p.bitrix24.ru', clientEndpoint: 'https://p.bitrix24.ru/rest/',
+      accessToken: 'ac', refreshTokenEnc: 'ENC', applicationToken: 'app',
+      expiresIn: 3600, issuedAtMs: 5, refreshedAtMs: 5
+    })
+  })
+  it('fills defaults for an uninstall-shaped job (no creds)', () => {
+    const r = eventJobToSaveInput(evJob({ event: 'ONAPPUNINSTALL', accessToken: undefined, refreshTokenEnc: undefined, clientEndpoint: undefined, expiresIn: undefined, issuedAtMs: undefined }))
+    expect(r).toMatchObject({ accessToken: '', refreshTokenEnc: '', clientEndpoint: '', expiresIn: 3600, issuedAtMs: 0, refreshedAtMs: 0 })
   })
 })

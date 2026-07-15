@@ -27,8 +27,30 @@ export interface SaveTokenInput {
   refreshedAtMs?: number
 }
 
-/** Upsert a portal token. application_token is write-once (kept if already set). */
-export async function saveToken(input: SaveTokenInput, query: QueryFn): Promise<void> {
+/**
+ * Upsert a portal token. application_token is write-once (kept if already set).
+ *
+ * Event-ordering guard (`eventTs` = the B24 event timestamp, monotone — an install
+ * fires before its uninstall). When `eventTs > 0` and a tombstone with `deleted_ts >=
+ * eventTs` exists, a same-or-newer uninstall already removed the portal, so this (stale)
+ * register is a no-op and MUST NOT resurrect it with obsolete creds (returns `false`,
+ * writes nothing). A genuine reinstall (strictly newer `eventTs`) proceeds and clears the
+ * stale tombstone. `eventTs === 0` (a token REFRESH, no ordering) keeps the pre-guard
+ * behaviour: always write. Returns whether the row was written.
+ *
+ * The tombstone SELECT + upsert are two statements (not one transaction). This is
+ * TOCTOU-free for the bug it fixes: the `b24-events` worker is SINGLE-INSTANCE (runs only
+ * on the cron/primary instance — see server/plugins/queue.ts) and concurrency-1, so a
+ * portal's register/unregister never overlap. The token-REFRESH path does NOT use this
+ * function — it uses `updateTokensOnRefresh` (UPDATE-only), so a refresh landing after an
+ * uninstall purge cannot resurrect the portal (0 rows updated). Hence `saveToken` is only
+ * ever called for a real install (with eventTs, via the events consumer/sync fallback).
+ */
+export async function saveToken(input: SaveTokenInput, query: QueryFn, eventTs = 0): Promise<boolean> {
+  if (eventTs > 0) {
+    const blocked = await query('SELECT 1 FROM portal_tombstone WHERE member_id = $1 AND deleted_ts >= $2', [input.memberId, eventTs])
+    if (blocked.rows[0]) return false // a same-or-newer uninstall already removed this portal
+  }
   await query(
     `INSERT INTO portal_tokens
        (member_id, domain, client_endpoint, access_token, refresh_token_enc, application_token, expires_in, issued_at_ms, refreshed_at_ms, updated_at)
@@ -47,6 +69,38 @@ export async function saveToken(input: SaveTokenInput, query: QueryFn): Promise<
       input.memberId, input.domain, input.clientEndpoint ?? '', input.accessToken ?? '',
       input.refreshTokenEnc ?? '', input.applicationToken ?? '', input.expiresIn ?? 3600,
       input.issuedAtMs ?? 0, input.refreshedAtMs ?? 0
+    ]
+  )
+  // A genuine reinstall (newer ts) clears the obsolete tombstone so a later stale
+  // uninstall can't re-block it. (Same-or-newer tombstones already short-circuited above.)
+  if (eventTs > 0) await query('DELETE FROM portal_tombstone WHERE member_id = $1 AND deleted_ts < $2', [input.memberId, eventTs])
+  return true
+}
+
+/**
+ * Refresh-path persist — UPDATE-only (never INSERT). A token REFRESH must not be able to
+ * (re)create a portal: if a concurrent ONAPPUNINSTALL already purged the row, this UPDATE
+ * matches 0 rows and the portal stays gone — no resurrection with live creds after
+ * uninstall. Absence of the row IS the guard, so no tombstone/eventTs is consulted (unlike
+ * the install path). application_token is not touched (write-once; a refresh never carries it).
+ * This is the ai-price-import stand-in for client-bank's advisory-lock refresh guard (#35),
+ * pending that port (issue #85).
+ */
+export async function updateTokensOnRefresh(input: SaveTokenInput, query: QueryFn): Promise<void> {
+  await query(
+    `UPDATE portal_tokens SET
+       domain            = $2,
+       client_endpoint   = $3,
+       access_token      = $4,
+       refresh_token_enc = $5,
+       expires_in        = $6,
+       issued_at_ms      = $7,
+       refreshed_at_ms   = $8,
+       updated_at        = now()
+     WHERE member_id = $1`,
+    [
+      input.memberId, input.domain, input.clientEndpoint ?? '', input.accessToken ?? '',
+      input.refreshTokenEnc ?? '', input.expiresIn ?? 3600, input.issuedAtMs ?? 0, input.refreshedAtMs ?? 0
     ]
   )
 }
@@ -88,7 +142,18 @@ export async function getApplicationToken(memberId: string, query: QueryFn): Pro
 /** Delete ALL data for a portal (ONAPPUNINSTALL — always purge, incl. client
  * documents: import_text raw text + import_doc extracted structure). Leaving any
  * client data after uninstall is a data-minimisation/privacy breach (docs 05). */
-export async function deletePortal(memberId: string, query: QueryFn): Promise<void> {
+export async function deletePortal(memberId: string, query: QueryFn, eventTs = 0): Promise<void> {
+  // Ordering guard (#77): record a TOMBSTONE (member_id, deleted_ts) BEFORE purging so a
+  // stale/out-of-order register can't resurrect the portal — saveToken refuses to write
+  // when a same-or-newer tombstone exists. GREATEST keeps the NEWEST uninstall ts on
+  // redelivery. portal_tombstone is deliberately NOT in the purge loop (it must outlive it).
+  if (eventTs > 0) {
+    await query(
+      `INSERT INTO portal_tombstone (member_id, deleted_ts) VALUES ($1, $2)
+       ON CONFLICT (member_id) DO UPDATE SET deleted_ts = GREATEST(portal_tombstone.deleted_ts, EXCLUDED.deleted_ts)`,
+      [memberId, eventTs]
+    )
+  }
   for (const table of ['portal_tokens', 'job_result', 'metrics_counter', 'import_job', 'import_text', 'import_doc']) {
     await query(`DELETE FROM ${table} WHERE member_id = $1`, [memberId])
   }

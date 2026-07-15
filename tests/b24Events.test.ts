@@ -35,6 +35,11 @@ describe('extractEvent', () => {
     const ev = extractEvent(parseBracketForm('event=ONAPPUNINSTALL&auth%5Bmember_id%5D=m&auth%5Bapplication_token%5D=X&auth%5Bdomain%5D=p.bitrix24.ru'))
     expect(ev).toMatchObject({ event: 'ONAPPUNINSTALL', memberId: 'm', applicationToken: 'X', domain: 'p.bitrix24.ru' })
   })
+  it('parses top-level ts (unix seconds) for the ordering guard; absent/garbage → 0', () => {
+    expect(extractEvent(parseBracketForm('event=ONAPPINSTALL&ts=1699999999&auth%5Bmember_id%5D=m')).ts).toBe(1699999999)
+    expect(extractEvent(parseBracketForm('event=ONAPPINSTALL&auth%5Bmember_id%5D=m')).ts).toBe(0)
+    expect(extractEvent(parseBracketForm('event=ONAPPINSTALL&ts=notanumber&auth%5Bmember_id%5D=m')).ts).toBe(0)
+  })
 })
 
 describe('safeEqual', () => {

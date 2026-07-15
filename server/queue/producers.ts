@@ -3,11 +3,11 @@ import { type AgentJob, agentJobId, type CrmSyncJob, crmSyncJobId, type EventJob
 
 // Producers: enqueue jobs with deterministic idempotent ids. No-op without Redis.
 
-// NOTE: `enqueueEvent`/`b24-events` is RESERVED scaffolding — the design (02 §Потоки)
-// keeps a queue for install/uninstall, but the current webhook route
-// (`server/api/b24/events.post.ts`) handles ONAPPINSTALL/ONAPPUNINSTALL SYNCHRONOUSLY
-// (online events are not retried, so a queue hop could lose them). No consumer is wired
-// yet; kept for parity with the sibling `bx-synapse` model and a future async switch.
+// `b24-events`: the webhook route (`server/api/b24/events.post.ts`) verifies the event
+// then ENQUEUES it; the consumer (worker.ts startEventWorker → handleEventJob), running on
+// the SINGLE primary instance, is the single writer of portal_tokens. Because B24 does not
+// retry online events, the route falls back to a synchronous write when Redis is
+// unavailable (queueEnabled() false) or the enqueue throws.
 export async function enqueueEvent(job: EventJob, ts: string | number): Promise<void> {
   await getQueue(QUEUES.events)?.add('event', job, { jobId: eventJobId(job.memberId, job.event, ts) })
 }

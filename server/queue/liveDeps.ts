@@ -3,7 +3,8 @@ import type { FetchFn, RestCall } from '../utils/b24Rest'
 import type { AgentSpawn } from '../agent/runAgent'
 import type { ExtractRunners } from '../utils/textExtract'
 import type { EnsureDeps } from '../utils/ensureAccessToken'
-import { getToken, saveToken } from '../utils/tokenStore'
+import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
+import { purgePortalFiles } from '../utils/nodeFileIO'
 import { makePortalRestCall } from '../utils/portalRest'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { setJobStatus } from '../utils/jobStore'
@@ -24,7 +25,8 @@ import { uploadPath } from '../utils/fileStore'
 import { runAgent } from '../agent/runAgent'
 import { buildExtractionPrompt } from '../../prompts/extract'
 import { enqueueAgent, enqueueCrmSync } from './producers'
-import type { AgentRunDeps, FileExtractDeps, HandlerDeps } from './handlers'
+import type { AgentRunDeps, EventHandlerDeps, FileExtractDeps, HandlerDeps } from './handlers'
+import { eventJobToSaveInput } from './topology'
 import type { CrmSyncDeps } from './crmSyncCore'
 import type { PortalMapping } from '~/types/mapping'
 
@@ -51,7 +53,8 @@ export interface LiveInfra {
 function ensureDeps(infra: LiveInfra): EnsureDeps {
   return {
     getToken: m => getToken(m, infra.query),
-    saveToken: input => saveToken(input, infra.query),
+    // Refresh path: UPDATE-only (never resurrect a portal purged by a concurrent uninstall).
+    saveToken: input => updateTokensOnRefresh(input, infra.query),
     refreshTransport: async (params) => {
       const res = await infra.fetchFn(`https://oauth.bitrix.info/oauth/token/?${new URLSearchParams(params).toString()}`)
       return res.json()
@@ -95,6 +98,15 @@ async function loadMapping(memberId: string, rest: (m: string) => Promise<RestCa
     return await readMapping(call)
   } catch {
     return defaultMapping()
+  }
+}
+
+/** b24-events deps: the SINGLE writer of portal_tokens (install/uninstall). */
+export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
+  return {
+    savePortal: job => saveToken(eventJobToSaveInput(job), infra.query, job.ts),
+    deletePortal: (m, ts) => deletePortal(m, infra.query, ts),
+    purgeFiles: m => purgePortalFiles(m)
   }
 }
 
