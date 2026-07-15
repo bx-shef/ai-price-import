@@ -460,14 +460,18 @@ describe('extractDemo — descriptive/requisite rows leaking into the table (GH 
       'Основание кровати 160х200|2|150|300',
       'Телефон IP настольный|3|200|600',
       'Факс-модем|1|80|80',
-      'Гитара Ibanez GRX70|1|9000|9000'
+      'Гитара Ibanez GRX70|1|9000|9000',
+      'Фильтр Suzuki Swift масляный|4|300|1200', // «Swift» without a «:» → not a SWIFT code
+      'Фреза БИК-твердосплавная|2|450|900', // «БИК-» not followed by a digit
+      'Труба IBAN 20мм|10|50|500' // «IBAN» not followed by a country code
     ].join('\n')
     const r = extractDemo(text)
     expect(r.items.map(i => i.name)).toEqual([
       'Бикарбонат натрия', 'Банка стеклянная 0.5 л', 'Основание кровати 160х200',
-      'Телефон IP настольный', 'Факс-модем', 'Гитара Ibanez GRX70'
+      'Телефон IP настольный', 'Факс-модем', 'Гитара Ibanez GRX70',
+      'Фильтр Suzuki Swift масляный', 'Фреза БИК-твердосплавная', 'Труба IBAN 20мм'
     ])
-    expect(r.items).toHaveLength(6)
+    expect(r.items).toHaveLength(9)
   })
 
   it('keeps products whose UNIT column uses slash-abbreviations (л/с, к/с) — not bank accounts', () => {
