@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-14
+> Last reviewed: 2026-07-15
 
 AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -29,19 +29,24 @@ AI-импорт документов с табличной частью в Bitri
     `plugins/queue.ts`. Per-queue concurrency — отдельно (`QUEUE_EXTRACT/AGENT/CRM_CONCURRENCY`,
     `worker.queueConcurrency`, #95).
   - **Рефреш OAuth-токена сериализован per-portal** (`utils/dbLock.withAdvisoryLock`, `ensureAccessToken`,
-    #35): при scale-out N воркеров рефрешат один портал ровно раз (advisory-lock + re-read внутри лока),
-    не гоняясь на ротации refresh-token. Персист — `updateTokensOnRefresh` (UPDATE-only, не воскрешает
-    удалённый портал); строка исчезла под локом ⇒ рефреш не делаем. Рефреш-POST ограничен таймаутом
-    (`AbortSignal`), чтобы зависший OAuth не запинил лок + соединение пула.
-  - **REST-транспорт к порталу — `@bitrix24/b24jssdk`** (`utils/b24Sdk.ts`, адаптер `B24OAuth`→`RestCall`):
-    у SDK встроенный **RestrictionManager** (пер-портальный leaky-bucket лимитер + auto-retry на
-    `QUERY_LIMIT_EXCEEDED`/429/5xx) — решает REST-бюджет при scale-out. Один `B24OAuth` на портал на
-    джобу = пер-портальный лимит + bind-once; рефреш SDK сам, `setCallbackRefreshAuth` → персист
-    (`updateTokensOnRefresh`, UPDATE-only). **Opt-in** через `B24_SDK_TRANSPORT=1` (дефолт off).
-    **Live-верифицирован** на `bel.bitrix24.by` (`pnpm sdk:smoke`: profile+crm.item.list+burst 30 без
-    `QUERY_LIMIT_EXCEEDED`, лимитер троттлит ~12 req/s) — распаковка `getData().result` и лимитер
-    работают; SDK-путь строится **per-job** (не мемоизируется, иначе заклинит на устаревшем токене
-    после ротации соседом/кроном). Чистые мапперы +
+    #35): advisory-lock + re-read внутри лока → портал рефрешится ровно раз, без гонки на ротации
+    refresh-token. Персист — `updateTokensOnRefresh` (UPDATE-only, не воскрешает удалённый портал); строка
+    исчезла под локом ⇒ рефреш не делаем. Рефреш-POST ограничен таймаутом (`AbortSignal`), чтобы зависший
+    OAuth не запинил лок + соединение пула. **Область**: этот путь — у **keep-alive крона** (`ensureFreshToken`,
+    single-instance) и синхронных frame-token API-роутов. **crm-sync hot-path им НЕ ходит** — там транспорт
+    `@bitrix24/b24jssdk` рефрешит **реактивно** (свой per-job `B24OAuth`, `setCallbackRefreshAuth`→персист),
+    без advisory-лока: при scale-out throughput-воркеры могут ротануть один портал параллельно, но персист
+    UPDATE-only идемпотентен, а SDK-лимитер гасит всплеск — гонка безопасна, лишь возможен лишний рефреш.
+  - **REST-транспорт к порталу (crm-sync) — `@bitrix24/b24jssdk`, единственный** (`utils/b24Sdk.ts`,
+    адаптер `B24OAuth`→`RestCall`): у SDK встроенный **RestrictionManager** (пер-портальный leaky-bucket
+    лимитер + auto-retry на `QUERY_LIMIT_EXCEEDED`/429/5xx) — решает REST-бюджет при scale-out. Один
+    `B24OAuth` на портал на джобу = пер-портальный лимит + bind-once; рефреш SDK сам,
+    `setCallbackRefreshAuth` → персист (`updateTokensOnRefresh`, UPDATE-only). **Live-верифицирован**
+    на `bel.bitrix24.by` (`pnpm sdk:smoke`: profile+crm.item.list+burst 30 без `QUERY_LIMIT_EXCEEDED`,
+    лимитер троттлит ~12 req/s). SDK-путь строится **per-job** (не мемоизируется, иначе заклинит на
+    устаревшем токене после ротации соседом/кроном). Ручной `makePortalRestCall` удалён; синхронные
+    frame-token API-роуты (`settings`/`catalog-properties`) остаются на `b24Rest.makeRestCall` (другой
+    механизм — фрейм-access-токен, не OAuth). Чистые мапперы +
     `makeSdkRestCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` — compile-time
     drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
   - **Keep-alive рефреш токенов** (`utils/tokenKeepAlive.runTokenKeepAlive`, #175): на cron-инстансе

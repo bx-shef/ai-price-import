@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildRefreshPersist,
+  makePortalSdkCall,
   makeSdkRestCall,
   oauthParamsFromToken,
   saveInputFromOAuthParams,
   type OAuthCallClient,
-  type SdkAjaxResult
+  type SdkAjaxResult,
+  type SdkPortalDeps
 } from '../server/utils/b24Sdk'
 import type { PortalToken } from '../server/utils/tokenStore'
 
@@ -64,6 +66,25 @@ function fakeClient(result: SdkAjaxResult): OAuthCallClient {
     setCallbackRefreshAuth: vi.fn()
   }
 }
+
+describe('makePortalSdkCall', () => {
+  // The sole crm-sync portal transport. The no-token guard returns BEFORE constructing a
+  // real B24OAuth, so it is unit-testable; the token-present path (live B24OAuth + refresh
+  // wiring) is covered by the live smoke test (pnpm sdk:smoke).
+  const deps = (loadToken: SdkPortalDeps['loadToken']): SdkPortalDeps => ({
+    loadToken,
+    saveToken: vi.fn(async () => {}),
+    creds: { clientId: 'cid', clientSecret: 'csec' },
+    now: () => 1_000_000,
+    decrypt,
+    encrypt
+  })
+  it('returns null when the portal has no stored token (never builds a client)', async () => {
+    const loadToken = vi.fn(async () => null)
+    expect(await makePortalSdkCall('m1', deps(loadToken))).toBeNull()
+    expect(loadToken).toHaveBeenCalledWith('m1')
+  })
+})
 
 describe('makeSdkRestCall', () => {
   it('returns the UNWRAPPED result (ai-price-import contract)', async () => {

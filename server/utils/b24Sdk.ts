@@ -114,10 +114,10 @@ export interface SdkPortalDeps {
 
 /** Build a `RestCall` bound to one portal, backed by a per-portal `B24OAuth` instance (its
  *  own rate-limiter bucket) with refresh-persistence wired. `null` when the portal has no
- *  stored token — same contract as `makePortalRestCall`, so it's a drop-in swap for the
- *  crm-sync transport once verified on a live portal.
- *  NB: unlike `makePortalRestCall` (proactive refresh via the advisory lock), the SDK
- *  refreshes REACTIVELY — one extra round-trip on the first call after access-token expiry. */
+ *  stored token. This is THE crm-sync portal transport (see liveDeps.restResolver).
+ *  NB: the SDK refreshes REACTIVELY — one extra round-trip on the first call after
+ *  access-token expiry; the daily keep-alive cron (#175) still proactively refreshes idle
+ *  near-expiry portals via ensureFreshToken (advisory lock, #35). */
 export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): Promise<RestCall | null> {
   const token = await deps.loadToken(memberId)
   if (!token) return null

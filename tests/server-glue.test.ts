@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { deletePortal, getApplicationToken, getToken, saveToken, updateTokensOnRefresh } from '../server/utils/tokenStore'
 import type { PortalToken } from '../server/utils/tokenStore'
 import { ensureFreshToken } from '../server/utils/ensureAccessToken'
-import { makePortalRestCall } from '../server/utils/portalRest'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -171,49 +170,6 @@ describe('ensureFreshToken', () => {
       loadToken: vi.fn(async () => null) // in-lock: purged by a concurrent uninstall
     })
     await expect(ensureFreshToken('m1', deps)).rejects.toThrow(/no token/)
-    expect(deps.refreshTransport).not.toHaveBeenCalled()
-  })
-})
-
-describe('makePortalRestCall', () => {
-  it('null when portal has no token', async () => {
-    const deps = { ...ensureDeps(), getToken: vi.fn(async () => null), fetchFn: vi.fn() }
-    expect(await makePortalRestCall('m1', deps)).toBeNull()
-  })
-  it('calls REST with fresh token', async () => {
-    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ result: 'OK' }) }))
-    const deps = { ...ensureDeps(), fetchFn }
-    const call = await makePortalRestCall('m1', deps)
-    expect(await call!('crm.item.list')).toBe('OK')
-  })
-  it('retries once after expired_token error (force refresh)', async () => {
-    let n = 0
-    const fetchFn = vi.fn(async () => {
-      n++
-      return n === 1
-        ? { ok: true, status: 401, json: async () => ({ error: 'expired_token', error_description: 'expired' }) }
-        : { ok: true, status: 200, json: async () => ({ result: 'OK2' }) }
-    })
-    const deps = { ...ensureDeps(), fetchFn }
-    const call = await makePortalRestCall('m1', deps)
-    expect(await call!('crm.item.add')).toBe('OK2')
-    expect(fetchFn).toHaveBeenCalledTimes(2)
-    expect(deps.refreshTransport).toHaveBeenCalled() // forced refresh happened
-  })
-  it('retry exhausted: second call also expired → rejects, called twice', async () => {
-    const fetchFn = vi.fn(async () => ({ ok: true, status: 401, json: async () => ({ error: 'expired_token', error_description: 'e' }) }))
-    const deps = { ...ensureDeps(), fetchFn }
-    const call = await makePortalRestCall('m1', deps)
-    await expect(call!('m')).rejects.toThrow(/expired_token/)
-    expect(fetchFn).toHaveBeenCalledTimes(2)
-  })
-  it('non-expired error does not retry', async () => {
-    const fetchFn = vi.fn(async () => ({ ok: true, status: 403, json: async () => ({ error: 'ACCESS_DENIED', error_description: 'no' }) }))
-    const deps = { ...ensureDeps(), fetchFn, refreshTransport: vi.fn(async () => ({ access_token: 'n', refresh_token: 'r', expires_in: 3600, member_id: 'm1', client_endpoint: '' })) }
-    const call = await makePortalRestCall('m1', deps)
-    await expect(call!('m')).rejects.toThrow(/ACCESS_DENIED/)
-    expect(fetchFn).toHaveBeenCalledTimes(1)
-    // only the initial ensureFreshToken (time-valid → no refresh) — no forced retry refresh
     expect(deps.refreshTransport).not.toHaveBeenCalled()
   })
 })

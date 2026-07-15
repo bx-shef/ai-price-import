@@ -1,6 +1,6 @@
 # Целевая архитектура (редизайн procure-ai)
 
-> Last reviewed: 2026-07-12
+> Last reviewed: 2026-07-15
 
 Как должно быть после редизайна. Синтез двух референсов: раскладка/дисциплина/лендинг/деплой —
 из эталона `client-bank-alfa-by` (облачное приложение Маркета Б24); слой «изолированный MCP + агент
@@ -153,7 +153,7 @@ app/                      # Nuxt (авто-импорт)
 server/                   # Nitro
   api/                    # upload, job/[id], health, b24/events, queues, ops, settings, auth
   utils/                  # pure DI-логика: tokenStore, secretCrypto, b24Oauth, ensureAccessToken,
-                          #   portalRest, companyLookup, productLookup, crmWrite (договор — не ищем)
+                          #   b24Sdk, companyLookup, productLookup, crmWrite (договор — не ищем)
   queue/                  # topology, connection, producers, handlers, worker, cron, stats
   db/                     # client.ts (pg pool + schema: portal_tokens, job_result (идемпот.), metrics), плагины
   agent/                  # оркестрация Claude Code (spawn, MCP-конфиг, таймауты/ретраи, DeepSeek env)
@@ -287,7 +287,7 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
     `ENTITY_TYPE='common'` (у нас ID 3, «Общий диск»); `disk.folder.addsubfolder` (папка `procure-ai-import`)
     и `disk.folder.uploadfile` (`fileContent: [name, base64]`) отрабатывают. `crm.activity.configurable.add`
     **через вебхук отдаёт `ERROR_WRONG_CONTEXT`** — метод жив только в OAuth-контексте приложения; наш
-    `crm-sync` ходит per-portal OAuth-токеном (`makePortalRestCall`), поэтому в проде корректен, но
+    `crm-sync` ходит per-portal OAuth-токеном (`makePortalSdkCall`, SDK-транспорт), поэтому в проде корректен, но
     вебхуком не проверяется. **Файловый фолбэк, проверяемый вебхуком:** `crm.activity.todo.add` с
     `fileTokens[0]=disk<ID>` прикрепляет диск-файл к делу (нужен `deadline`). Чат: `im.message.add`
     (`DIALOG_ID`/`MESSAGE`) — прогон round-trip + `im.message.delete` — ОК.
