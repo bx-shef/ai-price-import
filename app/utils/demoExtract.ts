@@ -337,9 +337,14 @@ const DESCRIPTIVE_ROW = new RegExp(
   + '|(?:УНП|БИН|ИНН)\\s+банка|наименован\\p{L}*\\s+банка'
   + '|банковск\\p{L}*\\s+реквизит|реквизит\\p{L}*\\s+сторон'
   + '|юридическ\\p{L}*\\s+адрес|почтов\\p{L}*\\s+адрес|фактическ\\p{L}*\\s+адрес|юр\\.?\\s*адрес'
-  // «Договор №»/«Контракт №» ONLY when the row STARTS with it (a leaked «основание» line) —
-  // a service item «Услуги по договору № 44» has it mid-name and must stay a product.
-  + '|^\\s*(?:договор|контракт)(?![\\p{L}])\\s*№'
+  // Belarusian / Kazakh requisites (parity with the ru/be/kk product scope). Full phrases,
+  // never product names: «разлiковы рахунак» (bare «рахунак» = the invoice title, excluded),
+  // «есеп(-)шот(ы)» account, «мекенжай» address, «юрыдычны/паштовы/фактычны адрас».
+  + '|разл[іi]\\p{L}*\\s+рахун\\p{L}*|есеп[-\\s]?шот\\p{L}*|мекен[-\\s]?жай\\p{L}*'
+  + '|юрыдычн\\p{L}*\\s+адрас|паштов\\p{L}*\\s+адрас|фактычн\\p{L}*\\s+адрас'
+  // «Договор/Дагавор/Шарт/Пагадненне №» ONLY when the row STARTS with it (a leaked
+  // «основание» line) — a service item «Услуги по договору № 44» has it mid-name and stays.
+  + '|^\\s*(?:договор|контракт|дагавор|пагадненн|шарт)(?![\\p{L}])\\s*№'
   + ')(?![\\p{L}])',
   'iu'
 )

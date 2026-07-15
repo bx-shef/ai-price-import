@@ -518,4 +518,46 @@ describe('extractDemo — descriptive/requisite rows leaking into the table (GH 
     const r = extractDemo(text)
     expect(r.items.map(i => i.name)).toEqual(['Услуги по договору № 44-ФЗ', 'Работы по контракту № 7'])
   })
+
+  it('drops Belarusian / Kazakh requisite rows (parity with be/kk scope)', () => {
+    const be = [
+      'Найменне|Кошт',
+      'Цвік будаўнічы|3.20',
+      'Разлiковы рахунак BY13 0000|—',
+      'Юрыдычны адрас: г. Мінск|—',
+      'Дагавор № 5 ад 01.07.2026|—'
+    ].join('\n')
+    expect(extractDemo(be).items.map(i => i.name)).toEqual(['Цвік будаўнічы'])
+    const kk = [
+      'Атауы|Бағасы',
+      'Кабель ВВГ|4.50',
+      'Есеп-шоты: KZ75 0000|—',
+      'Мекенжай: Алматы қ.|—',
+      'Шарт № 7|—'
+    ].join('\n')
+    expect(extractDemo(kk).items.map(i => i.name)).toEqual(['Кабель ВВГ'])
+  })
+
+  it('drops a requisite row INSIDE the second table and keeps the product after it', () => {
+    // Cross-feature: header re-detection (≥3 roles) + descriptive filter together, and the
+    // filter skips only the one row (a valid product right after is still captured).
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт|10|5|50',
+      '№|Наименование|Кол-во|Цена|Сумма', // second table header (4 roles → re-map)
+      '1|Гайка|20|2|40',
+      'Р/с 3012000000000 в ОАО Банк|—|—|—|—', // requisite inside the 2nd table
+      '2|Шайба|100|1|100'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт', 'Гайка', 'Шайба'])
+  })
+
+  it('applies the filter regardless of delimiter (tab / semicolon)', () => {
+    for (const d of ['\t', ';']) {
+      const text = [`Наименование${d}Цена`, `Болт${d}5`, `Р/с 3012000000000${d}в банке`].join('\n')
+      const r = extractDemo(text)
+      expect(r.items.map(i => i.name)).toEqual(['Болт'])
+    }
+  })
 })
