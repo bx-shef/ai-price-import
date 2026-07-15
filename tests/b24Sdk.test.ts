@@ -2,13 +2,16 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildRefreshPersist,
   makePortalSdkCall,
+  makeSdkListCall,
   makeSdkRestCall,
   oauthParamsFromToken,
   saveInputFromOAuthParams,
   type OAuthCallClient,
   type SdkAjaxResult,
+  type SdkListResult,
   type SdkPortalDeps
 } from '../server/utils/b24Sdk'
+import { fetchVatRates } from '../server/utils/portalVat'
 import type { PortalToken } from '../server/utils/tokenStore'
 
 const token: PortalToken = {
@@ -60,9 +63,14 @@ describe('buildRefreshPersist', () => {
   })
 })
 
-function fakeClient(result: SdkAjaxResult): OAuthCallClient {
+function fakeClient(result: SdkAjaxResult, listResult?: SdkListResult): OAuthCallClient {
   return {
-    actions: { v2: { call: { make: vi.fn(async () => result) } } },
+    actions: {
+      v2: {
+        call: { make: vi.fn(async () => result) },
+        callList: { make: vi.fn(async () => listResult ?? { getData: () => [] }) }
+      }
+    },
     setCallbackRefreshAuth: vi.fn()
   }
 }
@@ -83,6 +91,36 @@ describe('makePortalSdkCall', () => {
     const loadToken = vi.fn(async () => null)
     expect(await makePortalSdkCall('m1', deps(loadToken))).toBeNull()
     expect(loadToken).toHaveBeenCalledWith('m1')
+  })
+})
+
+describe('makeSdkListCall', () => {
+  const ok: SdkAjaxResult = { isSuccess: true, getData: () => ({ result: [] }), getErrorMessages: () => [] }
+
+  it('returns the SDK-collected full row array and passes method+params through', async () => {
+    const client = fakeClient(ok, { getData: () => [{ ID: '1' }, { ID: '2' }] })
+    const listCall = makeSdkListCall(client)
+    const rows = await listCall('crm.vat.list', { filter: { ACTIVE: 'Y' } })
+    expect(rows).toEqual([{ ID: '1' }, { ID: '2' }])
+    expect((client.actions.v2.callList.make as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toEqual({
+      method: 'crm.vat.list', params: { filter: { ACTIVE: 'Y' } }
+    })
+  })
+
+  it('coerces non-array data (empty portal) to []', async () => {
+    const listCall = makeSdkListCall(fakeClient(ok, { getData: () => undefined }))
+    expect(await listCall('crm.vat.list')).toEqual([])
+  })
+})
+
+describe('fetchVatRates (SDK full-list, #87)', () => {
+  it('fetches every rate via the list caller and maps rate/null', async () => {
+    const listCall = makeSdkListCall(fakeClient(
+      { isSuccess: true, getData: () => ({ result: [] }), getErrorMessages: () => [] },
+      { getData: () => [{ ID: '1', NAME: '20%', RATE: '20' }, { ID: '9', NAME: 'Без НДС', RATE: null }] }
+    ))
+    const rates = await fetchVatRates(listCall)
+    expect(rates).toEqual([{ id: '1', name: '20%', rate: 20 }, { id: '9', name: 'Без НДС', rate: null }])
   })
 })
 

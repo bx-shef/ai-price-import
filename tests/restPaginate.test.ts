@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { B24_PAGE_SIZE, fetchAllPages } from '../server/utils/restPaginate'
-import { fetchVatRates } from '../server/utils/portalVat'
 import { searchCatalogProperties } from '../server/utils/catalogPropertySearch'
 
 /** A RestCall that serves fixed pages keyed by the `start` offset. */
@@ -52,17 +51,6 @@ describe('fetchAllPages', () => {
     expect(call).toHaveBeenCalledTimes(2)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('catalog.stuck.list hit MAX_PAGES=2'))
     warn.mockRestore()
-  })
-})
-
-describe('fetchVatRates pagination (#87)', () => {
-  it('accumulates rates across pages and maps rate/null', async () => {
-    const full = Array.from({ length: B24_PAGE_SIZE }, (_, i) => ({ ID: String(i + 1), NAME: `r${i}`, RATE: '20' }))
-    const call = pagedCall({ 0: full, [B24_PAGE_SIZE]: [{ ID: '999', NAME: 'Без НДС', RATE: null }] })
-    const rates = await fetchVatRates(call)
-    expect(rates).toHaveLength(B24_PAGE_SIZE + 1)
-    expect(rates.at(-1)).toEqual({ id: '999', name: 'Без НДС', rate: null })
-    expect(call).toHaveBeenCalledTimes(2)
   })
 })
 

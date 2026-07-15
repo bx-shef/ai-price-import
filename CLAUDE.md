@@ -38,7 +38,10 @@ AI-импорт документов с табличной частью в Bitri
     без advisory-лока: при scale-out throughput-воркеры могут ротануть один портал параллельно, но персист
     UPDATE-only идемпотентен, а SDK-лимитер гасит всплеск — гонка безопасна, лишь возможен лишний рефреш.
   - **REST-транспорт к порталу (crm-sync) — `@bitrix24/b24jssdk`, единственный** (`utils/b24Sdk.ts`,
-    адаптер `B24OAuth`→`RestCall`): у SDK встроенный **RestrictionManager** (пер-портальный leaky-bucket
+    адаптер `B24OAuth`→`SdkTransport` `{ call, list }`): `call` — одиночный `RestCall`, `list` —
+    **полная выборка списка** (`SdkListCall`, SDK сам пагинирует keyset-ом по `ID` через
+    `actions.v2.callList.make` — ручной пейджер на этом транспорте не нужен). У SDK встроенный
+    **RestrictionManager** (пер-портальный leaky-bucket
     лимитер + auto-retry на `QUERY_LIMIT_EXCEEDED`/429/5xx) — решает REST-бюджет при scale-out. Один
     `B24OAuth` на портал на джобу = пер-портальный лимит + bind-once; рефреш SDK сам,
     `setCallbackRefreshAuth` → персист (`updateTokensOnRefresh`, UPDATE-only). **Live-верифицирован**
@@ -49,13 +52,17 @@ AI-импорт документов с табличной частью в Bitri
     механизм — фрейм-access-токен, не OAuth). Чистые мапперы +
     `makeSdkRestCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` — compile-time
     drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
-  - **Пагинация enumerate-all списков** (`utils/restPaginate.fetchAllPages`, #87): find-one lookup'ы
-    (`findCompanyByTaxId`/`findProduct`) берут первый id и в пагинации не нуждаются, но три **enumerate-all**
-    чтения молча обрезались на дефолтной странице B24 (50). RestCall отдаёт **unwrapped** `result` (envelope
-    `next`/`total` не виден), поэтому `fetchAllPages` листает по `start`-оффсету и стопается на короткой/пустой
-    странице; кап `MAX_PAGES=200` не молчит (`console.warn`). Подключены `fetchVatRates` (`crm.vat.list`) и
-    `searchCatalogProperties` (`catalog.productProperty.list`). `fetchCurrencies` (`crm.currency.list`) **НЕ**
-    паджинируется намеренно — метод отдаёт все валюты за один вызов (`total:0`, игнорит `start`; live+docs).
+  - **Пагинация enumerate-all списков** (#87): find-one lookup'ы (`findCompanyByTaxId`/`findProduct`)
+    берут первый id и в пагинации не нуждаются, но три **enumerate-all** чтения молча обрезались на
+    дефолтной странице B24 (50). Разведены по транспорту:
+    - **crm-sync (SDK/OAuth):** `fetchVatRates` (`crm.vat.list`) ходит через `SdkListCall` — **SDK сам
+      пагинирует** (`callList.make`, keyset по `ID`); ручной пейджер тут не нужен.
+    - **frame-token роуты (`makeRestCall`, SDK-клиента нет):** `searchCatalogProperties`
+      (`catalog.productProperty.list`) листает `utils/restPaginate.fetchAllPages` — по `start`-оффсету
+      (RestCall отдаёт **unwrapped** `result`, envelope `next`/`total` не виден), стоп на короткой/пустой
+      странице, кап `MAX_PAGES=200` не молчит (`console.warn`).
+    - `fetchCurrencies` (`crm.currency.list`) **НЕ** паджинируется намеренно — метод отдаёт все валюты
+      за один вызов (`total:0`, игнорит `start`, у строк нет `ID` для keyset; live+docs).
   - **Keep-alive рефреш токенов** (`utils/tokenKeepAlive.runTokenKeepAlive`, #175): на cron-инстансе
     суточный крон рефрешит **только** порталы у истечения (`selectTokensNearExpiry` по `updated_at`,
     порог ~3 д, батч-кап 50) — иначе простаивающий портал теряет refresh_token на 180-й день. Гейт на

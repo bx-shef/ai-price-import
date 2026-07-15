@@ -1,5 +1,5 @@
 import type { QueryFn } from '../utils/tokenStore'
-import type { FetchFn, RestCall } from '../utils/b24Rest'
+import type { FetchFn } from '../utils/b24Rest'
 import { REST_TIMEOUT_MS } from '../utils/b24Rest'
 import type { AgentSpawn } from '../agent/runAgent'
 import type { ExtractRunners } from '../utils/textExtract'
@@ -8,7 +8,7 @@ import { ensureFreshToken } from '../utils/ensureAccessToken'
 import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
-import { makePortalSdkCall } from '../utils/b24Sdk'
+import { makePortalSdkCall, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { setJobStatus } from '../utils/jobStore'
@@ -89,7 +89,7 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
  * cron rotates it → the cached client would fail invalid_grant forever). Per-job means each
  * job re-reads the current DB token, so a rotation is observed next job. `loadToken` is one
  * cheap query; refresh-persist is UPDATE-only (never resurrects a purged portal). */
-function restResolver(infra: LiveInfra): (memberId: string) => Promise<RestCall | null> {
+function restResolver(infra: LiveInfra): (memberId: string) => Promise<SdkTransport | null> {
   const sdkDeps = {
     loadToken: (m: string) => getToken(m, infra.query),
     saveToken: (input: Parameters<typeof updateTokensOnRefresh>[0]) => updateTokensOnRefresh(input, infra.query),
@@ -102,11 +102,11 @@ function restResolver(infra: LiveInfra): (memberId: string) => Promise<RestCall 
 }
 
 /** Load the portal mapping via server-side REST (falls back to defaults). */
-async function loadMapping(memberId: string, rest: (m: string) => Promise<RestCall | null>): Promise<PortalMapping> {
-  const call = await rest(memberId)
-  if (!call) return defaultMapping()
+async function loadMapping(memberId: string, rest: (m: string) => Promise<SdkTransport | null>): Promise<PortalMapping> {
+  const t = await rest(memberId)
+  if (!t) return defaultMapping()
   try {
-    return await readMapping(call)
+    return await readMapping(t.call)
   } catch {
     return defaultMapping()
   }
@@ -186,20 +186,21 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
  * `runCrmSync` (never silent). Wiring real `crm.product.add` is a follow-up (needs the
  * catalog/section policy); until then 'create' behaves like 'freeform'.
  */
-function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: string) => Promise<RestCall | null>, infra: LiveInfra): CrmSyncDeps {
-  const need = async (): Promise<RestCall> => {
-    const call = await rest(memberId)
-    if (!call) throw new Error('портал не авторизован (нет токена)')
-    return call
+function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: string) => Promise<SdkTransport | null>, infra: LiveInfra): CrmSyncDeps {
+  const need = async (): Promise<SdkTransport> => {
+    const t = await rest(memberId)
+    if (!t) throw new Error('портал не авторизован (нет токена)')
+    return t
   }
   return {
     getExisting: jobId => getExistingResult(memberId, jobId, infra.query),
-    findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, await need()),
-    findProduct: async item => findProduct(item, mapping, await need()),
-    portalVatRates: async () => fetchVatRates(await need()),
-    portalCurrencies: async () => fetchCurrencies(await need()),
-    createTarget: async (target, fields) => createTargetItem(target, fields, await need()),
-    setRows: async (etid, id, rows) => setProductRows(etid, id, rows, await need()),
+    findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
+    findProduct: async item => findProduct(item, mapping, (await need()).call),
+    // VAT rates: full-list fetch via the SDK's built-in pagination (SdkListCall).
+    portalVatRates: async () => fetchVatRates((await need()).list),
+    portalCurrencies: async () => fetchCurrencies((await need()).call),
+    createTarget: async (target, fields) => createTargetItem(target, fields, (await need()).call),
+    setRows: async (etid, id, rows) => setProductRows(etid, id, rows, (await need()).call),
     recordResult: (jobId, etid, id) => recordResult(memberId, jobId, etid, id, infra.query),
     reportErrors: async (messages, supplierName) => {
       if (!messages.length) return
@@ -208,15 +209,15 @@ function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: str
       // a chat failure must not mask the underlying import error.
       if (mapping.errorChatId) {
         try {
-          const call = await rest(memberId)
-          if (call) await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), call)
+          const t = await rest(memberId)
+          if (t) await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call)
         } catch { /* swallow — dashboard counter already bumped */ }
       }
     },
     notifySuccess: async (summary) => {
       if (!mapping.notifyChatId) return
-      const call = await need()
-      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary), call)
+      const t = await need()
+      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary), t.call)
     }
   }
 }
