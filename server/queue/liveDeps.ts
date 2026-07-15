@@ -10,7 +10,6 @@ import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../uti
 import { withAdvisoryLock } from '../utils/dbLock'
 import { makePortalSdkCall } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
-import { makePortalRestCall } from '../utils/portalRest'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { setJobStatus } from '../utils/jobStore'
 import { getText, saveText, deleteText } from '../utils/textStore'
@@ -81,50 +80,25 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
   }
 }
 
-/** Per-portal RestCall resolver.
+/** Per-portal RestCall resolver — @bitrix24/b24jssdk transport (built-in RestrictionManager:
+ * per-portal leaky-bucket rate limiter + retry-backoff on QUERY_LIMIT_EXCEEDED/429/5xx).
  *
- * Hand-rolled path (default): MEMOISED — the cached closure calls `ensureFreshToken`
- * (advisory-lock + DB re-read, #35) on EVERY call, so a process-lifetime cache is safe
- * (it always picks up a peer/cron token rotation).
- *
- * SDK path (`B24_SDK_TRANSPORT=1`): NOT memoised — a `B24OAuth` reads+decrypts the refresh
- * token ONCE at construction and holds it in memory (reactive refresh). A process-lifetime
- * cache would wedge on a STALE refresh token after any external rotation (a peer replica or
- * the keep-alive cron rotates it → this instance's cached client fails invalid_grant forever),
- * defeating the very #35 cross-instance coordination the SDK swap is meant to provide. So we
- * build a FRESH client per job (one B24OAuth per portal per crm-sync job) — each job re-reads
- * the current DB token, so a rotation is observed next job. loadToken is one cheap query. */
+ * Builds a FRESH `B24OAuth` per crm-sync job (NOT cached): the client reads+decrypts the
+ * refresh token once and holds it in memory (reactive refresh), so a process-lifetime cache
+ * would wedge on a STALE token after any external rotation (a peer replica or the keep-alive
+ * cron rotates it → the cached client would fail invalid_grant forever). Per-job means each
+ * job re-reads the current DB token, so a rotation is observed next job. `loadToken` is one
+ * cheap query; refresh-persist is UPDATE-only (never resurrects a purged portal). */
 function restResolver(infra: LiveInfra): (memberId: string) => Promise<RestCall | null> {
-  const deps = { ...ensureDeps(infra), fetchFn: infra.fetchFn }
-  // Opt-in @bitrix24/b24jssdk transport (built-in per-portal rate limiter). Default OFF —
-  // the hand-rolled makePortalRestCall stays default until the SDK path is verified live.
-  if (/^(1|true|yes|on)$/i.test(process.env.B24_SDK_TRANSPORT?.trim() ?? '')) {
-    const sdkDeps = {
-      loadToken: (m: string) => getToken(m, infra.query),
-      saveToken: (input: Parameters<typeof updateTokensOnRefresh>[0]) => updateTokensOnRefresh(input, infra.query),
-      creds: { clientId: infra.clientId, clientSecret: infra.clientSecret },
-      now: infra.now,
-      decrypt: (enc: string) => (enc ? decryptSecret(enc, infra.encKey) : ''),
-      encrypt: (plain: string) => encryptSecret(plain, infra.encKey)
-    }
-    return memberId => makePortalSdkCall(memberId, sdkDeps) // fresh per job (NOT cached)
+  const sdkDeps = {
+    loadToken: (m: string) => getToken(m, infra.query),
+    saveToken: (input: Parameters<typeof updateTokensOnRefresh>[0]) => updateTokensOnRefresh(input, infra.query),
+    creds: { clientId: infra.clientId, clientSecret: infra.clientSecret },
+    now: infra.now,
+    decrypt: (enc: string) => (enc ? decryptSecret(enc, infra.encKey) : ''),
+    encrypt: (plain: string) => encryptSecret(plain, infra.encKey)
   }
-
-  const cache = new Map<string, Promise<RestCall | null>>()
-  return async (memberId) => {
-    const cached = cache.get(memberId)
-    if (cached) return cached
-    const p = makePortalRestCall(memberId, deps)
-    cache.set(memberId, p)
-    try {
-      const result = await p
-      if (!result) cache.delete(memberId) // no token yet — allow a later re-resolve
-      return result
-    } catch (e) {
-      cache.delete(memberId) // transient failure — don't cache the rejection
-      throw e
-    }
-  }
+  return memberId => makePortalSdkCall(memberId, sdkDeps)
 }
 
 /** Load the portal mapping via server-side REST (falls back to defaults). */

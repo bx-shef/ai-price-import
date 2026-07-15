@@ -1,6 +1,6 @@
 # Карта проекта и процесс (редизайн procure-ai)
 
-> Last reviewed: 2026-07-12
+> Last reviewed: 2026-07-15
 
 Канонический срез состояния редизайна: цель, этапы, что сделано / в работе / дальше,
 блокеры, открытые вопросы и владельцы решений. Держим синхронно с
@@ -48,7 +48,7 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 |---|---|---|
 | 0 | **Документация редизайна** — старая арх., карта, целевая арх., стек, маркетинг, политика данных, мультиязычность | ✅ готово |
 | 1 | **Скелет Nuxt-монолита** — `app/` split + `server/api/health` + Vitest (unit) + ESLint + typecheck + SSG-сборка; чистое ядро (homoglyph/артикулы/роутинг/НДС/единицы/taxId) + 27 тестов; legacy-код перенесён в `legacy/` | 🧪 lint+typecheck+test+generate зелёные |
-| 2 | **Встройка в Б24 (мультитенант)** — `useB24()` dual-mode, `/install` + `event.bind` + `placement` (веб **и мобильное приложение**), OAuth per-portal (Postgres, шифрование refresh), ленивый `ensureAccessToken` + **проактивный keep-alive крон** (продление `refresh_token` за ~3 дня до 180-дневного истечения), `app.option` | 🧪 ядро+связка: `b24Oauth`/`accessToken`/`secretCrypto`/`b24Rest`/`tokenStore`/`ensureAccessToken`/`portalRest`/`server/db` + эндпоинт `/api/b24/events` + тесты (нет: `/install` UI, worker-транспорта, крона) |
+| 2 | **Встройка в Б24 (мультитенант)** — `useB24()` dual-mode, `/install` + `event.bind` + `placement` (веб **и мобильное приложение**), OAuth per-portal (Postgres, шифрование refresh), ленивый `ensureAccessToken` + **проактивный keep-alive крон** (продление `refresh_token` за ~3 дня до 180-дневного истечения), `app.option` | 🧪 ядро+связка: `b24Oauth`/`accessToken`/`secretCrypto`/`b24Rest`/`tokenStore`/`ensureAccessToken`/`b24Sdk`/`server/db` + эндпоинт `/api/b24/events` + тесты (нет: `/install` UI, worker-транспорта, крона) |
 | 3 | **Настройки/маппинг портала** — форма настроек + чистое ядро маппинга: каталог, **поле артикула поставщика** (тип текст=построчно / строка=разделитель, задаёт админ), **целевая сущность + направление** (сделка/смарт-процесс/инвойс/КП; **роутинг**: ручной override → упорядоченные правила `{match: type|keyword → target}` → дефолт; `resolveTarget` — чистая функция), **тумблер сохранения файла** (дело — настраиваемое `crm.activity.configurable.add`, `layout` от приложения), **стратегия поиска/создания товара**, **единицы** (словарь→`catalog.measure` + дефолт + авто-создать), **чат ошибок + чат уведомлений**. НДС — ставки из Б24 (`crm.vat.list`). Налоговый ID — фикс. `RQ_INN`. Договор — не тут (Q8) | 🧪 ядро+UI: `mapping.ts`/`portalSettings` (`parsePortalSettings`/`defaultMapping`) + `appSettings`/`settingsHandler` + страница `/settings` (`settings.vue`/`useSettings`) + роуты `/api/settings` + тесты. Дальше: полировка формы, живое сохранение на портале |
 | 4 | **Лендинг + маркетинг** — тёмная бренд-оболочка, `landing.ts`, hero-анимация, BriefForm, Метрика, OG, листинг Маркета | ✅ Композиция/вид как у client-bank на наших блоках (cyan): `index.vue` + `landing.ts` + **`HeroParticles`** (parallax-фон) + `PartnerBadge` + `useCardGlow` + **публичное демо** (`DemoTryout`/`demoExtract`/`demoAi`/`/api/demo/extract`: text детерминированно, PDF/скан/Word → AI, примеры рус/бел/каз .txt+.pdf) + **`BriefForm`** (встроенная CRM-форма Б24, form-scoped CSP) + **Метрика** (`useMetrikaGoal`) + **OG** (`make-og.mjs`/`og.png`) + **листинг Маркета** (`shef.priceimport`). Тесты. |
 | 5 | **Ядро загрузки/извлечения** — `app/utils` парсинг + `server/` извлечение текста (pdftotext/OCR/office) в очереди; UI загрузки **только in-portal** (веб+мобильное приложение) с ручным выбором цели у файла; результат = статус + **ссылка «открыть»** сущность. Standalone-загрузка — кастом (маркетинг) | 🧪 ядро+связка: `textExtract` (диспетч+OCR-фолбэк), `extractRunners` (pdftotext/libreoffice/tesseract rus+bel+kaz+eng), `fileStore` (traversal-safe), `importUpload` (браузерный валидатор); **API** `POST /api/import/upload` + `GET /api/import/status` (фрейм-токен + верификация `member_id`). **UI in-portal `/import` — 📝** |
@@ -78,7 +78,7 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 - **Ядро OAuth/токенов (этап 2):** `b24Oauth`, `accessToken` (ленивый/keep-alive предикаты),
   `secretCrypto` (AES-GCM), `b24Rest` (типизированная `B24RestError` + **SSRF-гард** `isSafeB24Domain`),
   `tokenStore` (Postgres, write-once `application_token`), `ensureAccessToken` (refresh + ретрай),
-  `portalRest` (`makePortalRestCall(memberId)` → **живой `RestCall`**), `server/db/` (схема + ленивый
+  `b24Sdk` (`makePortalSdkCall(memberId)` → **живой `RestCall`** через `@bitrix24/b24jssdk`, встроенный лимитер), `server/db/` (схема + ленивый
   pg-клиент + плагин миграции). **HTTP-эндпоинт `/api/b24/events`** (install/unregister, синхронная
   запись, вердикт по сохранённому per-portal токену).
 - **Ядро записи в CRM (этап 7):** `companyLookup` (RQ_INN), `crmWrite` (productrow/create-target),
@@ -127,7 +127,7 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 | Логика инструментов (поставщик/товар/сделка) | новый MCP-пакет `mcp/tools/*` | **Переписать на стандартный REST** (`crm.*`/`catalog.*`) вместо кастомных `shef:purchase.api.*`. **Поиск договора не переносим** (Q8) |
 | Ядро извлечения текста | `server/` + утилиты | pdftotext/tesseract/office; в очереди |
 | Homoglyph-логика | `app/utils/*` (чистая, тесты) | Уже почти чистая функция |
-| OAuth/мультитенант из старого MCP | `server/utils/*` + MCP | **Оживает**: per-portal токены, `ensureAccessToken`, `makePortalRestCall` (как эталон) |
+| OAuth/мультитенант из старого MCP | `server/utils/*` + MCP | **Оживает**: per-portal токены, `ensureAccessToken`, `makePortalSdkCall` (SDK-транспорт) |
 | Метрики + **обратная связь** | `server/` + Postgres | Пересобрать: метрики 2 уровня; отзывы сотрудников (👍/👎/💡) + сигналы агента |
 | Авторизация оператора | `server/utils/session.ts` + `/login` | Модель эталона (HMAC-cookie, rate-limit) для служебной зоны |
 

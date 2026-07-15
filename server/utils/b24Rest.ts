@@ -37,11 +37,6 @@ export class B24RestError extends Error {
   }
 }
 
-/** True when the error means the access token must be refreshed and the call retried. */
-export function isExpiredTokenError(err: unknown): boolean {
-  return err instanceof B24RestError && (err.code === 'expired_token' || err.code === 'invalid_token')
-}
-
 /** True when a REST error means the auth token was REJECTED (forbidden) rather than a
  * transport/network failure — lets callers tell "unauthorised" from "retry later". */
 export function isAuthRejection(err: unknown): boolean {
