@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
-import { xlsxToText, xlsxToTextFallback, zipUncompressedTotal, XlsxTooLargeError, MAX_XLSX_ENTRIES } from '../server/utils/demoXlsx'
+import { xlsxToText, xlsxToTextFallback, zipUncompressedTotal, XlsxTooLargeError, MAX_XLSX_ENTRIES, MAX_XLSX_ROWS, MAX_XLSX_SHEETS } from '../server/utils/demoXlsx'
 import { extractDemo } from '../app/utils/demoExtract'
 
 async function buildXlsx(rows: Array<Array<string | number>>): Promise<Uint8Array> {
@@ -9,6 +9,61 @@ async function buildXlsx(rows: Array<Array<string | number>>): Promise<Uint8Arra
   rows.forEach(r => ws.addRow(r))
   return new Uint8Array(await wb.xlsx.writeBuffer() as ArrayBuffer)
 }
+
+/** Build an .xlsx with several named sheets (each is an array of rows). */
+async function buildMultiSheetXlsx(sheets: Array<{ name: string, rows: Array<Array<string | number>> }>): Promise<Uint8Array> {
+  const wb = new ExcelJS.Workbook()
+  for (const s of sheets) {
+    const ws = wb.addWorksheet(s.name)
+    s.rows.forEach(r => ws.addRow(r))
+  }
+  return new Uint8Array(await wb.xlsx.writeBuffer() as ArrayBuffer)
+}
+
+describe('xlsxToText multi-sheet (GH #76)', () => {
+  const SHEETS = [
+    { name: 'ТТН', rows: [['Поставщик: ООО «Пример»'], ['УНП: 191234567']] },
+    { name: 'Приложение', rows: [['Наименование', 'Кол-во', 'Цена'], ['Болт М6', 100, 0.45]] },
+    { name: 'Пусто', rows: [] as Array<Array<string | number>> }
+  ]
+  it('exceljs path reads ALL sheets in order, drops empty, header first', async () => {
+    const t = await xlsxToText(await buildMultiSheetXlsx(SHEETS))
+    expect(t).toContain('УНП: 191234567') // ТТН sheet (header)
+    expect(t).toContain('Болт М6') // Приложение sheet (goods) — was lost before #76
+    expect(t.indexOf('УНП')).toBeLessThan(t.indexOf('Болт М6')) // workbook order preserved
+    expect(t).not.toMatch(/\n\n\n/) // empty sheet dropped, no blank-line pileup
+  })
+  it('fallback reader also reads all sheets', async () => {
+    const bytes = await buildMultiSheetXlsx(SHEETS)
+    const t = xlsxToTextFallback(Buffer.from(bytes))
+    expect(t).toContain('УНП: 191234567')
+    expect(t).toContain('Болт М6')
+  })
+
+  it('fallback shares the row budget across sheets (≤ MAX_XLSX_ROWS total, not per-sheet)', async () => {
+    // 3 sheets × 300 rows = 900 rows; the budget is 500 TOTAL, not 500 per sheet.
+    const big = Array.from({ length: 3 }, (_, s) => ({
+      name: `S${s}`,
+      rows: Array.from({ length: 300 }, (_, r) => [`s${s}r${r}`, r] as Array<string | number>)
+    }))
+    const bytes = await buildMultiSheetXlsx(big)
+    const lines = xlsxToTextFallback(Buffer.from(bytes)).split('\n').filter(Boolean).length
+    expect(lines).toBeLessThanOrEqual(MAX_XLSX_ROWS)
+  })
+
+  it('caps the number of worksheets read (MAX_XLSX_SHEETS) on both paths', async () => {
+    const many = Array.from({ length: MAX_XLSX_SHEETS + 3 }, (_, s) => ({
+      name: `S${s}`, rows: [[`marker_${s}`]] as Array<Array<string | number>>
+    }))
+    const bytes = await buildMultiSheetXlsx(many)
+    const exceljs = await xlsxToText(bytes)
+    const fallback = xlsxToTextFallback(Buffer.from(bytes))
+    // A sheet beyond the cap (the last one) is not read by either path.
+    expect(exceljs).not.toContain(`marker_${MAX_XLSX_SHEETS + 2}`)
+    expect(fallback).not.toContain(`marker_${MAX_XLSX_SHEETS + 2}`)
+    expect(exceljs).toContain('marker_0')
+  })
+})
 
 describe('xlsxToText', () => {
   it('first sheet → tab-separated text (header + rows)', async () => {
