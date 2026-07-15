@@ -38,6 +38,15 @@ const call = async (method, params = {}) => {
   return j.result
 }
 
+// fetchVatRates takes an SdkListCall (full-list fetch). This dev script talks to the portal
+// over a webhook, not the SDK, so adapt `call` to that signature. crm.vat.list returns all
+// rates in one page (the seeded test portal has a handful), so a single call is complete
+// here — production pages via the SDK's callList.make.
+const listCall = async (method, params) => {
+  const r = await call(method, params)
+  return Array.isArray(r) ? r : []
+}
+
 // A supplier taxId that exists in the seeded portal (crm.requisite RQ_INN) so the
 // company match succeeds; adjust to a value present on your portal.
 const SUPPLIER_TAX_ID = '7712345678'
@@ -95,7 +104,7 @@ const deps = {
   getExisting: async () => null,
   findCompanyByTaxId: t => findCompanyByTaxId(t, call),
   findProduct: it => findProduct(it, mapping, call),
-  portalVatRates: () => fetchVatRates(call),
+  portalVatRates: () => fetchVatRates(listCall),
   portalCurrencies: () => fetchCurrencies(call),
   createTarget: (t, f) => createTargetItem(t, f, call),
   setRows: (e, i, r) => setProductRows(e, i, r, call),

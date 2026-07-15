@@ -21,7 +21,9 @@
 import { B24OAuth } from '@bitrix24/b24jssdk'
 import type { B24OAuthParams, B24OAuthSecret, CallbackRefreshAuth } from '@bitrix24/b24jssdk'
 import type { RestCall } from './b24Rest'
-import type { PortalToken, SaveTokenInput } from './tokenStore'
+import type { PortalToken, QueryFn, SaveTokenInput } from './tokenStore'
+import { getToken, updateTokensOnRefresh } from './tokenStore'
+import { decryptSecret, encryptSecret } from './secretCrypto'
 
 /** B24 OAuth server endpoint (constant — the SDK refreshes tokens against it). */
 const B24_SERVER_ENDPOINT = 'https://oauth.bitrix.info/rest/'
@@ -29,7 +31,16 @@ const B24_SERVER_ENDPOINT = 'https://oauth.bitrix.info/rest/'
 /** The slice of a B24 OAuth client this adapter uses — structural so tests inject a fake
  *  and the real `B24OAuth` satisfies it (checked where the client is constructed). */
 export interface OAuthCallClient {
-  actions: { v2: { call: { make: (o: { method: string, params?: Record<string, unknown> }) => Promise<SdkAjaxResult> } } }
+  actions: {
+    v2: {
+      call: { make: (o: { method: string, params?: Record<string, unknown> }) => Promise<SdkAjaxResult> }
+      // Full-list fetch: the SDK pages through EVERY row (keyset pagination by `idKey`,
+      // default 'ID') and hands back the concatenated array via getData(). `customKeyForResult`
+      // names the grouped result key (e.g. `productProperties`). We use this instead of a
+      // hand-rolled pager for list reads on the OAuth transport.
+      callList: { make: (o: { method: string, params?: Record<string, unknown>, idKey?: string, customKeyForResult?: string }) => Promise<SdkListResult> }
+    }
+  }
   setCallbackRefreshAuth: (cb: CallbackRefreshAuth) => void
 }
 
@@ -39,6 +50,23 @@ export interface SdkAjaxResult {
   isSuccess: boolean
   getData: () => Record<string, unknown> | null | undefined
   getErrorMessages: () => string[]
+}
+
+/** The SDK's `callList.make` Result — `getData()` is the ALREADY-collected row array. */
+export interface SdkListResult {
+  getData: () => unknown
+}
+
+/** Fetch EVERY row of a B24 list method — the SDK handles pagination. `idKey` overrides
+ *  the keyset cursor field (default 'ID'; e.g. 'id' for catalog.*); `listKey` names the
+ *  grouped result key (e.g. 'productProperties') for methods that wrap rows in an object. */
+export type SdkListCall = (method: string, params?: Record<string, unknown>, opts?: { idKey?: string, listKey?: string }) => Promise<unknown[]>
+
+/** A portal-bound SDK transport: single-call `RestCall` PLUS a full-list `list` fetcher,
+ *  both backed by the same per-portal `B24OAuth` (one rate-limiter bucket for the job). */
+export interface SdkTransport {
+  call: RestCall
+  list: SdkListCall
 }
 
 /** Map our stored `PortalToken` → the SDK's `B24OAuthParams`. The refresh token is
@@ -100,6 +128,23 @@ export function makeSdkRestCall(client: OAuthCallClient): RestCall {
   }
 }
 
+/** Wrap a B24 OAuth client's `callList.make` as our `SdkListCall`: page through ALL rows
+ *  (the SDK's built-in pagination) and return the flat array. `opts.idKey`/`opts.listKey`
+ *  map to the SDK's `idKey`/`customKeyForResult` (grouped methods like
+ *  catalog.productProperty.list need both). Non-array data (empty portal) → `[]`. */
+export function makeSdkListCall(client: OAuthCallClient): SdkListCall {
+  return async (method, params, opts) => {
+    const res = await client.actions.v2.callList.make({
+      method,
+      params,
+      ...(opts?.idKey ? { idKey: opts.idKey } : {}),
+      ...(opts?.listKey ? { customKeyForResult: opts.listKey } : {})
+    })
+    const data = res.getData()
+    return Array.isArray(data) ? data : []
+  }
+}
+
 /** I/O the portal-bound factory needs, injected for testability. The SDK client itself is
  *  NOT injected — this module owns `new B24OAuth(...)`; only its inputs come from the caller. */
 export interface SdkPortalDeps {
@@ -112,13 +157,14 @@ export interface SdkPortalDeps {
   scope?: string
 }
 
-/** Build a `RestCall` bound to one portal, backed by a per-portal `B24OAuth` instance (its
- *  own rate-limiter bucket) with refresh-persistence wired. `null` when the portal has no
- *  stored token. This is THE crm-sync portal transport (see liveDeps.restResolver).
+/** Build the per-portal transport (single-call `.call` + full-list `.list`), backed by one
+ *  `B24OAuth` instance (its own rate-limiter bucket) with refresh-persistence wired. `null`
+ *  when the portal has no stored token. This is THE crm-sync portal transport (see
+ *  liveDeps.restResolver).
  *  NB: the SDK refreshes REACTIVELY — one extra round-trip on the first call after
  *  access-token expiry; the daily keep-alive cron (#175) still proactively refreshes idle
  *  near-expiry portals via ensureFreshToken (advisory lock, #35). */
-export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): Promise<RestCall | null> {
+export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): Promise<SdkTransport | null> {
   const token = await deps.loadToken(memberId)
   if (!token) return null
   // Typing the instance as OAuthCallClient is the drift guard (see file header).
@@ -127,5 +173,30 @@ export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): 
     deps.creds
   )
   client.setCallbackRefreshAuth(buildRefreshPersist(deps.saveToken, { now: deps.now, encrypt: deps.encrypt }))
-  return makeSdkRestCall(client)
+  return { call: makeSdkRestCall(client), list: makeSdkListCall(client) }
+}
+
+/** Live env/infra a portal-bound SDK transport needs (shared by the crm-sync worker and
+ *  the in-portal API routes so the wiring lives in ONE place). */
+export interface SdkInfra {
+  query: QueryFn
+  clientId: string
+  clientSecret: string
+  /** AES key (base64) for refresh-token decrypt/encrypt at rest. */
+  encKey: string
+  now: () => number
+}
+
+/** Bind `SdkPortalDeps` (token load/save + crypto + creds) to the live stores/env. Used by
+ *  liveDeps.restResolver (crm-sync) and the frame-token routes that read via the portal's
+ *  OAuth token (e.g. the catalog-property picker). */
+export function sdkPortalDeps(infra: SdkInfra): SdkPortalDeps {
+  return {
+    loadToken: m => getToken(m, infra.query),
+    saveToken: input => updateTokensOnRefresh(input, infra.query),
+    creds: { clientId: infra.clientId, clientSecret: infra.clientSecret },
+    now: infra.now,
+    decrypt: enc => (enc ? decryptSecret(enc, infra.encKey) : ''),
+    encrypt: plain => encryptSecret(plain, infra.encKey)
+  }
 }

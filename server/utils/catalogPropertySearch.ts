@@ -1,20 +1,20 @@
 // Backend proxy core for the supplier-article picker (P7): search a portal's catalog
 // product properties so an admin can PICK the property that holds the supplier article
-// instead of typing a raw code. Pure over an injected `call(method, params)` — the
-// route binds the real transport + frame identity (same model as /api/settings).
+// instead of typing a raw code. Reads via the portal's OAuth token (SdkTransport), so
+// the route resolves the caller's member_id from the frame token first (resolveFrameMember).
 //
-// Two REST reads, verified live (B24_HOOK, scope `catalog`):
-//   - catalog.catalog.list → pick the MAIN product catalog (offers catalogs carry a
-//     productIblockId pointing at their parent; the main one has productIblockId=null);
-//   - catalog.productProperty.list filter[iblockId] → result.productProperties[] with
-//     { id, code, name, propertyType }.
-// Normalized to one shape ({ value: code, label: name }). The query is applied
-// in-memory (the REST list has no name-substring filter). We page through ALL
-// properties (catalog.productProperty.list is paginated, 50/page, #87) so a large B2B
-// catalog with >50 product properties doesn't silently drop the tail from the picker.
+// Two REST reads, verified live (scope `catalog`):
+//   - catalog.catalog.list (single `.call`) → pick the MAIN product catalog (offers
+//     catalogs carry a productIblockId pointing at their parent; the main one has
+//     productIblockId=null);
+//   - catalog.productProperty.list (full-list `.list`, grouped key `productProperties`,
+//     keyset cursor `id`) → { id, code, name, propertyType } rows. The SDK pages through
+//     ALL of them, so a large B2B catalog with >50 properties doesn't drop the tail.
+// Normalized to one shape ({ value: code, label: name }); the query is applied in-memory
+// (the REST list has no name-substring filter).
 
 import type { RestCall } from './b24Rest'
-import { fetchAllPages } from './restPaginate'
+import type { SdkTransport } from './b24Sdk'
 
 /** One pickable property: `value` is the stored code (or PROPERTY_<id> fallback),
  *  `label` the human name. `id`/`code` are carried for callers that need them. */
@@ -37,8 +37,8 @@ export interface PropertySearchPage {
  * when no catalog is found (empty portal / missing scope).
  */
 export async function resolveMainIblockId(call: RestCall): Promise<number | null> {
-  // RestCall (makeRestCall) already returns the UNWRAPPED `result`, so read `catalogs`
-  // directly — NOT `result.catalogs` (that double-unwrap yields undefined in prod).
+  // The transport's `.call` (makeSdkRestCall) returns the UNWRAPPED `result`, so read
+  // `catalogs` directly — NOT `result.catalogs` (that double-unwrap yields undefined in prod).
   const resp = await call('catalog.catalog.list', {}) as { catalogs?: Array<Record<string, unknown>> }
   const catalogs = resp?.catalogs ?? []
   const main = catalogs.find(c => c.productIblockId == null) ?? catalogs[0]
@@ -77,19 +77,16 @@ export function filterProperties(props: PropertyOption[], q: string): PropertyOp
 }
 
 /**
- * Compose: resolve the main iblockId → page through ALL its product properties →
- * normalize → filter by query. `hasMore` is always false because we already fetched
+ * Compose: resolve the main iblockId → fetch ALL its product properties (SDK full-list) →
+ * normalize → filter by query. `hasMore` is always false because the SDK already fetched
  * every page (not because we assume one page). Empty list when no catalog is found
  * (never throws for that — the route maps transport failures to 502).
  */
-export async function searchCatalogProperties(call: RestCall, q: string): Promise<PropertySearchPage> {
-  const iblockId = await resolveMainIblockId(call)
+export async function searchCatalogProperties(t: SdkTransport, q: string): Promise<PropertySearchPage> {
+  const iblockId = await resolveMainIblockId(t.call)
   if (!iblockId) return { items: [], hasMore: false }
-  const rows = await fetchAllPages(
-    call,
-    'catalog.productProperty.list',
-    { filter: { iblockId } },
-    r => (r as { productProperties?: unknown[] })?.productProperties
-  )
+  // catalog.productProperty.list groups rows under `productProperties` and keys on `id`
+  // (lowercase) — the SDK needs both to page a >50-property catalog correctly.
+  const rows = await t.list('catalog.productProperty.list', { filter: { iblockId } }, { idKey: 'id', listKey: 'productProperties' })
   return { items: filterProperties(normalizeProperties({ productProperties: rows }), q), hasMore: false }
 }

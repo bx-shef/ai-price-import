@@ -94,6 +94,10 @@ const COL = {
   qty: /кол[-\s]?во|колич|колькас|сан|мөлшер/i,
   unit: /^ед\.?$|адзін|^адз\.?$|бірл/i,
   price: /цена|цана|кошт|баға|бага/i,
+  // NB: «Стоимость» is intentionally NOT a column keyword — it is ambiguous (unit cost in
+  // «…|Стоимость|…|Сумма», line total elsewhere), so mapping it either way misaligns a
+  // realistic two-money-column table. A second table whose ONLY money column is «Стоимость»
+  // stays a known demo limitation (GH #76) rather than risk that regression.
   sum: /сумма|сума|сомас|құн/i
 }
 
@@ -308,7 +312,15 @@ function pick(cells: string[], idx: number | undefined): string {
 // Footer / signature lines that leak into the goods table when a template puts them below
 // the items (esp. after merged-cell flattening). Only used to drop a row that ALSO has no
 // numbers — a real product with these words in its name keeps its figures and stays.
-const NOISE_ROW = /^(?:ответственн|исполнител|руководител|директор|гл(?:авный|\.)?\s*бухгалтер|бухгалтер|товар[ы]?\s+(?:отпустил|получил|принял)|отпуск\s+разрешил|отпустил|принял|сдал|груз\s+(?:получил|принял|сдал)|грузополучател|грузоотправител|изготовител|менеджер|м\.?\s*п\.?(?:\s|$)|подпис|по\s+доверенности|выписал|адпуск|адказн)/iu
+// NB: this only drops a row with NO qty/price/sum figures, so real goods that carry numbers
+// stay (e.g. «Телефон IP настольный|3|200|600»). The LAST alternative drops a leaked bare
+// tax-id requisite whose digits sit in the NAME cell (empty numeric columns), so it lands
+// here, not in DESCRIPTIVE_ROW (GH #76). It is anchored to the WHOLE cell («БИН 123456789012»
+// and nothing else) so a product whose name merely STARTS with a tax-id-like token + code
+// («УНП 200500 адаптер») is NOT dropped. Address/phone/«Телефон:» labels are deliberately
+// NOT matched here — they are indistinguishable from a legit «Category: product» name or a
+// bare «Телефон» product with a non-numeric price («по запросу»), so we don't risk that drop.
+const NOISE_ROW = /^(?:ответственн|исполнител|руководител|директор|гл(?:авный|\.)?\s*бухгалтер|бухгалтер|товар[ы]?\s+(?:отпустил|получил|принял)|отпуск\s+разрешил|отпустил|принял|сдал|груз\s+(?:получил|принял|сдал)|грузополучател|грузоотправител|изготовител|менеджер|м\.?\s*п\.?(?:\s|$)|подпис|по\s+доверенности|выписал|адпуск|адказн|(?:УНП|БИН|БСН|ИИН|ЖСН|ИНН)(?![\p{L}])\s*[:№]?\s*\d{6,}\s*$)/iu
 
 // Banking / address / contract / requisite markers of a NON-product line that leaked into
 // the table WITH numbers (account no. / postal index / contract no.) — so, unlike NOISE_ROW,

@@ -5,9 +5,9 @@ import type { RestCall } from './b24Rest'
 // create a wrong-currency entity). Verified live: entries are {CURRENCY, BASE, …}.
 //
 // NOT paginated (#87): crm.currency.list returns ALL currencies in one call and reports
-// total:0 (confirmed live + REST docs — `start` is ignored). So — unlike crm.vat.list /
-// catalog.productProperty.list — this one must NOT be wrapped in fetchAllPages; a single
-// read is complete.
+// total:0 (confirmed live + REST docs — `start` is ignored, and rows carry no ID for a
+// keyset cursor). So — unlike crm.vat.list (SDK full-list) or the catalog-property picker
+// (frame-token pager) — this stays a plain single `RestCall`; a single read is complete.
 
 /** Fetch the portal's ISO 4217 currency codes (uppercased). */
 export async function fetchCurrencies(call: RestCall): Promise<string[]> {

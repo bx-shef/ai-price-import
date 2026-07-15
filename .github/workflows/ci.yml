@@ -29,6 +29,14 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm generate
+      # Validate the shared front-proxy per-vhost tuning (deploy/vhost.d/*) — GH #71 option 3.
+      # The app's OWN nginx.conf is validated by the docker-build job (Dockerfile `nginx -t`);
+      # this covers the front nginx-proxy vhost snippet, which was otherwise only checked at
+      # `make proxy-tune` apply time — so a broken file could reach prod (413/504 / proxy wedge).
+      # Install nginx from the Ubuntu mirror (not Docker Hub) so the required gate has no
+      # anonymous-pull rate-limit flake; check-vhost.sh uses the local binary when present.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx-light
+      - run: sh scripts/check-vhost.sh
 
   docker-build:
     name: validate backend image builds

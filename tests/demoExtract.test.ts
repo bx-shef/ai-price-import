@@ -561,3 +561,60 @@ describe('extractDemo — descriptive/requisite rows leaking into the table (GH 
     }
   })
 })
+
+describe('extractDemo — #76 follow-up: bare requisite rows (tax-id / Адрес / Телефон)', () => {
+  // Two-money-column «Стоимость» + «Сумма» must not misalign: «Стоимость» is deliberately
+  // NOT a column keyword (ambiguous unit-cost vs total), so «Сумма» keeps the sum role.
+  it('keeps «Сумма» as the total when a «Стоимость» (unit cost) column is also present', () => {
+    const text = ['Наименование|Стоимость|Кол-во|Сумма', 'Труба стальная|150|5|750'].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0]).toMatchObject({ name: 'Труба стальная', quantity: 5, sum: 750 })
+  })
+
+  it('drops a leaked bare tax-id requisite row (whole cell = «БИН <digits>»)', () => {
+    // The tax-id line leaks with EMPTY qty/price/sum columns (digits in the name), and its
+    // whole name cell is exactly the requisite, so the end-anchored NOISE_ROW alt drops it.
+    const text = [
+      'Шот-фактура № 12',
+      'Жеткізуші: ТОО "Астана Трейд", БИН 990140000385',
+      'Атауы|Саны|Бағасы|Сомасы',
+      'Кофе|2|1000|2000',
+      'БИН 123456789012|||',
+      'УНП: 100200300|||',
+      'Барлығы|||2000'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Кофе'])
+    expect(r.totals.sum).toBe(2000)
+  })
+
+  it('keeps a real product whose NAME merely starts with a tax-id-like token + code', () => {
+    // End-anchored: only a cell that is ONLY «<tax-id> <digits>» drops. A product name that
+    // continues after the code («УНП 200500 адаптер») is kept — even with a non-numeric price.
+    const text = [
+      'Наименование|Цена',
+      'УНП 200500 адаптер|уточняйте',
+      'БИН 123456 модуль|по запросу',
+      'Кабель ВВГ|300'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['УНП 200500 адаптер', 'БИН 123456 модуль', 'Кабель ВВГ'])
+  })
+
+  it('keeps products that start with Телефон/Факс/Адрес (labels are NOT dropped — ambiguous)', () => {
+    // Address/phone labels are intentionally not requisite-filtered (they collide with
+    // «Category: product» names and bare «Телефон» products), so these always stay.
+    const text = [
+      'Наименование|Цена',
+      'Телефон IP настольный|200',
+      'Телефон: Panasonic KX-TS500|по запросу',
+      'Факс-модем|80',
+      'Адресная табличка|25'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual([
+      'Телефон IP настольный', 'Телефон: Panasonic KX-TS500', 'Факс-модем', 'Адресная табличка'
+    ])
+  })
+})

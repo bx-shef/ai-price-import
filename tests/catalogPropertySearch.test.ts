@@ -82,18 +82,32 @@ describe('filterProperties', () => {
   })
 })
 
+/** Fake SdkTransport: `.call` for catalog.catalog.list, `.list` for the full property fetch
+ *  (returns the flat productProperties array, as makeSdkListCall does). */
+function fakeTransport(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    call: fakeCall(overrides),
+    list: async (_method: string, _params?: Record<string, unknown>, opts?: { idKey?: string, listKey?: string }) => {
+      // The picker must request the grouped key + lowercase cursor for catalog.productProperty.list.
+      expect(opts).toEqual({ idKey: 'id', listKey: 'productProperties' })
+      const rows = (overrides['catalog.productProperty.list'] as { productProperties?: unknown[] })?.productProperties
+      return rows ?? PROPERTIES.productProperties
+    }
+  }
+}
+
 describe('searchCatalogProperties', () => {
   it('resolves the main catalog, lists its properties, filters by query', async () => {
-    const page = await searchCatalogProperties(fakeCall(), 'артикул')
+    const page = await searchCatalogProperties(fakeTransport(), 'артикул')
     expect(page).toEqual({ items: [{ value: 'SUPPLIER_ARTICLE', label: 'Артикул поставщика', code: 'SUPPLIER_ARTICLE', id: 99 }], hasMore: false })
   })
   it('empty query returns the full property list', async () => {
-    const page = await searchCatalogProperties(fakeCall(), '')
+    const page = await searchCatalogProperties(fakeTransport(), '')
     expect(page.items).toHaveLength(3)
     expect(page.hasMore).toBe(false)
   })
-  it('no catalog → empty page (never throws)', async () => {
-    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [] } })
-    expect(await searchCatalogProperties(call, '')).toEqual({ items: [], hasMore: false })
+  it('no catalog → empty page (never throws, never lists properties)', async () => {
+    const t = fakeTransport({ 'catalog.catalog.list': { catalogs: [] } })
+    expect(await searchCatalogProperties(t, '')).toEqual({ items: [], hasMore: false })
   })
 })
