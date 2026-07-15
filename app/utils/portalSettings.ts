@@ -5,6 +5,13 @@ import type { PortalMapping, RoutingRule, TargetRef } from '~/types/mapping'
 
 const DEFAULT_TARGET: TargetRef = { entityTypeId: 2 } // deal
 
+// DoS bounds (#83): app.option is admin-controlled, so a bloated blob (huge routingRules /
+// unit dictionary) would pin CPU/memory while a worker parses it once per job. Cap the
+// input BEFORE the loops — silently truncate rather than choke (a real config never nears these).
+const MAX_ROUTING_RULES = 200
+const MAX_RULE_KEYWORDS = 100
+const MAX_UNIT_DICT_ENTRIES = 1000
+
 export function defaultMapping(): PortalMapping {
   return {
     article: { field: '', kind: 'text' },
@@ -31,11 +38,11 @@ function asTarget(v: unknown, fallback: TargetRef): TargetRef {
 function asRules(v: unknown): RoutingRule[] {
   if (!Array.isArray(v)) return []
   const out: RoutingRule[] = []
-  for (const raw of v) {
+  for (const raw of v.slice(0, MAX_ROUTING_RULES)) { // DoS cap (#83)
     const o = raw as Record<string, unknown>
     const match = (o?.match ?? {}) as Record<string, unknown>
     const type = typeof match.type === 'string' ? match.type : undefined
-    const keywords = Array.isArray(match.keywords) ? match.keywords.map(String).filter(Boolean) : undefined
+    const keywords = Array.isArray(match.keywords) ? match.keywords.slice(0, MAX_RULE_KEYWORDS).map(String).filter(Boolean) : undefined
     if (!type && (!keywords || keywords.length === 0)) continue // skip empty condition
     out.push({ match: { ...(type ? { type } : {}), ...(keywords ? { keywords } : {}) }, target: asTarget(o?.target, DEFAULT_TARGET) })
   }
@@ -61,7 +68,7 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     },
     units: {
       dictionary: units.dictionary && typeof units.dictionary === 'object'
-        ? Object.fromEntries(Object.entries(units.dictionary as Record<string, unknown>).map(([k, v]) => [k.toLowerCase(), Number(v)]).filter(([, v]) => Number.isFinite(v as number)))
+        ? Object.fromEntries(Object.entries(units.dictionary as Record<string, unknown>).slice(0, MAX_UNIT_DICT_ENTRIES).map(([k, v]) => [k.toLowerCase(), Number(v)]).filter(([, v]) => Number.isFinite(v as number))) // DoS cap (#83)
         : {},
       defaultCode: Number.isFinite(Number(units.defaultCode)) ? Number(units.defaultCode) : 796,
       autoCreate: units.autoCreate === true
