@@ -32,6 +32,14 @@ export interface CrmSyncDeps {
     rowCount: number
     warnings: string[]
   }) => Promise<void>
+  /** Optional: record a configurable activity («настраиваемое дело») on the created entity's
+   *  timeline. Best-effort — a failure must not fail the import. */
+  writeActivity?: (input: {
+    entityTypeId: number
+    entityId: number
+    supplierName?: string
+    rowCount: number
+  }) => Promise<void>
 }
 
 export interface CrmSyncResult {
@@ -168,6 +176,19 @@ export async function runCrmSync(
       })
     } catch {
       warnings.push('Уведомление в чат не отправлено')
+    }
+  }
+
+  // Timeline activity («настраиваемое дело») — best-effort, gated on `created` like the
+  // chat notification (a redelivered/idempotent job must not add a second дело). The live
+  // transport is the OAuth SDK (real app context), where crm.activity.configurable.add
+  // works; a webhook context would return ERROR_WRONG_CONTEXT (verified) — so this is a
+  // no-op only on the dev webhook path, never in prod.
+  if (deps.writeActivity && created) {
+    try {
+      await deps.writeActivity({ entityTypeId, entityId, supplierName: doc.supplier?.name, rowCount: rows.length })
+    } catch {
+      warnings.push('Дело в таймлайне не создано')
     }
   }
 
