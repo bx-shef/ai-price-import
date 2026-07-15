@@ -16,11 +16,36 @@ import type { ExtractRunners } from './textExtract'
 
 const RUN_TIMEOUT_MS = 90_000
 
+// Least-privilege env for the extraction subprocesses (libreoffice/pdftotext/tesseract/
+// pdftoppm). They run UNTRUSTED documents (office macros, crafted PDFs), so they must NOT
+// see backend secrets — DATABASE_URL, B24_TOKEN_ENC_KEY, B24_CLIENT_SECRET, app token, etc.
+// (mirrors the agent's agentSpawnEnv guard). Only what these tools legitimately need to
+// run + render text correctly is passed through. GH #99.
+const SUBPROCESS_ENV_ALLOW = [
+  'PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', // process basics + temp dir
+  'LANG', 'LC_ALL', 'LANGUAGE', 'TZ', // locale (UTF-8 filenames, number formatting)
+  'OMP_THREAD_LIMIT', 'OMP_NUM_THREADS', // bound tesseract/OpenMP threads on minimal infra (#95)
+  'FONTCONFIG_PATH', 'FONTCONFIG_FILE', 'TESSDATA_PREFIX' // libreoffice fonts + tesseract data
+] as const
+
+/** Build the secret-free subprocess env (allow-list from `full`, then `extra` overrides). Pure. */
+export function subprocessEnv(
+  full: Record<string, string | undefined>,
+  extra?: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of SUBPROCESS_ENV_ALLOW) {
+    const v = full[k]
+    if (v != null && v !== '') out[k] = String(v)
+  }
+  return { ...out, ...extra }
+}
+
 function run(bin: string, args: string[], env?: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      ...(env ? { env: { ...process.env, ...env } } : {})
+      env: subprocessEnv(process.env, env)
     })
     let out = ''
     let err = ''

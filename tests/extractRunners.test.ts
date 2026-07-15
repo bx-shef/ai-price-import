@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasPdfMagic, officeConvertTarget, orderPdfPageImages, parseOfficeCsvOutputs } from '../server/utils/extractRunners'
+import { hasPdfMagic, officeConvertTarget, orderPdfPageImages, parseOfficeCsvOutputs, subprocessEnv } from '../server/utils/extractRunners'
 
 describe('officeConvertTarget', () => {
   it('exports spreadsheets as CSV with PINNED tab/UTF-8 options so the grid + prices survive (GH #64)', () => {
@@ -91,5 +91,21 @@ describe('hasPdfMagic (scanned-PDF sniff, GH #100)', () => {
   it('rejects a PNG header and short buffers', () => {
     expect(hasPdfMagic(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toBe(false)
     expect(hasPdfMagic(enc('JVBER'))).toBe(false) // base64-of-PDF is NOT a raw PDF
+  })
+})
+
+describe('subprocessEnv (secret-free env for extraction binaries, GH #99)', () => {
+  it('passes only the allow-list, dropping backend secrets', () => {
+    const out = subprocessEnv({
+      PATH: '/usr/bin', HOME: '/root', LANG: 'C.UTF-8', OMP_THREAD_LIMIT: '2',
+      DATABASE_URL: 'postgres://secret', B24_TOKEN_ENC_KEY: 'key', B24_CLIENT_SECRET: 'shh', RANDOM: 'x'
+    })
+    expect(out).toEqual({ PATH: '/usr/bin', HOME: '/root', LANG: 'C.UTF-8', OMP_THREAD_LIMIT: '2' })
+    expect(out.DATABASE_URL).toBeUndefined()
+    expect(out.B24_TOKEN_ENC_KEY).toBeUndefined()
+  })
+  it('skips empty/undefined values and applies extra overrides', () => {
+    const out = subprocessEnv({ PATH: '/bin', LANG: '' }, { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
+    expect(out).toEqual({ PATH: '/bin', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
   })
 })
