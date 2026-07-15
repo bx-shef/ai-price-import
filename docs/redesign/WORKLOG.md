@@ -137,3 +137,12 @@
   `11-pricing-selfhosted.md` — ТЗ калькулятора (облако↔self-hosted, единица расчёта, РФ/РБ) + чек-лист
   оффера + оговорка про данные (текст всё равно уходит на LLM). Ссылки из README/04-marketing, список
   доков в CLAUDE.md обновлён.
+- 2026-07-15 — GH #78 (демо job-store → Redis при масштабировании): введён async-интерфейс
+  `AsyncDemoJobStore` с двумя бэкендами за одним API — in-memory (дефолт, поведение не изменилось) и
+  Redis (opt-in `DEMO_JOBSTORE=redis` + `REDIS_URL`, общий между репликами, переживает рестарт, native
+  PX-expiry). Ядро чистое: `serialize/parse` + `createRedisDemoJobStore` на инъектируемом `RedisLike`
+  (тесты на фейке, XX-семантика = no-op на неизвестном id, паритет с memory); живой ioredis-адаптер
+  изолирован в `demoJobRedis.ts` (деградирует в 404 при сбое Redis, не роняет публичный роут). Роуты
+  `extract.post`/`result` переведены на `await`; сохранён инвариант «нет await между проверкой
+  `aiInFlight` и `++`» (слот резервируется до async-create, освобождается при отказе). ioredis добавлен
+  прямой зависимостью (был транзитивно через bullmq). Доки 08-demo/.env.example. `pnpm check` зелёный.

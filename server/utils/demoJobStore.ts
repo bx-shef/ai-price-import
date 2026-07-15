@@ -37,6 +37,95 @@ export interface DemoJobStoreOptions {
   genId: () => string
 }
 
+// ── Async layer (GH #78) ──────────────────────────────────────────────────────
+//
+// The in-memory store above is single-process. When the demo backend is scaled to
+// >1 replica (no sticky sessions), a poll can hit an instance that never created the
+// job → 404. The async interface below lets the SAME routes run over either backend:
+// the in-memory wrapper (default, unchanged behaviour) or a Redis backend (shared
+// across replicas, survives restart). Both keep identical semantics: complete/fail are
+// no-ops on an unknown/expired id, and a finished job refreshes its TTL so the client
+// still has time to fetch it.
+
+export interface AsyncDemoJobStore {
+  create: (now: number) => Promise<string | null>
+  complete: (id: string, result: DemoResult, now: number) => Promise<void>
+  fail: (id: string, error: string, now: number) => Promise<void>
+  get: (id: string, now: number) => Promise<DemoJobState | null>
+  sweep: (now: number) => Promise<void>
+}
+
+/** Wrap the synchronous in-memory store in the async interface (identity semantics). */
+export function toAsyncDemoJobStore(sync: DemoJobStore): AsyncDemoJobStore {
+  return {
+    create: async now => sync.create(now),
+    complete: async (id, result, now) => sync.complete(id, result, now),
+    fail: async (id, error, now) => sync.fail(id, error, now),
+    get: async (id, now) => sync.get(id, now),
+    sweep: async now => sync.sweep(now)
+  }
+}
+
+/** Serialize a job state for a KV backend (Redis value). */
+export function serializeJobState(state: DemoJobState): string {
+  return JSON.stringify(state)
+}
+
+/** Parse a KV value back into a job state; null on missing/corrupt (treated as gone). */
+export function parseJobState(raw: string | null | undefined): DemoJobState | null {
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw) as DemoJobState
+    if (v && (v.status === 'pending' || v.status === 'done' || v.status === 'error')) return v
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** Minimal Redis surface the store needs — injected so the store stays pure/testable
+ * (no ioredis import here). The live adapter lives in demoJobRedis.ts. */
+export interface RedisLike {
+  /** SET key value PX ttlMs — unconditional (used for create). */
+  setPx: (key: string, value: string, ttlMs: number) => Promise<void>
+  /** SET key value PX ttlMs XX — only if the key exists; true when it was updated. */
+  setPxIfExists: (key: string, value: string, ttlMs: number) => Promise<boolean>
+  get: (key: string) => Promise<string | null>
+}
+
+export interface RedisDemoJobStoreOptions {
+  ttlMs: number
+  /** Key namespace, e.g. 'demo:job:'. */
+  keyPrefix: string
+  genId: () => string
+}
+
+/** Redis-backed store: shared across replicas, survives restart, native PX expiry (so
+ * sweep is a no-op). The in-memory hard cap is intentionally dropped — creation is already
+ * bounded upstream by the per-IP rate limit + AI_MAX_CONCURRENCY in the submit route. */
+export function createRedisDemoJobStore(redis: RedisLike, opts: RedisDemoJobStoreOptions): AsyncDemoJobStore {
+  const key = (id: string): string => `${opts.keyPrefix}${id}`
+  return {
+    async create() {
+      const id = opts.genId()
+      await redis.setPx(key(id), serializeJobState({ status: 'pending' }), opts.ttlMs)
+      return id
+    },
+    async complete(id, result) {
+      // XX (only-if-exists) mirrors the memory store: a job swept/expired mid-processing
+      // is not resurrected. Refreshes TTL so the client can still fetch the result.
+      await redis.setPxIfExists(key(id), serializeJobState({ status: 'done', result }), opts.ttlMs)
+    },
+    async fail(id, error) {
+      await redis.setPxIfExists(key(id), serializeJobState({ status: 'error', error }), opts.ttlMs)
+    },
+    async get(id) {
+      return parseJobState(await redis.get(key(id)))
+    },
+    async sweep() { /* native PX expiry — nothing to sweep */ }
+  }
+}
+
 export function createDemoJobStore(opts: DemoJobStoreOptions): DemoJobStore {
   const jobs = new Map<string, StoredJob>()
 
