@@ -327,3 +327,52 @@ describe('extractDemo — real-invoice quality (GH #66)', () => {
     expect(r.items[0]!.name).toBe('Болт М6')
   })
 })
+
+describe('extractDemo — two tables with shifted columns (GH #76)', () => {
+  it('re-maps roles for a second table whose columns are shifted', () => {
+    // Счёт (name|qty|price|sum) followed by a «Спецификация» with an extra leading «№»
+    // column (num|name|qty|price|sum). Without re-detection the spec rows would inherit
+    // the first table's positions → quantity/price/sum shift by one column.
+    const text = [
+      'Счёт № 76',
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт М6|10|5|50',
+      'Гайка М6|20|2|40',
+      'Спецификация',
+      '№|Наименование|Кол-во|Цена|Сумма',
+      '1|Шайба М6|100|1|100'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт М6', 'Гайка М6', 'Шайба М6'])
+    // The spec row parsed under ITS OWN header, not the first table's columns.
+    expect(r.items[2]).toMatchObject({ name: 'Шайба М6', quantity: 100, price: 1, sum: 100 })
+  })
+
+  it('does not leak a repeated page-header in as a «(без наименования)» item', () => {
+    // A multi-page export repeats the header. Previously it was parsed as a data row
+    // (name = «Наименование», no numbers) → a junk item; now it re-maps the same roles.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Болт М6|10|5|50',
+      'Наименование|Кол-во|Цена|Сумма', // repeated header on «page 2»
+      'Гайка М6|20|2|40'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items.map(i => i.name)).toEqual(['Болт М6', 'Гайка М6'])
+    expect(r.items.some(i => i.name === 'Наименование')).toBe(false)
+    expect(r.items.some(i => i.name === '(без наименования)')).toBe(false)
+  })
+
+  it('a data row containing a name-column keyword does NOT reset the table', () => {
+    // «Товар» matches the name-column regex, but a real product row lacks a second header
+    // keyword (qty/price/sum are numbers), so mapHeader returns null → no false re-map.
+    const text = [
+      'Наименование|Кол-во|Цена|Сумма',
+      'Товар хозяйственный|3|10|30',
+      'Гайка|20|2|40'
+    ].join('\n')
+    const r = extractDemo(text)
+    expect(r.items).toHaveLength(2)
+    expect(r.items[0]).toMatchObject({ name: 'Товар хозяйственный', quantity: 3, price: 10, sum: 30 })
+  })
+})

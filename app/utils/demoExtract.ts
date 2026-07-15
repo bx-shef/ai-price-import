@@ -229,11 +229,19 @@ export function extractDemo(input: string): DemoResult {
     for (const raw of lines) {
       if (!raw.includes(delim)) continue
       const cells = raw.split(delim).map(c => c.trim())
-      if (!roles) {
-        const mapped = mapHeader(cells)
-        if (mapped) roles = mapped
+      // Header row. The FIRST one starts the table; a LATER one is a SECOND table with its
+      // own column layout (GH #76: счёт + «Спецификация»/«Протокол согласования» ниже, где
+      // колонки сдвинуты) — re-map roles so the new block doesn't inherit the first table's
+      // positions (quantity/price/sum would misalign). Data rows can't match mapHeader (it
+      // needs a name keyword AND a qty/price/sum keyword — those are header words), so this
+      // never fires on products; a repeated page-header just re-maps to the same roles
+      // (harmless, and stops the header line itself leaking in as a junk «(без наименования)»).
+      const header = mapHeader(cells)
+      if (header) {
+        roles = header
         continue
       }
+      if (!roles) continue // lines with the delimiter before any header → pre-table noise
       // Totals lines (Итого / Усяго / Барлығы / НДС / ПДВ / ҚҚС / Всего)
       const joined = cells.join(' ')
       const totalKind = classifyTotal(joined)
