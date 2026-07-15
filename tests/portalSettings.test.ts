@@ -39,4 +39,17 @@ describe('parsePortalSettings', () => {
     const m = parsePortalSettings({ defaultTarget: { entityTypeId: -1 } })
     expect(m.defaultTarget).toEqual({ entityTypeId: 2 })
   })
+  it('caps a bloated routingRules array (DoS bound #83)', () => {
+    const rules = Array.from({ length: 5000 }, () => ({ match: { type: 'x' }, target: { entityTypeId: 2 } }))
+    const m = parsePortalSettings({ routingRules: rules })
+    expect(m.routingRules.length).toBe(200)
+  })
+  it('caps rule keywords and the unit dictionary (DoS bound #83)', () => {
+    const m = parsePortalSettings({
+      routingRules: [{ match: { keywords: Array.from({ length: 5000 }, (_, i) => `k${i}`) }, target: { entityTypeId: 2 } }],
+      units: { dictionary: Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`u${i}`, i + 1])) }
+    })
+    expect(m.routingRules[0]!.match.keywords!.length).toBe(100)
+    expect(Object.keys(m.units.dictionary).length).toBe(1000)
+  })
 })

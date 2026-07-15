@@ -1,9 +1,13 @@
 import type { QueryFn } from '../utils/tokenStore'
 import type { FetchFn, RestCall } from '../utils/b24Rest'
+import { REST_TIMEOUT_MS } from '../utils/b24Rest'
 import type { AgentSpawn } from '../agent/runAgent'
 import type { ExtractRunners } from '../utils/textExtract'
 import type { EnsureDeps } from '../utils/ensureAccessToken'
+import { ensureFreshToken } from '../utils/ensureAccessToken'
+import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
+import { withAdvisoryLock } from '../utils/dbLock'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { makePortalRestCall } from '../utils/portalRest'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
@@ -53,10 +57,19 @@ export interface LiveInfra {
 function ensureDeps(infra: LiveInfra): EnsureDeps {
   return {
     getToken: m => getToken(m, infra.query),
-    // Refresh path: UPDATE-only (never resurrect a portal purged by a concurrent uninstall).
-    saveToken: input => updateTokensOnRefresh(input, infra.query),
+    // Refresh serialized per portal (advisory lock, #35); re-read + persist run on the
+    // LOCKED connection. persistRefresh is UPDATE-only (never resurrects a purged portal).
+    withLock: withAdvisoryLock,
+    loadToken: (q, m) => getToken(m, q),
+    persistRefresh: (q, input) => updateTokensOnRefresh(input, q),
     refreshTransport: async (params) => {
-      const res = await infra.fetchFn(`https://oauth.bitrix.info/oauth/token/?${new URLSearchParams(params).toString()}`)
+      // Bound the POST (AbortSignal): it runs INSIDE the advisory lock holding a pooled
+      // connection, so a hung oauth.bitrix.info must not pin the lock + connection (dbLock's
+      // documented invariant — statement_timeout/lock_timeout don't cover an HTTP await).
+      const res = await infra.fetchFn(
+        `https://oauth.bitrix.info/oauth/token/?${new URLSearchParams(params).toString()}`,
+        { signal: AbortSignal.timeout(REST_TIMEOUT_MS) }
+      )
       return res.json()
     },
     decrypt: enc => (enc ? decryptSecret(enc, infra.encKey) : ''),
@@ -98,6 +111,31 @@ async function loadMapping(memberId: string, rest: (m: string) => Promise<RestCa
     return await readMapping(call)
   } catch {
     return defaultMapping()
+  }
+}
+
+/** Keep-alive deps (#175): select near-expiry portals + force-refresh each under the
+ *  per-portal lock (reuses ensureFreshToken → advisory lock + UPDATE-only persist). */
+export function liveKeepAliveDeps(infra: LiveInfra): KeepAliveDeps {
+  const ens = ensureDeps(infra)
+  return {
+    now: infra.now,
+    selectNearExpiry: nowMs => selectTokensNearExpiry(infra.query, nowMs),
+    refreshPortal: async (memberId) => {
+      const tok = await getToken(memberId, infra.query)
+      if (!tok) return 'skipped' // vanished (uninstalled) — nothing to keep alive
+      try {
+        await ensureFreshToken(memberId, ens, true) // force → rotates; throws on a dead grant
+        return 'refreshed'
+      } catch (e) {
+        // Uninstalled between the read and acquiring the lock → the row vanished under the
+        // lock (ensureFreshToken throws "no token"). That is a benign skip, NOT a dead grant.
+        if ((e as { message?: string })?.message?.includes('no token')) return 'skipped'
+        throw e
+      }
+    },
+    log: msg => console.info(msg),
+    warn: msg => console.warn(msg)
   }
 }
 
