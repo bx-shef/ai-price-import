@@ -51,5 +51,17 @@ export function checkBackendEnv(env: Record<string, string | undefined>): EnvRep
     }
   }
 
+  // Worker concurrency overrides (GH #95): invalid values silently fall back to the default,
+  // which on a minimal 2-vCPU host is the very oversubscription the override was meant to fix
+  // (a typo → default 4 → OCR false-timeouts). Warn loudly so the operator notices.
+  for (const key of ['QUEUE_EXTRACT_CONCURRENCY', 'QUEUE_AGENT_CONCURRENCY', 'QUEUE_CRM_CONCURRENCY']) {
+    const raw = env[key]
+    if (raw == null || raw === '') continue // unset = use default, fine
+    const n = Number(raw)
+    if (!Number.isInteger(n) || n < 1) {
+      warnings.push(`${key}='${raw}' is not a positive integer — ignored, using the default`)
+    }
+  }
+
   return { errors, warnings }
 }

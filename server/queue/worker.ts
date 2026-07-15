@@ -20,14 +20,20 @@ import type { FetchFn } from '../utils/b24Rest'
 // RUN_TIMEOUT_MS (false failures). See GH #95, docs/redesign/09-deploy §«Ресурсы воркера».
 export interface QueueConcurrency { extract: number, agent: number, crm: number }
 
-/** Read a positive-int env override, else the default. Pure (env injected). */
+/** Sanity ceiling on an env concurrency override (a typo like `999999` mustn't spawn an
+ *  absurd worker). Clamps, not rejects — a big-but-plausible value is honoured up to this. */
+export const MAX_QUEUE_CONCURRENCY = 64
+
+/** Read a positive-int env override (clamped to MAX_QUEUE_CONCURRENCY), else the default.
+ *  Invalid values (0, negative, non-integer, junk) fall back to `def`. Pure (env injected). */
 export function concurrencyFromEnv(
   env: Record<string, string | undefined>,
   key: string,
   def: number
 ): number {
   const n = Number(env[key])
-  return Number.isInteger(n) && n >= 1 ? n : def
+  if (!Number.isInteger(n) || n < 1) return def
+  return Math.min(n, MAX_QUEUE_CONCURRENCY)
 }
 
 /** Resolve the three worker concurrencies from env (defaults 4/2/4). Pure → unit-tested. */

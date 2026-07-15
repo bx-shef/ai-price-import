@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { concurrencyFromEnv, queueConcurrency } from '../server/queue/worker'
+import { MAX_QUEUE_CONCURRENCY, concurrencyFromEnv, queueConcurrency } from '../server/queue/worker'
 
 describe('queueConcurrency (env-overridable worker concurrency, GH #95)', () => {
   it('defaults to 4/2/4 when env is empty', () => {
@@ -17,5 +17,10 @@ describe('queueConcurrency (env-overridable worker concurrency, GH #95)', () => 
     expect(concurrencyFromEnv({ K: 'abc' }, 'K', 4)).toBe(4)
     expect(concurrencyFromEnv({}, 'K', 4)).toBe(4)
     expect(concurrencyFromEnv({ K: '3' }, 'K', 4)).toBe(3)
+  })
+  it('clamps an absurd override to MAX_QUEUE_CONCURRENCY (typo guard)', () => {
+    expect(concurrencyFromEnv({ K: '999999' }, 'K', 4)).toBe(MAX_QUEUE_CONCURRENCY)
+    expect(concurrencyFromEnv({ K: String(MAX_QUEUE_CONCURRENCY + 1) }, 'K', 4)).toBe(MAX_QUEUE_CONCURRENCY)
+    expect(concurrencyFromEnv({ K: String(MAX_QUEUE_CONCURRENCY) }, 'K', 4)).toBe(MAX_QUEUE_CONCURRENCY)
   })
 })

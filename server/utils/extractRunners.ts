@@ -21,6 +21,9 @@ const RUN_TIMEOUT_MS = 90_000
 // see backend secrets — DATABASE_URL, B24_TOKEN_ENC_KEY, B24_CLIENT_SECRET, app token, etc.
 // (mirrors the agent's agentSpawnEnv guard). Only what these tools legitimately need to
 // run + render text correctly is passed through. GH #99.
+// Assumes apt-installed binaries (compiled rpath) → no LD_LIBRARY_PATH needed; and headless
+// libreoffice with no Xvfb → DISPLAY intentionally omitted (add it here only if the image
+// ever runs xvfb-run). Adjust if the image changes how these tools are built.
 const SUBPROCESS_ENV_ALLOW = [
   'PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', // process basics + temp dir
   'LANG', 'LC_ALL', 'LANGUAGE', 'TZ', // locale (UTF-8 filenames, number formatting)
@@ -28,7 +31,9 @@ const SUBPROCESS_ENV_ALLOW = [
   'FONTCONFIG_PATH', 'FONTCONFIG_FILE', 'TESSDATA_PREFIX' // libreoffice fonts + tesseract data
 ] as const
 
-/** Build the secret-free subprocess env (allow-list from `full`, then `extra` overrides). Pure. */
+/** Build the secret-free subprocess env: allow-list from `full`, then `extra` overrides.
+ *  NB `extra` is NOT allow-list-filtered — callers must pass only non-secret overrides
+ *  (locale/thread hints); it exists for those, not for reintroducing env from `full`. Pure. */
 export function subprocessEnv(
   full: Record<string, string | undefined>,
   extra?: Record<string, string>
@@ -158,11 +163,18 @@ async function officeToText(path: string, fileName: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-office-'))
   try {
     const { filter, outExt } = officeConvertTarget(fileName)
+    // --safe-mode: run a HARDENED libreoffice on the UNTRUSTED document — disables macros,
+    //   extensions and user customisations (defense-in-depth vs a malicious office doc; GH #99).
+    // -env:UserInstallation: a PER-JOB profile in our temp dir → parallel conversions don't
+    //   fight over one shared `$HOME/.config/libreoffice` profile lock (concurrency is now
+    //   configurable and can rise; GH #95). Auto-removed with the temp dir in `finally`.
     // LANG=C.UTF-8 so libreoffice writes multi-byte (Cyrillic) per-sheet filenames as valid
-    // UTF-8 — otherwise a non-UTF-8 container locale FAILS to write «Приложение».csv at all
-    // (verified: dir stays empty). Harmless for the txt path.
-    const stdout = await run('libreoffice', ['--headless', '--convert-to', filter, '--outdir', dir, path],
-      { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
+    //   UTF-8 — a non-UTF-8 container locale FAILS to write «Приложение».csv at all (verified:
+    //   dir stays empty). Harmless for the txt path.
+    const stdout = await run('libreoffice', [
+      '--safe-mode', '-env:UserInstallation=file://' + join(dir, 'loprofile'),
+      '--headless', '--convert-to', filter, '--outdir', dir, path
+    ], { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
     if (outExt === 'csv') {
       // Primary: read the produced CSVs in workbook sheet order (from stdout). Fallback to a
       // readdir (order not guaranteed → sorted) only if stdout parsing yields nothing.

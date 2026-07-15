@@ -108,4 +108,9 @@ describe('subprocessEnv (secret-free env for extraction binaries, GH #99)', () =
     const out = subprocessEnv({ PATH: '/bin', LANG: '' }, { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
     expect(out).toEqual({ PATH: '/bin', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' })
   })
+  it('drops an empty OMP_THREAD_LIMIT (no accidental empty thread cap)', () => {
+    const out = subprocessEnv({ PATH: '/bin', OMP_THREAD_LIMIT: '', OMP_NUM_THREADS: '2' })
+    expect('OMP_THREAD_LIMIT' in out).toBe(false)
+    expect(out.OMP_NUM_THREADS).toBe('2')
+  })
 })
