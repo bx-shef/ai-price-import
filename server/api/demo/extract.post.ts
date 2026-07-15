@@ -116,24 +116,28 @@ export default defineEventHandler(async (event) => {
       event.node.res.setHeader('Retry-After', '30')
       return { error: 'Демо сейчас перегружено разбором. Попробуйте через минуту.' }
     }
-    // Shed load when too many heavy extractions are already running, or the job store is
-    // full (both = global DoS guards). NB: no `await` between this check and aiInFlight++
-    // below — keep it that way, or the counter could exceed the cap under concurrency.
+    // Shed load when too many heavy extractions are already running (global DoS guard).
+    // NB: no `await` between this check and aiInFlight++ below — keep it that way, or the
+    // counter could exceed the cap under concurrency. Reserve the slot BEFORE the (now
+    // async) store call and release it if creation is refused.
     if (aiInFlight >= AI_MAX_CONCURRENCY) return shed503()
+    aiInFlight++
     // Register a job and process it in the BACKGROUND — return the id immediately so the
     // HTTP request is short (no 504 on a slow scan); the client polls the result endpoint.
-    const jobId = demoJobStore.create(now)
-    if (!jobId) return shed503()
-    aiInFlight++
+    const jobId = await demoJobStore.create(now)
+    if (!jobId) {
+      aiInFlight-- // job store full → release the reserved slot before shedding
+      return shed503()
+    }
     const bytes = file.data
     const fileName = file.filename
     void (async () => {
       try {
         const out = await runDemoAiExtract(bytes, fileName, demoAiDeps)
-        if (out.error || !out.result) demoJobStore.fail(jobId, out.error || 'Не удалось разобрать документ.', Date.now())
-        else demoJobStore.complete(jobId, out.result, Date.now())
+        if (out.error || !out.result) await demoJobStore.fail(jobId, out.error || 'Не удалось разобрать документ.', Date.now())
+        else await demoJobStore.complete(jobId, out.result, Date.now())
       } catch {
-        demoJobStore.fail(jobId, 'Ошибка обработки документа.', Date.now())
+        await demoJobStore.fail(jobId, 'Ошибка обработки документа.', Date.now())
       } finally {
         aiInFlight--
       }
