@@ -15,6 +15,7 @@ export const MAX_XLSX_ROWS = 500
 export const MAX_XLSX_COLS = 40
 export const MAX_XLSX_UNCOMPRESSED = 40 * 1024 * 1024 // 40 MB expanded — reject bombs
 export const MAX_XLSX_ENTRIES = 128
+export const MAX_XLSX_SHEETS = 32 // read at most this many worksheets (GH #76; DoS bound)
 /** Cap a single cell's text so one giant cell can't blow up the output line. */
 const MAX_CELL_CHARS = 32_768
 const PARSE_TIMEOUT_MS = 5000
@@ -123,28 +124,34 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
   try {
     const wb = new ExcelJS.Workbook()
     await withTimeout(wb.xlsx.load(buf as unknown as ArrayBuffer), PARSE_TIMEOUT_MS)
-    const ws = wb.worksheets[0]
-    if (!ws) return ''
-    const lines: string[] = []
+    // ALL worksheets, in workbook order — goods can live on a non-first sheet (e.g. a ТТН
+    // «Приложение»), which taking only worksheets[0] silently dropped (GH #76). `count` is a
+    // SHARED row budget across sheets so the total stays ≤ MAX_XLSX_ROWS. Empty sheets drop.
+    const sheets: string[] = []
     let count = 0
-    ws.eachRow({ includeEmpty: false }, (row) => {
-      if (count >= MAX_XLSX_ROWS) return
-      count++
-      // Emit a merged range's value ONCE (in its master cell), not repeated across every
-      // spanned column — exceljs fills every slave with the master's value, which would
-      // otherwise duplicate a header/supplier line dozens of times and wreck table
-      // detection. Slaves → blank; the master keeps the value. (The fallback reader never
-      // duplicates, so this only fixes the exceljs path.)
-      const vals: string[] = []
-      row.eachCell({ includeEmpty: true }, (cell, col) => {
-        if (col > MAX_XLSX_COLS) return
-        const slave = cell.isMerged && cell.master && cell.master.address !== cell.address
-        vals[col - 1] = slave ? '' : cellText(cell.value)
+    for (const ws of wb.worksheets.slice(0, MAX_XLSX_SHEETS)) {
+      const lines: string[] = []
+      ws.eachRow({ includeEmpty: false }, (row) => {
+        if (count >= MAX_XLSX_ROWS) return
+        count++
+        // Emit a merged range's value ONCE (in its master cell), not repeated across every
+        // spanned column — exceljs fills every slave with the master's value, which would
+        // otherwise duplicate a header/supplier line dozens of times and wreck table
+        // detection. Slaves → blank; the master keeps the value. (The fallback reader never
+        // duplicates, so this only fixes the exceljs path.)
+        const vals: string[] = []
+        row.eachCell({ includeEmpty: true }, (cell, col) => {
+          if (col > MAX_XLSX_COLS) return
+          const slave = cell.isMerged && cell.master && cell.master.address !== cell.address
+          vals[col - 1] = slave ? '' : cellText(cell.value)
+        })
+        for (let k = 0; k < vals.length; k++) if (vals[k] == null) vals[k] = ''
+        lines.push(vals.join('\t'))
       })
-      for (let k = 0; k < vals.length; k++) if (vals[k] == null) vals[k] = ''
-      lines.push(vals.join('\t'))
-    })
-    return lines.join('\n').trim()
+      const text = lines.join('\n').trim()
+      if (text) sheets.push(text)
+    }
+    return sheets.join('\n')
   } catch (err) {
     if (err instanceof XlsxTooLargeError) throw err
     // exceljs crashes on some valid workbooks — notably a header/footer drawing
@@ -339,7 +346,7 @@ function parseSheet(xml: string, shared: string[]): string {
   return lines.join('\n').trim()
 }
 
-/** exceljs-free reader: first worksheet of an .xlsx → TAB-separated text. */
+/** exceljs-free reader: ALL worksheets of an .xlsx → TAB-separated text, in sheet order. */
 export function xlsxToTextFallback(buf: Buffer): string {
   const cd = readCentralDirectory(buf)
   if (!cd || cd.entryCount > MAX_XLSX_ENTRIES) return ''
@@ -348,13 +355,20 @@ export function xlsxToTextFallback(buf: Buffer): string {
   const shared = byName['xl/sharedStrings.xml']
     ? parseSharedStrings(readZipEntry(buf, byName['xl/sharedStrings.xml']))
     : []
-  // Lowest sheetN.xml = first worksheet. Sort NUMERICALLY (string sort puts sheet10
-  // before sheet2), so the first sheet is picked even on a workbook that starts at sheet2.
-  const sheetName = cd.records
+  // ALL sheetN.xml, sorted NUMERICALLY (string sort puts sheet10 before sheet2). Reading
+  // every sheet (not just the lowest) so goods on a non-first sheet survive (GH #76); joined
+  // in sheet order, empty sheets dropped, sheet count capped (DoS bound).
+  const sheetNames = cd.records
     .map(r => r.name)
     .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
-    .sort((a, b) => Number(a.match(/(\d+)\.xml$/)![1]) - Number(b.match(/(\d+)\.xml$/)![1]))[0]
-  const sheet = sheetName ? byName[sheetName] : undefined
-  if (!sheet) return ''
-  return parseSheet(readZipEntry(buf, sheet), shared)
+    .sort((a, b) => Number(a.match(/(\d+)\.xml$/)![1]) - Number(b.match(/(\d+)\.xml$/)![1]))
+    .slice(0, MAX_XLSX_SHEETS)
+  const parts: string[] = []
+  for (const name of sheetNames) {
+    const rec = byName[name]
+    if (!rec) continue
+    const text = parseSheet(readZipEntry(buf, rec), shared).trim()
+    if (text) parts.push(text)
+  }
+  return parts.join('\n')
 }

@@ -10,6 +10,39 @@ async function buildXlsx(rows: Array<Array<string | number>>): Promise<Uint8Arra
   return new Uint8Array(await wb.xlsx.writeBuffer() as ArrayBuffer)
 }
 
+/** Build an .xlsx with several named sheets (each is an array of rows). */
+async function buildMultiSheetXlsx(sheets: Array<{ name: string, rows: Array<Array<string | number>> }>): Promise<Uint8Array> {
+  const wb = new ExcelJS.Workbook()
+  for (const s of sheets) {
+    const ws = wb.addWorksheet(s.name)
+    s.rows.forEach(r => ws.addRow(r))
+  }
+  return new Uint8Array(await wb.xlsx.writeBuffer() as ArrayBuffer)
+}
+
+describe('xlsxToText multi-sheet (GH #76)', () => {
+  const SHEETS = [
+    { name: 'ТТН', rows: [['Поставщик: ООО «Пример»'], ['УНП: 191234567']] },
+    { name: 'Приложение', rows: [['Наименование', 'Кол-во', 'Цена'], ['Болт М6', 100, 0.45]] },
+    { name: 'Пусто', rows: [] as Array<Array<string | number>> }
+  ]
+  it('exceljs path reads ALL sheets in order, drops empty, header first', async () => {
+    const t = await xlsxToText(await buildMultiSheetXlsx(SHEETS))
+    expect(t).toContain('УНП: 191234567') // ТТН sheet (header)
+    expect(t).toContain('Болт М6') // Приложение sheet (goods) — was lost before #76
+    expect(t.indexOf('УНП')).toBeLessThan(t.indexOf('Болт М6')) // workbook order preserved
+    expect(t).not.toMatch(/\n\n\n/) // empty sheet dropped, no blank-line pileup
+  })
+  it('fallback reader also reads all sheets', () => {
+    // Rebuild synchronously via the same bytes — exercise the exceljs-free path directly.
+    return buildMultiSheetXlsx(SHEETS).then((bytes) => {
+      const t = xlsxToTextFallback(Buffer.from(bytes))
+      expect(t).toContain('УНП: 191234567')
+      expect(t).toContain('Болт М6')
+    })
+  })
+})
+
 describe('xlsxToText', () => {
   it('first sheet → tab-separated text (header + rows)', async () => {
     const bytes = await buildXlsx([
