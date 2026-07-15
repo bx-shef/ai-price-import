@@ -28,6 +28,10 @@ AI-импорт документов с табличной частью в Bitri
     (extract/agent/crm-sync) масштабируется на N реплик (`worker`-контейнер, `QUEUE_CRON=0`). Гейтинг — в
     `plugins/queue.ts`. Per-queue concurrency — отдельно (`QUEUE_EXTRACT/AGENT/CRM_CONCURRENCY`,
     `worker.queueConcurrency`, #95).
+  - **Рефреш OAuth-токена сериализован per-portal** (`utils/dbLock.withAdvisoryLock`, `ensureAccessToken`,
+    #35): при scale-out N воркеров рефрешат один портал ровно раз (advisory-lock + re-read внутри лока),
+    не гоняясь на ротации refresh-token. Персист — `updateTokensOnRefresh` (UPDATE-only, не воскрешает
+    удалённый портал); строка исчезла под локом ⇒ рефреш не делаем.
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
 - `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).

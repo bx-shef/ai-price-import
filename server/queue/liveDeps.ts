@@ -1,9 +1,11 @@
 import type { QueryFn } from '../utils/tokenStore'
 import type { FetchFn, RestCall } from '../utils/b24Rest'
+import { REST_TIMEOUT_MS } from '../utils/b24Rest'
 import type { AgentSpawn } from '../agent/runAgent'
 import type { ExtractRunners } from '../utils/textExtract'
 import type { EnsureDeps } from '../utils/ensureAccessToken'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
+import { withAdvisoryLock } from '../utils/dbLock'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { makePortalRestCall } from '../utils/portalRest'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
@@ -53,10 +55,19 @@ export interface LiveInfra {
 function ensureDeps(infra: LiveInfra): EnsureDeps {
   return {
     getToken: m => getToken(m, infra.query),
-    // Refresh path: UPDATE-only (never resurrect a portal purged by a concurrent uninstall).
-    saveToken: input => updateTokensOnRefresh(input, infra.query),
+    // Refresh serialized per portal (advisory lock, #35); re-read + persist run on the
+    // LOCKED connection. persistRefresh is UPDATE-only (never resurrects a purged portal).
+    withLock: withAdvisoryLock,
+    loadToken: (q, m) => getToken(m, q),
+    persistRefresh: (q, input) => updateTokensOnRefresh(input, q),
     refreshTransport: async (params) => {
-      const res = await infra.fetchFn(`https://oauth.bitrix.info/oauth/token/?${new URLSearchParams(params).toString()}`)
+      // Bound the POST (AbortSignal): it runs INSIDE the advisory lock holding a pooled
+      // connection, so a hung oauth.bitrix.info must not pin the lock + connection (dbLock's
+      // documented invariant — statement_timeout/lock_timeout don't cover an HTTP await).
+      const res = await infra.fetchFn(
+        `https://oauth.bitrix.info/oauth/token/?${new URLSearchParams(params).toString()}`,
+        { signal: AbortSignal.timeout(REST_TIMEOUT_MS) }
+      )
       return res.json()
     },
     decrypt: enc => (enc ? decryptSecret(enc, infra.encKey) : ''),

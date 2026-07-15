@@ -98,22 +98,26 @@ const baseTok: PortalToken = {
 }
 
 function ensureDeps(overrides: Partial<Parameters<typeof ensureFreshToken>[1]> = {}) {
-  const saveToken = vi.fn(async () => {})
+  const getToken = overrides.getToken ?? vi.fn(async () => baseTok)
+  const persistRefresh = vi.fn(async () => {})
   const refreshTransport = vi.fn(async () => ({
     access_token: 'new', refresh_token: 'rt2', expires_in: 3600,
     member_id: 'm1', client_endpoint: 'https://p.bitrix24.ru/rest/', domain: 'oauth.bitrix24.tech'
   }))
-  return {
-    getToken: vi.fn(async () => baseTok),
-    saveToken,
+  const base = {
+    getToken,
+    // Passthrough lock (no DB in unit tests); pass a fake locked QueryFn to fn.
+    withLock: async <T>(_key: string, fn: (q: (sql: string, params?: unknown[]) => Promise<{ rows: [] }>) => Promise<T>) => fn(async () => ({ rows: [] })),
+    loadToken: vi.fn(async (_q: unknown, m: string) => getToken(m)),
+    persistRefresh,
     refreshTransport,
     decrypt: (e: string) => e.replace(/^ENC\((.*)\)$/, '$1'),
     encrypt: (p: string) => `ENC(${p})`,
     clientId: 'cid',
     clientSecret: 'csec',
-    now: () => 1000 + 30 * 60 * 1000, // 30 min later (still valid)
-    ...overrides
+    now: () => 1000 + 30 * 60 * 1000 // 30 min later (still valid)
   }
+  return { ...base, ...overrides }
 }
 
 describe('ensureFreshToken', () => {
@@ -128,7 +132,7 @@ describe('ensureFreshToken', () => {
     const fresh = await ensureFreshToken('m1', deps)
     expect(fresh.accessToken).toBe('new')
     expect(fresh.domain).toBe('p.bitrix24.ru') // NOT oauth.bitrix24.tech
-    expect(deps.saveToken).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'new', refreshTokenEnc: 'ENC(rt2)', domain: 'p.bitrix24.ru' }))
+    expect(deps.persistRefresh).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accessToken: 'new', refreshTokenEnc: 'ENC(rt2)', domain: 'p.bitrix24.ru' }))
   })
   it('force refreshes even when time-valid', async () => {
     const deps = ensureDeps()
@@ -147,6 +151,27 @@ describe('ensureFreshToken', () => {
     const fresh = await ensureFreshToken('m1', deps)
     expect(fresh.accessToken).toBe('new')
     expect(deps.refreshTransport).toHaveBeenCalled()
+  })
+  it('in-lock re-read skips the refresh when another worker already refreshed (#35 dedup)', async () => {
+    const later = 1000 + 2 * 3600_000
+    const freshTok = { ...baseTok, accessToken: 'newer', issuedAtMs: later, expiresIn: 3600 }
+    const deps = ensureDeps({
+      now: () => later, // pre-lock: baseTok is expired → we take the lock…
+      getToken: vi.fn(async () => baseTok),
+      loadToken: vi.fn(async () => freshTok) // …but inside the lock the token is already fresh
+    })
+    const fresh = await ensureFreshToken('m1', deps)
+    expect(fresh.accessToken).toBe('newer')
+    expect(deps.refreshTransport).not.toHaveBeenCalled() // deduped — no rotation race
+  })
+  it('uninstalled under the lock (row gone) → throws, never refreshes/resurrects', async () => {
+    const deps = ensureDeps({
+      now: () => 1000 + 2 * 3600_000,
+      getToken: vi.fn(async () => baseTok), // pre-lock: present + expired
+      loadToken: vi.fn(async () => null) // in-lock: purged by a concurrent uninstall
+    })
+    await expect(ensureFreshToken('m1', deps)).rejects.toThrow(/no token/)
+    expect(deps.refreshTransport).not.toHaveBeenCalled()
   })
 })
 
