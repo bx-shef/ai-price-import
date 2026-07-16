@@ -17,7 +17,10 @@ export function defaultMapping(): PortalMapping {
     article: { field: '', kind: 'text' },
     product: { by: 'article', onMissing: 'skip-warn' },
     units: { dictionary: {}, defaultCode: 796, autoCreate: false },
-    saveFile: true,
+    // Opt-in (default OFF): archiving raw client documents onto the portal's common Disk is a
+    // privacy choice on a multitenant OAuth app — a tenant that never configured it should not
+    // have client files copied to its Disk. The admin turns it on in settings.
+    saveFile: false,
     routingRules: [],
     defaultTarget: { ...DEFAULT_TARGET }
   }
@@ -73,7 +76,7 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
       defaultCode: Number.isFinite(Number(units.defaultCode)) ? Number(units.defaultCode) : 796,
       autoCreate: units.autoCreate === true
     },
-    saveFile: o.saveFile !== false,
+    saveFile: o.saveFile === true, // opt-in — only an explicit `true` enables Disk archiving
     ...(typeof o.notifyChatId === 'string' ? { notifyChatId: o.notifyChatId } : {}),
     ...(typeof o.errorChatId === 'string' ? { errorChatId: o.errorChatId } : {}),
     routingRules: asRules(o.routingRules),

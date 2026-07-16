@@ -1,6 +1,6 @@
 # План проверок procure-ai
 
-> Last reviewed: 2026-07-14
+> Last reviewed: 2026-07-16
 
 Этот документ — практический чек-лист ручных и автоматических проверок procure-ai по подсистемам. Пользоваться им так: начните с раздела «Быстрый старт (smoke)», убедитесь, что приложение вообще поднимается, затем идите по нужной подсистеме и прогоняйте строки таблицы (колонка «Метка» показывает, что уже покрыто vitest, а что требует ручного прогона, живого портала или LLM-ключа). Документ детализирует три уровня из [`07-testing.md`](07-testing.md): чистое ядро (unit, `pnpm test`), интеграция роутов/пайплайна (ручной прогон бэкенда) и сквозные проверки на живом портале Bitrix24. Каждая метка `[нужен живой портал]` / `[нужен LLM-ключ]` собрана отдельно в разделе «Что заблокировано и почему».
 
@@ -236,11 +236,11 @@
 | Проверка | Действие | Ожидаемо | Метка |
 |---|---|---|---|
 | Прогон | `pnpm test:unit` → `portalSettings`/`appSettings`/`frameAuth` | Зелёные | [авто] |
-| Пустой/битый вход | `parsePortalSettings(null)`/`('nope')` | `defaultMapping()` (article text, product article/skip-warn, units defaultCode 796, saveFile true, defaultTarget entityTypeId 2) | [авто] |
+| Пустой/битый вход | `parsePortalSettings(null)`/`('nope')` | `defaultMapping()` (article text, product article/skip-warn, units defaultCode 796, saveFile **false** (opt-in), defaultTarget entityTypeId 2) | [авто] |
 | Полный валидный объект | Article/product/units | Значения приняты; ключи `units.dictionary` в нижнем регистре, нечисловые отброшены | [авто] |
 | `entityTypeId ≤0/NaN` | `parsePortalSettings({defaultTarget:{entityTypeId:-1}})` | Фолбэк `{entityTypeId:2}` | [авто] |
 | Пустое правило / пустые keywords | `routingRules:[{match:{}}]`; `['ТН','']` | Правило отброшено; пустые keywords отфильтрованы | [авто] |
-| `saveFile`/chatId/categoryId/stageId | Разные типы | `saveFile !== false` → true; не-строка chatId опускается; не-finite categoryId опускается; stageId→строка | [авто] |
+| `saveFile`/chatId/categoryId/stageId | Разные типы | `saveFile === true` → true (opt-in, иначе false); не-строка chatId опускается; не-finite categoryId опускается; stageId→строка | [авто] |
 | `readMapping` из строки/объекта | `tests/appSettings.test.ts` | `app.option.get {option:'procure_mapping'}`; строка распарсена; объект принят напрямую | [авто] |
 | `readMapping` невалидный JSON / не задано | `'not json'` / `''` | Safe defaults, не throw | [авто] |
 | `writeMapping` нормализует перед записью | Мусорный вход | bad→2, пустое правило отброшено; `app.option.set`; вернул нормализованное | [авто] |

@@ -184,10 +184,11 @@ describe('portalSettings coercion nuances', () => {
     expect(m.defaultTarget).toEqual({ entityTypeId: 31, categoryId: 2, stageId: '5' })
     expect(m.routingRules[0]!.target).toEqual({ entityTypeId: 2 }) // fallback default
   })
-  it('chat ids pass-through only when string; saveFile default true; dictionary non-object → {}', () => {
+  it('chat ids pass-through only when string; saveFile default OFF (opt-in); dictionary non-object → {}', () => {
     expect(parsePortalSettings({ notifyChatId: 'chat1', errorChatId: 5 }).notifyChatId).toBe('chat1')
     expect(parsePortalSettings({ errorChatId: 5 }).errorChatId).toBeUndefined()
-    expect(parsePortalSettings({}).saveFile).toBe(true)
+    expect(parsePortalSettings({}).saveFile).toBe(false) // opt-in — privacy default
+    expect(parsePortalSettings({ saveFile: true }).saveFile).toBe(true) // explicit true enables
     expect(parsePortalSettings({ units: { dictionary: 'nope' } }).units.dictionary).toEqual({})
   })
 })

@@ -47,7 +47,7 @@ export interface HandlerDeps {
   getMapping: (memberId: string) => Promise<PortalMapping>
   /** Load the extracted document + routing signals for a job (stored by agent-run). */
   getDocument: (memberId: string, jobId: string) => Promise<{ doc: ExtractedDocument, signals: RoutingSignals } | null>
-  /** Build the crm-sync deps bound to this portal/job/mapping (MCP tools). */
+  /** Build the crm-sync deps bound to this portal/job/mapping (in-process tool bodies over REST). */
   crmSyncDeps: (memberId: string, jobId: string, mapping: PortalMapping) => CrmSyncDeps
   /** Persist the job outcome. */
   setJobStatus: (memberId: string, jobId: string, status: 'done' | 'error', result: string) => Promise<void>
@@ -117,6 +117,10 @@ export interface FileExtractDeps {
   failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
   /** Optional progress: mark the job 'extracting' at entry (UI stage indicator). */
   markExtracting?: (memberId: string, jobId: string) => Promise<void>
+  /** Optional best-effort: archive the SOURCE file to the portal's common Disk when the
+   *  portal's `saveFile` toggle is on (the impl reads the setting). Runs at this stage (the raw
+   *  file only exists here — the worker deletes it after) but AFTER enqueue — never fails the job. */
+  saveSourceFile?: (memberId: string, jobId: string, fileId: string) => Promise<void>
 }
 
 /** file-extract: file → text → enqueue agent-run. Empty/failed/oversized extraction fails the job. */
@@ -140,6 +144,17 @@ export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDep
   }
   await deps.saveText(job.memberId, job.jobId, text)
   await deps.enqueueAgentRun(job.memberId, job.jobId)
+  // Archive the source file to the portal's Disk LAST — after enqueue, before returning (the
+  // worker deletes the raw bytes only once this handler returns, so the file is still present).
+  // Ordering matters: a throw from enqueueAgentRun retries the whole job; if the archive ran
+  // BEFORE enqueue, that retry would re-upload a duplicate client document. Running it after a
+  // successful enqueue means the only throw-after-archive path is gone. Best-effort + gated on
+  // `saveFile` inside; a Disk failure must NOT fail the import (text is extracted, pipeline runs).
+  if (deps.saveSourceFile) {
+    try {
+      await deps.saveSourceFile(job.memberId, job.jobId, job.fileId)
+    } catch { /* best-effort archive — the import proceeds without it */ }
+  }
   return { ok: true }
 }
 

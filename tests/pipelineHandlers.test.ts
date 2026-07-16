@@ -24,6 +24,34 @@ describe('handleFileExtractJob', () => {
     expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
     expect(d.failJob).not.toHaveBeenCalled()
   })
+  it('calls saveSourceFile (best-effort) AFTER enqueue — a retry from an enqueue throw must not re-archive', async () => {
+    const order: string[] = []
+    const saveSourceFile = vi.fn(async () => {
+      order.push('archive')
+    })
+    const d = deps({
+      saveSourceFile,
+      enqueueAgentRun: vi.fn(async () => {
+        order.push('enqueue')
+      })
+    })
+    await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'накладная.pdf' }, d)
+    expect(saveSourceFile).toHaveBeenCalledWith('m', 'j', 'накладная.pdf')
+    expect(order).toEqual(['enqueue', 'archive']) // enqueue first → its throw retries before any upload
+  })
+  it('an enqueue throw skips the archive entirely (so the retry, not this attempt, uploads once)', async () => {
+    const saveSourceFile = vi.fn(async () => {})
+    const d = deps({ saveSourceFile, enqueueAgentRun: vi.fn(() => Promise.reject(new Error('redis down'))) })
+    await expect(handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'f' }, d)).rejects.toThrow('redis down')
+    expect(saveSourceFile).not.toHaveBeenCalled()
+  })
+  it('a failing saveSourceFile does NOT fail the job (Disk archive is best-effort)', async () => {
+    const saveSourceFile = vi.fn(() => Promise.reject(new Error('disk down')))
+    const d = deps({ saveSourceFile })
+    const r = await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'f' }, d)
+    expect(r.ok).toBe(true)
+    expect(d.enqueueAgentRun).toHaveBeenCalled()
+  })
   it('oversized text → failJob, no save/enqueue (loud, not silent truncation)', async () => {
     const big = 'x'.repeat(MAX_DOCUMENT_TEXT + 1)
     const d = deps({ extractText: vi.fn(async () => big) })
