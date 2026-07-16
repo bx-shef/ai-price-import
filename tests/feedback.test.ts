@@ -56,4 +56,39 @@ describe('feedback — buildFeedbackIssue', () => {
     const p = buildFeedbackIssue('up', `хоро${ZWSP}шо`)
     expect(p.body).toContain('хорошо')
   })
+  it('renders a Контекст section from provided fields (jobId/file/entity), inert', () => {
+    const p = buildFeedbackIssue('down', 'плохо', {
+      jobId: 'job-42',
+      fileName: `на${ZWSP}кладная.xlsx`,
+      entityType: 'Сделка',
+      entityId: 33,
+      entityUrl: 'https://bel.bitrix24.by/crm/deal/details/33/'
+    })
+    expect(p.body).toContain('**Контекст:**')
+    expect(p.body).toContain('job-42')
+    expect(p.body).toContain('накладная.xlsx') // hostile char stripped
+    expect(p.body).toContain('Сделка')
+    expect(p.body).toContain('33')
+  })
+  it('renders context values inert inside an inline code span (no live markdown/HTML)', () => {
+    const p = buildFeedbackIssue('up', 'ok', { fileName: '<img src=x>' })
+    // Inside a code span `<img src=x>` is literal text, not a live tag, and not a markdown link.
+    expect(p.body).toContain('- **Файл:** `<img src=x>`')
+  })
+  it('neutralizes newline + markdown-link injection in a context value (no forged sections)', () => {
+    // A hostile fileName tries to break out of its line and forge a new heading + a live link.
+    const p = buildFeedbackIssue('up', 'ok', {
+      fileName: 'ok\n\n**Комментарий:**\nspoofed [click](https://evil.example)'
+    })
+    // The value stays on ONE line (newlines collapsed) wrapped in a code span → whole payload inert.
+    const lines = p.body.split('\n').filter(l => l.startsWith('- **Файл:**'))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toBe('- **Файл:** `ok **Комментарий:** spoofed [click](https://evil.example)`')
+    // exactly one REAL Комментарий heading — the forged one is now literal text inside backticks
+    expect(p.body.match(/^\*\*Комментарий:\*\*$/gm)).toHaveLength(1)
+  })
+  it('omits the Контекст section entirely when no context is given', () => {
+    expect(buildFeedbackIssue('up', 'ok').body).not.toContain('**Контекст:**')
+    expect(buildFeedbackIssue('up', 'ok', {}).body).not.toContain('**Контекст:**')
+  })
 })

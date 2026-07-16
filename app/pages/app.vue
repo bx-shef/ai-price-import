@@ -231,7 +231,11 @@ const toneClass: Record<string, string> = {
             {{ row.result.message }}
           </p>
           <!-- Отзыв 👍/👎 — только по завершённым (done/error), если канал включён на сервере -->
-          <FeedbackWidget v-if="row.job.status === 'done' || row.job.status === 'error'" />
+          <FeedbackWidget
+            v-if="row.job.status === 'done' || row.job.status === 'error'"
+            :job-id="row.job.jobId"
+            :file-name="row.job.fileName"
+          />
         </div>
         <span
           class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"

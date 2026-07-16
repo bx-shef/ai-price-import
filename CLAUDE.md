@@ -112,7 +112,11 @@ pnpm check        # lint + typecheck + test
 (фрейм-токен, гейт на config → 503) / `feedback.get.ts` (`{enabled}` для показа виджета) + `GITHUB_FEEDBACK_*`
 в `.env.example`. Тесты. **UI-виджет 👍/👎 — сделан** (`app/components/FeedbackWidget.vue` +
 `useFeedback`: на строке результата `/app`, показ по `GET /api/feedback {enabled}`; 👍 шлёт сразу, 👎 сперва
-просит комментарий; nuxt-тесты). **Репо-приёмник — `bx-shef/ai-price-import-feedback`** (приватный, владелец).
+просит комментарий; nuxt-тесты). **Контекст в отзыве — добавлен:** виджет прокидывает `jobId`/`fileName` строки
+результата → `submit(kind, comment, context)` → `POST /api/feedback {context}` → `buildFeedbackIssue` рендерит
+секцию «Контекст» (jobId/файл/сущность/ссылка/версия), **каждое поле stripHostileChars+escapeHtml+кап 300** (как
+комментарий). Разрешено, т.к. репо-приёмник **приватный**; пустые поля — секция опускается целиком.
+**Репо-приёмник — `bx-shef/ai-price-import-feedback`** (приватный, владелец).
 **Осталось для включения:** `GITHUB_FEEDBACK_TOKEN` (Issues R/W) + `GITHUB_FEEDBACK_REPO=bx-shef/ai-price-import-feedback`
 в env прода; live-verify POST по включённому каналу.
 

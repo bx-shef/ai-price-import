@@ -5,6 +5,9 @@ import { useFeedback } from '~/composables/useFeedback'
 // Compact 👍/👎 feedback widget under an import result row. Renders nothing unless the channel is
 // enabled on the server (probed via useFeedback). 👍 sends immediately; 👎 first opens a comment
 // box («что пошло не так»), then sends. Inert outside a portal (submit no-ops). Ported UX from #218.
+// Optional jobId/fileName trace the issue back to the run (rendered inert server-side; the receiving
+// repo is private, so client context is permitted).
+const props = defineProps<{ jobId?: string, fileName?: string }>()
 const { enabled, ensureEnabled, submit } = useFeedback()
 onMounted(ensureEnabled)
 
@@ -24,7 +27,10 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
   error.value = ''
   try {
     // submit() returns false (without throwing) outside a portal frame — do NOT claim success.
-    const ok = await submit(kind, comment.value.trim() || undefined)
+    const ok = await submit(kind, comment.value.trim() || undefined, {
+      jobId: props.jobId,
+      fileName: props.fileName
+    })
     if (ok) sent.value = true
     else error.value = 'Отзыв доступен только внутри портала Bitrix24'
   } catch {
