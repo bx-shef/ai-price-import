@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ensureSubfolder, monthlySubfolderName, pickCommonStorage, uploadFile } from '../server/utils/disk'
+import { DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
 import { buildConfigurableActivity, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
 
 describe('disk — common storage + monthly folder', () => {
@@ -29,6 +29,106 @@ describe('disk — ensureSubfolder (idempotent)', () => {
       .mockResolvedValueOnce({ ID: '90' })
     expect(await ensureSubfolder(3, '2026-07', call)).toBe(90)
     expect(call).toHaveBeenNthCalledWith(2, 'disk.folder.addsubfolder', { id: 3, data: { NAME: '2026-07' } })
+  })
+})
+
+describe('disk — sanitizeFileName', () => {
+  it('strips path separators, falls back on blank, caps at 255', () => {
+    expect(sanitizeFileName('a/b\\c.pdf')).toBe('a_b_c.pdf')
+    expect(sanitizeFileName('   ')).toBe('document')
+    expect(sanitizeFileName('x'.repeat(300)).length).toBe(255)
+  })
+})
+
+describe('disk — saveSourceFileToDisk (composition)', () => {
+  it('common → app folder → monthly subfolder → upload; returns the file id', async () => {
+    const call = vi.fn(async (method: string, params: { data?: { NAME?: string } }) => {
+      if (method === 'disk.storage.getlist') return [{ ID: '3', ENTITY_TYPE: 'common', NAME: 'Shared', ROOT_OBJECT_ID: '3' }]
+      if (method === 'disk.folder.getchildren') return [] // nothing exists → create each
+      if (method === 'disk.folder.addsubfolder') return { ID: params.data?.NAME === DISK_APP_FOLDER ? '39' : '77' }
+      if (method === 'disk.folder.uploadfile') return { ID: '45' }
+      return null
+    })
+    const id = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'н/акл:адная.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
+    expect(id).toBe(45)
+    expect(call).toHaveBeenCalledWith('disk.folder.addsubfolder', { id: 3, data: { NAME: DISK_APP_FOLDER } }) // app folder under root
+    expect(call).toHaveBeenCalledWith('disk.folder.addsubfolder', { id: 39, data: { NAME: '2026-07' } }) // month under app folder
+    expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 77, data: { NAME: 'н_акл:адная.pdf' }, fileContent: ['н_акл:адная.pdf', 'QQ=='] })
+  })
+  it('throws when the common drive / root is missing', async () => {
+    await expect(saveSourceFileToDisk({ base64: 'QQ==', fileName: 'x', date: { getFullYear: () => 2026, getMonth: () => 0 } }, vi.fn(async () => [])))
+      .rejects.toThrow(/общий диск/)
+  })
+  it('is idempotent on retry: an existing same-name file in the month folder is returned, not re-uploaded', async () => {
+    const call = vi.fn(async (method: string) => {
+      if (method === 'disk.storage.getlist') return [{ ID: '3', ENTITY_TYPE: 'common', NAME: 'Shared', ROOT_OBJECT_ID: '3' }]
+      if (method === 'disk.folder.getchildren') return [
+        { ID: '39', NAME: DISK_APP_FOLDER, TYPE: 'folder' },
+        { ID: '77', NAME: '2026-07', TYPE: 'folder' },
+        { ID: '46', NAME: 'j1__doc.pdf', TYPE: 'file' } // already archived by a prior attempt
+      ]
+      return null
+    })
+    const id = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'j1__doc.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
+    expect(id).toBe(46)
+    expect(call).not.toHaveBeenCalledWith('disk.folder.uploadfile', expect.anything())
+  })
+})
+
+describe('disk — makeSaveSourceFile (file-extract wiring)', () => {
+  function diskCall() {
+    return vi.fn(async (method: string, params: { data?: { NAME?: string } }) => {
+      if (method === 'disk.storage.getlist') return [{ ID: '3', ENTITY_TYPE: 'common', NAME: 'Shared', ROOT_OBJECT_ID: '3' }]
+      if (method === 'disk.folder.getchildren') return []
+      if (method === 'disk.folder.addsubfolder') return { ID: params.data?.NAME === DISK_APP_FOLDER ? '39' : '77' }
+      if (method === 'disk.folder.uploadfile') return { ID: '45' }
+      return null
+    })
+  }
+  it('saveFile OFF → resolves nothing, never reads bytes or uploads', async () => {
+    const readBytes = vi.fn(async () => new Uint8Array([65]))
+    const call = diskCall()
+    const hook = makeSaveSourceFile({
+      resolveCall: async () => ({ call }),
+      loadMapping: async () => ({ saveFile: false }),
+      readBytes,
+      now: () => 0
+    })
+    await hook('m', 'j1', 'doc.pdf')
+    expect(readBytes).not.toHaveBeenCalled()
+    expect(call).not.toHaveBeenCalled()
+  })
+  it('no portal token (resolveCall → null) → skip without loading the mapping', async () => {
+    const loadMapping = vi.fn(async () => ({ saveFile: true }))
+    const hook = makeSaveSourceFile({ resolveCall: async () => null, loadMapping, readBytes: async () => new Uint8Array(), now: () => 0 })
+    await hook('m', 'j1', 'doc.pdf')
+    expect(loadMapping).not.toHaveBeenCalled()
+  })
+  it('saveFile ON → resolves ONE transport, reuses it for mapping + upload, job-scoped name', async () => {
+    const call = diskCall()
+    const resolveCall = vi.fn(async () => ({ call }))
+    const loadMapping = vi.fn(async () => ({ saveFile: true }))
+    const hook = makeSaveSourceFile({ resolveCall, loadMapping, readBytes: async () => new Uint8Array([65]), now: () => Date.UTC(2026, 6, 1) })
+    await hook('m', 'j1', 'doc.pdf')
+    expect(resolveCall).toHaveBeenCalledTimes(1) // transport built once (no double token-load)
+    expect(loadMapping).toHaveBeenCalledWith(call) // SAME call handed to the mapping read...
+    expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 77, data: { NAME: 'j1__doc.pdf' }, fileContent: ['j1__doc.pdf', 'QQ=='] }) // ...and the upload
+  })
+  it('runs the Disk write under the per-portal serializer when provided', async () => {
+    const call = diskCall()
+    const serialize = vi.fn(async (_key: string, fn: () => Promise<void>) => {
+      await fn()
+    })
+    const hook = makeSaveSourceFile({
+      resolveCall: async () => ({ call }),
+      loadMapping: async () => ({ saveFile: true }),
+      readBytes: async () => new Uint8Array([65]),
+      serialize,
+      now: () => Date.UTC(2026, 6, 1)
+    })
+    await hook('m', 'j1', 'doc.pdf')
+    expect(serialize).toHaveBeenCalledWith('disk-archive:m', expect.any(Function))
+    expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', expect.anything()) // upload still happened
   })
 })
 

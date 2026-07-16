@@ -27,7 +27,9 @@ import { createTargetItem, setProductRows } from '../utils/crmWrite'
 import { buildConfigurableActivity, entityOpenPath } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { extractText } from '../utils/textExtract'
+import { readFile } from 'node:fs/promises'
 import { uploadPath } from '../utils/fileStore'
+import { makeSaveSourceFile } from '../utils/disk'
 import { runAgent } from '../agent/runAgent'
 import { buildExtractionPrompt } from '../../prompts/extract'
 import { enqueueAgent, enqueueCrmSync } from './producers'
@@ -150,7 +152,21 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
     saveText: (m, j, text) => saveText(m, j, text, infra.query),
     enqueueAgentRun: (m, j) => enqueueAgent({ memberId: m, jobId: j }),
     failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, infra.query),
-    markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', infra.query)
+    markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', infra.query),
+    // Archive the source file to the portal's common Disk when `saveFile` is on. One transport
+    // is resolved and shared by the mapping read and the Disk upload (no double token-load); the
+    // raw bytes come from the upload dir (this is the last stage where they exist). A Disk hiccup
+    // is swallowed by the handler — the import proceeds.
+    saveSourceFile: makeSaveSourceFile({
+      resolveCall: restResolver(infra),
+      loadMapping: call => readMapping(call).catch(() => defaultMapping()),
+      readBytes: (m, j) => readFile(uploadPath(m, j)),
+      // Serialize the Disk write per portal so concurrent scale-out workers don't duplicate the
+      // shared app/month folders (B24 Disk has no atomic create-if-absent). Same primitive as the
+      // token-refresh path (#35); the lock ignores the injected QueryFn (no DB work in the archive).
+      serialize: (key, fn) => withAdvisoryLock(key, () => fn()),
+      now: infra.now
+    })
   }
 }
 
