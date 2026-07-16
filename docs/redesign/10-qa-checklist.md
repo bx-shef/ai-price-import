@@ -145,10 +145,10 @@
 
 | Проверка | Действие | Ожидаемо | Метка |
 |---|---|---|---|
-| Happy path: создание target | `tests/crmSyncCore.test.ts` | `createTarget` с fields (вкл. `opportunity`+`isManualOpportunity:'Y'` для сделки/КП/смарт-счёта); `recordResult` ДО `setRows`; строки пишутся; `created=true` | [авто] |
+| Happy path: создание target | `tests/crmSyncCore.test.ts` | `createTarget` с fields (вкл. `opportunity`+`isManualOpportunity:'Y'` для сделки/смарт-счёта + маркер `originId`/`xmlId`); `findExisting`-поиск маркера ДО создания; строки пишутся; `created=true` | [авто] |
 | Сумма сделки (opportunity) | `tests/server-crm.test.ts` (`computeOpportunity`/`supportsOpportunity`) | по-юнитное округление как Bitrix; проставляется только для 2/7/31, смарт-процесс (≥1000) пропускается | [авто] |
 | Уведомление об успехе | `tests/crmSyncCore.test.ts` | `notifySuccess` с summary (supplier/entityId/rowCount/warnings) | [авто] |
-| Идемпотентный повтор | `tests/crmSyncCore.test.ts` | `getExisting`≠null → нет create, `setRows` повторяется (замещение), `created=false`, без повторного `notifySuccess` | [авто] |
+| Идемпотентный повтор | `tests/crmSyncCore.test.ts` | `findExisting`≠null (маркер найден в Б24) → нет create, `setRows` повторяется (замещение), `created=false`, без повторного `notifySuccess` | [авто] |
 | Поставщик не найден | `tests/crmSyncCore.test.ts` | Сущность создаётся без `companyId`, warning; без `taxId` — lookup не вызывается | [авто] |
 | `findCompanyByTaxId` нормализация | `tests/server-crm.test.ts` | Стрипает не-цифры (`RQ_INN`), при дублях min ID, пустой→null | [авто] |
 | Живой поиск компании по taxId | Портал: фильтр `RQ_INN` + `ENTITY_TYPE_ID=4` | Отдаёт `ENTITY_ID` для BY-УНП / RU-ИНН | [нужен живой портал] |
@@ -169,7 +169,7 @@
 | Чат ошибок в `liveDeps.reportErrors` | Код-ревью `liveDeps.ts` | `METRICS.errors` инкрементнут, ошибка чата глотается | [вручную] |
 | Живая доставка в чат (scope `im`) | Портал: `im.message.add` в notify/error чат | Success/error реально отправлены | [нужен живой портал] |
 | `handleCrmSyncJob` статусы | `tests/queueHandlers.test.ts` | Нет документа→`error` без run; успех→`done` с JSON; жёсткая ошибка→`error`; терминал→`deleteDocument`, сбой очистки не валит | [авто] |
-| Гонка create↔recordResult | Код-ревью `crmSyncCore.ts:118-140` | Известный риск редкого дубля (не атомарны) — зафиксировать как ограничение | [вручную] |
+| Маркер vs мутабельная цель/originator | Код-ревью `crmSyncCore.ts` (search-before-create) | Известное узкое ограничение: правка маппинга/`IMPORT_ORIGINATOR_ID` в окне между create и ретраем → поиск под другим ключом → возможен дубль (нацелено на восстановление после краха, не на реконфиг под нагрузкой) | [вручную] |
 | Кэш RestCall / портал без токена | Код-ревью `liveDeps.ts`, `need()` | null и rejected вычищаются из кэша; `need()` бросает «портал не авторизован» | [вручную] |
 | Диск + настраиваемое дело (ядро) | `tests/diskActivity.test.ts` | `buildConfigurableActivity` (капы, `safeRelativePath`); `pickCommonStorage`/`monthlySubfolderName`/`ensureSubfolder`/`uploadFile` | [авто] |
 | Диск/дело НЕ проведены в пайплайн | grep `server/queue/` пуст | Реальная загрузка на диск и `crm.activity.configurable.add` не подключены | [нужен живой портал] |
@@ -365,7 +365,7 @@
 | Проверка | Что проверить | Метка |
 |---|---|---|
 | Изоляция джобы по `member_id` | Джоба `agent-run`/`crm-sync` с подделанным/перепутанным `member_id` в payload пишет строго в свой портал (member_id в теле джобы — доверенный, негативного теста нет) | [вручную/нужен живой портал] |
-| Скоуп ключа идемпотентности | Два портала с одинаковым файлом/документом НЕ схлопываются в одну запись (`makeJobId`/`getExisting`/`job_result`/`import_doc` — кросс-портальная коллизия дедупа) | [авто-кандидат] |
+| Скоуп ключа идемпотентности | Маркер сущности скоуплен порталом (`crm.item.list` идёт по OAuth-токену конкретного портала) + `originatorId`/`xmlId`-префикс namespace'ит наш маркер; чужой портал/данные не матчатся (`originMarker`/`findExisting`) | [авто-кандидат] |
 | Uninstall при in-flight | После `deletePortal` оставшиеся в Redis джобы портала не пишут в CRM и не висят в ретраях; байты активных загрузок вычищаются (не только по событию) | [вручную] |
 
 ### Rate-limit / DoS / стоимость
@@ -399,6 +399,6 @@
 | Проверка | Что проверить | Метка |
 |---|---|---|
 | Параллельная обработка джобы | Идемпотентность под параллелизмом (два воркера, один jobId), а не только последовательный повтор | [вручную] |
-| Атомарность create↔recordResult | Дубль-загрузка под конкуренцией не создаёт две сущности | [нужен живой портал] |
+| Маркер идемпотентности вживую | Ретрай джобы (create ок, `setRows` упал) не создаёт вторую сущность — маркер `originId`/`xmlId` находится поиском `crm.item.list` перед повторным create | [нужен живой портал] |
 | Cookie в dev без HTTPS | Флаг `Secure` → кука не ставится по HTTP; поведение входа оператора в dev | [вручную] |
 | Эндпоинт метрик | `metrics_counter` не отдаётся неаутентифицированным эндпоинтом | [вручную] |

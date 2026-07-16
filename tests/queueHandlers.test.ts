@@ -13,13 +13,12 @@ const doc: ExtractedDocument = {
 
 function crmDeps() {
   return {
-    getExisting: vi.fn(async () => null),
+    findExisting: vi.fn(async () => null as number | null),
     findCompanyByTaxId: vi.fn(async () => 42),
     findProduct: vi.fn(async () => null),
     portalVatRates: vi.fn(async () => [{ id: '1', name: 'Без НДС', rate: null }]),
     createTarget: vi.fn(async () => 555),
     setRows: vi.fn(async () => {}),
-    recordResult: vi.fn(async () => {}),
     reportErrors: vi.fn(async () => {})
   }
 }
@@ -68,7 +67,7 @@ describe('handleCrmSyncJob', () => {
 
   it('idempotent redelivery re-counts nothing (docs not double-counted)', async () => {
     const bumpMetrics = vi.fn(async () => {})
-    const cd = { ...crmDeps(), getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 99 })) }
+    const cd = { ...crmDeps(), findExisting: vi.fn(async () => 99 as number | null) }
     const d = deps({ bumpMetrics, crmSyncDeps: vi.fn(() => cd) })
     const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
     expect(r?.idempotent).toBe(true)
@@ -108,7 +107,7 @@ describe('handleCrmSyncJob', () => {
   })
 
   it('idempotent re-run (existing, no errors) → done', async () => {
-    const cd = { ...crmDeps(), getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 99 })) }
+    const cd = { ...crmDeps(), findExisting: vi.fn(async () => 99 as number | null) }
     const d = deps({ crmSyncDeps: vi.fn(() => cd) })
     const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
     expect(r?.created).toBe(false)
