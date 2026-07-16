@@ -9,9 +9,9 @@ export const B24_EVENT_HANDLER_PATH = '/api/b24/events'
 /** Events bound on install. */
 export const B24_BOUND_EVENTS = ['ONAPPINSTALL', 'ONAPPUNINSTALL'] as const
 
-/** Bitrix24 entityTypeId constants used as import targets. */
+/** Bitrix24 entityTypeId constants used as import targets.
+ *  quote (7) is intentionally excluded — no filterable external-marker field (see #135). */
 export const ENTITY_TYPE_ID = {
   deal: 2,
-  quote: 7,
   smartInvoice: 31
 } as const
