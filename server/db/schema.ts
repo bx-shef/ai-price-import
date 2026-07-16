@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS portal_tombstone (
   deleted_ts BIGINT NOT NULL
 );
 
+-- DEPRECATED (#135): crm-sync idempotency moved to a Bitrix24 entity marker (originId/xmlId)
+-- searched before create — the source of truth is the portal, not this checkpoint. The table is
+-- retained (not dropped) to avoid a prod migration on the switch; a later migration may DROP it.
+-- Nothing writes it anymore; uninstall still purges it (harmless on an empty table).
 CREATE TABLE IF NOT EXISTS job_result (
   member_id    TEXT NOT NULL,
   job_id       TEXT NOT NULL,

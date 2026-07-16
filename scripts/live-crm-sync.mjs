@@ -17,6 +17,7 @@ import { findProduct } from '../server/utils/productLookup.ts'
 import { fetchVatRates } from '../server/utils/portalVat.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, setProductRows } from '../server/utils/crmWrite.ts'
+import { findExistingItemId } from '../server/utils/originLookup.ts'
 
 const args = new Set(process.argv.slice(2))
 const useAi = args.has('--ai')
@@ -91,24 +92,28 @@ const mapping = {
   saveFile: false,
   routingRules: [
     { match: { type: 'накладная' }, target: { entityTypeId: 2, categoryId: 1 } },
-    { match: { type: 'счёт' }, target: { entityTypeId: 31 } },
-    { match: { type: 'КП' }, target: { entityTypeId: 7 } }
+    { match: { type: 'счёт' }, target: { entityTypeId: 31 } }
+    // КП/7 removed — not a supported target (no idempotency marker field), #135.
   ],
   defaultTarget: { entityTypeId: 2, categoryId: 0 }
 }
 
-// Capture the created entity as soon as runCrmSync checkpoints it, so cleanup runs even
-// if a later step (setRows) throws before runCrmSync returns — no leaked [TEST] entity.
+// Idempotency is now a B24 marker (originId/xmlId) searched pre-create — wire the real lookup so
+// the live run exercises it. Capture the created entity in the createTarget wrapper so cleanup
+// runs even if a later step (setRows) throws before runCrmSync returns — no leaked [TEST] entity.
 let created = null
 const deps = {
-  getExisting: async () => null,
+  findExisting: (etid, filter) => findExistingItemId(etid, filter, call),
   findCompanyByTaxId: t => findCompanyByTaxId(t, call),
   findProduct: it => findProduct(it, mapping, call),
   portalVatRates: () => fetchVatRates(listCall),
   portalCurrencies: () => fetchCurrencies(call),
-  createTarget: (t, f) => createTargetItem(t, f, call),
+  createTarget: async (t, f) => {
+    const entityId = await createTargetItem(t, f, call)
+    created = { entityTypeId: t.entityTypeId, entityId }
+    return entityId
+  },
   setRows: (e, i, r) => setProductRows(e, i, r, call),
-  recordResult: async (_jobId, entityTypeId, entityId) => { created = { entityTypeId, entityId } },
   reportErrors: async m => console.log('  ⚠ errors →', m),
   notifySuccess: async s => console.log('  ✓ notifySuccess', JSON.stringify(s))
 }

@@ -4,13 +4,18 @@ import { resolveTarget, type RoutingSignals } from '~/utils/routing'
 import { resolveMeasure } from '~/utils/units'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
+import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
 
 // Pure crm-sync orchestration with injected dependencies (no I/O here).
 // Deps are abstract async fns → wired to the isolated MCP tools (not direct REST):
 // docs/redesign 02 §1.4 «MCP — единственная дверь в Bitrix24».
 
 export interface CrmSyncDeps {
-  getExisting: (jobId: string) => Promise<{ entityTypeId: number, entityId: number } | null>
+  /** Find a prior create of this job by its idempotency marker (originId/xmlId) via a
+   *  crm.item.list filter — the source of truth is Bitrix24, not a local checkpoint. */
+  findExisting: (entityTypeId: number, filter: Record<string, unknown>) => Promise<number | null>
+  /** Originator code stamped into the marker (env; defaults to the repo code). */
+  originatorPrefix?: string
   findCompanyByTaxId: (taxId: string) => Promise<number | null>
   findProduct: (item: ExtractedDocument['items'][number]) => Promise<number | null>
   /** Optional: create a catalog product for onMissing:'create'; returns its id. */
@@ -20,7 +25,6 @@ export interface CrmSyncDeps {
   portalCurrencies?: () => Promise<string[]>
   createTarget: (target: TargetRef, fields: Record<string, unknown>) => Promise<number>
   setRows: (entityTypeId: number, entityId: number, rows: Array<Record<string, unknown>>) => Promise<void>
-  recordResult: (jobId: string, entityTypeId: number, entityId: number) => Promise<void>
   /** One error-chat message per document (batched). Supplier name for BB-safe context. */
   reportErrors: (messages: string[], supplierName?: string) => Promise<void>
   /** Optional success notification (chat). Failure here must not fail the import. */
@@ -48,8 +52,8 @@ export interface CrmSyncResult {
   created: boolean
   /** Product rows actually written (after skip-warn/skips) — the true «lines» count. */
   rowCount: number
-  /** True when this was an idempotent resume (getExisting hit) — a redelivery of an
-   * already-processed job, so dashboard counters must NOT re-count it. */
+  /** True when this was an idempotent resume (the entity's marker was found in B24) — a
+   * redelivery of an already-processed job, so dashboard counters must NOT re-count it. */
   idempotent: boolean
   warnings: string[]
   errors: string[]
@@ -66,6 +70,16 @@ export async function runCrmSync(
   const warnings: string[] = []
   const errors: string[] = []
   const target = resolveTarget(signals, mapping.routingRules, mapping.defaultTarget)
+
+  // Idempotency requires a filterable marker on the target type (originId/xmlId). A markerless
+  // type (originSearchFilter → null; e.g. quote/7, or a nonsensical target set via free entityTypeId
+  // input / routing rule / manual override) would create with NO marker → a retry can't find it and
+  // silently duplicates. So we treat it as a HARD ERROR (→ error chat, no create) rather than create
+  // a duplicate-prone entity. This is the code that ENFORCES «markerless types are not targets» (#135).
+  const markerFilter = originSearchFilter(target.entityTypeId, jobId, deps.originatorPrefix)
+  if (!markerFilter) {
+    errors.push(`Целевая сущность (тип ${target.entityTypeId}) не поддерживается импортом — нет поля-маркера идемпотентности; выберите сделку, смарт-счёт или смарт-процесс`)
+  }
 
   // Currency must exist in the portal (hard error → do not create a wrong-currency entity).
   if (doc.currency && deps.portalCurrencies) {
@@ -128,34 +142,40 @@ export async function runCrmSync(
     return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, warnings, errors }
   }
 
-  // Idempotency: create + checkpoint before rows; on retry resume rows (productrow.set replaces).
-  // NB: create→recordResult is not atomic (no transaction spans a REST create + a DB write).
-  // If the process dies in that ~1ms window, a retry re-creates → a rare duplicate. Fully
-  // closing it needs an entity-side job-id marker + pre-create search (future hardening).
-  const existing = await deps.getExisting(jobId)
-  let entityTypeId: number
+  // Idempotency: the created entity carries a job-id MARKER (originId/originatorId for deal,
+  // xmlId for invoice/smart-processes — originMarker.ts). On retry we SEARCH Bitrix24 for that
+  // marker BEFORE creating, so the source of truth is the portal itself (no local DB checkpoint).
+  // This closes the old create→checkpoint window: even if a retry runs after a create but before
+  // anything was recorded, the marker on the entity is found. `markerFilter` is guaranteed non-null
+  // here (a null one was caught as a hard error above).
+  // KNOWN NARROW LIMITATION (vs the old jobId-keyed DB checkpoint): the search key derives from
+  // mutable state — the resolved target's entityTypeId (mapping) and the originator (env). If the
+  // portal mapping OR IMPORT_ORIGINATOR_ID is changed in the seconds-wide window between a create
+  // and its retry, the retry searches under a different key and may duplicate. This targets crash
+  // recovery, not concurrent reconfiguration; acceptable residual for the «search in B24» design.
+  const existingId = await deps.findExisting(target.entityTypeId, markerFilter!)
+  const entityTypeId = target.entityTypeId
   let entityId: number
   let created: boolean
-  if (existing) {
-    entityTypeId = existing.entityTypeId
-    entityId = existing.entityId
+  if (existingId) {
+    entityId = existingId
     created = false
   } else {
     const fields: Record<string, unknown> = {
+      // Idempotency marker FIRST so a retry can find this exact create.
+      ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
       title: `Импорт: ${doc.supplier?.name ?? 'документ'}`.slice(0, 255),
       ...(companyId ? { companyId } : {}),
       ...(doc.currency ? { currencyId: doc.currency } : {}),
       // Set the total explicitly (+ manual flag): live-verified that productrow.set does
       // NOT recompute `opportunity` on portals without trade-accounting → deal would show 0.
-      // Only for entities that always expose the field (deal/quote/smart-invoice); dynamic
+      // Only for entities that always expose the field (deal/smart-invoice); dynamic
       // smart-processes are skipped (the field may be absent → create could be rejected).
       ...(rows.length && supportsOpportunity(target.entityTypeId)
         ? { opportunity: computeOpportunity(rows), isManualOpportunity: 'Y' }
         : {})
     }
-    entityTypeId = target.entityTypeId
     entityId = await deps.createTarget(target, fields)
-    await deps.recordResult(jobId, entityTypeId, entityId)
     created = true
   }
 
@@ -192,7 +212,7 @@ export async function runCrmSync(
     }
   }
 
-  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existing, warnings, errors }
+  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId, warnings, errors }
 }
 
 function clampNonNeg(n: number, fallback = 0): number {

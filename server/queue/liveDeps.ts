@@ -14,7 +14,7 @@ import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { setJobStatus } from '../utils/jobStore'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
-import { getExistingResult, recordResult } from '../utils/resultStore'
+import { findExistingItemId } from '../utils/originLookup'
 import { bumpCounter, METRICS } from '../utils/metricsStore'
 import { readMapping } from '../utils/appSettings'
 import { defaultMapping } from '~/utils/portalSettings'
@@ -207,7 +207,11 @@ function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: str
     return t
   }
   return {
-    getExisting: jobId => getExistingResult(memberId, jobId, infra.query),
+    // Idempotency by B24 marker search (originId/xmlId) — no local checkpoint. The originator
+    // code (env, defaults to the repo code) namespaces our marker so it never matches a portal's
+    // own external-source data.
+    findExisting: async (entityTypeId, filter) => findExistingItemId(entityTypeId, filter, (await need()).call),
+    originatorPrefix: process.env.IMPORT_ORIGINATOR_ID,
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
     findProduct: async item => findProduct(item, mapping, (await need()).call),
     createProduct: async item => createProductViaRest(item, mapping, (await need()).call),
@@ -216,7 +220,6 @@ function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: str
     portalCurrencies: async () => fetchCurrencies((await need()).call),
     createTarget: async (target, fields) => createTargetItem(target, fields, (await need()).call),
     setRows: async (etid, id, rows) => setProductRows(etid, id, rows, (await need()).call),
-    recordResult: (jobId, etid, id) => recordResult(memberId, jobId, etid, id, infra.query),
     reportErrors: async (messages, supplierName) => {
       if (!messages.length) return
       await bumpCounter(memberId, METRICS.errors, 1, infra.query)

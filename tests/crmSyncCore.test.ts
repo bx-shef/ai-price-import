@@ -16,13 +16,12 @@ function mapping(): PortalMapping {
 
 function baseDeps(over: Partial<Parameters<typeof runCrmSync>[4]> = {}) {
   return {
-    getExisting: vi.fn(async () => null),
+    findExisting: vi.fn(async () => null as number | null),
     findCompanyByTaxId: vi.fn(async () => 42),
     findProduct: vi.fn(async () => null),
     portalVatRates: vi.fn(async () => VAT),
     createTarget: vi.fn(async () => 555),
     setRows: vi.fn(async () => {}),
-    recordResult: vi.fn(async () => {}),
     reportErrors: vi.fn(async () => {}),
     ...over
   }
@@ -36,7 +35,7 @@ const doc: ExtractedDocument = {
 }
 
 describe('runCrmSync — happy + supplier/idempotency', () => {
-  it('creates target (target+fields) + rows, records result BEFORE rows', async () => {
+  it('creates target (target+fields incl. job-id marker) + rows', async () => {
     const deps = baseDeps()
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(r.created).toBe(true)
@@ -44,12 +43,53 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(deps.createTarget).toHaveBeenCalledWith(
       expect.objectContaining({ entityTypeId: 2, categoryId: 1 }),
       // Гвоздь 100×2, НДС включён → opportunity 200, флаг ручной суммы (live-verified).
-      expect.objectContaining({ companyId: 42, currencyId: 'BYN', opportunity: 200, isManualOpportunity: 'Y' })
+      // Deal (2) carries the origin marker (originId=jobId + originatorId) for idempotency.
+      expect.objectContaining({
+        companyId: 42, currencyId: 'BYN', opportunity: 200, isManualOpportunity: 'Y',
+        originId: 'job1', originatorId: 'ai-price-import'
+      })
     )
-    expect(deps.recordResult).toHaveBeenCalledWith('job1', 2, 555)
     expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
       expect.objectContaining({ taxRate: 22, taxIncluded: 'Y', measureCode: 796, price: 100, quantity: 2 })
     ]))
+  })
+
+  it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {
+    const deps = baseDeps()
+    await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(deps.findExisting).toHaveBeenCalledWith(2, { '=originId': 'job1', '=originatorId': 'ai-price-import' })
+  })
+
+  it('smart-invoice target → xmlId marker + xmlId search filter', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 31 }
+    const deps = baseDeps()
+    await runCrmSync('job1', doc, m, {}, deps)
+    expect(deps.findExisting).toHaveBeenCalledWith(31, { '=xmlId': 'ai-price-import:job1' })
+    expect(deps.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ entityTypeId: 31 }),
+      expect.objectContaining({ xmlId: 'ai-price-import:job1' })
+    )
+  })
+
+  it('originatorPrefix overrides the marker/filter originator', async () => {
+    const deps = baseDeps({ originatorPrefix: 'acme' })
+    await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(deps.findExisting).toHaveBeenCalledWith(2, { '=originId': 'job1', '=originatorId': 'acme' })
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ originatorId: 'acme' }))
+  })
+
+  it('markerless target (no idempotency field, e.g. quote/7) → hard error, NO create, NO search', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 7 } // quote — no originId/xmlId → not a supported target
+    const reportErrors = vi.fn(async () => {})
+    const deps = baseDeps({ reportErrors })
+    const r = await runCrmSync('job1', doc, m, {}, deps)
+    expect(r.created).toBe(false)
+    expect(r.errors.some(e => /не поддерживается импортом/.test(e))).toBe(true)
+    expect(deps.findExisting).not.toHaveBeenCalled()
+    expect(deps.createTarget).not.toHaveBeenCalled()
+    expect(reportErrors).toHaveBeenCalled()
   })
 
   it('calls notifySuccess with a summary on success', async () => {
@@ -77,7 +117,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
 
   it('does NOT write a дело on an idempotent resume (already-processed job)', async () => {
     const writeActivity = vi.fn(async () => {})
-    const deps = baseDeps({ writeActivity, getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 900 })) })
+    const deps = baseDeps({ writeActivity, findExisting: vi.fn(async () => 900 as number | null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(r.idempotent).toBe(true)
     expect(writeActivity).not.toHaveBeenCalled()
@@ -106,13 +146,13 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
 
   it('idempotent resume → does NOT re-notify (created=false path stays silent)', async () => {
     const notifySuccess = vi.fn(async () => {})
-    const deps = baseDeps({ getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 999 })), notifySuccess })
+    const deps = baseDeps({ findExisting: vi.fn(async () => 999 as number | null), notifySuccess })
     await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(notifySuccess).not.toHaveBeenCalled()
   })
 
   it('idempotent: existing entity → no create, but resumes setRows', async () => {
-    const deps = baseDeps({ getExisting: vi.fn(async () => ({ entityTypeId: 2, entityId: 999 })) })
+    const deps = baseDeps({ findExisting: vi.fn(async () => 999 as number | null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(r).toMatchObject({ created: false, entityId: 999 })
     expect(deps.createTarget).not.toHaveBeenCalled()
