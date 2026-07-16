@@ -27,13 +27,24 @@ export default defineEventHandler(async (event) => {
     return { error: 'authorization failed', reason: member.reason }
   }
 
-  const raw = await readBody(event).catch(() => null) as { kind?: unknown, comment?: unknown } | null
+  const raw = await readBody(event).catch(() => null) as
+    { kind?: unknown, comment?: unknown, context?: Record<string, unknown> } | null
   const kind = normalizeKind(raw?.kind)
   if (!kind) {
     setResponseStatus(event, 400)
     return { error: 'неизвестная оценка' }
   }
-  const payload = buildFeedbackIssue(kind, raw?.comment)
+  // Context (jobId/file/entity/version) is client-supplied and rendered inert by the builder; the
+  // receiving repo is private so client data is permitted (see feedback.ts module header).
+  const c = raw?.context ?? {}
+  const payload = buildFeedbackIssue(kind, raw?.comment, {
+    jobId: c.jobId,
+    fileName: c.fileName,
+    entityType: c.entityType,
+    entityId: c.entityId,
+    entityUrl: c.entityUrl,
+    appVersion: c.appVersion
+  })
   const result = await postFeedbackIssue(config, payload, globalThis.fetch as unknown as FetchFn)
   if (result.ok) return { ok: true, number: result.number }
   // Never surface GitHub's body/URL/token — only a generic message + the retry hint.

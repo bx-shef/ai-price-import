@@ -46,26 +46,67 @@ export function normalizeKind(kind: unknown): FeedbackKind | null {
 export interface IssuePayload { title: string, body: string, labels: string[] }
 
 /**
- * Build the { title, body, labels } for the GitHub issue from a validated kind + raw comment.
- * The comment is sanitized here (do not assume a pre-sanitized value — this is exported). Body wraps
- * the comment in <pre><code> so backticks/asterisks/HTML are inert. No client context is added by
- * the builder (obезличенно by default); any context the employee typed is their responsibility and
- * the reason the receiving repo must be private.
+ * Optional import context attached to the feedback issue so triage can trace it back to a run.
+ * PRIVACY: these fields may carry client data (file name, deal id) — they are ONLY rendered because
+ * the receiving repo is PRIVATE (see the module header). Every value is stripped + escaped + capped
+ * before rendering; unknown/empty fields are omitted.
  */
-export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown): IssuePayload {
+export interface FeedbackContext {
+  jobId?: unknown
+  fileName?: unknown
+  entityType?: unknown
+  entityId?: unknown
+  entityUrl?: unknown
+  appVersion?: unknown
+}
+
+const MAX_CONTEXT_VALUE = 300
+
+/**
+ * One `- **Label:** `value`` line, rendered fully INERT. Client-supplied context values (fileName is
+ * attacker-influenced — an uploaded document name) must not forge markdown into the issue body:
+ *   - collapse interior CR/LF/tab (which `stripHostileChars` intentionally keeps) → a single space,
+ *     so a value can't break out of its line and inject extra sections (the body is `join('\n')`d);
+ *   - strip backticks, then wrap the value in an inline code span — inside a code span markdown
+ *     metacharacters ([](), ![](), *, _, |, #) render literally, so no live links/images/formatting.
+ * Empty value → null (omit the line entirely). Cap applied before wrapping.
+ */
+function contextLine(label: string, value: unknown): string | null {
+  const flat = stripHostileChars(value).replace(/[\r\n\t]+/g, ' ').replace(/`/g, '').trim().slice(0, MAX_CONTEXT_VALUE)
+  return flat ? `- **${label}:** \`${flat}\`` : null
+}
+
+/**
+ * Build the { title, body, labels } for the GitHub issue from a validated kind + raw comment +
+ * optional import context. The comment is sanitized here (do not assume a pre-sanitized value — this
+ * is exported). Body wraps the comment in <pre><code> so backticks/asterisks/HTML are inert. Context
+ * lines (jobId/file/entity/version) are rendered ONLY because the receiving repo is private; each is
+ * made fully inert (newlines collapsed + wrapped in an inline code span — see contextLine) so a
+ * client-supplied value can't inject markdown. Absent/empty context → the section is omitted.
+ */
+export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context: FeedbackContext = {}): IssuePayload {
   const safe = escapeHtml(sanitizeComment(comment)).trim() || '(без текста)'
   const firstLine = safe.split('\n', 1)[0]!.slice(0, 80).trim()
   const kindWord = FEEDBACK_KINDS[kind]
   const title = firstLine && firstLine !== '(без текста)'
     ? `${kindWord} · ${firstLine}`.slice(0, 120)
     : `Отзыв сотрудника — ${kindWord}`.slice(0, 120)
+  const contextLines = [
+    contextLine('Задача (jobId)', context.jobId),
+    contextLine('Файл', context.fileName),
+    contextLine('Сущность', context.entityType),
+    contextLine('ID сущности', context.entityId),
+    contextLine('Ссылка', context.entityUrl),
+    contextLine('Версия приложения', context.appVersion)
+  ].filter((l): l is string => l !== null)
   const body = [
     `- **Оценка:** ${kindWord}`,
     '',
     '**Комментарий:**',
     '<pre><code>',
     safe,
-    '</code></pre>'
+    '</code></pre>',
+    ...(contextLines.length ? ['', '**Контекст:**', ...contextLines] : [])
   ].join('\n')
   return { title, body, labels: ['user-feedback', `feedback:${kind}`] }
 }

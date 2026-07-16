@@ -39,8 +39,15 @@ describe('FeedbackWidget', () => {
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', undefined)
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, expect.any(Object))
     expect(w.text()).toContain('Спасибо')
+  })
+
+  it('passes jobId/fileName context to submit', async () => {
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-7', fileName: 'счёт.xlsx' } })
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await tick()
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-7', fileName: 'счёт.xlsx' })
   })
 
   it('👎 opens the comment box; the «Отправить» button sends with the comment', async () => {
@@ -50,7 +57,7 @@ describe('FeedbackWidget', () => {
     await w.find('textarea').setValue('НДС не тот')
     await clickText(w, 'Отправить') // the real primary submit control
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот')
+    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object))
     expect(w.text()).toContain('Спасибо')
   })
 
