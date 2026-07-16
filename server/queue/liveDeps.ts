@@ -117,14 +117,17 @@ export function liveKeepAliveDeps(infra: LiveInfra): KeepAliveDeps {
     now: infra.now,
     selectNearExpiry: nowMs => selectTokensNearExpiry(infra.query, nowMs),
     refreshPortal: async (memberId) => {
-      const tok = await getToken(memberId, infra.query)
-      if (!tok) return 'skipped' // vanished (uninstalled) — nothing to keep alive
       try {
-        await ensureFreshToken(memberId, ens, true) // force → rotates; throws on a dead grant
+        // force → always rotates (resets the 180-day clock even if the access token somehow
+        // isn't expired). ensureFreshToken does its own read (unlocked fast-path + a re-read
+        // INSIDE the advisory lock), so a separate pre-read here would just be a wasted query.
+        await ensureFreshToken(memberId, ens, true)
         return 'refreshed'
       } catch (e) {
-        // Uninstalled between the read and acquiring the lock → the row vanished under the
-        // lock (ensureFreshToken throws "no token"). That is a benign skip, NOT a dead grant.
+        // A vanished portal (uninstalled before the read, or between it and the lock) makes
+        // ensureFreshToken throw "no token" — a benign skip, NOT a dead grant. Anything else
+        // (invalid_grant, removed app, PAYMENT_REQUIRED) propagates to the caller's per-portal
+        // isolation, which logs it and carries on.
         if ((e as { message?: string })?.message?.includes('no token')) return 'skipped'
         throw e
       }
