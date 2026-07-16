@@ -35,10 +35,11 @@ function onArticlePicked(o: Record<string, unknown> | undefined) {
   selectedArticle.value = o
 }
 
+// Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
+// retry-idempotency by B24-search is impossible; support deferred (issue #135).
 const TARGET_PRESETS = [
   { id: 2, label: 'Сделка' },
-  { id: 31, label: 'Смарт-счёт' },
-  { id: 7, label: 'Коммерческое предложение' }
+  { id: 31, label: 'Смарт-счёт' }
 ]
 
 const ARTICLE_KIND_ITEMS = [

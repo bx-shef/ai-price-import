@@ -1,10 +1,14 @@
 // Per-portal configuration (mapping). Stored in app.option via server-side REST.
 // Pure types — see docs/redesign/02-target-architecture.md §5.
 
-/** CRM entity kinds the import can create. */
-export type TargetEntityKind = 'deal' | 'smart-process' | 'invoice' | 'quote'
+/** CRM entity kinds the import can create.
+ *  NB: quote (КП, entityTypeId 7) is intentionally NOT a target — it has no filterable
+ *  external-marker field (no originId/originatorId, no xmlId), so retry-idempotency by
+ *  B24-search is impossible for it. Revisit when КП support is designed — issue #135. */
+export type TargetEntityKind = 'deal' | 'smart-process' | 'invoice'
 
-/** Bitrix24 entityTypeId helpers: deal=2, invoice(smart)=31, quote=7, smart-process >= 1000. */
+/** Bitrix24 entityTypeId helpers: deal=2, invoice(smart)=31, smart-process >= 1000.
+ *  (quote=7 is not a target — see #135.) */
 export interface TargetRef {
   entityTypeId: number
   /** Direction (voronka) — crm.category.* id. */
