@@ -110,7 +110,11 @@ pnpm check        # lint + typecheck + test
 порт из legacy) + `server/utils/feedbackConfig.ts` (**fail-closed**, НЕ дефолтит на публичный код-репо) +
 `server/utils/feedbackGithub.ts` (POST issue, не логирует токен/URL/тело) + роуты `server/api/feedback.post.ts`
 (фрейм-токен, гейт на config → 503) / `feedback.get.ts` (`{enabled}` для показа виджета) + `GITHUB_FEEDBACK_*`
-в `.env.example`. Тесты. **Осталось:** UI-виджет 👍/👎 на строке результата + приватный репо-приёмник + токен.
+в `.env.example`. Тесты. **UI-виджет 👍/👎 — сделан** (`app/components/FeedbackWidget.vue` +
+`useFeedback`: на строке результата `/app`, показ по `GET /api/feedback {enabled}`; 👍 шлёт сразу, 👎 сперва
+просит комментарий; nuxt-тесты). **Репо-приёмник — `bx-shef/ai-price-import-feedback`** (приватный, владелец).
+**Осталось для включения:** `GITHUB_FEEDBACK_TOKEN` (Issues R/W) + `GITHUB_FEEDBACK_REPO=bx-shef/ai-price-import-feedback`
+в env прода; live-verify POST по включённому каналу.
 
 - [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — **ingestion**: три канала #182 (сотрудник 👍/👎, агент
   `feedback[]`, MCP-матчинг) → issue в репо-приёмнике (`GITHUB_FEEDBACK_REPO`).
