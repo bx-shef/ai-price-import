@@ -160,10 +160,16 @@ const toneClass: Record<string, string> = {
           </div>
         </div>
       </div>
-      <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
         <span>Документов: {{ counters.docs || 0 }}</span>
         <span>Создано в CRM: {{ counters.created || 0 }}</span>
         <span>Позиций: {{ counters.lines || 0 }}</span>
+        <NuxtLink
+          to="/metrics"
+          class="ml-auto text-blue-600 hover:underline"
+        >
+          Подробные метрики →
+        </NuxtLink>
       </div>
       <B24Alert
         v-if="metricsError"
