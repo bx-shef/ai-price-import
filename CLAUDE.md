@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-15
+> Last reviewed: 2026-07-16
 
 AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -105,8 +105,12 @@ pnpm check        # lint + typecheck + test
 ## Обратная связь (feedback-triage)
 
 Разбор отзывов в чистый инженерный бэклог — портированный «feedback-triage kit» (PR #118).
-**Статус:** триаж-сторона готова (доки + скрипты); ingestion-канал в редизайне ещё не пересобран
-(legacy `legacy/backend/feedback.js`; `.env.example` без `GITHUB_FEEDBACK_*`) — #122.
+**Статус:** триаж-сторона готова (доки + скрипты). **Ingestion-канал «сотрудник» — backend пересобран**
+(#122, частично): чистое ядро `app/utils/feedback.ts` (санитизация Trojan-Source/`escapeHtml`/метки,
+порт из legacy) + `server/utils/feedbackConfig.ts` (**fail-closed**, НЕ дефолтит на публичный код-репо) +
+`server/utils/feedbackGithub.ts` (POST issue, не логирует токен/URL/тело) + роуты `server/api/feedback.post.ts`
+(фрейм-токен, гейт на config → 503) / `feedback.get.ts` (`{enabled}` для показа виджета) + `GITHUB_FEEDBACK_*`
+в `.env.example`. Тесты. **Осталось:** UI-виджет 👍/👎 на строке результата + приватный репо-приёмник + токен.
 
 - [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — **ingestion**: три канала #182 (сотрудник 👍/👎, агент
   `feedback[]`, MCP-матчинг) → issue в репо-приёмнике (`GITHUB_FEEDBACK_REPO`).
