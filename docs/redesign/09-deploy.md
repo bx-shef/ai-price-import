@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-15
+> Last reviewed: 2026-07-17
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -124,6 +124,45 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 **Комфортно (несколько документов параллельно):** 4–8 vCPU / 2–4 ГБ — по сути 1 ядро на один
 одновременный тяжёлый документ. Но это уже про «быстро» → таких клиентов уводим в self-hosted, а не
 масштабируем общий сервер.
+
+### REST-бюджет портала: лимитер `@bitrix24/b24jssdk` (#123)
+
+**Свой дозатор REST не пишем** — у SDK встроен `RestrictionManager` (пер-инстанс leaky-bucket:
+`drainRate` 2 req/s + `burstLimit` 50 на стандартном тарифе, `ParamsFactory.getDefault()`) +
+operating-limit-адаптив (сервер сам сигналит перегрузку `operating`/`operating_reset_at` — две
+параллельные джобы одного портала видят один сигнал и тормозят согласованно) + auto-retry на
+`QUERY_LIMIT_EXCEEDED`/429/5xx. Задача была не строить своё, а **проверить дефолты нагрузкой и
+подобрать настройки**.
+
+**Живой нагруз-тест — `pnpm loadtest:123`** (`scripts/load-test-123.mjs`, dev-only; вебхук в
+git-ignored `.env.b24test`; читает реальные `crm.item.list`/`crm.vat.list`/`crm.requisite.list`/
+`catalog.measure.list`/`crm.currency.list`, как crm-sync). Гейт зачётен, только если троттл
+**реально сработал** (Scenario A `limitHits>0`) — иначе «0 QLE» ничего не доказывает. QLE ловим по
+`AjaxError.code` (в `.message` — человеческий текст, регексп по нему не сматчил бы). Прогон вживую:
+
+| Сценарий (`pnpm loadtest:123 --jobs 6 --ops 20`) | нагрузка | результат |
+|---|---|---|
+| Один лимитер, 60 чтений (OPS×3 > burst 50) | ~11.5 req/s | **`limitHits:55`** (троттл сработал), **0 `QUERY_LIMIT_EXCEEDED`**, 0 ошибок |
+| Scale-out ×6 (свой лимитер на джобу), 120 чтений | ~40 req/s агрегат | **0 `QUERY_LIMIT_EXCEEDED`**, 0 ошибок |
+
+**Вывод: дефолтные `RestrictionParams` держат** — лимитер сам троттлит (`limitHits:55`), когда
+burst-ведро инстанса исчерпано; при 6× scale-out ноль `QUERY_LIMIT_EXCEEDED`. **Понижать
+`drainRate`/`burst` не нужно.** ⚠ Тест меряет **rate-limit/burst**, но **не** устойчивый 10-минутный
+operating-лимит (для него нужны тяжёлые методы в течение минут) — при росте конкуренции/смене тарифа
+пере-прогнать `pnpm loadtest:123 --jobs N --ops M` и держать оба чека зелёными.
+
+**Правка транспорта — `maxRetries:1` + `retryOnNetworkError:false`** (`makePortalSdkCall`,
+`server/utils/b24Sdk.ts`): **полностью выключаем in-SDK-ретрай**. crm-sync-джоба делает
+**неидемпотентные** создания (`crm.item.add`/`crm.product.add`); любой in-SDK-ретрай одного из них —
+после client-side network-таймаута **или серверного 504** (запрос мог уже **пройти** на сервере) —
+молча создал бы **дубль** (Bitrix не гарантирует уникальность `originId`/`xmlId`). Вместо этого даём
+упасть всей BullMQ-джобе и ретраим её — там создания идемпотентны (`findExisting`-перед-созданием по
+маркеру #135 для сущности; `findProduct` перед `crm.product.add` для товара). **Остаётся включённым**
+(всё это **независимо** от цикла ретраев — live-verified: при `maxRetries:1` `limitHits` продолжают
+срабатывать): проактивный rate-limit-троттл (ждёт **до** отправки), operating-адаптив и реактивный
+рефреш OAuth-токена (свой путь `abstract-http._isAuthError`). Размен: редкий `QUERY_LIMIT_EXCEEDED`/5xx
+теперь стоит джоб-ретрая, а не in-SDK-ретрая — приемлемо для нашей низкой конкуренции, а проактивный
+лимитер QLE и так предотвращает.
 
 ### Тюнинг общего фронт-`nginx-proxy` (обязательно для загрузок/OCR)
 

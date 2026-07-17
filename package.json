@@ -23,6 +23,7 @@
     "verify:agent": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-agent.mjs",
     "verify:idem": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-idempotency-live.mjs",
     "sdk:smoke": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/sdk-smoke.mjs",
+    "loadtest:123": "node scripts/load-test-123.mjs",
     "og": "node scripts/make-og.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test"
   },
