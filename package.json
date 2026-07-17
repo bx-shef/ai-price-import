@@ -20,6 +20,7 @@
     "screenshot": "node scripts/screenshot.mjs",
     "demo:pdfs": "node scripts/make-demo-pdfs.mjs",
     "live:crm": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/live-crm-sync.mjs",
+    "verify:agent": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-agent.mjs",
     "verify:idem": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-idempotency-live.mjs",
     "sdk:smoke": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/sdk-smoke.mjs",
     "og": "node scripts/make-og.mjs",
