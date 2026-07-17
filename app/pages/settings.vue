@@ -77,9 +77,6 @@ watch(() => mapping.value.errorChatId, id => seedChat(selectedErrorChat, id), { 
 // code, so quantities aren't all forced to the default (796/шт). Measures come from the portal
 // (catalog.measure.list) as a small list — no search, just a dropdown per row.
 const { measures, load: loadMeasures } = useCatalogMeasures()
-// Measure options as b24ui Select items (value = code string). Prepend the CURRENT default/row
-// code if the portal list hasn't loaded yet, so a saved code still shows a value.
-const measureItems = computed(() => measures.value.map(m => ({ label: m.label, value: m.value })))
 
 // Editable rows carry a client-only `id` for a stable v-for key (avoids input focus j/loss on
 // add/remove); the pure util deals in {unit,code}. Seeded ONCE from the loaded dictionary; from
@@ -110,6 +107,21 @@ const defaultMeasure = computed<string>({
     const n = Number(v)
     if (Number.isInteger(n) && n > 0) mapping.value.units.defaultCode = n
   }
+})
+
+// Measure options as b24ui Select items (value = code string). Merge a synthetic «код N» entry
+// for the current default and any row code NOT in the portal list, so a saved code still shows a
+// value BEFORE the list loads (async) or if the measure was later deactivated on the portal
+// (catalog.measure.list filters active:Y). The real label wins once loaded (same code → skipped).
+const measureItems = computed(() => {
+  const items = measures.value.map(m => ({ label: m.label, value: m.value }))
+  const present = new Set(items.map(i => i.value))
+  const referenced = new Set<string>([String(mapping.value.units.defaultCode || 796)])
+  for (const r of unitRows.value) if (r.code != null) referenced.add(String(r.code))
+  for (const code of referenced) {
+    if (code && !present.has(code)) items.push({ label: `код ${code}`, value: code })
+  }
+  return items
 })
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
@@ -217,6 +229,7 @@ const ON_MISSING_ITEMS = [
             :items="measureItems"
             placeholder="Ед. Б24"
             class="w-56"
+            aria-label="Единица по умолчанию"
           />
         </div>
 

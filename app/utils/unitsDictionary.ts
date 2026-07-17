@@ -14,7 +14,9 @@ export interface UnitRow {
 export function dictionaryToRows(dict: Record<string, number> | null | undefined): UnitRow[] {
   const d = dict && typeof dict === 'object' ? dict : {}
   return Object.entries(d)
-    .filter(([k, v]) => k.trim() !== '' && Number.isFinite(v))
+    // Same invariant as rowsToDictionary: a measure code is a positive integer. Keeping the two
+    // sides aligned means a stored code the editor would drop never survives as a phantom row.
+    .filter(([k, v]) => k.trim() !== '' && Number.isInteger(Number(v)) && Number(v) > 0)
     .map(([unit, code]) => ({ unit, code: Number(code) }))
     .sort((a, b) => a.unit.localeCompare(b.unit, 'ru'))
 }

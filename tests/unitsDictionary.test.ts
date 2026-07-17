@@ -9,10 +9,17 @@ describe('dictionaryToRows', () => {
       { unit: 'шт', code: 796 }
     ])
   })
-  it('drops empty keys and non-finite codes', () => {
-    expect(dictionaryToRows({ '': 6, 'м': Number.NaN as unknown as number, 'кг': 116 })).toEqual([
-      { unit: 'кг', code: 116 }
-    ])
+  it('drops empty keys, non-finite, and finite-but-invalid codes (0/negative/non-integer)', () => {
+    // Aligned with rowsToDictionary: a measure code must be a positive integer, so a stored
+    // 6.5 / -6 / 0 (only reachable via out-of-band app.option editing) never becomes a phantom row.
+    expect(dictionaryToRows({
+      '': 6,
+      'a': Number.NaN as unknown as number,
+      'b': 6.5,
+      'c': -6,
+      'd': 0,
+      'кг': 116
+    })).toEqual([{ unit: 'кг', code: 116 }])
   })
   it('returns [] for null/undefined/non-object', () => {
     expect(dictionaryToRows(null)).toEqual([])
