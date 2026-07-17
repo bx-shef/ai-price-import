@@ -133,6 +133,37 @@ export async function getMemberIdByDomain(domain: string, query: QueryFn): Promi
   return id ? String(id) : null
 }
 
+/** One installed portal, NON-SECRET fields only (for the ops token-status view, #132). */
+export interface PortalStatusRow {
+  memberId: string
+  domain: string
+  /** Epoch ms of the last token pair received (install/refresh) — `updated_at`. */
+  updatedAtMs: number
+}
+
+/**
+ * List installed portals for the owner status view — member_id / domain / updated_at ONLY.
+ * SECURITY: this SELECT deliberately excludes every token column (access_token,
+ * refresh_token_enc, application_token) so secrets can never reach the ops UI. Bounded by
+ * `limit` (a portal count in the thousands is already an operational outlier).
+ */
+export async function listPortalStatus(query: QueryFn, limit = 500): Promise<PortalStatusRow[]> {
+  const cap = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 5000) : 500
+  const { rows } = await query(
+    // member_id tie-break (like getMemberIdByDomain) makes the LIMIT cutoff deterministic when
+    // several portals share an updated_at (batch install → same now()), so a row can't flicker
+    // in/out of the capped page between refreshes.
+    `SELECT member_id, domain, (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_at_ms
+     FROM portal_tokens ORDER BY updated_at ASC, member_id ASC LIMIT $1`,
+    [cap]
+  )
+  return rows.map(r => ({
+    memberId: String(r.member_id ?? ''),
+    domain: String(r.domain ?? ''),
+    updatedAtMs: Number(r.updated_at_ms ?? 0)
+  }))
+}
+
 export async function getApplicationToken(memberId: string, query: QueryFn): Promise<string | null> {
   const { rows } = await query('SELECT application_token FROM portal_tokens WHERE member_id = $1', [memberId])
   const t = rows[0]?.application_token
