@@ -168,6 +168,21 @@ export interface SdkPortalDeps {
   scope?: string
 }
 
+/** DISABLE the SDK's in-client retry on a per-portal client (#123, live-tested via
+ *  `pnpm loadtest:123`). Keep the default leaky-bucket (drainRate 2 / burst 50 — 0
+ *  QUERY_LIMIT_EXCEEDED even at 10× scale-out), but `maxRetries:1` = one attempt, no retry
+ *  (`retryOnNetworkError:false` belt-and-braces): a crm-sync job issues NON-IDEMPOTENT creates
+ *  (crm.item.add / crm.product.add), and ANY in-SDK retry — after a client network timeout OR a
+ *  server 504 (the request may have already COMMITTED) — would silently duplicate the entity
+ *  (Bitrix doesn't enforce originId/xmlId uniqueness). We let the whole BullMQ job fail + retry,
+ *  where creates are idempotent (findExisting-before-create). STILL ON (independent of the retry
+ *  loop — live-verified: limitHits fire with maxRetries:1): the proactive rate-limit throttle, the
+ *  operating-limit adaptive backoff, and the reactive OAuth token-refresh. Shared by the OAuth and
+ *  bare-token clients (a bare token wants fail-fast too: one attempt → reactive-reject, no retry). */
+function disableSdkRetry(client: OAuthCallClient): void {
+  client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), maxRetries: 1, retryOnNetworkError: false })
+}
+
 /** Build the per-portal transport (single-call `.call` + full-list `.list`), backed by one
  *  `B24OAuth` instance (its own rate-limiter bucket) with refresh-persistence wired. `null`
  *  when the portal has no stored token. This is THE crm-sync portal transport (see
@@ -184,21 +199,7 @@ export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): 
     deps.creds
   )
   client.setCallbackRefreshAuth(buildRefreshPersist(deps.saveToken, { now: deps.now, encrypt: deps.encrypt }))
-  // Calibration (#123, live-tested via `pnpm loadtest:123`): the default leaky-bucket
-  // (drainRate 2 / burst 50) holds — 0 QUERY_LIMIT_EXCEEDED even at 10× scale-out — so we keep
-  // the rate-limit params. We DISABLE in-SDK retry entirely (maxRetries:1 = one attempt, no
-  // retry; retryOnNetworkError:false as belt-and-braces): a crm-sync job issues NON-IDEMPOTENT
-  // creates (crm.item.add / crm.product.add), and ANY in-SDK retry of one — after a client-side
-  // network timeout OR a server-returned 504 (the request may have already COMMITTED) — would
-  // silently duplicate the entity, since Bitrix does not enforce originId/xmlId uniqueness.
-  // Instead we let the whole BullMQ job fail + retry, where creates are idempotent
-  // (findExisting-before-create via the #135 marker; findProduct before crm.product.add).
-  // What STAYS on (all independent of the retry loop — live-verified: limitHits still fire with
-  // maxRetries:1): the PROACTIVE rate-limit throttle (waits before send), the operating-limit
-  // adaptive backoff, and the reactive OAuth token-refresh (its own path, abstract-http _isAuthError).
-  // Trade: a rare QUERY_LIMIT_EXCEEDED/5xx now costs a job-level retry instead of an in-SDK one —
-  // acceptable for this low-concurrency design, and the proactive limiter prevents QLE anyway.
-  client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), maxRetries: 1, retryOnNetworkError: false })
+  disableSdkRetry(client)
   return { call: makeSdkRestCall(client), list: makeSdkListCall(client) }
 }
 
@@ -231,8 +232,8 @@ export function makeBareTokenSdkCall(domain: string, accessToken: string): RestC
     memberId: '',
     accessToken,
     refreshToken: '',
-    expires: BARE_TOKEN_EXPIRES_S,
-    expiresIn: BARE_TOKEN_EXPIRES_S,
+    expires: BARE_TOKEN_EXPIRES_S, // absolute epoch (s) — getAuthData() gates freshness on this
+    expiresIn: 0, // duration, never consumed for a bare token (no proactive refresh)
     scope: '',
     domain: d,
     clientEndpoint: `https://${d}/rest/`,
@@ -243,7 +244,7 @@ export function makeBareTokenSdkCall(domain: string, accessToken: string): RestC
   const client: OAuthCallClient = new B24OAuth(params, { clientId: '', clientSecret: '' })
   // Bare token has no refresh path: any auth error is a hard rejection, not "refresh me".
   client.setCustomRefreshAuth(() => Promise.reject(new Error(BARE_TOKEN_REJECTED)))
-  client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), maxRetries: 1, retryOnNetworkError: false })
+  disableSdkRetry(client)
   const sdkCall = makeSdkRestCall(client)
   return (method, callParams) => {
     // SSRF guard: `domain` is client-supplied (X-B24-Domain / install event) — only ever call
@@ -262,11 +263,16 @@ export function makeBareTokenSdkCall(domain: string, accessToken: string): RestC
 // typed RefreshTokenError. Wired as EnsureDeps.refreshTransport, so ensureFreshToken keeps its
 // per-portal advisory lock + re-read + UPDATE-only persist (#35) unchanged.
 
-/** Race a promise against a timeout. The SDK's refresh axios has NO timeout, but the refresh
- *  runs inside ensureFreshToken's advisory lock holding a pooled connection — a hung OAuth
- *  server must not pin the lock. On timeout we reject (releasing the lock); the orphaned request
- *  settles into a no-op (nothing reads its result). */
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+/** Race a promise against a timeout, clearing the timer on either settle path (no dangling
+ *  timer on the fast path). The SDK's refresh axios has NO timeout, but the refresh runs inside
+ *  ensureFreshToken's advisory lock holding a pooled connection — a hung OAuth server must not
+ *  pin the lock. On timeout we reject (ensureFreshToken then rolls back + releases the connection).
+ *  KNOWN EDGE (accepted): the orphaned axios request is NOT cancelled — if the OAuth server was
+ *  merely slow (responds past `ms`) it may have rotated the refresh token server-side while we
+ *  rolled back, leaving the stored refresh stale; recovery is the operator reauth button (#132).
+ *  This is inherent to a refresh crossing the timeout and is rare (the token endpoint answers in
+ *  well under a second); the lock-safety it buys is worth the trade. Exported for unit test. */
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`b24 oauth refresh: no response within ${ms}ms`)), ms)
     p.then(
@@ -284,12 +290,15 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 /** Map the SDK's refreshed params/authData → the raw token-response shape parseTokenResponse
  *  consumes. `captured` (from the setCallbackRefreshAuth callback) carries the full updated
- *  fields (clientEndpoint/scope/status); `authData` is the refreshAuth return (fallback). Pure. */
+ *  fields (clientEndpoint/scope/status); `authData` is the refreshAuth return (fallback). Pure.
+ *  access_token/refresh_token are left UNDEFINED when neither source has them (never coerced to
+ *  '') — a malformed 200 (no token, no error) must still fail parseTokenResponse's string guard
+ *  and THROW, not persist blank credentials over a live portal (fail-closed, as the old raw path). */
 export function rawTokenFromRefresh(captured: B24OAuthParams | undefined, authData: AuthData | false): Record<string, unknown> {
   const a = authData || undefined
   return {
-    access_token: captured?.accessToken ?? a?.access_token ?? '',
-    refresh_token: captured?.refreshToken ?? a?.refresh_token ?? '',
+    access_token: captured?.accessToken ?? a?.access_token,
+    refresh_token: captured?.refreshToken ?? a?.refresh_token,
     expires_in: captured?.expiresIn ?? a?.expires_in,
     expires: captured?.expires ?? a?.expires,
     client_endpoint: captured?.clientEndpoint,

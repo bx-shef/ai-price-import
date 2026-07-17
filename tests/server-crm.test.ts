@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { restUrl, unwrap } from '../server/utils/b24Rest'
 import { buildProductRow, buildProductRows, computeOpportunity, createTargetItem, ownerTypeCode, setProductRows, supportsOpportunity } from '../server/utils/crmWrite'
 import { findCompanyByTaxId } from '../server/utils/companyLookup'
 import { buildConfigurableActivity, entityOpenPath } from '../server/utils/configurableActivity'
@@ -34,16 +33,6 @@ describe('supportsOpportunity', () => {
     expect(supportsOpportunity(31)).toBe(true)
     expect(supportsOpportunity(1032)).toBe(false)
     expect(supportsOpportunity(1)).toBe(false)
-  })
-})
-
-describe('b24Rest', () => {
-  it('restUrl', () => {
-    expect(restUrl('https://p.bitrix24.ru/', 'crm.item.add')).toBe('https://p.bitrix24.ru/rest/crm.item.add.json')
-  })
-  it('unwrap throws on error', () => {
-    expect(() => unwrap({ error: 'X', error_description: 'bad' })).toThrow(/bad/)
-    expect(unwrap({ result: 42 })).toBe(42)
   })
 })
 

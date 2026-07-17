@@ -69,8 +69,9 @@ AI-импорт документов с табличной частью в Bitri
       **секреты в теле POST** (старый код слал их в URL-query → утечка в access-логи), таймаут-гард (гонка —
       у SDK-axios рефреша нет таймаута), а вокруг остаётся `ensureFreshToken`: advisory-lock + re-read +
       UPDATE-only persist (#35). `rawTokenFromRefresh` (чистый маппер SDK-результат→raw JSON) тестируется.
-    `b24Rest.ts` теперь несёт только чистые хелперы/контракт: тип `RestCall`, `unwrap`, SSRF-гард `isSafeB24Domain`,
-    `B24RestError`, `isAuthRejection` (тип `FetchFn` остаётся для не-Б24 GitHub-POST `feedbackGithub`).
+    `b24Rest.ts` теперь несёт только чистые хелперы/контракт: тип `RestCall`, SSRF-гард `isSafeB24Domain`/
+    `normaliseHost`, `B24RestError`, `isAuthRejection` (сырой `fetch`-транспорт `makeRestCall` + `unwrap`/`restUrl`
+    удалены — SDK разворачивает `result` и строит URL сам; тип `FetchFn` остаётся для не-Б24 GitHub-POST `feedbackGithub`).
   - **Пагинация enumerate-all списков** (#87): find-one lookup'ы (`findCompanyByTaxId`/`findProduct`)
     берут первый id и в пагинации не нуждаются, но enumerate-all чтения молча обрезались на дефолтной
     странице B24 (50). Оба таких чтения теперь на **SDK full-list** (`SdkListCall`→`callList.make`, SDK сам

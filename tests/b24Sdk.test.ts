@@ -7,11 +7,13 @@ import {
   oauthParamsFromToken,
   rawTokenFromRefresh,
   saveInputFromOAuthParams,
+  withTimeout,
   type OAuthCallClient,
   type SdkAjaxResult,
   type SdkListResult,
   type SdkPortalDeps
 } from '../server/utils/b24Sdk'
+import { parseTokenResponse } from '../server/utils/b24Oauth'
 import type { B24OAuthParams } from '@bitrix24/b24jssdk'
 import { fetchVatRates } from '../server/utils/portalVat'
 import type { PortalToken } from '../server/utils/tokenStore'
@@ -137,6 +139,31 @@ describe('fetchVatRates (SDK full-list, #87)', () => {
   })
 })
 
+describe('withTimeout (refresh lock-safety guard)', () => {
+  it('resolves a fast promise and clears the timer (no dangling timer)', async () => {
+    vi.useFakeTimers()
+    try {
+      await expect(withTimeout(Promise.resolve('ok'), 10_000)).resolves.toBe('ok')
+      expect(vi.getTimerCount()).toBe(0) // proves clearTimeout ran — fails if removed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('propagates a fast rejection as-is and clears the timer', async () => {
+    vi.useFakeTimers()
+    try {
+      await expect(withTimeout(Promise.reject(new Error('grant dead')), 10_000)).rejects.toThrow('grant dead')
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('rejects with a timeout error when the promise outlives the deadline', async () => {
+    const never = new Promise<string>(() => {}) // never settles
+    await expect(withTimeout(never, 5)).rejects.toThrow(/no response within 5ms/)
+  })
+})
+
 describe('rawTokenFromRefresh (SDK refresh → raw token JSON, #b24jssdk)', () => {
   const captured = {
     accessToken: 'AT2', refreshToken: 'RT2', expiresIn: 3600, expires: 1_700_000_000,
@@ -156,10 +183,12 @@ describe('rawTokenFromRefresh (SDK refresh → raw token JSON, #b24jssdk)', () =
     expect(raw.refresh_token).toBe('RT9')
     expect(raw.member_id).toBe('m1')
   })
-  it('empty strings (never undefined) for tokens when neither source has them — parseTokenResponse then rejects', () => {
+  it('leaves tokens UNDEFINED when neither source has them (fail-closed — parseTokenResponse then throws, no blank-credential persist)', () => {
     const raw = rawTokenFromRefresh(undefined, false)
-    expect(raw.access_token).toBe('')
-    expect(raw.refresh_token).toBe('')
+    expect(raw.access_token).toBeUndefined()
+    expect(raw.refresh_token).toBeUndefined()
+    // The downstream guard must reject it (would otherwise UPDATE the portal row to empty creds).
+    expect(() => parseTokenResponse(raw)).toThrow(/invalid token response/)
   })
 })
 

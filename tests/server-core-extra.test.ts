@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isAuthRejection, restUrl } from '../server/utils/b24Rest'
+import { isAuthRejection } from '../server/utils/b24Rest'
 import { BARE_TOKEN_REJECTED, makeBareTokenSdkCall } from '../server/utils/b24Sdk'
 import { ensureSubfolder, uploadFile } from '../server/utils/disk'
 import { buildProductRow, createTargetItem } from '../server/utils/crmWrite'
@@ -23,19 +23,6 @@ describe('makeBareTokenSdkCall (SDK bare-token transport)', () => {
     // A bare token cannot refresh — the custom refresh hook throws BARE_TOKEN_REJECTED, which
     // isAuthRejection must recognise so a forged frame/install token yields 401/403.
     expect(isAuthRejection(new Error(BARE_TOKEN_REJECTED))).toBe(true)
-  })
-})
-
-describe('restUrl + SSRF guard', () => {
-  it('handles no scheme / no trailing slash for a Bitrix24 host', () => {
-    expect(restUrl('p.bitrix24.ru', 'm')).toBe('https://p.bitrix24.ru/rest/m.json')
-    expect(restUrl('https://co.bitrix24.by/', 'crm.item.add')).toBe('https://co.bitrix24.by/rest/crm.item.add.json')
-  })
-  it('refuses non-Bitrix24 / malicious hosts', () => {
-    expect(() => restUrl('evil.com', 'm')).toThrow(/UNSAFE_DOMAIN/)
-    expect(() => restUrl('bitrix24.ru.evil.com', 'm')).toThrow(/UNSAFE_DOMAIN/)
-    expect(() => restUrl('p.bitrix24.ru:22', 'm')).toThrow(/UNSAFE_DOMAIN/)
-    expect(() => restUrl('user@p.bitrix24.ru', 'm')).toThrow(/UNSAFE_DOMAIN/)
   })
 })
 
