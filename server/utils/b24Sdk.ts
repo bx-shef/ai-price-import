@@ -18,7 +18,7 @@
 // @bitrix24/b24jssdk bump renames/removes `actions`/`setCallbackRefreshAuth`, typecheck fails
 // at that assignment rather than only on a live smoke-test.
 
-import { B24OAuth } from '@bitrix24/b24jssdk'
+import { B24OAuth, ParamsFactory } from '@bitrix24/b24jssdk'
 import type { B24OAuthParams, B24OAuthSecret, CallbackRefreshAuth } from '@bitrix24/b24jssdk'
 import type { RestCall } from './b24Rest'
 import type { PortalToken, QueryFn, SaveTokenInput } from './tokenStore'
@@ -42,6 +42,9 @@ export interface OAuthCallClient {
     }
   }
   setCallbackRefreshAuth: (cb: CallbackRefreshAuth) => void
+  /** Tune the built-in RestrictionManager (rate-limit + retry). We use it to turn OFF
+   *  network-error retry on this per-portal client (#123) — see makePortalSdkCall. */
+  setRestrictionManagerParams: (params: Record<string, unknown>) => void
 }
 
 /** The bits of the SDK's `AjaxResult` we read. `getData()` returns the full REST envelope
@@ -173,6 +176,16 @@ export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): 
     deps.creds
   )
   client.setCallbackRefreshAuth(buildRefreshPersist(deps.saveToken, { now: deps.now, encrypt: deps.encrypt }))
+  // Calibration (#123, live load-tested via `pnpm loadtest:123`): the default leaky-bucket
+  // (drainRate 2 / burst 50) holds — 0 QUERY_LIMIT_EXCEEDED even at 10× scale-out — so we keep
+  // it. The ONE change is retryOnNetworkError:false: a crm-sync job issues non-idempotent
+  // creates (crm.item.add / crm.product.add), and an in-SDK retry after a client-side network
+  // TIMEOUT (request may have already succeeded server-side) would duplicate the entity. We
+  // instead let the whole BullMQ job fail + retry, where the create is idempotent via its B24
+  // marker (findExisting-before-create, #135). The rate-limit auto-retry (QUERY_LIMIT_EXCEEDED/
+  // 429/5xx) stays ON — those are safe to replay. Reads are idempotent, so losing their in-SDK
+  // network-retry to a job-level retry is an acceptable, safer trade.
+  client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), retryOnNetworkError: false })
   return { call: makeSdkRestCall(client), list: makeSdkListCall(client) }
 }
 

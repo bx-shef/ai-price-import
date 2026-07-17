@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-15
+> Last reviewed: 2026-07-17
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -124,6 +124,44 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 **Комфортно (несколько документов параллельно):** 4–8 vCPU / 2–4 ГБ — по сути 1 ядро на один
 одновременный тяжёлый документ. Но это уже про «быстро» → таких клиентов уводим в self-hosted, а не
 масштабируем общий сервер.
+
+### REST-бюджет портала: лимитер `@bitrix24/b24jssdk` (#123)
+
+**Свой дозатор REST не пишем** — у SDK встроен `RestrictionManager` (пер-инстанс leaky-bucket:
+`drainRate` 2 req/s + `burstLimit` 50 на стандартном тарифе, `ParamsFactory.getDefault()`) +
+operating-limit-адаптив (сервер сам сигналит перегрузку `operating`/`operating_reset_at` — две
+параллельные джобы одного портала видят один сигнал и тормозят согласованно) + auto-retry на
+`QUERY_LIMIT_EXCEEDED`/429/5xx. Задача была не строить своё, а **проверить дефолты нагрузкой и
+подобрать настройки**.
+
+**Живой нагруз-тест — `pnpm loadtest:123`** (`scripts/load-test-123.mjs`, dev-only; вебхук в
+git-ignored `.env.b24test`; читает реальные `crm.item.list`/`crm.vat.list`/`crm.requisite.list`/
+`catalog.measure.list`/`crm.currency.list`, как crm-sync). Прогон на живом портале:
+
+| Сценарий | нагрузка | результат |
+|---|---|---|
+| Один лимитер, 60 чтений (> burst 50) | — | `limitHits:64`, self-throttle до ~10 req/s, **0 `QUERY_LIMIT_EXCEEDED`**, 0 ошибок |
+| Scale-out ×5 (свой лимитер на джобу), 100 чтений | 37 req/s агрегат | **0 `QUERY_LIMIT_EXCEEDED`**, 0 ошибок |
+| Scale-out ×10, 150 чтений | 47 req/s агрегат | **0 `QUERY_LIMIT_EXCEEDED`**, 0 ошибок |
+
+**Вывод: дефолтные `RestrictionParams` держат** — даже при 10× scale-out ноль
+`QUERY_LIMIT_EXCEEDED`. Лимитер сам троттлит, когда burst-ведро инстанса исчерпано; короткие
+всплески scale-out гасит burst-аллованс (50 на инстанс), устойчивый поток — operating-лимит
+(координируется сервером). **Понижать `drainRate`/`burst` не нужно.**
+
+**Единственная правка — `retryOnNetworkError: false`** (`makePortalSdkCall`, `server/utils/b24Sdk.ts`):
+crm-sync-джоба делает **неидемпотентные** создания (`crm.item.add`/`crm.product.add`); in-SDK-ретрай
+после client-side **network-таймаута** (запрос мог уже пройти на сервере) создал бы **дубль
+сущности**. Вместо этого даём упасть всей BullMQ-джобе и ретраим её — там создание идемпотентно по
+B24-маркеру (`findExisting`-перед-созданием, #135). Rate-limit-ретрай (`QUERY_LIMIT_EXCEEDED`/429/5xx)
+**остаётся включён** (его повтор безопасен). Чтения идемпотентны — потерю их in-SDK network-ретрая на
+джоб-ретрай считаем приемлемым безопасным разменом.
+
+**Гайд по конкуренции:** `QUEUE_CRM_CONCURRENCY` × `drainRate` сглаживается burst-алловансом +
+серверным operating-лимитом (замерено — до 10 параллельных чисто). При смене тарифа портала
+(Enterprise → `ParamsFactory.getEnterprise()`, `drainRate` 5 / burst 250) или заметном росте
+конкуренции — **пере-прогнать `pnpm loadtest:123 --jobs N --ops M`** и убедиться в нуле
+`QUERY_LIMIT_EXCEEDED` (методика повторяема).
 
 ### Тюнинг общего фронт-`nginx-proxy` (обязательно для загрузок/OCR)
 
