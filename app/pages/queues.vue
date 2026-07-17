@@ -54,6 +54,29 @@ async function load() {
   } catch { /* non-fatal */ }
 }
 
+// Force-refresh one portal's OAuth token from the UI (#132) — no SSH, no secret in the browser.
+const reauthing = ref<string>('') // member_id currently refreshing (disables its button)
+const reauthMsg = ref<string>('')
+async function reauth(memberId: string) {
+  reauthing.value = memberId
+  reauthMsg.value = ''
+  try {
+    await $fetch('/api/ops/tokens/refresh', { method: 'POST', body: { memberId } })
+    reauthMsg.value = 'Токен обновлён'
+    await load() // re-pull status so the row's expiry resets
+  } catch (e) {
+    const code = (e as { statusCode?: number })?.statusCode
+    if (code === 401) {
+      // Session expired mid-page — same handling as load(), not a fake «failed».
+      await router.push('/login')
+      return
+    }
+    reauthMsg.value = code === 409 ? 'Портал не установлен' : code === 503 ? 'OAuth не настроен' : 'Не удалось обновить'
+  } finally {
+    reauthing.value = ''
+  }
+}
+
 async function signOut() {
   await logout()
   await router.push('/login')
@@ -144,6 +167,13 @@ onMounted(async () => {
       <h2 class="mb-3 text-sm font-semibold text-gray-700">
         Авторизация порталов
       </h2>
+      <p
+        v-if="reauthMsg"
+        class="mb-2 text-xs text-gray-500"
+        role="status"
+      >
+        {{ reauthMsg }}
+      </p>
       <div class="space-y-2">
         <div
           v-for="p in portals"
@@ -156,6 +186,15 @@ onMounted(async () => {
             <span class="text-gray-500">{{
               p.expiresInDays > 0 ? `refresh_token ≈ ${p.expiresInDays} дн.` : 'срок истёк'
             }}</span>
+            <B24Button
+              color="air-tertiary-no-accent"
+              size="xs"
+              :loading="reauthing === p.memberId"
+              :disabled="reauthing !== ''"
+              :label="reauthing === p.memberId ? 'Обновление…' : 'Переавторизовать'"
+              :aria-label="`Переавторизовать портал ${p.domain}`"
+              @click="() => reauth(p.memberId)"
+            />
           </span>
         </div>
       </div>
