@@ -1,6 +1,6 @@
 # Стек технологий (редизайн procure-ai)
 
-> Last reviewed: 2026-07-16
+> Last reviewed: 2026-07-17
 
 Целевой стек взят из эталона `client-bank-alfa-by` (проверенная на проде раскладка Bitrix24-приложения)
 и дополнен слоем AI-агента из старого procure-ai. Версии — ориентир на момент фиксации; при инициализации
@@ -19,8 +19,8 @@
 | UI Kit | **`@bitrix24/b24ui-nuxt`** + **`@bitrix24/b24icons-vue`** | нативные компоненты Б24 |
 | B24 SDK | **`@bitrix24/b24jssdk`** + **`@bitrix24/b24jssdk-nuxt`** | встройка в портал (dual-mode) |
 | Утилиты | **`@vueuse/core`** + **`@vueuse/nuxt`** | реактивные хелперы |
-| Шрифты | **`@fontsource/*`** (self-hosted) | без Google CDN (CSP) |
-| Графики | **`echarts`** (tree-shaken, динамический импорт) | queue-monitor, метрики |
+| Шрифты | системные / Tailwind по умолчанию (self-hosted `@fontsource/*` **пока не подключён** — нет в `package.json`, нет `@font-face`) | без Google CDN (CSP) |
+| Графики | **отдельной библиотеки пока нет** — `/queues` и `/metrics` рендерятся на b24ui/HTML (карточки + счётчики + CSS-бар); `echarts` **не в зависимостях**, заложен на будущее (глубокий queue-monitor) | queue-monitor, метрики |
 | QR | **`qrcode`** (динамический импорт, только мобилка) | визитка/промо |
 
 Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"private": true`, лицензия MIT.
@@ -39,11 +39,11 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 
 | Что | Технология | Роль |
 |---|---|---|
-| Агент | **Claude Code CLI** (headless, `--print --bare --output-format json`) | извлечение структуры + вызов MCP |
+| Агент | **Claude Code CLI** (headless, `--print --bare --output-format json`) | извлечение структуры (**tool-less** — без вызова инструментов) |
 | Провайдер | **DeepSeek V4** (Anthropic-совместимый endpoint `https://api.deepseek.com/anthropic`) через `ANTHROPIC_*` env; ключ — в `ANTHROPIC_AUTH_TOKEN` | решение Q5; модели `deepseek-v4-flash` (дефолт) / `deepseek-v4-pro`; извлечение проверено вживую на рус/бел/каз (поставщик/налоговый ID/позиции/НДС) 2026-07-09; см. юрисдикцию ниже |
-| Протокол инструментов | **MCP** (`@modelcontextprotocol/sdk`, Streamable HTTP, Bearer) | изолированный MCP-сервер |
-| Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (**rus+bel+kaz+eng**), python (`openpyxl`/`xlrd`/`python-docx`) | PDF/скан/офис → текст; языки — см. `06-multilingual.md` |
-| Схемы | **`zod`** | валидация входов MCP-инструментов и вывода агента |
+| Протокол инструментов | **не нужен** — агент tool-less (решение из ревью): `@modelcontextprotocol/sdk` / MCP-HTTP-сервер **не подключены** (нет в `package.json`), тела «инструментов» зовёт `crm-sync` в процессе | (был замысел: изолированный MCP-сервер) |
+| Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (**rus+bel+kaz+eng**), `libreoffice` (soffice — офис→текст/pdf), **`exceljs`** (xlsx→текст) | PDF/скан/офис → текст; языки — см. `06-multilingual.md`. Python-библиотек (`openpyxl`/`xlrd`) **не используем** |
+| Схемы | **ручная валидация** — `validateExtractedDocument` (нормализация untrusted JSON агента); `zod` **не подключён** | валидация вывода агента |
 
 ## 4. Тесты / тулинг
 
