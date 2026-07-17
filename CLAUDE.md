@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-16
+> Last reviewed: 2026-07-17
 
 AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -31,9 +31,10 @@ AI-импорт документов с табличной частью в Bitri
   - **Рефреш OAuth-токена сериализован per-portal** (`utils/dbLock.withAdvisoryLock`, `ensureAccessToken`,
     #35): advisory-lock + re-read внутри лока → портал рефрешится ровно раз, без гонки на ротации
     refresh-token. Персист — `updateTokensOnRefresh` (UPDATE-only, не воскрешает удалённый портал); строка
-    исчезла под локом ⇒ рефреш не делаем. Рефреш-POST ограничен таймаутом (`AbortSignal`), чтобы зависший
-    OAuth не запинил лок + соединение пула. **Область**: этот путь — у **keep-alive крона** (`ensureFreshToken`,
-    single-instance) и синхронных frame-token API-роутов. **crm-sync hot-path им НЕ ходит** — там транспорт
+    исчезла под локом ⇒ рефреш не делаем. Сам refresh идёт **через SDK** (`b24Sdk.sdkRefreshTransport` →
+    `B24OAuth.auth.refreshAuth`), ограничен таймаутом (гонка — у SDK-axios рефреша нет своего таймаута), чтобы
+    зависший OAuth не запинил лок + соединение пула. **Область**: этот путь — у **keep-alive крона**
+    (`ensureFreshToken`, single-instance) и кнопки reauth (`portalReauth`). **crm-sync hot-path им НЕ ходит** — там транспорт
     `@bitrix24/b24jssdk` рефрешит **реактивно** (свой per-job `B24OAuth`, `setCallbackRefreshAuth`→персист),
     без advisory-лока: при scale-out throughput-воркеры могут ротануть один портал параллельно, но персист
     UPDATE-only идемпотентен, а SDK-лимитер гасит всплеск — гонка безопасна, лишь возможен лишний рефреш.
@@ -50,10 +51,26 @@ AI-импорт документов с табличной частью в Bitri
     устаревшем токене после ротации соседом/кроном). Ручной `makePortalRestCall` удалён. Общий билдер
     `sdkPortalDeps(SdkInfra)` связывает `SdkPortalDeps` со стором/env — им пользуются и `liveDeps.restResolver`
     (crm-sync), и frame-token роут `catalog-properties` (читает по OAuth-токену портала: `resolveFrameMember`
-    верифицирует фрейм-токен → `member_id`, дальше SDK). Роут `settings` остаётся на `b24Rest.makeRestCall`
-    (фрейм-access-токен пишет `app.option`). Чистые мапперы +
+    верифицирует фрейм-токен → `member_id`, дальше SDK). Чистые мапперы +
     `makeSdkRestCall`/`makeSdkListCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` —
     compile-time drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
+  - **ВСЕ вызовы Б24 идут через `@bitrix24/b24jssdk`** (ручной `fetch`-транспорт `b24Rest.makeRestCall`
+    удалён). Два пути, раньше шедшие мимо SDK, переведены (единый транспорт: RestrictionManager, 30s-таймаут,
+    drift-guard):
+    - **Frame/install-токен REST** (`profile`-верификация в `resolveFrameMember`/`verifyInstallToken`,
+      `app.option` в роутах `settings.get/post`) → `b24Sdk.makeBareTokenSdkCall(domain, accessToken)`: per-call
+      `B24OAuth` с фрейм-токеном, `expires` в 2100 (SDK не рефрешит проактивно) + `setCustomRefreshAuth` →
+      `BARE_TOKEN_REJECTED` (у bare-токена нет server-side refresh → любой auth-error = «токен отвергнут»,
+      `isAuthRejection` ловит → 401/403 vs 502/503). **SSRF-гард сохранён** (`isSafeB24Domain` внутри —
+      клиентский `X-B24-Domain`/домен install-события не должен утащить токен на чужой хост). `verifyInstallToken`/
+      `resolveFrameMember` берут инъектируемую фабрику `makeCall` (дефолт — SDK) → юнит-тестируются фейком.
+    - **OAuth-refresh POST** (keep-alive крон `liveDeps`, кнопка reauth `portalReauth`) → `b24Sdk.sdkRefreshTransport()`
+      через `B24OAuth.auth.refreshAuth()`: тот же refresh (POST `grant_type=refresh_token` на OAuth-сервер), но
+      **секреты в теле POST** (старый код слал их в URL-query → утечка в access-логи), таймаут-гард (гонка —
+      у SDK-axios рефреша нет таймаута), а вокруг остаётся `ensureFreshToken`: advisory-lock + re-read +
+      UPDATE-only persist (#35). `rawTokenFromRefresh` (чистый маппер SDK-результат→raw JSON) тестируется.
+    `b24Rest.ts` теперь несёт только чистые хелперы/контракт: тип `RestCall`, `unwrap`, SSRF-гард `isSafeB24Domain`,
+    `B24RestError`, `isAuthRejection` (тип `FetchFn` остаётся для не-Б24 GitHub-POST `feedbackGithub`).
   - **Пагинация enumerate-all списков** (#87): find-one lookup'ы (`findCompanyByTaxId`/`findProduct`)
     берут первый id и в пагинации не нуждаются, но enumerate-all чтения молча обрезались на дефолтной
     странице B24 (50). Оба таких чтения теперь на **SDK full-list** (`SdkListCall`→`callList.make`, SDK сам

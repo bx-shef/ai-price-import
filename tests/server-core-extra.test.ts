@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeRestCall, restUrl } from '../server/utils/b24Rest'
+import { isAuthRejection, restUrl } from '../server/utils/b24Rest'
+import { BARE_TOKEN_REJECTED, makeBareTokenSdkCall } from '../server/utils/b24Sdk'
 import { ensureSubfolder, uploadFile } from '../server/utils/disk'
 import { buildProductRow, createTargetItem } from '../server/utils/crmWrite'
 import { decryptSecret, encryptSecret } from '../server/utils/secretCrypto'
@@ -8,57 +9,20 @@ import { parseTokenResponse } from '../server/utils/b24Oauth'
 import { buildConfigurableActivity, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
 import { parsePortalSettings } from '../app/utils/portalSettings'
 
-describe('makeRestCall (injected fetch)', () => {
-  it('POSTs to restUrl with auth in body, unwraps result', async () => {
-    const fetchFn = vi.fn(async (_url: string, _init?: { body?: string }) => ({
-      ok: true, status: 200, json: async () => ({ result: [1, 2] })
-    }))
-    const call = makeRestCall('p.bitrix24.ru', 'tok', fetchFn)
-    const res = await call('crm.item.list', { entityTypeId: 2 })
-    expect(res).toEqual([1, 2])
-    const [url, init] = fetchFn.mock.calls[0]!
-    expect(url).toBe(restUrl('p.bitrix24.ru', 'crm.item.list'))
-    expect(JSON.parse(init!.body!)).toEqual({ entityTypeId: 2, auth: 'tok' })
-  })
-  it('rejects on B24 error body', async () => {
-    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ error: 'QUERY_LIMIT', error_description: 'too many' }) }))
-    await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn)('m')).rejects.toThrow(/too many/)
-  })
-  it('passes an AbortSignal and aborts a hung call (headers phase) as a typed TIMEOUT', async () => {
-    // fetch never resolves on its own; it only settles when the injected signal aborts.
-    const fetchFn = vi.fn((_url: string, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
-    }) as Promise<{ ok: boolean, status: number, json: () => Promise<unknown> }>)
-    await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn, 5)('m')).rejects.toThrow(/TIMEOUT/)
-    expect(fetchFn.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal)
-  })
-  it('aborts a stalled response BODY as TIMEOUT (headers arrive, res.json() hangs)', async () => {
-    // Real fetch resolves on headers; a dribbled/stalled body must still hit the timeout.
-    const fetchFn = vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => ({
-      ok: true, status: 200,
-      json: () => new Promise<unknown>((_res, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
-      })
-    }))
-    await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn, 5)('m')).rejects.toThrow(/TIMEOUT/)
-  })
-  it('rethrows a non-timeout transport error as-is (not mislabeled TIMEOUT)', async () => {
-    const fetchFn = vi.fn(async () => {
-      throw new Error('ECONNREFUSED')
-    })
-    const p = makeRestCall('p.bitrix24.ru', 't', fetchFn, 10_000)('m')
-    await expect(p).rejects.toThrow('ECONNREFUSED')
-    await expect(p).rejects.not.toThrow(/TIMEOUT/)
-  })
-  it('clears the abort timer on a fast call (no timer left pending)', async () => {
-    vi.useFakeTimers()
-    try {
-      const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ result: 'ok' }) }))
-      await expect(makeRestCall('p.bitrix24.ru', 't', fetchFn, 10_000)('m')).resolves.toBe('ok')
-      expect(vi.getTimerCount()).toBe(0) // proves clearTimeout ran — fails if removed
-    } finally {
-      vi.useRealTimers()
+describe('makeBareTokenSdkCall (SDK bare-token transport)', () => {
+  // The frame/install access token has NO server-side refresh; the call rides the SDK. We can
+  // exercise the SSRF guard without a network (it rejects BEFORE the SDK sends), and pin the
+  // bare-token rejection contract (BARE_TOKEN_REJECTED is classified as an auth rejection so the
+  // verify paths return 401/403, not 502/503).
+  it('refuses a non-Bitrix24 / malicious host before any network call', async () => {
+    for (const host of ['evil.com', 'bitrix24.ru.evil.com', 'p.bitrix24.ru:22', 'user@p.bitrix24.ru']) {
+      await expect(makeBareTokenSdkCall(host, 'tok')('profile')).rejects.toThrow(/UNSAFE_DOMAIN/)
     }
+  })
+  it('a bare-token auth error is classified as a rejection (→401/403, not transport)', () => {
+    // A bare token cannot refresh — the custom refresh hook throws BARE_TOKEN_REJECTED, which
+    // isAuthRejection must recognise so a forged frame/install token yields 401/403.
+    expect(isAuthRejection(new Error(BARE_TOKEN_REJECTED))).toBe(true)
   })
 })
 

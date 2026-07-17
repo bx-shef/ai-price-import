@@ -1,4 +1,4 @@
-import { makeRestCall } from '../utils/b24Rest'
+import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { extractFrameAuth } from '../utils/frameAuth'
 import { readMapping } from '../utils/appSettings'
 
@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 401)
     return { error: 'frame auth required' }
   }
-  const call = makeRestCall(auth.domain, auth.accessToken, globalThis.fetch as never)
+  const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
   try {
     return { mapping: await readMapping(call) }
   } catch {

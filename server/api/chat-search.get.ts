@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
     return { error: 'frame auth required' }
   }
   // Verify the frame token controls this portal + resolve member_id (anti-spoof).
-  const resolved = await resolveFrameMember(auth, { fetchFn: globalThis.fetch as never, query })
+  const resolved = await resolveFrameMember(auth, { query })
   if (!resolved.ok || !resolved.memberId) {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }

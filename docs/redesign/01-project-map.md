@@ -78,7 +78,10 @@ MCP зовёт **стандартный REST Bitrix24** (ноль кода в к
 - **Ядро OAuth/токенов (этап 2):** `b24Oauth`, `accessToken` (ленивый/keep-alive предикаты),
   `secretCrypto` (AES-GCM), `b24Rest` (типизированная `B24RestError` + **SSRF-гард** `isSafeB24Domain`),
   `tokenStore` (Postgres, write-once `application_token`), `ensureAccessToken` (refresh + ретрай),
-  `b24Sdk` (`makePortalSdkCall(memberId)` → **живой `RestCall`** через `@bitrix24/b24jssdk`, встроенный лимитер), `server/db/` (схема + ленивый
+  `b24Sdk` (**единственный транспорт Б24** через `@bitrix24/b24jssdk`: `makePortalSdkCall(memberId)` → живой
+  OAuth-`RestCall` со встроенным лимитером; `makeBareTokenSdkCall(domain,token)` → frame/install-токен REST
+  (bare-токен без refresh, SSRF-гард); `sdkRefreshTransport()` → OAuth-refresh через `refreshAuth` для
+  keep-alive/reauth. Ручной `b24Rest.makeRestCall`-fetch удалён), `server/db/` (схема + ленивый
   pg-клиент + плагин миграции). **HTTP-эндпоинт `/api/b24/events`** (install/unregister, синхронная
   запись, вердикт по сохранённому per-portal токену).
 - **Ядро записи в CRM (этап 7):** `companyLookup` (RQ_INN), `crmWrite` (productrow/create-target),

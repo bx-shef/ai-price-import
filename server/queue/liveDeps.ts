@@ -1,6 +1,4 @@
 import type { QueryFn } from '../utils/tokenStore'
-import type { FetchFn } from '../utils/b24Rest'
-import { REST_TIMEOUT_MS } from '../utils/b24Rest'
 import type { AgentSpawn } from '../agent/runAgent'
 import type { ExtractRunners } from '../utils/textExtract'
 import type { EnsureDeps } from '../utils/ensureAccessToken'
@@ -8,7 +6,7 @@ import { ensureFreshToken } from '../utils/ensureAccessToken'
 import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
-import { makePortalSdkCall, sdkPortalDeps, type SdkTransport } from '../utils/b24Sdk'
+import { makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { setJobStatus } from '../utils/jobStore'
@@ -45,7 +43,6 @@ import type { PortalMapping } from '~/types/mapping'
 
 export interface LiveInfra {
   query: QueryFn
-  fetchFn: FetchFn
   /** AES key (base64) for refresh-token decrypt/encrypt. */
   encKey: string
   clientId: string
@@ -66,16 +63,12 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
     withLock: withAdvisoryLock,
     loadToken: (q, m) => getToken(m, q),
     persistRefresh: (q, input) => updateTokensOnRefresh(input, q),
-    refreshTransport: async (params) => {
-      // Bound the POST (AbortSignal): it runs INSIDE the advisory lock holding a pooled
-      // connection, so a hung oauth.bitrix.info must not pin the lock + connection (dbLock's
-      // documented invariant — statement_timeout/lock_timeout don't cover an HTTP await).
-      const res = await infra.fetchFn(
-        `https://oauth.bitrix.info/oauth/token/?${new URLSearchParams(params).toString()}`,
-        { signal: AbortSignal.timeout(REST_TIMEOUT_MS) }
-      )
-      return res.json()
-    },
+    // Refresh THROUGH the SDK (@bitrix24/b24jssdk `refreshAuth`) — single transport, and
+    // secrets ride in the POST body (the old hand-rolled POST put them in the URL query). Its
+    // own timeout bounds the call: it runs INSIDE the advisory lock holding a pooled connection,
+    // so a hung OAuth server must not pin the lock (dbLock's invariant — statement_timeout /
+    // lock_timeout don't cover an HTTP await). Persist stays UPDATE-only via persistRefresh above.
+    refreshTransport: sdkRefreshTransport(),
     decrypt: enc => (enc ? decryptSecret(enc, infra.encKey) : ''),
     encrypt: plain => encryptSecret(plain, infra.encKey),
     clientId: infra.clientId,

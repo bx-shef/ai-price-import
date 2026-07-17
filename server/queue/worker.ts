@@ -9,7 +9,6 @@ import { setJobStatus } from '../utils/jobStore'
 import { query } from '../db/client'
 import { makeAgentSpawn } from '../agent/spawn'
 import { liveExtractRunners } from '../utils/extractRunners'
-import type { FetchFn } from '../utils/b24Rest'
 
 // BullMQ workers binding the pure handlers to live infra. Thin glue — the logic lives
 // in the (tested) handlers; validated by typecheck. Started in-process by the queue plugin.
@@ -49,7 +48,6 @@ export function queueConcurrency(env: Record<string, string | undefined> = proce
 export function buildLiveInfra(): LiveInfra {
   return {
     query,
-    fetchFn: globalThis.fetch as unknown as FetchFn,
     encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
     clientId: process.env.B24_CLIENT_ID ?? '',
     clientSecret: process.env.B24_CLIENT_SECRET ?? '',

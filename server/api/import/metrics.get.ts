@@ -3,7 +3,6 @@ import { resolveFrameMember } from '../../utils/resolveFrameMember'
 import { readCounters } from '../../utils/metricsStore'
 import { computeSavings } from '~/utils/savings'
 import { query } from '../../db/client'
-import type { FetchFn } from '../../utils/b24Rest'
 
 // GET /api/import/metrics — per-portal counters + a time/money-saved estimate for the
 // in-portal dashboard. Frame-token authenticated and member-scoped (a portal only sees
@@ -14,7 +13,7 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 401)
     return { error: 'frame auth required' }
   }
-  const member = await resolveFrameMember(auth, { fetchFn: globalThis.fetch as unknown as FetchFn, query })
+  const member = await resolveFrameMember(auth, { query })
   if (!member.ok || !member.memberId) {
     setResponseStatus(event, member.status ?? 401)
     return { error: 'authorization failed', reason: member.reason }

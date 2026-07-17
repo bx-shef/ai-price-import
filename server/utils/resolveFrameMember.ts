@@ -1,5 +1,6 @@
-import type { FetchFn } from './b24Rest'
-import { isAuthRejection, makeRestCall, normaliseHost } from './b24Rest'
+import type { RestCall } from './b24Rest'
+import { isAuthRejection, normaliseHost } from './b24Rest'
+import { makeBareTokenSdkCall } from './b24Sdk'
 import type { QueryFn } from './tokenStore'
 import { getMemberIdByDomain } from './tokenStore'
 import type { FrameAuth } from './frameAuth'
@@ -11,8 +12,10 @@ import type { FrameAuth } from './frameAuth'
 // DI over fetch + query → unit-tested. docs/redesign 02 §8.
 
 export interface FrameMemberDeps {
-  fetchFn: FetchFn
   query: QueryFn
+  /** Bare-token REST factory. Prod uses the SDK transport (makeBareTokenSdkCall); tests inject
+   *  a fake so verification logic stays unit-testable without a live portal. */
+  makeCall?: (domain: string, accessToken: string) => RestCall
 }
 
 /** Why resolution failed (for diagnostics — surfaced by the caller). */
@@ -36,7 +39,8 @@ export async function resolveFrameMember(auth: FrameAuth, deps: FrameMemberDeps)
   // the same call doubles as the admin-gate source — no extra REST round-trip.
   let admin: boolean
   try {
-    const profile = await makeRestCall(auth.domain, auth.accessToken, deps.fetchFn)('profile') as { ADMIN?: unknown } | null
+    const makeCall = deps.makeCall ?? makeBareTokenSdkCall
+    const profile = await makeCall(auth.domain, auth.accessToken)('profile') as { ADMIN?: unknown } | null
     admin = profile?.ADMIN === true
   } catch (e) {
     // An auth rejection means the token doesn't control the portal → 401; a transport

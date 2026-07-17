@@ -19,8 +19,9 @@
 // at that assignment rather than only on a live smoke-test.
 
 import { B24OAuth, ParamsFactory } from '@bitrix24/b24jssdk'
-import type { B24OAuthParams, B24OAuthSecret, CallbackRefreshAuth } from '@bitrix24/b24jssdk'
+import type { AuthData, B24OAuthParams, B24OAuthSecret, CallbackRefreshAuth, CustomRefreshAuth } from '@bitrix24/b24jssdk'
 import type { RestCall } from './b24Rest'
+import { B24RestError, REST_TIMEOUT_MS, isSafeB24Domain } from './b24Rest'
 import type { PortalToken, QueryFn, SaveTokenInput } from './tokenStore'
 import { getToken, updateTokensOnRefresh } from './tokenStore'
 import { decryptSecret, encryptSecret } from './secretCrypto'
@@ -42,6 +43,13 @@ export interface OAuthCallClient {
     }
   }
   setCallbackRefreshAuth: (cb: CallbackRefreshAuth) => void
+  /** Override the OAuth refresh with a custom handler. A BARE-token client (frame/install —
+   *  no server-side refresh token) sets this to hard-reject instead of POSTing an empty
+   *  refresh_token to the OAuth server (see makeBareTokenSdkCall). */
+  setCustomRefreshAuth: (cb: CustomRefreshAuth) => void
+  /** Auth manager — `refreshAuth()` forces a PROACTIVE token refresh through the SDK (POST to
+   *  the OAuth server), firing the setCallbackRefreshAuth callback. Used by sdkRefreshTransport. */
+  auth: { refreshAuth: () => Promise<AuthData | false> }
   /** Tune the built-in RestrictionManager (rate-limit + retry). We use it to turn OFF
    *  network-error retry on this per-portal client (#123) — see makePortalSdkCall. */
   setRestrictionManagerParams: (params: Record<string, unknown>) => void
@@ -192,6 +200,138 @@ export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): 
   // acceptable for this low-concurrency design, and the proactive limiter prevents QLE anyway.
   client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), maxRetries: 1, retryOnNetworkError: false })
   return { call: makeSdkRestCall(client), list: makeSdkListCall(client) }
+}
+
+// ── Bare-token transport (frame / install access token) ──────────────────────────────────
+// A frame/install access token is USER-scoped and short-lived: the server holds NO refresh
+// token or client secret bound to it, so it cannot be renewed here. We still route these calls
+// through the SDK (unified transport: rate-limiter + 30s timeout + drift guard) — but a bare
+// token can't refresh, so any auth error means the token is REJECTED, not "expired, refresh me".
+
+/** Message thrown when a bare token hits an auth error. Carries `invalid_token` so
+ *  b24Rest.isAuthRejection classifies it as a token rejection (→401/403), not a transport
+ *  error (→502/503) — preserving the frame/install verification semantics. */
+export const BARE_TOKEN_REJECTED = 'invalid_token: bare frame/install token cannot be refreshed'
+
+/** Far-future expiry (2100) so the SDK treats a bare token as perpetually fresh and never
+ *  PROACTIVELY refreshes it. If the token is actually invalid/expired the REST call still gets
+ *  an auth error → reactive refresh → our custom hook throws BARE_TOKEN_REJECTED. */
+const BARE_TOKEN_EXPIRES_S = 4_102_444_800
+
+/** SDK `RestCall` for a BARE access token (frame/install) — the drop-in replacement for
+ *  b24Rest.makeRestCall on the frame-token paths (resolveFrameMember / verifyInstallToken /
+ *  app.option I/O). The wire call is identical (the token rides as `auth`), but the transport is
+ *  the SDK's, and a bare token hard-rejects on any auth error instead of POSTing an empty
+ *  refresh_token to the OAuth server. No client creds needed (the custom refresh never POSTs). */
+export function makeBareTokenSdkCall(domain: string, accessToken: string): RestCall {
+  const d = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim().toLowerCase()
+  const params: B24OAuthParams = {
+    applicationToken: '',
+    userId: 0,
+    memberId: '',
+    accessToken,
+    refreshToken: '',
+    expires: BARE_TOKEN_EXPIRES_S,
+    expiresIn: BARE_TOKEN_EXPIRES_S,
+    scope: '',
+    domain: d,
+    clientEndpoint: `https://${d}/rest/`,
+    serverEndpoint: B24_SERVER_ENDPOINT,
+    status: 'L'
+  }
+  // Typing the instance as OAuthCallClient is the drift guard (see file header).
+  const client: OAuthCallClient = new B24OAuth(params, { clientId: '', clientSecret: '' })
+  // Bare token has no refresh path: any auth error is a hard rejection, not "refresh me".
+  client.setCustomRefreshAuth(() => Promise.reject(new Error(BARE_TOKEN_REJECTED)))
+  client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), maxRetries: 1, retryOnNetworkError: false })
+  const sdkCall = makeSdkRestCall(client)
+  return (method, callParams) => {
+    // SSRF guard: `domain` is client-supplied (X-B24-Domain / install event) — only ever call
+    // Bitrix24 hosts so a forged domain can't exfiltrate the token to an attacker host. Thrown
+    // at call time (inside the caller's try/catch), same as the old b24Rest.restUrl guard; not
+    // an auth rejection → transport-class (verify paths → 502/503), never trusts the forgery.
+    if (!isSafeB24Domain(d)) return Promise.reject(new B24RestError('UNSAFE_DOMAIN', `refusing REST to ${d}`))
+    return sdkCall(method, callParams)
+  }
+}
+
+// ── OAuth refresh transport (keep-alive cron + operator reauth) ───────────────────────────
+// Force-refresh a portal's OAuth token THROUGH the SDK (`refreshAuth`) instead of a hand-rolled
+// POST. Same effect (POST grant_type=refresh_token to the OAuth server) but: secrets ride in the
+// POST body (the old code put them in the URL query → access-log leak), and it uses the SDK's
+// typed RefreshTokenError. Wired as EnsureDeps.refreshTransport, so ensureFreshToken keeps its
+// per-portal advisory lock + re-read + UPDATE-only persist (#35) unchanged.
+
+/** Race a promise against a timeout. The SDK's refresh axios has NO timeout, but the refresh
+ *  runs inside ensureFreshToken's advisory lock holding a pooled connection — a hung OAuth
+ *  server must not pin the lock. On timeout we reject (releasing the lock); the orphaned request
+ *  settles into a no-op (nothing reads its result). */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`b24 oauth refresh: no response within ${ms}ms`)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      }
+    )
+  })
+}
+
+/** Map the SDK's refreshed params/authData → the raw token-response shape parseTokenResponse
+ *  consumes. `captured` (from the setCallbackRefreshAuth callback) carries the full updated
+ *  fields (clientEndpoint/scope/status); `authData` is the refreshAuth return (fallback). Pure. */
+export function rawTokenFromRefresh(captured: B24OAuthParams | undefined, authData: AuthData | false): Record<string, unknown> {
+  const a = authData || undefined
+  return {
+    access_token: captured?.accessToken ?? a?.access_token ?? '',
+    refresh_token: captured?.refreshToken ?? a?.refresh_token ?? '',
+    expires_in: captured?.expiresIn ?? a?.expires_in,
+    expires: captured?.expires ?? a?.expires,
+    client_endpoint: captured?.clientEndpoint,
+    server_endpoint: captured?.serverEndpoint,
+    scope: captured?.scope,
+    status: captured?.status,
+    member_id: captured?.memberId ?? a?.member_id ?? ''
+  }
+}
+
+/** Build an EnsureDeps.refreshTransport that refreshes THROUGH the SDK. Receives the refresh
+ *  params (client_id/client_secret/refresh_token, built by buildRefreshParams) and returns the
+ *  raw token JSON. The transient B24OAuth's domain is a placeholder — refreshAuth POSTs to the
+ *  OAuth server (serverEndpoint), never the portal domain, and ensureFreshToken keeps the real
+ *  stored portal domain. Bounded by `timeoutMs` (default REST_TIMEOUT_MS). */
+export function sdkRefreshTransport(opts: { timeoutMs?: number } = {}): (params: Record<string, string>) => Promise<unknown> {
+  const timeoutMs = opts.timeoutMs ?? REST_TIMEOUT_MS
+  return async (params) => {
+    const oauthParams: B24OAuthParams = {
+      applicationToken: '',
+      userId: 0,
+      memberId: '',
+      accessToken: '',
+      refreshToken: params.refresh_token ?? '',
+      expires: 0,
+      expiresIn: 0,
+      scope: '',
+      domain: 'oauth.bitrix.info',
+      clientEndpoint: 'https://oauth.bitrix.info/rest/',
+      serverEndpoint: B24_SERVER_ENDPOINT,
+      status: 'L'
+    }
+    const client: OAuthCallClient = new B24OAuth(oauthParams, { clientId: params.client_id ?? '', clientSecret: params.client_secret ?? '' })
+    let captured: B24OAuthParams | undefined
+    // Capture the refreshed params (fuller than the refreshAuth return); persistence stays with
+    // ensureFreshToken (this callback only records — it must NOT double-write).
+    client.setCallbackRefreshAuth(async ({ b24OAuthParams }) => {
+      captured = b24OAuthParams
+    })
+    const authData = await withTimeout(client.auth.refreshAuth(), timeoutMs)
+    return rawTokenFromRefresh(captured, authData)
+  }
 }
 
 /** Live env/infra a portal-bound SDK transport needs (shared by the crm-sync worker and

@@ -4,18 +4,16 @@ import type { QueryFn, SaveTokenInput } from './tokenStore'
 import { getToken, updateTokensOnRefresh } from './tokenStore'
 import { withAdvisoryLock } from './dbLock'
 import { decryptSecret, encryptSecret } from './secretCrypto'
-import type { FetchFn } from './b24Rest'
-import { REST_TIMEOUT_MS } from './b24Rest'
+import { sdkRefreshTransport } from './b24Sdk'
 
 // Operator token-reauth action (#132): FORCE-refresh one portal's OAuth token from the /queues
 // UI instead of the SSH dev-script (which rotates the refresh token as a side effect). Reuses the
 // exact refresh path crm-sync/keep-alive use (ensureFreshToken → per-portal advisory lock #35 →
 // UPDATE-only persist). Returns a NON-SECRET outcome — the token itself never leaves the server.
 
-/** Non-secret infra for the reauth action (env + db + fetch). */
+/** Non-secret infra for the reauth action (env + db). */
 export interface ReauthInfra {
   query: QueryFn
-  fetchFn: FetchFn
   /** AES key (base64) for refresh-token decrypt/encrypt. */
   encKey: string
   clientId: string
@@ -24,21 +22,16 @@ export interface ReauthInfra {
 }
 
 /** Assemble the OAuth-refresh EnsureDeps from the shared primitives (same wiring as
- *  liveDeps.ensureDeps; the refresh POST runs inside the lock, so it is AbortSignal-bounded so a
- *  hung oauth.bitrix.info cannot pin the lock + pooled connection). */
+ *  liveDeps.ensureDeps). The refresh runs THROUGH the SDK (@bitrix24/b24jssdk `refreshAuth`) —
+ *  secrets in the POST body, its own timeout bounds the call so a hung OAuth server cannot pin
+ *  the advisory lock + pooled connection. Persist stays UPDATE-only via persistRefresh. */
 function reauthEnsureDeps(infra: ReauthInfra): EnsureDeps {
   return {
     getToken: m => getToken(m, infra.query),
     withLock: withAdvisoryLock,
     loadToken: (q, m) => getToken(m, q),
     persistRefresh: (q: QueryFn, input: SaveTokenInput) => updateTokensOnRefresh(input, q),
-    refreshTransport: async (params) => {
-      const res = await infra.fetchFn(
-        `https://oauth.bitrix.info/oauth/token/?${new URLSearchParams(params).toString()}`,
-        { signal: AbortSignal.timeout(REST_TIMEOUT_MS) }
-      )
-      return res.json()
-    },
+    refreshTransport: sdkRefreshTransport(),
     decrypt: enc => (enc ? decryptSecret(enc, infra.encKey) : ''),
     encrypt: plain => encryptSecret(plain, infra.encKey),
     clientId: infra.clientId,
