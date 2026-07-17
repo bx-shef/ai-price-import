@@ -11,9 +11,15 @@ function query(rows: Array<Record<string, unknown>>) {
 }
 
 describe('resolveFrameMember', () => {
-  it('verifies token then resolves member_id by domain', async () => {
+  it('verifies token then resolves member_id by domain (non-admin caller ⇒ admin:false)', async () => {
     const r = await resolveFrameMember(auth, { fetchFn: okFetch(), query: query([{ member_id: 'm42' }]) })
-    expect(r).toEqual({ ok: true, memberId: 'm42' })
+    expect(r).toEqual({ ok: true, memberId: 'm42', admin: false })
+  })
+
+  it('exposes admin:true when profile.ADMIN is true (drives the server-side admin gate)', async () => {
+    const adminFetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ result: { ID: '1', ADMIN: true } }) }))
+    const r = await resolveFrameMember(auth, { fetchFn: adminFetch, query: query([{ member_id: 'm42' }]) })
+    expect(r).toEqual({ ok: true, memberId: 'm42', admin: true })
   })
 
   it('401 when the token is rejected (auth error)', async () => {
@@ -44,7 +50,7 @@ describe('resolveFrameMember', () => {
     // domain is bare lower-case. Normalisation must let them still match.
     const variant = { accessToken: 'tok', domain: 'BEL.Bitrix24.by/' }
     const r = await resolveFrameMember(variant, { fetchFn: okFetch(), query: q })
-    expect(r).toEqual({ ok: true, memberId: 'm42' })
+    expect(r).toEqual({ ok: true, memberId: 'm42', admin: false })
     // getMemberIdByDomain must be queried with the bare lower-case host.
     expect(q).toHaveBeenCalledWith(expect.any(String), ['bel.bitrix24.by'])
   })

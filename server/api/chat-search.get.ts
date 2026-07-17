@@ -1,22 +1,21 @@
 import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { makePortalSdkCall, sdkPortalDeps } from '../utils/b24Sdk'
-import { searchCatalogProperties } from '../utils/catalogPropertySearch'
+import { searchChats } from '../utils/chatSearch'
 import { query } from '../db/client'
 
-// GET /api/catalog-properties?q=<phrase> — search the portal's catalog product
-// properties for the supplier-article picker (P7). Auth = the Bitrix24 frame access
-// token (Authorization: Bearer) + portal domain (X-B24-Domain). We VERIFY that token
-// controls the domain (resolveFrameMember → cheap `profile` call), map it to the
-// installed portal's member_id, then read via the portal's stored OAuth token over the
-// SDK transport (full-list pagination, same path as crm-sync). Read-only, no storage.
+// GET /api/chat-search?q=<phrase> — search the portal's chats for the settings notify/error
+// chat pickers. Auth = the Bitrix24 frame access token (Authorization: Bearer) + portal
+// domain (X-B24-Domain). We VERIFY that token controls the domain (resolveFrameMember →
+// cheap `profile` call), map it to the installed portal's member_id, then read via the
+// portal's stored OAuth token over the SDK transport (same path as crm-sync / catalog
+// properties). Read-only, no storage.
 //
 // member_id is derived from the VERIFIED domain (not client-supplied) → same-portal only,
-// no cross-portal reach. NB: the read uses the portal's app-install OAuth token, so it sees
-// catalog metadata regardless of the caller's own CRM rights — acceptable here: the payload
-// is non-sensitive schema (property names/codes, visible to anyone browsing the catalog) and
-// this endpoint backs the ADMIN-gated settings picker (SettingsForm useIsAdmin). It matches
-// the app's server-side-OAuth read model (settings/app.option, crm-sync).
+// no cross-portal reach. The read uses the portal's app-install OAuth token, so it sees the
+// portal's chats regardless of the caller's own rights — acceptable: this backs the
+// ADMIN-gated settings picker, and the payload is chat titles + DIALOG_IDs (a chat the app
+// itself may post to via im.message.add). Matches the app's server-side-OAuth read model.
 export default defineEventHandler(async (event) => {
   const auth = extractFrameAuth(getHeaders(event) as Record<string, string | undefined>)
   if (!auth) {
@@ -29,9 +28,9 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }
   }
-  // Server-side ADMIN gate (mirrors the client-side useIsAdmin on the settings form): the read
-  // runs on the portal's app OAuth token, so reject non-admins rather than let any in-portal
-  // user enumerate catalog property metadata.
+  // Server-side ADMIN gate (not just the client-side useIsAdmin): the read below runs on the
+  // portal's app OAuth token and would otherwise let ANY in-portal user enumerate chat titles +
+  // DIALOG_IDs. Only a portal admin configures settings, so reject non-admins here.
   if (!resolved.admin) {
     setResponseStatus(event, 403)
     return { error: 'admin only' }
@@ -51,9 +50,10 @@ export default defineEventHandler(async (event) => {
   }
   const q = typeof getQuery(event).q === 'string' ? getQuery(event).q as string : ''
   try {
-    return await searchCatalogProperties(transport, q)
+    // transport is an SdkTransport { call, list }; searchChats needs the single-call RestCall.
+    return await searchChats(transport.call, q)
   } catch {
     setResponseStatus(event, 502)
-    return { error: 'catalog properties read failed' }
+    return { error: 'chat search failed' }
   }
 })
