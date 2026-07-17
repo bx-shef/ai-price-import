@@ -5,12 +5,16 @@ import {
   makeSdkListCall,
   makeSdkRestCall,
   oauthParamsFromToken,
+  rawTokenFromRefresh,
   saveInputFromOAuthParams,
+  withTimeout,
   type OAuthCallClient,
   type SdkAjaxResult,
   type SdkListResult,
   type SdkPortalDeps
 } from '../server/utils/b24Sdk'
+import { parseTokenResponse } from '../server/utils/b24Oauth'
+import type { B24OAuthParams } from '@bitrix24/b24jssdk'
 import { fetchVatRates } from '../server/utils/portalVat'
 import type { PortalToken } from '../server/utils/tokenStore'
 
@@ -71,7 +75,10 @@ function fakeClient(result: SdkAjaxResult, listResult?: SdkListResult): OAuthCal
         callList: { make: vi.fn(async () => listResult ?? { getData: () => [] }) }
       }
     },
-    setCallbackRefreshAuth: vi.fn()
+    setCallbackRefreshAuth: vi.fn(),
+    setCustomRefreshAuth: vi.fn(),
+    auth: { refreshAuth: vi.fn(async () => false) },
+    setRestrictionManagerParams: vi.fn()
   }
 }
 
@@ -129,6 +136,59 @@ describe('fetchVatRates (SDK full-list, #87)', () => {
     ))
     const rates = await fetchVatRates(listCall)
     expect(rates).toEqual([{ id: '1', name: '20%', rate: 20 }, { id: '9', name: 'Без НДС', rate: null }])
+  })
+})
+
+describe('withTimeout (refresh lock-safety guard)', () => {
+  it('resolves a fast promise and clears the timer (no dangling timer)', async () => {
+    vi.useFakeTimers()
+    try {
+      await expect(withTimeout(Promise.resolve('ok'), 10_000)).resolves.toBe('ok')
+      expect(vi.getTimerCount()).toBe(0) // proves clearTimeout ran — fails if removed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('propagates a fast rejection as-is and clears the timer', async () => {
+    vi.useFakeTimers()
+    try {
+      await expect(withTimeout(Promise.reject(new Error('grant dead')), 10_000)).rejects.toThrow('grant dead')
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('rejects with a timeout error when the promise outlives the deadline', async () => {
+    const never = new Promise<string>(() => {}) // never settles
+    await expect(withTimeout(never, 5)).rejects.toThrow(/no response within 5ms/)
+  })
+})
+
+describe('rawTokenFromRefresh (SDK refresh → raw token JSON, #b24jssdk)', () => {
+  const captured = {
+    accessToken: 'AT2', refreshToken: 'RT2', expiresIn: 3600, expires: 1_700_000_000,
+    clientEndpoint: 'https://p.bitrix24.ru/rest/', serverEndpoint: 'https://oauth.bitrix.info/rest/',
+    scope: 'crm,im', status: 'L', memberId: 'm1'
+  } as B24OAuthParams
+  it('prefers the captured params (fullest — carries client_endpoint/scope/status)', () => {
+    const raw = rawTokenFromRefresh(captured, false)
+    expect(raw).toMatchObject({
+      access_token: 'AT2', refresh_token: 'RT2', expires_in: 3600,
+      client_endpoint: 'https://p.bitrix24.ru/rest/', scope: 'crm,im', status: 'L', member_id: 'm1'
+    })
+  })
+  it('falls back to authData when the callback did not capture (e.g. only refreshAuth return)', () => {
+    const raw = rawTokenFromRefresh(undefined, { access_token: 'AT9', refresh_token: 'RT9', expires: 0, expires_in: 3600, domain: 'p.bitrix24.ru', member_id: 'm1' })
+    expect(raw.access_token).toBe('AT9')
+    expect(raw.refresh_token).toBe('RT9')
+    expect(raw.member_id).toBe('m1')
+  })
+  it('leaves tokens UNDEFINED when neither source has them (fail-closed — parseTokenResponse then throws, no blank-credential persist)', () => {
+    const raw = rawTokenFromRefresh(undefined, false)
+    expect(raw.access_token).toBeUndefined()
+    expect(raw.refresh_token).toBeUndefined()
+    // The downstream guard must reject it (would otherwise UPDATE the portal row to empty creds).
+    expect(() => parseTokenResponse(raw)).toThrow(/invalid token response/)
   })
 })
 

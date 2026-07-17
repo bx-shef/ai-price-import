@@ -19,7 +19,6 @@ export default defineEventHandler(async (event) => {
     configured: !!(clientId && clientSecret),
     reauth: memberId => reauthPortal(memberId, {
       query,
-      fetchFn: globalThis.fetch as never,
       encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
       clientId,
       clientSecret,

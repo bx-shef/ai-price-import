@@ -8,7 +8,6 @@ import { enqueueExtract } from '../../queue/producers'
 import { queueEnabled } from '../../queue/connection'
 import { MAX_UPLOAD_BYTES, validateUploadFile } from '~/utils/importUpload'
 import { query } from '../../db/client'
-import type { FetchFn } from '../../utils/b24Rest'
 
 // POST /api/import/upload — in-portal document upload. Frame-token authenticated and
 // bound to a verified portal member_id (no client-trusted id → no cross-portal
@@ -19,7 +18,7 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 401)
     return { error: 'frame auth required' }
   }
-  const member = await resolveFrameMember(auth, { fetchFn: globalThis.fetch as unknown as FetchFn, query })
+  const member = await resolveFrameMember(auth, { query })
   if (!member.ok || !member.memberId) {
     console.warn(`[import/upload] auth fail: reason=${member.reason} domain=${auth.domain} status=${member.status}`)
     setResponseStatus(event, member.status ?? 401)

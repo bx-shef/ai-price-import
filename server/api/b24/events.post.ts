@@ -5,7 +5,7 @@ import { deletePortal, getApplicationToken, saveToken } from '../../utils/tokenS
 import { purgePortalFiles } from '../../utils/nodeFileIO'
 import { encryptSecret } from '../../utils/secretCrypto'
 import { verifyInstallToken } from '../../utils/verifyInstallToken'
-import { normaliseHost, type FetchFn } from '../../utils/b24Rest'
+import { normaliseHost } from '../../utils/b24Rest'
 import { enqueueEvent } from '../../queue/producers'
 import { queueEnabled } from '../../queue/connection'
 import { eventJobToSaveInput, type EventJob } from '../../queue/topology'
@@ -47,8 +47,7 @@ export default defineEventHandler(async (event) => {
   if (decision.verifyAccessToken) {
     const verdict = await verifyInstallToken(
       ev.domain || String(auth.domain ?? ''),
-      String(auth.access_token ?? ''),
-      globalThis.fetch as unknown as FetchFn
+      String(auth.access_token ?? '')
     )
     if (!verdict.ok) {
       setResponseStatus(event, verdict.status ?? 403)

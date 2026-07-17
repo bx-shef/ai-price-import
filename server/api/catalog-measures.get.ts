@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 401)
     return { error: 'frame auth required' }
   }
-  const resolved = await resolveFrameMember(auth, { fetchFn: globalThis.fetch as never, query })
+  const resolved = await resolveFrameMember(auth, { query })
   if (!resolved.ok || !resolved.memberId) {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }
