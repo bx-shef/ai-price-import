@@ -19,6 +19,12 @@ describe('computePortalHealth', () => {
     expect(r.expiresInDays).toBe(-20)
     expect(r.health).toBe('stale')
   })
+  it('pins the end-of-life seam: exactly 0 days left is stale (not near-expiry)', () => {
+    // ageDays === REFRESH_LIFETIME_DAYS ⇒ expiresInDays === 0 ⇒ the `<= 0` boundary must be stale.
+    expect(computePortalHealth(NOW - REFRESH_LIFETIME_DAYS * DAY, NOW)).toEqual({
+      ageDays: REFRESH_LIFETIME_DAYS, expiresInDays: 0, health: 'stale'
+    })
+  })
   it('clamps a future/invalid timestamp to age 0 (defensive; a real row always has updated_at)', () => {
     expect(computePortalHealth(NOW + 5 * DAY, NOW).ageDays).toBe(0)
     expect(computePortalHealth(0, NOW)).toEqual({ ageDays: 0, expiresInDays: REFRESH_LIFETIME_DAYS, health: 'ok' })
