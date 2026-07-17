@@ -5,6 +5,7 @@ import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
+import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -16,6 +17,7 @@ const { mapping, loading, saving, saved, error, load, save } = useSettings()
 onMounted(async () => {
   await load()
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
+  seedRoutingRows() // build editable routing rules from the loaded mapping (once)
   await loadMeasures() // populate the measure dropdowns
 })
 
@@ -124,6 +126,28 @@ const measureItems = computed(() => {
   return items
 })
 
+// Routing rules editor: send a document to a target by its classified type and/or keywords
+// (first matching rule wins, else the default target below). Same rows↔stored pattern as units.
+// categoryId/stageId are not edited by the UI but ride along so a category/stage-scoped target
+// (only settable via app.option today) is not stripped on the round-trip.
+interface EditableRoutingRow { id: number, type: string, keywords: string, entityTypeId: number | null, categoryId?: number, stageId?: string }
+let nextRuleId = 1
+const routingRows = ref<EditableRoutingRow[]>([])
+function seedRoutingRows() {
+  routingRows.value = rulesToRows(mapping.value.routingRules).map(r => ({ id: nextRuleId++, ...r }))
+}
+function addRoutingRow() {
+  routingRows.value.push({ id: nextRuleId++, type: '', keywords: '', entityTypeId: null })
+}
+function removeRoutingRow(id: number) {
+  routingRows.value = routingRows.value.filter(r => r.id !== id)
+}
+watch(routingRows, (rows) => {
+  mapping.value.routingRules = rowsToRules(rows.map(r => ({ type: r.type, keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId })))
+}, { deep: true })
+// Type dropdown: the known document types + «любой тип» (empty → match by keywords only).
+const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: '' }, ...DOCUMENT_TYPES.map(t => ({ label: t, value: t }))]
+
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
 const TARGET_PRESETS = [
@@ -187,6 +211,57 @@ const ON_MISSING_ITEMS = [
         </div>
       </B24FormField>
 
+      <!-- Правила маршрутизации -->
+      <B24FormField label="Правила маршрутизации (по типу/словам → цель)">
+        <p class="mb-2 text-xs text-gray-500">
+          Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: 2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
+        </p>
+        <div class="space-y-2">
+          <div
+            v-for="(row, i) in routingRows"
+            :key="row.id"
+            class="flex flex-wrap items-center gap-2"
+          >
+            <B24Select
+              v-model="row.type"
+              :items="DOCUMENT_TYPE_ITEMS"
+              class="w-40"
+              :aria-label="`Правило ${i + 1}: тип документа`"
+            />
+            <B24Input
+              v-model="row.keywords"
+              placeholder="слова через запятую (необязательно)"
+              class="w-56"
+              :aria-label="`Правило ${i + 1}: ключевые слова`"
+            />
+            <span
+              class="text-gray-400"
+              aria-hidden="true"
+            >→</span>
+            <B24InputNumber
+              v-model="row.entityTypeId"
+              :min="1"
+              class="w-28"
+              :aria-label="`Правило ${i + 1}: тип целевой сущности`"
+            />
+            <B24Button
+              color="air-tertiary-no-accent"
+              size="sm"
+              label="✕"
+              :aria-label="`Удалить правило ${i + 1}`"
+              @click="() => removeRoutingRow(row.id)"
+            />
+          </div>
+        </div>
+        <B24Button
+          class="mt-2"
+          color="air-tertiary"
+          size="sm"
+          label="+ Добавить правило"
+          @click="addRoutingRow"
+        />
+      </B24FormField>
+
       <!-- Поле артикула поставщика -->
       <B24FormField label="Поле артикула поставщика">
         <AsyncSearchSelect
@@ -238,7 +313,7 @@ const ON_MISSING_ITEMS = [
         </p>
         <div class="space-y-2">
           <div
-            v-for="row in unitRows"
+            v-for="(row, i) in unitRows"
             :key="row.id"
             class="flex items-center gap-2"
           >
@@ -246,22 +321,25 @@ const ON_MISSING_ITEMS = [
               v-model="row.unit"
               placeholder="из документа, напр. м"
               class="w-40"
-              aria-label="Единица из документа"
+              :aria-label="`Единица ${i + 1}: из документа`"
             />
-            <span class="text-gray-400">→</span>
+            <span
+              class="text-gray-400"
+              aria-hidden="true"
+            >→</span>
             <B24Select
               :model-value="row.code != null ? String(row.code) : undefined"
               :items="measureItems"
               placeholder="Ед. Б24"
               class="w-56"
-              aria-label="Единица Б24"
+              :aria-label="`Единица ${i + 1}: соответствие Б24`"
               @update:model-value="(v) => { row.code = v ? Number(v) : null }"
             />
             <B24Button
               color="air-tertiary-no-accent"
               size="sm"
               label="✕"
-              aria-label="Удалить строку"
+              :aria-label="`Удалить единицу ${i + 1}`"
               @click="() => removeUnitRow(row.id)"
             />
           </div>
