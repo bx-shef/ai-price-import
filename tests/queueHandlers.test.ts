@@ -49,12 +49,13 @@ describe('handleCrmSyncJob', () => {
     expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'error', expect.stringContaining('не найден'))
   })
 
-  it('bumps dashboard counters on success (docs/created/lines; errors handled upstream)', async () => {
+  it('bumps dashboard counters on success (docs/created/lines/unmatched; errors handled upstream)', async () => {
     const bumpMetrics = vi.fn(async () => {})
     const d = deps({ bumpMetrics })
     await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
-    // 1 doc processed, 1 CRM entity created, 1 product row (doc has 1 item). No `errors` key.
-    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 1 })
+    // 1 doc processed, 1 CRM entity created, 1 product row (doc has 1 item), supplier matched
+    // (unmatched:0). No `errors` key.
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 1, unmatched: 0 })
   })
 
   it('bumps docs but not created/lines on a hard error', async () => {
@@ -62,16 +63,27 @@ describe('handleCrmSyncJob', () => {
     const badDoc: ExtractedDocument = { ...doc, items: [{ name: 'a', price: 10, quantity: 1, unit: 'шт', vatRate: 20 }] }
     const d = deps({ bumpMetrics, getDocument: vi.fn(async () => ({ doc: badDoc, signals: {} })) })
     await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
-    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 0, lines: 0 })
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 0, lines: 0, unmatched: 0 })
   })
 
-  it('idempotent redelivery re-counts nothing (docs not double-counted)', async () => {
+  it('bumps `unmatched` when the supplier company is not resolved', async () => {
+    const bumpMetrics = vi.fn(async () => {})
+    // findCompanyByTaxId → null ⇒ entity still created (freeform), but unmatched:1.
+    const cd = { ...crmDeps(), findCompanyByTaxId: vi.fn(async () => null as number | null) }
+    const d = deps({ bumpMetrics, crmSyncDeps: vi.fn(() => cd) })
+    const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(r?.unmatched).toBe(true)
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 1, unmatched: 1 })
+  })
+
+  it('idempotent redelivery counts a `skipped`, re-counts nothing else', async () => {
     const bumpMetrics = vi.fn(async () => {})
     const cd = { ...crmDeps(), findExisting: vi.fn(async () => 99 as number | null) }
     const d = deps({ bumpMetrics, crmSyncDeps: vi.fn(() => cd) })
     const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
     expect(r?.idempotent).toBe(true)
-    expect(bumpMetrics).not.toHaveBeenCalled()
+    // The whole document was skipped as a duplicate — count it, but do NOT re-count docs/lines.
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { skipped: 1 })
   })
 
   it('lines uses rows actually written, not doc.items.length (skip-warn drops a line)', async () => {
@@ -86,7 +98,7 @@ describe('handleCrmSyncJob', () => {
     m.product.onMissing = 'skip-warn'
     const d = deps({ bumpMetrics, getMapping: vi.fn(async () => m), getDocument: vi.fn(async () => ({ doc: twoItem, signals: {} })) })
     await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
-    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 0 })
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 0, unmatched: 0 })
   })
 
   it('a metrics-write failure never fails the job', async () => {
