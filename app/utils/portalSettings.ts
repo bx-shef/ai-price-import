@@ -71,7 +71,7 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     },
     units: {
       dictionary: units.dictionary && typeof units.dictionary === 'object'
-        ? Object.fromEntries(Object.entries(units.dictionary as Record<string, unknown>).slice(0, MAX_UNIT_DICT_ENTRIES).map(([k, v]) => [k.toLowerCase(), Number(v)]).filter(([, v]) => Number.isFinite(v as number))) // DoS cap (#83)
+        ? Object.fromEntries(Object.entries(units.dictionary as Record<string, unknown>).slice(0, MAX_UNIT_DICT_ENTRIES).map(([k, v]) => [k.toLowerCase(), Number(v)]).filter(([, v]) => Number.isInteger(v as number) && (v as number) > 0)) // DoS cap (#83); a measure code is a positive integer (aligned with the editor's rowsToDictionary)
         : {},
       defaultCode: Number.isFinite(Number(units.defaultCode)) ? Number(units.defaultCode) : 796,
       autoCreate: units.autoCreate === true

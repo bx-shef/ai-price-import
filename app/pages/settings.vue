@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { useSettings } from '~/composables/useSettings'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
+import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
+import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -11,7 +13,11 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
 
 const { mapping, loading, saving, saved, error, load, save } = useSettings()
-onMounted(load)
+onMounted(async () => {
+  await load()
+  seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
+  await loadMeasures() // populate the measure dropdowns
+})
 
 // Supplier-article field: searchable picker over the portal's catalog product
 // properties (P7). The model carries the property CODE (string); coerce the picker's
@@ -66,6 +72,57 @@ function seedChat(sel: Ref<Record<string, unknown> | undefined>, id: string | un
 }
 watch(() => mapping.value.notifyChatId, id => seedChat(selectedNotifyChat, id), { immediate: true })
 watch(() => mapping.value.errorChatId, id => seedChat(selectedErrorChat, id), { immediate: true })
+
+// Units dictionary editor (Q11): map a document unit synonym ("м","кг") → a portal measure
+// code, so quantities aren't all forced to the default (796/шт). Measures come from the portal
+// (catalog.measure.list) as a small list — no search, just a dropdown per row.
+const { measures, load: loadMeasures } = useCatalogMeasures()
+
+// Editable rows carry a client-only `id` for a stable v-for key (avoids input focus j/loss on
+// add/remove); the pure util deals in {unit,code}. Seeded ONCE from the loaded dictionary; from
+// then on the editor is the source of truth and syncs rows → mapping.units.dictionary.
+interface EditableUnitRow { id: number, unit: string, code: number | null }
+let nextRowId = 1
+const unitRows = ref<EditableUnitRow[]>([])
+function seedUnitRows() {
+  unitRows.value = dictionaryToRows(mapping.value.units.dictionary).map(r => ({ id: nextRowId++, ...r }))
+}
+function addUnitRow() {
+  unitRows.value.push({ id: nextRowId++, unit: '', code: null })
+}
+function removeUnitRow(id: number) {
+  unitRows.value = unitRows.value.filter(r => r.id !== id)
+}
+// rows → dictionary (one direction only, so no reseed loop). Deep watch catches unit/code edits.
+watch(unitRows, (rows) => {
+  mapping.value.units.dictionary = rowsToDictionary(rows.map(r => ({ unit: r.unit, code: r.code })))
+}, { deep: true })
+const duplicateUnits = computed(() => hasDuplicateUnits(unitRows.value.map(r => ({ unit: r.unit, code: r.code }))))
+
+// Default measure (when no unit matches): mapping.units.defaultCode is a number; the Select
+// carries strings. Empty/invalid selection keeps the current default (never write NaN).
+const defaultMeasure = computed<string>({
+  get: () => String(mapping.value.units.defaultCode || 796),
+  set: (v) => {
+    const n = Number(v)
+    if (Number.isInteger(n) && n > 0) mapping.value.units.defaultCode = n
+  }
+})
+
+// Measure options as b24ui Select items (value = code string). Merge a synthetic «код N» entry
+// for the current default and any row code NOT in the portal list, so a saved code still shows a
+// value BEFORE the list loads (async) or if the measure was later deactivated on the portal
+// (catalog.measure.list filters active:Y). The real label wins once loaded (same code → skipped).
+const measureItems = computed(() => {
+  const items = measures.value.map(m => ({ label: m.label, value: m.value }))
+  const present = new Set(items.map(i => i.value))
+  const referenced = new Set<string>([String(mapping.value.units.defaultCode || 796)])
+  for (const r of unitRows.value) if (r.code != null) referenced.add(String(r.code))
+  for (const code of referenced) {
+    if (code && !present.has(code)) items.push({ label: `код ${code}`, value: code })
+  }
+  return items
+})
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
@@ -160,6 +217,67 @@ const ON_MISSING_ITEMS = [
           v-model="mapping.product.onMissing"
           :items="ON_MISSING_ITEMS"
           class="w-full"
+        />
+      </B24FormField>
+
+      <!-- Единицы измерения -->
+      <B24FormField label="Единицы измерения">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs text-gray-500">По умолчанию (если единица не сопоставлена):</span>
+          <B24Select
+            v-model="defaultMeasure"
+            :items="measureItems"
+            placeholder="Ед. Б24"
+            class="w-56"
+            aria-label="Единица по умолчанию"
+          />
+        </div>
+
+        <p class="mt-3 mb-1 text-xs text-gray-500">
+          Сопоставление единиц из документа с единицами Б24:
+        </p>
+        <div class="space-y-2">
+          <div
+            v-for="row in unitRows"
+            :key="row.id"
+            class="flex items-center gap-2"
+          >
+            <B24Input
+              v-model="row.unit"
+              placeholder="из документа, напр. м"
+              class="w-40"
+              aria-label="Единица из документа"
+            />
+            <span class="text-gray-400">→</span>
+            <B24Select
+              :model-value="row.code != null ? String(row.code) : undefined"
+              :items="measureItems"
+              placeholder="Ед. Б24"
+              class="w-56"
+              aria-label="Единица Б24"
+              @update:model-value="(v) => { row.code = v ? Number(v) : null }"
+            />
+            <B24Button
+              color="air-tertiary-no-accent"
+              size="sm"
+              label="✕"
+              aria-label="Удалить строку"
+              @click="() => removeUnitRow(row.id)"
+            />
+          </div>
+        </div>
+        <B24Button
+          class="mt-2"
+          color="air-tertiary"
+          size="sm"
+          label="+ Добавить единицу"
+          @click="addUnitRow"
+        />
+        <B24Alert
+          v-if="duplicateUnits"
+          class="mt-2"
+          color="air-primary-warning"
+          title="Повторяющиеся единицы — сработает последняя."
         />
       </B24FormField>
 
