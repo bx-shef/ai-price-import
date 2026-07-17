@@ -128,7 +128,9 @@ const measureItems = computed(() => {
 
 // Routing rules editor: send a document to a target by its classified type and/or keywords
 // (first matching rule wins, else the default target below). Same rows↔stored pattern as units.
-interface EditableRoutingRow { id: number, type: string, keywords: string, entityTypeId: number | null }
+// categoryId/stageId are not edited by the UI but ride along so a category/stage-scoped target
+// (only settable via app.option today) is not stripped on the round-trip.
+interface EditableRoutingRow { id: number, type: string, keywords: string, entityTypeId: number | null, categoryId?: number, stageId?: string }
 let nextRuleId = 1
 const routingRows = ref<EditableRoutingRow[]>([])
 function seedRoutingRows() {
@@ -141,7 +143,7 @@ function removeRoutingRow(id: number) {
   routingRows.value = routingRows.value.filter(r => r.id !== id)
 }
 watch(routingRows, (rows) => {
-  mapping.value.routingRules = rowsToRules(rows.map(r => ({ type: r.type, keywords: r.keywords, entityTypeId: r.entityTypeId })))
+  mapping.value.routingRules = rowsToRules(rows.map(r => ({ type: r.type, keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId })))
 }, { deep: true })
 // Type dropdown: the known document types + «любой тип» (empty → match by keywords only).
 const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: '' }, ...DOCUMENT_TYPES.map(t => ({ label: t, value: t }))]
@@ -216,7 +218,7 @@ const ON_MISSING_ITEMS = [
         </p>
         <div class="space-y-2">
           <div
-            v-for="row in routingRows"
+            v-for="(row, i) in routingRows"
             :key="row.id"
             class="flex flex-wrap items-center gap-2"
           >
@@ -224,26 +226,29 @@ const ON_MISSING_ITEMS = [
               v-model="row.type"
               :items="DOCUMENT_TYPE_ITEMS"
               class="w-40"
-              aria-label="Тип документа для правила"
+              :aria-label="`Правило ${i + 1}: тип документа`"
             />
             <B24Input
               v-model="row.keywords"
               placeholder="слова через запятую (необязательно)"
               class="w-56"
-              aria-label="Ключевые слова правила"
+              :aria-label="`Правило ${i + 1}: ключевые слова`"
             />
-            <span class="text-gray-400">→</span>
+            <span
+              class="text-gray-400"
+              aria-hidden="true"
+            >→</span>
             <B24InputNumber
               v-model="row.entityTypeId"
               :min="1"
               class="w-28"
-              aria-label="Тип целевой сущности правила"
+              :aria-label="`Правило ${i + 1}: тип целевой сущности`"
             />
             <B24Button
               color="air-tertiary-no-accent"
               size="sm"
               label="✕"
-              aria-label="Удалить правило"
+              :aria-label="`Удалить правило ${i + 1}`"
               @click="() => removeRoutingRow(row.id)"
             />
           </div>
@@ -308,7 +313,7 @@ const ON_MISSING_ITEMS = [
         </p>
         <div class="space-y-2">
           <div
-            v-for="row in unitRows"
+            v-for="(row, i) in unitRows"
             :key="row.id"
             class="flex items-center gap-2"
           >
@@ -316,22 +321,25 @@ const ON_MISSING_ITEMS = [
               v-model="row.unit"
               placeholder="из документа, напр. м"
               class="w-40"
-              aria-label="Единица из документа"
+              :aria-label="`Единица ${i + 1}: из документа`"
             />
-            <span class="text-gray-400">→</span>
+            <span
+              class="text-gray-400"
+              aria-hidden="true"
+            >→</span>
             <B24Select
               :model-value="row.code != null ? String(row.code) : undefined"
               :items="measureItems"
               placeholder="Ед. Б24"
               class="w-56"
-              aria-label="Единица Б24"
+              :aria-label="`Единица ${i + 1}: соответствие Б24`"
               @update:model-value="(v) => { row.code = v ? Number(v) : null }"
             />
             <B24Button
               color="air-tertiary-no-accent"
               size="sm"
               label="✕"
-              aria-label="Удалить строку"
+              :aria-label="`Удалить единицу ${i + 1}`"
               @click="() => removeUnitRow(row.id)"
             />
           </div>

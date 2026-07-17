@@ -8,8 +8,10 @@ const DEFAULT_TARGET: TargetRef = { entityTypeId: 2 } // deal
 // DoS bounds (#83): app.option is admin-controlled, so a bloated blob (huge routingRules /
 // unit dictionary) would pin CPU/memory while a worker parses it once per job. Cap the
 // input BEFORE the loops — silently truncate rather than choke (a real config never nears these).
-const MAX_ROUTING_RULES = 200
-const MAX_RULE_KEYWORDS = 100
+// Exported so the settings-form editor (routingRulesEditor) enforces the SAME caps it will be
+// parsed against — otherwise an overflowing editor state is silently truncated on save.
+export const MAX_ROUTING_RULES = 200
+export const MAX_RULE_KEYWORDS = 100
 const MAX_UNIT_DICT_ENTRIES = 1000
 
 export function defaultMapping(): PortalMapping {
@@ -29,7 +31,9 @@ export function defaultMapping(): PortalMapping {
 function asTarget(v: unknown, fallback: TargetRef): TargetRef {
   const o = v as Record<string, unknown> | undefined
   const etid = Number(o?.entityTypeId)
-  if (!Number.isFinite(etid) || etid <= 0) return fallback
+  // A B24 entityTypeId is a positive INTEGER. Reject non-integers too, so the parse layer and the
+  // settings-form editor (rowsToRules requires an integer) agree — no rule silently drops on save.
+  if (!Number.isInteger(etid) || etid <= 0) return fallback
   const categoryId = Number(o?.categoryId)
   return {
     entityTypeId: etid,

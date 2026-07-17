@@ -64,4 +64,16 @@ describe('rowsToRules', () => {
     ]
     expect(rowsToRules(rulesToRows(rules))).toEqual(rules)
   })
+  it('preserves a category/stage-scoped target across the round-trip (not stripped)', () => {
+    const rules: RoutingRule[] = [
+      { match: { type: 'накладная' }, target: { entityTypeId: 1032, categoryId: 7, stageId: 'DT1032_7:NEW' } }
+    ]
+    expect(rowsToRules(rulesToRows(rules))).toEqual(rules)
+  })
+  it('caps the rules list and per-rule keywords (mirrors parsePortalSettings DoS caps)', () => {
+    const many = Array.from({ length: 250 }, (_, i) => ({ type: 'накладная', keywords: `k${i}`, entityTypeId: 2 }))
+    expect(rowsToRules(many).length).toBe(200) // MAX_ROUTING_RULES
+    const kw = Array.from({ length: 150 }, (_, i) => `k${i}`).join(',')
+    expect(parseKeywords(kw).length).toBe(100) // MAX_RULE_KEYWORDS
+  })
 })
