@@ -176,16 +176,21 @@ export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): 
     deps.creds
   )
   client.setCallbackRefreshAuth(buildRefreshPersist(deps.saveToken, { now: deps.now, encrypt: deps.encrypt }))
-  // Calibration (#123, live load-tested via `pnpm loadtest:123`): the default leaky-bucket
+  // Calibration (#123, live-tested via `pnpm loadtest:123`): the default leaky-bucket
   // (drainRate 2 / burst 50) holds — 0 QUERY_LIMIT_EXCEEDED even at 10× scale-out — so we keep
-  // it. The ONE change is retryOnNetworkError:false: a crm-sync job issues non-idempotent
-  // creates (crm.item.add / crm.product.add), and an in-SDK retry after a client-side network
-  // TIMEOUT (request may have already succeeded server-side) would duplicate the entity. We
-  // instead let the whole BullMQ job fail + retry, where the create is idempotent via its B24
-  // marker (findExisting-before-create, #135). The rate-limit auto-retry (QUERY_LIMIT_EXCEEDED/
-  // 429/5xx) stays ON — those are safe to replay. Reads are idempotent, so losing their in-SDK
-  // network-retry to a job-level retry is an acceptable, safer trade.
-  client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), retryOnNetworkError: false })
+  // the rate-limit params. We DISABLE in-SDK retry entirely (maxRetries:1 = one attempt, no
+  // retry; retryOnNetworkError:false as belt-and-braces): a crm-sync job issues NON-IDEMPOTENT
+  // creates (crm.item.add / crm.product.add), and ANY in-SDK retry of one — after a client-side
+  // network timeout OR a server-returned 504 (the request may have already COMMITTED) — would
+  // silently duplicate the entity, since Bitrix does not enforce originId/xmlId uniqueness.
+  // Instead we let the whole BullMQ job fail + retry, where creates are idempotent
+  // (findExisting-before-create via the #135 marker; findProduct before crm.product.add).
+  // What STAYS on (all independent of the retry loop — live-verified: limitHits still fire with
+  // maxRetries:1): the PROACTIVE rate-limit throttle (waits before send), the operating-limit
+  // adaptive backoff, and the reactive OAuth token-refresh (its own path, abstract-http _isAuthError).
+  // Trade: a rare QUERY_LIMIT_EXCEEDED/5xx now costs a job-level retry instead of an in-SDK one —
+  // acceptable for this low-concurrency design, and the proactive limiter prevents QLE anyway.
+  client.setRestrictionManagerParams({ ...ParamsFactory.getDefault(), maxRetries: 1, retryOnNetworkError: false })
   return { call: makeSdkRestCall(client), list: makeSdkListCall(client) }
 }
 

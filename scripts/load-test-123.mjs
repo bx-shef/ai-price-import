@@ -22,8 +22,10 @@ const arg = (name, def) => {
   const i = process.argv.indexOf(name)
   return i >= 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) : def
 }
-const JOBS = arg('--jobs', 4) // parallel "documents"/jobs → each gets its OWN limiter (scale-out)
-const OPS = arg('--ops', 10) // REST calls per job (a crm-sync job does ~6-10 reads per op)
+// Defaults chosen so the throttle path is ACTUALLY entered: Scenario A fires OPS*3 reads on one
+// bucket, so OPS>=17 exhausts the 50-token burst and forces the 2/s drain (the gate asserts it did).
+const JOBS = arg('--jobs', 6) // parallel "documents"/jobs → each gets its OWN limiter (scale-out)
+const OPS = arg('--ops', 20) // REST calls per job (a crm-sync job does ~6-10 reads per op)
 
 // The reads a crm-sync job actually issues (company/product/VAT/units lookups). All idempotent.
 const READS = [
@@ -58,13 +60,17 @@ async function runJob(hook) {
   const calls = Array.from({ length: OPS }, (_, i) => {
     const [method, params] = READS[i % READS.length]
     // Same call path production crm-sync uses (b24Sdk.makeSdkRestCall → actions.v2.call.make).
-    return hook.actions.v2.call.make({ method, params }).then(() => ({ ok: true })).catch(e => ({ ok: false, msg: String(e?.message ?? e) }))
+    // The QUERY_LIMIT_EXCEEDED token lives in AjaxError.code (the SDK keys on it); the .message is
+    // human text — so capture BOTH `code` and String(e) or the escaped-QLE gate would never match.
+    return hook.actions.v2.call.make({ method, params })
+      .then(() => ({ ok: true }))
+      .catch(e => ({ ok: false, code: String(e?.code ?? ''), msg: `${e?.code ?? ''} ${String(e)}` }))
   })
   return Promise.all(calls)
 }
 
 function qle(results) {
-  return results.flat().filter(r => !r.ok && /QUERY_LIMIT_EXCEEDED/i.test(r.msg || '')).length
+  return results.flat().filter(r => !r.ok && /QUERY_LIMIT_EXCEEDED/i.test(`${r.code} ${r.msg}`)).length
 }
 
 async function main() {
@@ -77,10 +83,11 @@ async function main() {
     const rounds = await Promise.all(Array.from({ length: 3 }, () => runJob(hookA)))
     return rounds
   })
-  const nA = JOBS * 0 + OPS * 3
-  console.log(`Scenario A — single limiter, ${nA} reads:`)
-  console.log(`  ${ms(tookA)}  ~${(nA / (tookA / 1000)).toFixed(1)} req/s  ·  QUERY_LIMIT_EXCEEDED=${qle(resA)}`)
-  console.log(`  stats:`, JSON.stringify(stats(hookA)))
+  const nA = OPS * 3
+  const statsA = stats(hookA)
+  console.log(`Scenario A — single limiter, ${nA} reads (OPS×3):`)
+  console.log(`  ${ms(tookA)}  ~${(nA / (tookA / 1000)).toFixed(1)} req/s  ·  QUERY_LIMIT_EXCEEDED=${qle(resA)}  ·  limitHits=${statsA.limitHits}`)
+  console.log(`  stats:`, JSON.stringify(statsA))
 
   // --- Scenario B: SCALE-OUT — JOBS separate hooks (each its own limiter), all firing at once ---
   // Mirrors N throughput workers on N B24OAuth instances hitting one portal in parallel.
@@ -93,9 +100,19 @@ async function main() {
   const agg = hooks.map(stats).reduce((s, x) => ({ limitHits: s.limitHits + x.limitHits, retries: s.retries + x.retries, adaptiveDelays: s.adaptiveDelays + x.adaptiveDelays, failed: s.failed + x.failed }), { limitHits: 0, retries: 0, adaptiveDelays: 0, failed: 0 })
   console.log(`  aggregate stats:`, JSON.stringify(agg))
 
-  console.log(`\n${totalQle === 0 ? '✅ DoD MET' : '❌ DoD FAILED'}: ${totalQle} QUERY_LIMIT_EXCEEDED under ${JOBS}× scale-out.`)
-  console.log(`   Default RestrictionParams (drainRate 2 / burst 50) ${totalQle === 0 ? 'hold' : 'need lowering'} at this concurrency.`)
-  console.log(`   Recommended prod cap: keep QUEUE_CRM_CONCURRENCY such that jobs×drainRate stays within the portal's ~2 req/s standard budget (operating-limit adaptivity smooths the rest).\n`)
+  // The gate is only meaningful if the throttle path was actually ENTERED (Scenario A burst
+  // exhausted → limitHits>0). Otherwise "0 QLE" proves nothing (nothing was throttled).
+  const engaged = statsA.limitHits > 0
+  const pass = engaged && totalQle === 0
+  console.log(`\n${pass ? '✅ DoD MET' : '❌ DoD NOT MET'}:`)
+  console.log(`   • throttle engaged (Scenario A limitHits=${statsA.limitHits} > 0): ${engaged ? 'yes' : 'NO — raise --ops so OPS×3 > 50 burst'}`)
+  console.log(`   • escaped QUERY_LIMIT_EXCEEDED under ${JOBS}× scale-out: ${totalQle} (want 0)`)
+  console.log(`   Interpretation: the per-instance limiter self-throttles once its burst is spent, and`)
+  console.log(`   default params (drainRate 2 / burst 50) let ${JOBS} concurrent limiters run without a`)
+  console.log(`   single escaped QLE. NOTE: this exercises the rate-limit/burst dimension, NOT the`)
+  console.log(`   sustained 10-min operating-limit (which needs heavy methods over minutes) — re-run`)
+  console.log(`   with higher --jobs/--ops (or on tariff change) and keep both checks green.\n`)
+  process.exit(pass ? 0 : 1)
 }
 
 main().catch((e) => {
