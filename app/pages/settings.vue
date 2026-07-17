@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { useSettings } from '~/composables/useSettings'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
+import { useChatSearch } from '~/composables/useChatSearch'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -34,6 +35,37 @@ watch(() => mapping.value.article.field, (code) => {
 function onArticlePicked(o: Record<string, unknown> | undefined) {
   selectedArticle.value = o
 }
+
+// Notify / error chat pickers (P3): search the portal's group chats via /api/chat-search.
+// Both share one fetcher (same portal). The model stores the B24 DIALOG_ID `chat<id>`;
+// clearing the picker (emits undefined) unsets the optional field so the worker skips it.
+const { fetcher: chatFetcher } = useChatSearch()
+
+// The model stores the B24 DIALOG_ID `chat<id>`; the optional field is unset (→ worker
+// skips it) when the picker is cleared (emits '' / undefined).
+const notifyChatId = computed<string | undefined>({
+  get: () => mapping.value.notifyChatId || undefined,
+  set: (v) => { mapping.value.notifyChatId = v || undefined }
+})
+const errorChatId = computed<string | undefined>({
+  get: () => mapping.value.errorChatId || undefined,
+  set: (v) => { mapping.value.errorChatId = v || undefined }
+})
+
+// Seed each picker's selected option so a SAVED id shows before the chat list is fetched
+// (the mapping stores only the id, not the title → the raw `chat<id>` is the fallback label
+// until the user re-picks). Mirrors the article-field seed.
+const selectedNotifyChat = ref<Record<string, unknown> | undefined>()
+const selectedErrorChat = ref<Record<string, unknown> | undefined>()
+function seedChat(sel: Ref<Record<string, unknown> | undefined>, id: string | undefined) {
+  if (!id) {
+    sel.value = undefined
+    return
+  }
+  if (sel.value?.value !== id) sel.value = { value: id, label: id }
+}
+watch(() => mapping.value.notifyChatId, id => seedChat(selectedNotifyChat, id), { immediate: true })
+watch(() => mapping.value.errorChatId, id => seedChat(selectedErrorChat, id), { immediate: true })
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
@@ -137,6 +169,36 @@ const ON_MISSING_ITEMS = [
         label="Сохранять исходный файл"
         description="На общий Диск портала, в папку приложения по месяцам."
       />
+
+      <!-- Чат уведомлений об успешном импорте -->
+      <B24FormField label="Чат уведомлений">
+        <AsyncSearchSelect
+          v-model="notifyChatId"
+          :fetcher="chatFetcher"
+          :selected-option="selectedNotifyChat"
+          :min-chars="3"
+          placeholder="Выберите чат для уведомлений об импорте…"
+          @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
+        />
+        <p class="mt-1 text-xs text-gray-500">
+          Куда слать сообщение после успешной записи документа. Пусто — не уведомляем.
+        </p>
+      </B24FormField>
+
+      <!-- Чат ошибок -->
+      <B24FormField label="Чат ошибок">
+        <AsyncSearchSelect
+          v-model="errorChatId"
+          :fetcher="chatFetcher"
+          :selected-option="selectedErrorChat"
+          :min-chars="3"
+          placeholder="Выберите чат для сообщений об ошибках…"
+          @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
+        />
+        <p class="mt-1 text-xs text-gray-500">
+          Куда слать сообщение, если документ не удалось внести (нет ставки НДС, валюты и т.п.). Пусто — не уведомляем.
+        </p>
+      </B24FormField>
     </div>
 
     <div class="mt-8 flex items-center gap-3">
