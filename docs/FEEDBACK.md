@@ -1,10 +1,18 @@
 # Обратная связь от сотрудника (`POST /feedback`)
 
-> Last reviewed: 2026-07-15
+> Last reviewed: 2026-07-17
 
-> **Пути кода в этом документе** (`backend/…`, `mcp/…`, `mcp-overlay/…`, `prompts/…`) описывают
-> **legacy**-реализацию и физически лежат в дереве `legacy/…` (напр. `legacy/backend/feedback.js`) —
-> редизайн `server/` (Nitro) ещё не пересобрал канал (см. `docs/FEEDBACK_TRIAGE_AGENT.md` §2 NB).
+> **Статус (редизайн, #122):** канал «сотрудник» **пересобран в Nitro `server/`** — чистое ядро
+> `app/utils/feedback.ts` (санитизация Trojan-Source/`escapeHtml`/метки) + `server/utils/feedbackConfig.ts`
+> (**fail-closed**) + `server/utils/feedbackGithub.ts` (POST issue, не логирует токен/URL/тело) + роуты
+> `server/api/feedback.post.ts` (фрейм-токен, гейт на config → 503) / `feedback.get.ts` (`{enabled}`) +
+> UI-виджет `app/components/FeedbackWidget.vue` (+ `useFeedback`, 👍/👎 на строке результата `/app`) +
+> `GITHUB_FEEDBACK_*` в `.env.example`. Репо-приёмник — **приватный** `bx-shef/ai-price-import-feedback`.
+> Осталось для включения на проде: `GITHUB_FEEDBACK_TOKEN` + `GITHUB_FEEDBACK_REPO` в env + live-verify POST.
+>
+> **NB:** отдельные пути кода НИЖЕ по тексту (`backend/…`, `mcp/…`, `mcp-overlay/…`, `prompts/…`) остались из
+> **legacy**-описания (лежат в `legacy/…`, напр. `legacy/backend/feedback.js`) — концептуально соответствуют
+> новым модулям выше; полный переписанный текст тела — отдельная задача (см. `docs/FEEDBACK_TRIAGE_AGENT.md` §2 NB).
 
 Это **первый из трёх каналов** обратной связи из issue **#182** — канал «**сотрудник**». Человек, который
 обработал прайс-лист, прямо на странице результата (под КАЖДЫМ файлом, #218) может оценить итог (👍 / 👎) и оставить
