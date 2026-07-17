@@ -28,6 +28,13 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }
   }
+  // Server-side ADMIN gate (not just the client-side useIsAdmin): the read below runs on the
+  // portal's app OAuth token and would otherwise let ANY in-portal user enumerate chat titles +
+  // DIALOG_IDs. Only a portal admin configures settings, so reject non-admins here.
+  if (!resolved.admin) {
+    setResponseStatus(event, 403)
+    return { error: 'admin only' }
+  }
   // Read via the portal's stored OAuth token (SDK transport). Missing token ⇒ the app
   // isn't fully installed for this portal — treat like a failed verification.
   const transport = await makePortalSdkCall(resolved.memberId, sdkPortalDeps({

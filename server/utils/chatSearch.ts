@@ -30,8 +30,9 @@ export interface ChatOption {
 
 /** Min chars before a non-empty query searches (im.search.chat.list expects ≥3). */
 export const CHAT_SEARCH_MIN = 3
-/** Page size for the search (im.search.chat.list). */
-export const CHAT_SEARCH_LIMIT = 20
+/** Page size for the search (im.search.chat.list). Since this transport can't reach
+ *  total/next (unwrapped result → no cursor), we serve one wide page: the method caps at 50. */
+export const CHAT_SEARCH_LIMIT = 50
 /** Page size for the default recent list (im.recent.list; max 200). */
 export const CHAT_RECENT_LIMIT = 50
 
@@ -52,9 +53,11 @@ function canSend(chat: Record<string, unknown>): boolean {
 /** Normalize the UNWRAPPED im.search.chat.list result (an ARRAY of chats) → options.
  *  Non-array input (bad transport) yields an empty list rather than throwing. */
 export function normalizeChatSearch(result: unknown): ChatOption[] {
-  const rows = Array.isArray(result) ? result as Record<string, unknown>[] : []
+  const rows = Array.isArray(result) ? result as unknown[] : []
   const items: ChatOption[] = []
-  for (const row of rows) {
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue // a null/primitive element must not crash the map
+    const row = raw as Record<string, unknown>
     if (!canSend(row)) continue
     const value = chatDialogId(row.id)
     const label = String(row.name ?? '').trim()
@@ -67,10 +70,15 @@ export function normalizeChatSearch(result: unknown): ChatOption[] {
  *  options. 1-1 user dialogs are dropped (type === 'user') as a guard on top of SKIP_DIALOG. */
 export function normalizeRecentChats(result: unknown): ChatOption[] {
   const obj = (result ?? {}) as Record<string, unknown>
-  const rows = Array.isArray(obj.items) ? obj.items as Record<string, unknown>[] : []
+  const rows = Array.isArray(obj.items) ? obj.items as unknown[] : []
   const items: ChatOption[] = []
-  for (const row of rows) {
-    if (row.type === 'user') continue
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue // guard a null/primitive element
+    const row = raw as Record<string, unknown>
+    if (row.type === 'user') continue // 1-1 dialog (belt-and-braces on top of SKIP_DIALOG)
+    // Read-only channels / broadcast chats can't be posted to (im.message.add would fail) —
+    // skip them like canSend does for the search branch. Only an explicit false excludes.
+    if (row.text_field_enabled === false) continue
     const value = chatDialogId(row.chat_id ?? row.id)
     const label = String(row.title ?? '').trim()
     if (value && label) items.push({ value, label })
@@ -95,6 +103,8 @@ export async function searchChats(call: RestCall, query: string): Promise<ChatSe
     const result = await call('im.search.chat.list', { FIND: q, OFFSET: 0, LIMIT: CHAT_SEARCH_LIMIT })
     return { items: normalizeChatSearch(result), hasMore: false }
   }
-  const result = await call('im.recent.list', { SKIP_DIALOG: 'Y', OFFSET: 0, LIMIT: CHAT_RECENT_LIMIT })
+  // SKIP_DIALOG=Y drops 1-1 dialogs; SKIP_OPENLINES=Y drops open-line chats (a bot can't
+  // freely post there). text_field_enabled=false rows are filtered in normalizeRecentChats.
+  const result = await call('im.recent.list', { SKIP_DIALOG: 'Y', SKIP_OPENLINES: 'Y', OFFSET: 0, LIMIT: CHAT_RECENT_LIMIT })
   return { items: normalizeRecentChats(result), hasMore: false }
 }

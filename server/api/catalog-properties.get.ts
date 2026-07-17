@@ -29,6 +29,13 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }
   }
+  // Server-side ADMIN gate (mirrors the client-side useIsAdmin on the settings form): the read
+  // runs on the portal's app OAuth token, so reject non-admins rather than let any in-portal
+  // user enumerate catalog property metadata.
+  if (!resolved.admin) {
+    setResponseStatus(event, 403)
+    return { error: 'admin only' }
+  }
   // Read via the portal's stored OAuth token (SDK transport). Missing token ⇒ the app
   // isn't fully installed for this portal — treat like a failed verification.
   const transport = await makePortalSdkCall(resolved.memberId, sdkPortalDeps({

@@ -41,6 +41,20 @@ describe('normalizeChatSearch (im.search.chat.list → array)', () => {
     ])
     expect(out).toEqual([{ value: 'chat10', label: 'Можно' }])
   })
+  it('keeps a chat whose restrictions object lacks an explicit send:false (only false excludes)', () => {
+    const out = normalizeChatSearch([
+      { id: 14, name: 'Без флага', restrictions: {} },
+      { id: 15, name: 'Другое', restrictions: { mute: true } }
+    ])
+    expect(out).toEqual([
+      { value: 'chat14', label: 'Без флага' },
+      { value: 'chat15', label: 'Другое' }
+    ])
+  })
+  it('skips a null/primitive element without throwing', () => {
+    const out = normalizeChatSearch([null, 'x', 7, { id: 16, name: 'Хороший' }])
+    expect(out).toEqual([{ value: 'chat16', label: 'Хороший' }])
+  })
   it('drops rows without a usable id or a non-empty title', () => {
     const out = normalizeChatSearch([
       { id: 0, name: 'BadId' },
@@ -73,6 +87,26 @@ describe('normalizeRecentChats (im.recent.list → object.items)', () => {
     ] })
     expect(out).toEqual([{ value: 'chat20', label: 'Группа' }])
   })
+  it('drops a read-only chat (text_field_enabled === false)', () => {
+    const out = normalizeRecentChats({ items: [
+      { type: 'chat', chat_id: 20, title: 'Канал только чтение', text_field_enabled: false },
+      { type: 'chat', chat_id: 21, title: 'Обычный' }
+    ] })
+    expect(out).toEqual([{ value: 'chat21', label: 'Обычный' }])
+  })
+  it('drops a whitespace-only title or a bad id on the recent path (pins the trim/id gate)', () => {
+    const out = normalizeRecentChats({ items: [
+      { type: 'chat', chat_id: 20, title: '   ' },
+      { type: 'chat', chat_id: 0, id: 99, title: 'BadId' },
+      { type: 'chat', chat_id: 22, title: 'Хороший' }
+    ] })
+    // chat_id:0 is invalid; the row has no other usable positive id → dropped (id:99 is NOT a fallback here).
+    expect(out).toEqual([{ value: 'chat22', label: 'Хороший' }])
+  })
+  it('skips a null/primitive element without throwing', () => {
+    const out = normalizeRecentChats({ items: [null, 5, { type: 'chat', chat_id: 23, title: 'ОК' }] })
+    expect(out).toEqual([{ value: 'chat23', label: 'ОК' }])
+  })
   it('returns [] when items is absent or the result is not an object', () => {
     expect(normalizeRecentChats({})).toEqual([])
     expect(normalizeRecentChats(null)).toEqual([])
@@ -86,10 +120,10 @@ describe('searchChats', () => {
     expect(call).toHaveBeenCalledWith('im.search.chat.list', { FIND: 'про', OFFSET: 0, LIMIT: CHAT_SEARCH_LIMIT })
     expect(page).toEqual({ items: [{ value: 'chat30', label: 'Найдено' }], hasMore: false })
   })
-  it('empty / short query → im.recent.list (SKIP_DIALOG=Y), single page', async () => {
+  it('empty / short query → im.recent.list (SKIP_DIALOG=Y + SKIP_OPENLINES=Y), single page', async () => {
     const call = vi.fn(async () => ({ items: [{ type: 'chat', chat_id: 40, title: 'Недавний' }] }))
     const page = await searchChats(call, '')
-    expect(call).toHaveBeenCalledWith('im.recent.list', { SKIP_DIALOG: 'Y', OFFSET: 0, LIMIT: CHAT_RECENT_LIMIT })
+    expect(call).toHaveBeenCalledWith('im.recent.list', { SKIP_DIALOG: 'Y', SKIP_OPENLINES: 'Y', OFFSET: 0, LIMIT: CHAT_RECENT_LIMIT })
     expect(page).toEqual({ items: [{ value: 'chat40', label: 'Недавний' }], hasMore: false })
   })
   it('trims the query before the ≥3 gate (2 real chars after trim → recent)', async () => {
