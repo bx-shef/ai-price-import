@@ -9,10 +9,12 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Очереди импорта', meta: [{ name: 'robots', content: 'noindex' }] })
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
+interface PortalStatus { memberId: string, domain: string, ageDays: number, expiresInDays: number, health: 'ok' | 'near-expiry' | 'stale' }
 
 const { authenticated, check, logout } = useAuth()
 const router = useRouter()
 const queues = ref<QueueCounts[]>([])
+const portals = ref<PortalStatus[]>([])
 const error = ref('')
 const loading = ref(false)
 
@@ -21,6 +23,12 @@ const LABELS: Record<string, string> = {
   'file-extract': 'Извлечение текста',
   'agent-run': 'AI-разбор',
   'crm-sync': 'Запись в CRM'
+}
+// Non-secret auth health (#132) — the token itself is never sent here.
+const HEALTH_META: Record<PortalStatus['health'], { label: string, cls: string }> = {
+  'ok': { label: 'активен', cls: 'text-green-600' },
+  'near-expiry': { label: 'скоро истекает', cls: 'text-amber-600' },
+  'stale': { label: 'нужна переустановка', cls: 'text-red-600' }
 }
 
 async function load() {
@@ -39,6 +47,11 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // Portal auth status — best-effort, must not blank the queues view on its own failure.
+  try {
+    const t = await $fetch<{ portals: PortalStatus[] }>('/api/ops/tokens')
+    portals.value = t.portals
+  } catch { /* non-fatal */ }
 }
 
 async function signOut() {
@@ -121,6 +134,31 @@ onMounted(async () => {
       >
         Нет данных по очередям
       </p>
+    </div>
+
+    <!-- Авторизация порталов (#132) — статус токенов, без секретов -->
+    <div
+      v-if="portals.length"
+      class="mt-8"
+    >
+      <h2 class="mb-3 text-sm font-semibold text-gray-700">
+        Авторизация порталов
+      </h2>
+      <div class="space-y-2">
+        <div
+          v-for="p in portals"
+          :key="p.memberId"
+          class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-gray-200 p-3"
+        >
+          <span class="text-sm font-medium">{{ p.domain }}</span>
+          <span class="flex flex-wrap items-center gap-x-4 text-sm">
+            <span :class="HEALTH_META[p.health].cls">{{ HEALTH_META[p.health].label }}</span>
+            <span class="text-gray-500">{{
+              p.expiresInDays > 0 ? `refresh_token ≈ ${p.expiresInDays} дн.` : 'срок истёк'
+            }}</span>
+          </span>
+        </div>
+      </div>
     </div>
   </div>
 </template>
