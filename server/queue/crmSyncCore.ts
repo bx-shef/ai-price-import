@@ -55,6 +55,10 @@ export interface CrmSyncResult {
   /** True when this was an idempotent resume (the entity's marker was found in B24) — a
    * redelivery of an already-processed job, so dashboard counters must NOT re-count it. */
   idempotent: boolean
+  /** True when the supplier company could NOT be matched (no taxId or no `RQ_INN` hit) — the
+   * entity was still created but without a company (see the warning). Drives the `unmatched`
+   * dashboard counter so the operator sees how often supplier resolution fails. */
+  unmatched: boolean
   warnings: string[]
   errors: string[]
 }
@@ -136,10 +140,12 @@ export async function runCrmSync(
     sort += 10
   }
 
-  // Hard errors → report and DO NOT create a partial/wrong entity.
+  // Hard errors → report and DO NOT create a partial/wrong entity. `unmatched` stays FALSE here:
+  // nothing was created, so this is NOT a «created without a company» case (that's what the counter
+  // means — see the field JSDoc). A hard error is its own failure mode, counted via `errors`.
   if (errors.length) {
     await deps.reportErrors(errors, doc.supplier?.name)
-    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, warnings, errors }
+    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: false, warnings, errors }
   }
 
   // Idempotency: the created entity carries a job-id MARKER (originId/originatorId for deal,
@@ -212,7 +218,7 @@ export async function runCrmSync(
     }
   }
 
-  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId, warnings, errors }
+  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId, unmatched: !companyId, warnings, errors }
 }
 
 function clampNonNeg(n: number, fallback = 0): number {

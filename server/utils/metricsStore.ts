@@ -9,8 +9,8 @@ export const METRICS = {
   docs: 'docs', // documents processed
   created: 'created', // CRM entities created
   lines: 'lines', // product rows written
-  unmatched: 'unmatched', // supplier not found
-  skipped: 'skipped', // idempotent re-runs / skipped lines
+  unmatched: 'unmatched', // supplier not found — entity created without a company
+  skipped: 'skipped', // idempotent whole-document redeliveries (a duplicate job, nothing re-created)
   errors: 'errors' // documents that hit a hard error
 } as const
 

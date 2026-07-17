@@ -23,7 +23,7 @@ const METRIC_LABELS: Array<{ key: string, label: string }> = [
   { key: 'created', label: 'Создано в CRM' },
   { key: 'lines', label: 'Позиций внесено' },
   { key: 'unmatched', label: 'Поставщик не найден' },
-  { key: 'skipped', label: 'Пропущено / повторы' },
+  { key: 'skipped', label: 'Повторы (дубликаты)' },
   { key: 'errors', label: 'Ошибок' }
 ]
 

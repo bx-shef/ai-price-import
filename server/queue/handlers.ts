@@ -60,8 +60,9 @@ export interface HandlerDeps {
   deleteDocument?: (memberId: string, jobId: string) => Promise<void>
   /**
    * Bump per-portal dashboard counters after a crm-sync (best-effort; absent in
-   * tests). Covers docs/created/lines; the `errors` counter is bumped upstream in
-   * crm-sync's reportErrors, so it is NOT set here (no double count).
+   * tests). Covers docs/created/lines/unmatched (fresh run) and skipped (idempotent
+   * redelivery); the `errors` counter is bumped upstream in crm-sync's reportErrors,
+   * so it is NOT set here (no double count).
    */
   bumpMetrics?: (memberId: string, deltas: Record<string, number>) => Promise<void>
 }
@@ -81,16 +82,21 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
     result.created || !result.errors.length ? 'done' : 'error',
     JSON.stringify({ entityId: result.entityId, created: result.created, warnings: result.warnings, errors: result.errors })
   )
-  // Dashboard counters: one document processed, plus (on success) the CRM entity and the
-  // product rows ACTUALLY written (result.rowCount, after skips — not doc.items.length).
-  // An idempotent redelivery (already processed) re-counts nothing. `errors` is bumped
-  // upstream (reportErrors) — not here.
-  if (deps.bumpMetrics && !result.idempotent) {
-    await bumpMetricsSafe(deps.bumpMetrics, job.memberId, {
-      docs: 1,
-      created: result.created ? 1 : 0,
-      lines: result.rowCount
-    })
+  // Dashboard counters. `errors` is bumped upstream (reportErrors) — not here.
+  //  - Idempotent redelivery (job already processed): the whole document was SKIPPED — count
+  //    it as `skipped` and re-count nothing else (no new doc/entity/rows were produced).
+  //  - Fresh run: one document processed, plus (on success) the CRM entity and the product
+  //    rows ACTUALLY written (result.rowCount, after skips — not doc.items.length), plus
+  //    `unmatched` when the supplier company could not be resolved.
+  if (deps.bumpMetrics) {
+    await bumpMetricsSafe(deps.bumpMetrics, job.memberId, result.idempotent
+      ? { skipped: 1 }
+      : {
+          docs: 1,
+          created: result.created ? 1 : 0,
+          lines: result.rowCount,
+          unmatched: result.unmatched ? 1 : 0
+        })
   }
   // Terminal now (status recorded, no crm-sync retry) — drop the raw client
   // document. Best-effort: never fail the job on a cleanup error.
