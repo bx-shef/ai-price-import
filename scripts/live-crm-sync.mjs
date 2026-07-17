@@ -3,11 +3,14 @@
 // webhook-backed RestCall, routing by document type: накладная→deal / счёт→smart-invoice /
 // КП→quote. Optionally runs the DeepSeek extraction first.
 //
-//   pnpm live:crm            # crafted doc → runCrmSync → verify → delete
-//   pnpm live:crm --ai       # document TEXT → DeepSeek → runCrmSync → verify → delete
-//   pnpm live:crm --keep     # do not delete the created entity
+//   pnpm live:crm             # crafted накладная → deal (entityTypeId 2) → verify → delete
+//   pnpm live:crm --type счёт  # crafted счёт → smart-invoice (entityTypeId 31, xmlId marker)
+//   pnpm live:crm --ai        # document TEXT → DeepSeek → runCrmSync → verify → delete
+//   pnpm live:crm --keep      # do not delete the created entity
 //
-// Reads git-ignored env: .env.b24test (B24_TEST_WEBHOOK) and, with --ai, .env
+// `--type` exercises the routing table below: накладная→deal (originId marker) and
+// счёт→smart-invoice (xmlId marker) are DISTINCT idempotency code paths, so both are worth a
+// live run. Reads git-ignored env: .env.b24test (B24_TEST_WEBHOOK) and, with --ai, .env
 // (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN). Creates then deletes a [TEST] entity.
 import { readFileSync } from 'node:fs'
 import { buildExtractionPrompt } from '../prompts/extract.ts'
@@ -19,9 +22,20 @@ import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, setProductRows } from '../server/utils/crmWrite.ts'
 import { findExistingItemId } from '../server/utils/originLookup.ts'
 
-const args = new Set(process.argv.slice(2))
+const argv = process.argv.slice(2)
+const args = new Set(argv)
 const useAi = args.has('--ai')
 const keep = args.has('--keep')
+// Document type to route on: `--type счёт` or `--type=счёт` (default накладная). Only the
+// types present in `mapping.routingRules` below route to a distinct target; anything else
+// falls through to `defaultTarget`.
+const typeArg = (() => {
+  const eq = argv.find(a => a.startsWith('--type='))
+  if (eq) return eq.slice('--type='.length)
+  const i = argv.indexOf('--type')
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : ''
+})()
+const DOC_TYPE = typeArg || 'накладная'
 
 const readEnv = (file, key) => {
   // Anchor to line start (^…$ with the m flag) so a commented `#KEY=…` or a longer
@@ -53,7 +67,7 @@ const listCall = async (method, params) => {
 const SUPPLIER_TAX_ID = '7712345678'
 
 const CRAFTED = {
-  documentType: 'накладная',
+  documentType: DOC_TYPE,
   currency: 'BYN',
   priceIncludesVat: false,
   supplier: { name: 'ООО «Тест-Поставщик»', taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
@@ -118,8 +132,19 @@ const deps = {
   notifySuccess: async s => console.log('  ✓ notifySuccess', JSON.stringify(s))
 }
 
+// --type applies to the CRAFTED path only; in --ai mode the extracted documentType wins
+// (that's the point of the AI path), so warn if both were passed to avoid a misleading run.
+if (useAi && typeArg) console.log(`  ⚠ --type "${typeArg}" ignored in --ai mode (extracted documentType routes)`)
+
 const doc = useAi ? await extractWithAi(DOC_TEXT) : CRAFTED
 if (useAi) console.log('extracted:', JSON.stringify({ type: doc.documentType, currency: doc.currency, taxId: doc.supplier?.taxId, items: doc.items.length, priceIncludesVat: doc.priceIncludesVat }))
+
+// Print which route this run actually exercises — a verification script must be honest about
+// the path taken, so an unrecognized/typo'd type (→ defaultTarget, a deal) can't be mistaken
+// for the smart-invoice (xmlId) path it was meant to test.
+const matchedRule = mapping.routingRules.find(r => r.match.type === doc.documentType)
+const chosen = matchedRule ? matchedRule.target : mapping.defaultTarget
+console.log(`route: documentType="${doc.documentType}" → entityTypeId ${chosen.entityTypeId}${chosen.categoryId != null ? ` (categoryId ${chosen.categoryId})` : ''}${matchedRule ? '' : ' [defaultTarget — тип не сматчен]'}`)
 
 try {
   const res = await runCrmSync('live-' + Math.floor(Date.now() / 1000), doc, mapping, { documentType: doc.documentType, text: DOC_TEXT }, deps)
