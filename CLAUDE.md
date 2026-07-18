@@ -21,7 +21,14 @@ AI-импорт документов с табличной частью в Bitri
     — **единственный писатель** `portal_tokens`; при недоступности Redis роут пишет **синхронным
     фолбэком** (B24 online-события не ретраит). Порядок событий защищает **тумбстоун** `portal_tombstone`
     (#77): stale/out-of-order install не воскрешает удалённый портал (гард в `tokenStore.saveToken/deletePortal`
-    по `eventTs` = top-level `ts` вебхука). Тумбстоун неатомарен, но TOCTOU-free — событийный воркер
+    по `eventTs` = top-level `ts` вебхука). **Привязка member_id к OAuth-гранту на первой установке**
+    (`verifyInstallMember`, #162): `verifyInstallToken` доказывает контроль **домена** (вызов `profile`), но не
+    member_id — поэтому дополнительно рефрешим присланный `refresh_token` и сверяем **authoritative** member_id из
+    ответа токен-эндпоинта с присланным `ev.memberId` (mismatch → 403; forged grant `invalid_grant` → 403;
+    network/`wrong_client` → 503, fail-closed). Так поддельная установка (валидный токен своего портала + чужой
+    member_id) не отравит member_id жертвы. Рефреш **ротирует** токен ⇒ на успехе храним **возвращённый** грант,
+    а не присланные креды. Гейт на `B24_CLIENT_ID/SECRET` (без них рефреш невозможен в принципе). Тумбстоун
+    неатомарен, но TOCTOU-free — событийный воркер
     **single-instance**.
   - **Роль-сплит воркеров** (`queue/runtime.ts`, scale-out): роли `QUEUE_WORKERS`/`QUEUE_CRON`.
     `startEventWorker` (события) идёт **только на primary/cron-инстансе**; `startThroughputWorkers`
@@ -76,6 +83,10 @@ AI-импорт документов с табличной частью в Bitri
     `b24Rest.ts` теперь несёт только чистые хелперы/контракт: тип `RestCall`, SSRF-гард `isSafeB24Domain`/
     `normaliseHost`, `B24RestError`, `isAuthRejection` (сырой `fetch`-транспорт `makeRestCall` + `unwrap`/`restUrl`
     удалены — SDK разворачивает `result` и строит URL сам; тип `FetchFn` остаётся для не-Б24 GitHub-POST `feedbackGithub`).
+    **Единственное осознанное исключение из «всё через SDK» — `verifyInstallMember.rawOauthRefresh`** (#162): один
+    сырой POST на `oauth.bitrix.info/oauth/token/` при верификации установки, т.к. SDK-рефреш **выбрасывает**
+    `member_id` из ответа (`oauth/auth.mjs` его не читает), а привязка member_id его требует. Хост фиксированный
+    (нет SSRF), секреты в теле POST, AbortSignal-таймаут.
   - **Пагинация enumerate-all списков** (#87): find-one lookup'ы (`findCompanyByTaxId`/`findProduct`)
     берут первый id и в пагинации не нуждаются, но enumerate-all чтения молча обрезались на дефолтной
     странице B24 (50). Оба таких чтения теперь на **SDK full-list** (`SdkListCall`→`callList.make`, SDK сам

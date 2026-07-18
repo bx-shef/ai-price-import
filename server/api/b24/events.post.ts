@@ -5,7 +5,8 @@ import { deletePortal, getApplicationToken, saveToken } from '../../utils/tokenS
 import { purgePortalFiles } from '../../utils/nodeFileIO'
 import { encryptSecret } from '../../utils/secretCrypto'
 import { verifyInstallToken } from '../../utils/verifyInstallToken'
-import { normaliseHost } from '../../utils/b24Rest'
+import { rawOauthRefresh, verifyInstallMember, type RefreshedGrant } from '../../utils/verifyInstallMember'
+import { normaliseHost, type FetchFn } from '../../utils/b24Rest'
 import { enqueueEvent } from '../../queue/producers'
 import { queueEnabled } from '../../queue/connection'
 import { eventJobToSaveInput, type EventJob } from '../../queue/topology'
@@ -55,12 +56,38 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // Build the verified packet. Refresh is encrypted HERE — plaintext never reaches Redis.
-  // KNOWN LIMITATION (low-sev, tracked): verifyInstallToken proves control of ev.domain,
-  // but we store under the client-supplied ev.memberId without binding member_id↔domain
-  // (targeted install-poisoning DoS; no hijack/data-theft). Full fix = authenticate
-  // member_id from the OAuth token exchange. Deferred — not a deploy blocker.
-  const refresh = String(auth.refresh_token ?? '')
+  // #162: BIND the client-supplied member_id to the OAuth grant. verifyInstallToken above proves
+  // control of the DOMAIN but not of member_id, so a forged install (a victim's member_id + a
+  // valid token from the attacker's own portal) would poison the victim's member_id. We refresh
+  // the delivered refresh_token — the token endpoint returns the AUTHORITATIVE member_id, which
+  // must equal the claimed one. Refresh ROTATES the token, so on success we store the returned
+  // grant (not the delivered creds). Gated on OAuth creds: without them we can't refresh at all
+  // (crm-sync/keep-alive are dead too), so it degrades to the prior domain-only check.
+  const clientId = process.env.B24_CLIENT_ID ?? ''
+  const clientSecret = process.env.B24_CLIENT_SECRET ?? ''
+  let grant: RefreshedGrant | undefined
+  if (decision.verifyAccessToken && decision.action === 'register' && clientId && clientSecret) {
+    const bound = await verifyInstallMember(ev.memberId, String(auth.refresh_token ?? ''), {
+      refresh: rawOauthRefresh(globalThis.fetch as unknown as FetchFn),
+      clientId,
+      clientSecret
+    })
+    if (!bound.ok) {
+      setResponseStatus(event, bound.status ?? 403)
+      return { ok: false, error: 'member verification failed' }
+    }
+    grant = bound.grant
+    // ACCEPTED window (low-sev): the refresh above ROTATED the grant at B24, so the delivered
+    // refresh_token is now spent. If persistence below dies AFTER the refresh returned but BEFORE
+    // the rotated grant is durably stored (a crash, or a sync-fallback DB throw), we hold no valid
+    // creds. B24 doesn't retry online events → recovery is a reinstall (fresh grant, re-runs this
+    // bind). The pre-existing verifyInstallToken path already had the "500 → stored nothing" window;
+    // rotation only makes the delivered token unusable, which the reinstall replaces anyway.
+  }
+
+  // Build the verified packet. Refresh is encrypted HERE — plaintext never reaches Redis. When the
+  // member_id bind ran, store the ROTATED grant (the delivered refresh_token is now spent).
+  const refresh = grant?.refreshToken ?? String(auth.refresh_token ?? '')
   const job: EventJob = {
     memberId: ev.memberId,
     event: ev.event,
@@ -71,10 +98,10 @@ export default defineEventHandler(async (event) => {
     applicationToken: ev.applicationToken,
     ...(decision.action === 'register'
       ? {
-          accessToken: String(auth.access_token ?? ''),
+          accessToken: grant?.accessToken ?? String(auth.access_token ?? ''),
           refreshTokenEnc: refresh ? encryptSecret(refresh, process.env.B24_TOKEN_ENC_KEY ?? '') : '',
-          clientEndpoint: String(auth.client_endpoint ?? ''),
-          expiresIn: Number(auth.expires_in ?? 3600),
+          clientEndpoint: grant?.clientEndpoint || String(auth.client_endpoint ?? ''),
+          expiresIn: grant?.expiresIn ?? Number(auth.expires_in ?? 3600),
           issuedAtMs: Date.now()
         }
       : {})
