@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS import_job (
 );
 -- Backfill the column on portals created before #164 (idempotent — no-op once present).
 ALTER TABLE import_job ADD COLUMN IF NOT EXISTS notified BOOLEAN NOT NULL DEFAULT false;
+-- Close the one-time deploy window: rows that reached a terminal state BEFORE #164 backfill to
+-- notified=false, so a stalled redelivery across the deploy could re-post a chat/дело for an
+-- already-finished job. Mark every terminal job as finalized. The "notified=false" guard makes
+-- this a no-op on every later boot (SCHEMA_SQL re-runs each start) and for jobs finalized normally.
+UPDATE import_job SET notified=true WHERE notified=false AND status IN ('done','error');
 
 CREATE TABLE IF NOT EXISTS import_text (
   member_id  TEXT NOT NULL,
