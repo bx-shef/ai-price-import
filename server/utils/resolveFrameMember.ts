@@ -21,6 +21,37 @@ export interface FrameMemberDeps {
 /** Why resolution failed (for diagnostics — surfaced by the caller). */
 export type FrameMemberReason = 'token-rejected' | 'transport' | 'not-installed'
 
+/** Deps for the lighter token-only verification (no token store). */
+export interface FrameVerifyDeps {
+  makeCall?: (domain: string, accessToken: string) => RestCall
+}
+
+export interface FrameVerifyResult {
+  ok: boolean
+  /** True when the calling user is a portal administrator (profile.ADMIN). */
+  admin?: boolean
+  status?: 401 | 502
+  reason?: 'token-rejected' | 'transport'
+}
+
+/**
+ * Verify a frame token controls its portal (a cheap authed `profile` call) and read the caller's
+ * ADMIN flag — WITHOUT requiring the portal be installed (no member_id / token-store lookup). For
+ * routes that operate on the frame token ALONE (settings `app.option` read/write is portal-scoped by
+ * that token), so a not-installed/install-race window doesn't wrongly reject a valid admin. Never
+ * throws. `resolveFrameMember` builds on this and adds the member_id resolution.
+ */
+export async function verifyFrameToken(auth: FrameAuth, deps: FrameVerifyDeps = {}): Promise<FrameVerifyResult> {
+  try {
+    const makeCall = deps.makeCall ?? makeBareTokenSdkCall
+    const profile = await makeCall(auth.domain, auth.accessToken)('profile') as { ADMIN?: unknown } | null
+    return { ok: true, admin: profile?.ADMIN === true }
+  } catch (e) {
+    const rejected = isAuthRejection(e)
+    return { ok: false, status: rejected ? 401 : 502, reason: rejected ? 'token-rejected' : 'transport' }
+  }
+}
+
 export interface FrameMemberResult {
   ok: boolean
   memberId?: string
@@ -34,24 +65,13 @@ export interface FrameMemberResult {
 
 /** Verify the frame token and resolve member_id, or an error status. Never throws. */
 export async function resolveFrameMember(auth: FrameAuth, deps: FrameMemberDeps): Promise<FrameMemberResult> {
-  // 1. Verify the token is valid for this portal (profile is a cheap authed method). Its
-  // result ALSO carries the caller's ADMIN flag (the frame token is the calling user's), so
-  // the same call doubles as the admin-gate source — no extra REST round-trip.
-  let admin: boolean
-  try {
-    const makeCall = deps.makeCall ?? makeBareTokenSdkCall
-    const profile = await makeCall(auth.domain, auth.accessToken)('profile') as { ADMIN?: unknown } | null
-    admin = profile?.ADMIN === true
-  } catch (e) {
-    // An auth rejection means the token doesn't control the portal → 401; a transport
-    // failure (network) → 502 so the client retries rather than treating it as forbidden.
-    const rejected = isAuthRejection(e)
-    return { ok: false, status: rejected ? 401 : 502, reason: rejected ? 'token-rejected' : 'transport' }
-  }
+  // 1. Verify the token controls the portal + read the caller's ADMIN flag (one `profile` call).
+  const verified = await verifyFrameToken(auth, { makeCall: deps.makeCall })
+  if (!verified.ok) return { ok: false, status: verified.status, reason: verified.reason }
   // 2. Map the (now-verified) domain to the installed portal's member_id. Normalise the
   // host (lower-case, strip scheme/path) so a frame domain that differs only in case or
   // form from the stored install domain still matches (getMemberIdByDomain is exact).
   const memberId = await getMemberIdByDomain(normaliseHost(auth.domain), deps.query)
   if (!memberId) return { ok: false, status: 401, reason: 'not-installed' }
-  return { ok: true, memberId, admin }
+  return { ok: true, memberId, admin: verified.admin }
 }

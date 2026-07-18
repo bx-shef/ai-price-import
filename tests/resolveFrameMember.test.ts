@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { resolveFrameMember } from '../server/utils/resolveFrameMember'
+import { resolveFrameMember, verifyFrameToken } from '../server/utils/resolveFrameMember'
 import type { RestCall } from '../server/utils/b24Rest'
 
 const auth = { accessToken: 'tok', domain: 'p.bitrix24.by' }
@@ -12,6 +12,27 @@ const okProfile: RestCall = async () => ({ ID: '1' })
 function query(rows: Array<Record<string, unknown>>) {
   return vi.fn(async () => ({ rows }))
 }
+
+describe('verifyFrameToken (token-only; no member_id / install dependency)', () => {
+  it('ok + admin:false for a valid non-admin token', async () => {
+    expect(await verifyFrameToken(auth, { makeCall: makeCall(okProfile) })).toEqual({ ok: true, admin: false })
+  })
+  it('ok + admin:true when profile.ADMIN is true', async () => {
+    const admin: RestCall = async () => ({ ID: '1', ADMIN: true })
+    expect(await verifyFrameToken(auth, { makeCall: makeCall(admin) })).toEqual({ ok: true, admin: true })
+  })
+  it('does NOT require an installed portal (no token store) — a valid admin passes with no query', async () => {
+    const admin: RestCall = async () => ({ ADMIN: true })
+    const r = await verifyFrameToken(auth, { makeCall: makeCall(admin) })
+    expect(r.ok).toBe(true) // resolveFrameMember would 401 not-installed here; verifyFrameToken does not
+  })
+  it('401 token-rejected on an auth error, 502 transport otherwise', async () => {
+    const rejected = await verifyFrameToken(auth, { makeCall: makeCall(() => Promise.reject(new Error('invalid_token'))) })
+    expect(rejected).toMatchObject({ ok: false, status: 401, reason: 'token-rejected' })
+    const down = await verifyFrameToken(auth, { makeCall: makeCall(() => Promise.reject(new Error('network down'))) })
+    expect(down).toMatchObject({ ok: false, status: 502, reason: 'transport' })
+  })
+})
 
 describe('resolveFrameMember', () => {
   it('verifies token then resolves member_id by domain (non-admin caller ⇒ admin:false)', async () => {
