@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { RoutingRule, TargetRef } from '../app/types/mapping'
 import { FALLBACK_TARGET, resolveTarget, resolveValidTarget, ruleMatches } from '../app/utils/routing'
 
@@ -98,5 +98,17 @@ describe('resolveValidTarget — deleted-funnel fallback (user clarification)', 
   })
   it('fail-open: empty funnel list (can\'t verify) → use as-is', async () => {
     expect(await resolveValidTarget({ entityTypeId: 999, categoryId: 5 }, DEAL_CAT3, async () => [])).toEqual({ entityTypeId: 999, categoryId: 5 })
+  })
+  it('the hard anchor (deal/0) is NOT validated by REST — the common default path is free', async () => {
+    const spy = vi.fn(async () => [0, 3])
+    // resolved === default === FALLBACK_TARGET (deal, dir 0) → short-circuit, no crm.category.list.
+    expect(await resolveValidTarget(FALLBACK_TARGET, FALLBACK_TARGET, spy)).toEqual(FALLBACK_TARGET)
+    expect(spy).not.toHaveBeenCalled()
+  })
+  it('memoizes crm.category.list per entityTypeId across the chain (one call, not two)', async () => {
+    const spy = vi.fn(async () => [0, 3]) // funnels 5 and 7 both gone
+    const out = await resolveValidTarget({ entityTypeId: 2, categoryId: 5 }, { entityTypeId: 2, categoryId: 7 }, spy)
+    expect(out).toEqual(FALLBACK_TARGET) // both gone → anchor
+    expect(spy).toHaveBeenCalledTimes(1) // deal categories fetched once, reused for the 2nd deal target
   })
 })

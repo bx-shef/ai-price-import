@@ -273,12 +273,23 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     m.defaultTarget = { entityTypeId: 2, categoryId: 5 } // funnel 5 was DELETED in CRM
     // portal now has deal funnels 0 and 3 only (5 is gone)
     const deps = baseDeps({ listCategoryIds: vi.fn(async () => [0, 3]) })
-    await runCrmSync('job1', doc, m, {}, deps)
+    const r = await runCrmSync('job1', doc, m, {}, deps)
     // create lands on the hard anchor: deal, direction 0
     expect(deps.createTarget).toHaveBeenCalledWith(
       expect.objectContaining({ entityTypeId: 2, categoryId: 0 }),
       expect.any(Object)
     )
+    // the redirect is surfaced, not silent
+    expect(r.warnings.some(w => /воронка удалена/i.test(w))).toBe(true)
+  })
+
+  it('validation is SKIPPED when listCategoryIds dep is absent (backward-compat)', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 2, categoryId: 5 } // would be "gone" but no validation wired
+    const deps = baseDeps() // no listCategoryIds
+    const r = await runCrmSync('job1', doc, m, {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.objectContaining({ entityTypeId: 2, categoryId: 5 }), expect.any(Object))
+    expect(r.warnings.some(w => /воронка удалена/i.test(w))).toBe(false)
   })
 
   it('deleted funnel: rule direction gone → falls back to the (valid) default target', async () => {

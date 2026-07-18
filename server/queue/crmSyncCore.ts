@@ -85,9 +85,15 @@ export async function runCrmSync(
   // Guard the resolved direction against a DELETED funnel (settings not fixed after the воронка was
   // removed in CRM): rule/manual with a gone direction → default target → deal/direction-0. No-op
   // when a target pins no categoryId, or when direction validation isn't wired (tests). Fail-open.
-  const target = deps.listCategoryIds
-    ? await resolveValidTarget(resolved, mapping.defaultTarget, deps.listCategoryIds)
-    : resolved
+  let target = resolved
+  if (deps.listCategoryIds) {
+    target = await resolveValidTarget(resolved, mapping.defaultTarget, deps.listCategoryIds)
+    // Surface the redirect so it's NOT silent: the operator sees the document landed in a fallback
+    // target (its chosen/rule direction — or entity — was gone). Warning, not error: import proceeds.
+    if (target.entityTypeId !== resolved.entityTypeId || target.categoryId !== resolved.categoryId) {
+      warnings.push('Направление цели недоступно (воронка удалена в CRM) — импорт направлен в запасную цель')
+    }
+  }
 
   // Idempotency requires a filterable marker on the target type (originId/xmlId). A markerless
   // type (originSearchFilter → null; e.g. quote/7, or a nonsensical target set via free entityTypeId

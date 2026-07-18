@@ -79,13 +79,20 @@ export async function resolveValidTarget(
     seen.add(key)
     return true
   })
+  const idsByEtid = new Map<number, number[]>() // one crm.category.list per entity type, not per target
   for (const target of chain) {
     if (target.categoryId == null) return target // no direction pinned → entity's default funnel
-    let ids: number[]
-    try {
-      ids = await listCategoryIds(target.entityTypeId)
-    } catch {
-      return target // fail-open: can't verify → use as-is (don't block the import)
+    // The hard anchor (deal / direction 0) is guaranteed to exist — never spend a REST to confirm it
+    // (this keeps the COMMON default-routed import at zero extra calls, since DEFAULT_TARGET === it).
+    if (target.entityTypeId === FALLBACK_TARGET.entityTypeId && target.categoryId === FALLBACK_TARGET.categoryId) return target
+    let ids = idsByEtid.get(target.entityTypeId)
+    if (ids === undefined) {
+      try {
+        ids = await listCategoryIds(target.entityTypeId)
+      } catch {
+        return target // fail-open: can't verify → use as-is (don't block the import)
+      }
+      idsByEtid.set(target.entityTypeId, ids)
     }
     if (ids.length === 0) return target // fail-open: no funnels to check against
     if (ids.includes(target.categoryId)) return target // direction still exists
