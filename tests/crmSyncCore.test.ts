@@ -159,6 +159,62 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(deps.setRows).toHaveBeenCalledWith(2, 999, expect.any(Array))
   })
 
+  // #164 — the one-time finalize claim overrides the `created` gate so a retry resuming after a
+  // post-create failure (setRows threw on attempt 1) still delivers the chat + timeline дело.
+  it('claimFinalize wins on a RESUME (created=false) → notify + activity STILL fire (#164 fix)', async () => {
+    const notifySuccess = vi.fn(async () => {})
+    const writeActivity = vi.fn(async () => {})
+    const claimFinalize = vi.fn(async () => true) // this run wins the claim
+    const deps = baseDeps({
+      findExisting: vi.fn(async () => 900 as number | null), // resume: entity already created
+      notifySuccess, writeActivity, claimFinalize
+    })
+    const r = await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(r.created).toBe(false) // it was a resume…
+    expect(claimFinalize).toHaveBeenCalledTimes(1)
+    expect(notifySuccess).toHaveBeenCalledTimes(1) // …but the notice is no longer lost
+    // Payload on the resume path: the entity is the found one (900), created reflects the resume.
+    expect(notifySuccess).toHaveBeenCalledWith(expect.objectContaining({ entityId: 900, created: false, rowCount: 1 }))
+    expect(writeActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('claimFinalize already taken (false) → skip both EVEN when created=true (no double post)', async () => {
+    const notifySuccess = vi.fn(async () => {})
+    const writeActivity = vi.fn(async () => {})
+    const claimFinalize = vi.fn(async () => false) // a prior run already finalized
+    const deps = baseDeps({ notifySuccess, writeActivity, claimFinalize })
+    const r = await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(r.created).toBe(true)
+    expect(claimFinalize).toHaveBeenCalledTimes(1)
+    expect(notifySuccess).not.toHaveBeenCalled()
+    expect(writeActivity).not.toHaveBeenCalled()
+  })
+
+  it('does NOT claim on a hard-error abort (no create/setRows → no spurious claim)', async () => {
+    const claimFinalize = vi.fn(async () => true)
+    // VAT 25 is not in the portal → hard error → abort before create/setRows.
+    const bad: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт', vatRate: 25 }] }
+    const deps = baseDeps({ claimFinalize })
+    const r = await runCrmSync('job1', bad, mapping(), {}, deps)
+    expect(r.created).toBe(false)
+    expect(claimFinalize).not.toHaveBeenCalled() // nothing was created → nothing to finalize
+  })
+
+  it('claims AFTER setRows: a throwing setRows propagates and does NOT consume the claim (#164)', async () => {
+    // The exact regression scenario: create succeeds, then setRows throws on the first attempt.
+    // The claim must NOT be taken (it sits after setRows), so the retry can still finalize.
+    const claimFinalize = vi.fn(async () => true)
+    const notifySuccess = vi.fn(async () => {})
+    const deps = baseDeps({
+      setRows: vi.fn(() => Promise.reject(new Error('productrow.set down'))),
+      claimFinalize, notifySuccess
+    })
+    await expect(runCrmSync('job1', doc, mapping(), {}, deps)).rejects.toThrow('productrow.set down')
+    expect(deps.createTarget).toHaveBeenCalledTimes(1) // entity was created…
+    expect(claimFinalize).not.toHaveBeenCalled() // …but the claim is untouched → retry can finalize
+    expect(notifySuccess).not.toHaveBeenCalled()
+  })
+
   it('supplier not found → still creates, warning, no companyId', async () => {
     const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)

@@ -44,6 +44,10 @@ export interface CrmSyncDeps {
     supplierName?: string
     rowCount: number
   }) => Promise<void>
+  /** Optional: atomically CLAIM the one-time finalize (success chat + timeline дело) for this
+   *  job (#164). Returns true for the FIRST run to claim, false for any later resume/redelivery.
+   *  When absent (unit tests / no job row), the caller falls back to the `created` gate. */
+  claimFinalize?: () => Promise<boolean>
 }
 
 export interface CrmSyncResult {
@@ -187,10 +191,18 @@ export async function runCrmSync(
 
   if (rows.length) await deps.setRows(entityTypeId, entityId, rows)
 
+  // FINALIZE (success chat + timeline дело) EXACTLY ONCE per job. Gating on `created` alone lost
+  // both when a post-create step (setRows) threw on the first attempt and the retry resumed with
+  // created=false — the entity existed, but the operator got no notice (#164). Instead we take a
+  // write-once claim: whichever run wins finalizes; a resume/redelivery that finds it already
+  // claimed skips (no double chat post). The claim runs AFTER setRows (the entity is fully built)
+  // and BEFORE the side effects, so a crash between claim and post errs toward a missed notice
+  // over a double post — the accepted trade (#164). Fallback to the `created` gate when no claim
+  // dep is wired (unit tests, or a path without a tracked job row).
+  const finalize = deps.claimFinalize ? await deps.claimFinalize() : created
+
   // Success chat notification (best-effort — never fail an import over a chat hiccup).
-  // Gated on `created`: an idempotent resume (retry / redelivery of an already-done job)
-  // must NOT re-post — the notification went out on the first, creating run.
-  if (deps.notifySuccess && created) {
+  if (deps.notifySuccess && finalize) {
     try {
       await deps.notifySuccess({
         supplierName: doc.supplier?.name,
@@ -205,12 +217,12 @@ export async function runCrmSync(
     }
   }
 
-  // Timeline activity («настраиваемое дело») — best-effort, gated on `created` like the
+  // Timeline activity («настраиваемое дело») — best-effort, same one-time finalize gate as the
   // chat notification (a redelivered/idempotent job must not add a second дело). The live
   // transport is the OAuth SDK (real app context), where crm.activity.configurable.add
   // works; a webhook context would return ERROR_WRONG_CONTEXT (verified) — so this is a
   // no-op only on the dev webhook path, never in prod.
-  if (deps.writeActivity && created) {
+  if (deps.writeActivity && finalize) {
     try {
       await deps.writeActivity({ entityTypeId, entityId, supplierName: doc.supplier?.name, rowCount: rows.length })
     } catch {

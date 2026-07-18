@@ -9,7 +9,7 @@ import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
-import { setJobStatus } from '../utils/jobStore'
+import { claimJobNotify, setJobStatus } from '../utils/jobStore'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
 import { findExistingItemId } from '../utils/originLookup'
@@ -201,13 +201,17 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
  * the product is re-found next import (no duplicate). Returns null on failure ⇒ runCrmSync
  * degrades to a freeform line + a warning (never silent).
  */
-function liveCrmSyncDeps(memberId: string, mapping: PortalMapping, rest: (m: string) => Promise<SdkTransport | null>, infra: LiveInfra): CrmSyncDeps {
+function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping, rest: (m: string) => Promise<SdkTransport | null>, infra: LiveInfra): CrmSyncDeps {
   const need = async (): Promise<SdkTransport> => {
     const t = await rest(memberId)
     if (!t) throw new Error('портал не авторизован (нет токена)')
     return t
   }
   return {
+    // One-time finalize claim (#164): the run that wins flips import_job.notified false→true, so
+    // the success chat + timeline дело fire exactly once even when a retry resumes after a
+    // post-create failure. Atomic UPDATE → race-safe against a concurrent stalled redelivery.
+    claimFinalize: () => claimJobNotify(memberId, jobId, infra.query),
     // Idempotency by B24 marker search (originId/xmlId) — no local checkpoint. The originator
     // code (env, defaults to the repo code) namespaces our marker so it never matches a portal's
     // own external-source data.
@@ -259,7 +263,7 @@ export function liveCrmSyncHandlerDeps(infra: LiveInfra): HandlerDeps {
   return {
     getMapping: m => loadMapping(m, rest),
     getDocument: (m, j) => getDocument(m, j, infra.query),
-    crmSyncDeps: (m, _j, mapping) => liveCrmSyncDeps(m, mapping, rest, infra),
+    crmSyncDeps: (m, j, mapping) => liveCrmSyncDeps(m, j, mapping, rest, infra),
     setJobStatus: (m, j, status, result) => setJobStatus(m, j, status, result, infra.query),
     deleteDocument: (m, j) => deleteDocument(m, j, infra.query),
     bumpMetrics: async (m, deltas) => {

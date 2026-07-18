@@ -28,6 +28,25 @@ export async function setJobStatus(memberId: string, jobId: string, status: JobS
   )
 }
 
+/**
+ * Atomically CLAIM the one-time «finalize» (success chat + timeline дело) for a job (#164).
+ * Flips `notified` false→true in a single UPDATE and RETURNs the row only to the winner, so
+ * exactly one run finalizes even under a retry that resumes after a post-create failure or a
+ * concurrent stalled redelivery: the first caller gets `true`, everyone after gets `false`.
+ * A missing job row (anomalous — the row is created at ingestion) also yields `false` → the
+ * notification is skipped rather than risking a post without a tracked job (fail toward
+ * «missed notice over double post», the accepted trade in #164).
+ */
+export async function claimJobNotify(memberId: string, jobId: string, query: QueryFn): Promise<boolean> {
+  const { rows } = await query(
+    `UPDATE import_job SET notified=true, updated_at=now()
+     WHERE member_id=$1 AND job_id=$2 AND notified=false
+     RETURNING job_id`,
+    [memberId, jobId]
+  )
+  return rows.length > 0
+}
+
 function mapJob(r: Record<string, unknown>): ImportJob {
   return {
     memberId: String(r.member_id),

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createJob, getJob, listJobs, setJobStatus } from '../server/utils/jobStore'
+import { claimJobNotify, createJob, getJob, listJobs, setJobStatus } from '../server/utils/jobStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -16,6 +16,19 @@ describe('jobStore', () => {
     await createJob('m', 'j1', 'накладная.pdf', q)
     expect(calls[0]!.sql).toContain('ON CONFLICT (member_id, job_id) DO NOTHING')
     expect(calls[0]!.params).toEqual(['m', 'j1', 'накладная.pdf'])
+  })
+  it('claimJobNotify: atomic UPDATE guarded by notified=false, RETURNING (#164)', async () => {
+    const { q, calls } = fakeQuery([{ job_id: 'j1' }]) // one row back → we won the claim
+    const won = await claimJobNotify('m', 'j1', q)
+    expect(won).toBe(true)
+    expect(calls[0]!.sql).toContain('SET notified=true')
+    expect(calls[0]!.sql).toContain('AND notified=false') // the guard that makes it one-shot
+    expect(calls[0]!.sql).toContain('RETURNING job_id')
+    expect(calls[0]!.params).toEqual(['m', 'j1'])
+  })
+  it('claimJobNotify: no row returned (already notified / missing job) → false', async () => {
+    const won = await claimJobNotify('m', 'j1', fakeQuery([]).q)
+    expect(won).toBe(false)
   })
   it('setJobStatus updates status+result', async () => {
     const { q, calls } = fakeQuery()
