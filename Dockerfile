@@ -51,7 +51,7 @@ ENV NODE_OPTIONS="--import /app/otel.instrument.mjs"
 EXPOSE 3000
 # Liveness is GET /api/health (docs/redesign 02).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD NODE_OPTIONS= node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", ".output/server/index.mjs"]
 
 # ── app: the front reverse proxy (behind the shared nginx-proxy) ──────────────

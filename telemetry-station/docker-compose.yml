@@ -24,9 +24,10 @@ services:
     ports:
       - "4318:4318" # OTLP HTTP — apps push here
       - "4317:4317" # OTLP gRPC
+      - "13133:13133" # health_check extension — probe GET / for liveness (see README)
     # No healthcheck: the collector-contrib image is distroless (no shell/wget/curl), so an
-    # exec healthcheck can't run. Liveness is the health_check extension on :13133 — probe it
-    # externally (monitoring) if needed. `restart: unless-stopped` covers crashes.
+    # exec healthcheck can't run. Liveness is the health_check extension on :13133 (published
+    # above — probe it from monitoring). `restart: unless-stopped` covers crashes.
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -37,8 +38,9 @@ services:
     environment:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DB: otel
-      # Let the default user authenticate with the password (native + http).
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      # Password auth for the `default` user comes from CLICKHOUSE_PASSWORD above. We do NOT set
+      # CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT — the collector only writes/creates the OTel schema
+      # and Grafana only reads; neither needs SQL access-management (CREATE USER/ROLE) privileges.
     volumes:
       - clickhouse_data:/var/lib/clickhouse
     healthcheck:
