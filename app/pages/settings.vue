@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useSettings } from '~/composables/useSettings'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
@@ -19,19 +19,38 @@ import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEd
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
 
-const { mapping, loading, saving, saved, error, load, save, scheduleSave, flushSave } = useSettings()
+const { mapping, loading, saving, saved, error, load, save, scheduleSave, flushSave, rebaseline } = useSettings()
 onMounted(async () => {
   await load()
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
   seedRoutingRows() // build editable routing rules from the loaded mapping (once)
   await loadMeasures() // populate the measure dropdowns
-  // Autosave: register AFTER the seed round-trips so opening the form doesn't POST — only genuine
-  // user edits arm the debounce (useSettings gates on `ready` + a content snapshot). Registered in
-  // onMounted so it's bound to this instance and auto-disposed on unmount.
+  // The category/stage `immediate` watchers reconcile the loaded mapping (dropping a categoryId/
+  // stageId whose funnel/stage was deleted in the portal) AFTER their REST fetches resolve — later
+  // than this onMounted. Await those same (cached) fetches + flush watchers so that open-time
+  // normalization is already applied, THEN re-baseline the echo guard: opening the form (even with a
+  // stale target) never autosaves — only genuine user edits do.
+  await settleOpenReconciles()
+  await nextTick()
+  rebaseline()
+  // Autosave: register the deep watch only now (post-seed, post-reconcile). Bound to this instance →
+  // auto-disposed on unmount. useSettings gates each fire on `ready` + a content snapshot.
   watch(mapping, scheduleSave, { deep: true })
 })
 // Flush a pending autosave when leaving the page so the last edit isn't lost mid-debounce.
 onBeforeUnmount(flushSave)
+
+/** Await the open-time direction/stage reconcile fetches for the default target and every routing
+ *  row (the same idempotent/cached `ensure*` the immediate watchers use), so their normalization of
+ *  the loaded mapping settles before the autosave baseline is taken. */
+async function settleOpenReconciles(): Promise<void> {
+  const dt = mapping.value.defaultTarget
+  const jobs: Array<Promise<void>> = [ensureCategories(dt.entityTypeId), ensureStages(dt.entityTypeId, dt.categoryId)]
+  for (const r of routingRows.value) {
+    if (r.entityTypeId) jobs.push(ensureCategories(r.entityTypeId), ensureStages(r.entityTypeId, r.categoryId))
+  }
+  await Promise.allSettled(jobs)
+}
 
 // Supplier-article field: searchable picker over the portal's catalog product
 // properties (P7). The model carries the property CODE (string); coerce the picker's

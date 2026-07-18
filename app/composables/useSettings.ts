@@ -3,6 +3,7 @@ import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { defaultMapping } from '~/utils/portalSettings'
 import { createDebouncer } from '~/utils/debounce'
+import { shouldAutosave } from '~/utils/autosave'
 import type { PortalMapping } from '~/types/mapping'
 
 // In-portal settings client: load/save the portal mapping via the frame-token
@@ -63,19 +64,32 @@ export function useSettings() {
       error.value = 'Настройки доступны только внутри портала Bitrix24'
       return
     }
+    // Serialize saves: if one is already in flight, re-arm the debounce and bail. Overlapping POSTs
+    // would race, and an older response reseeding `mapping` could clobber a newer edit (lost update).
+    if (saving.value) {
+      debouncer.schedule()
+      return
+    }
     debouncer.cancel() // a manual/flushed save subsumes any pending autosave — don't double-POST
-    // Serialize what we're about to send BEFORE the await, so edits made during the round-trip
-    // aren't wrongly marked as saved (they'll re-trigger autosave against the new snapshot).
+    // Snapshot what we're about to send BEFORE the await, so we can tell whether the user edited
+    // during the round-trip.
     const sentJson = snapshot()
     saving.value = true
     saved.value = false
     try {
       const res = await $fetch<{ mapping: PortalMapping }>('/api/settings', { method: 'POST', headers: h, body: { mapping: mapping.value } })
-      mapping.value = res.mapping
-      // Baseline is the SENT content, not the reseeded one: if the server normalized a field the
-      // reseed differs → autosave picks it up once more (converges), never loops on identical data.
-      lastSavedJson = sentJson
-      saved.value = true
+      if (snapshot() === sentJson) {
+        // Untouched since we sent it → safe to reflect the server's normalized form. Baseline on the
+        // RESEEDED value (server key order) so the echo guard matches exactly — no redundant re-POST.
+        mapping.value = res.mapping
+        lastSavedJson = snapshot()
+        saved.value = true
+      } else {
+        // The user edited during the round-trip. Do NOT reseed (that would clobber the newer edit).
+        // We persisted `sentJson`; the newer content stays "dirty" → arm autosave to persist it too.
+        lastSavedJson = sentJson
+        scheduleSave()
+      }
       error.value = ''
     } catch (e) {
       error.value = fetchErrorMessage(e, 'Не удалось сохранить настройки')
@@ -86,8 +100,7 @@ export function useSettings() {
 
   /** Arm autosave after an edit. No-op before the first load, or when nothing changed (echo guard). */
   function scheduleSave(): void {
-    if (!ready.value) return
-    if (snapshot() === lastSavedJson) return // reseed echo / no net change — don't POST
+    if (!shouldAutosave(snapshot(), lastSavedJson, ready.value)) return
     saved.value = false
     debouncer.schedule()
   }
@@ -97,5 +110,12 @@ export function useSettings() {
     debouncer.flush()
   }
 
-  return { mapping, loading, saving, saved, error, load, save, scheduleSave, flushSave }
+  /** Re-baseline the echo guard to the CURRENT mapping (nothing pending to save). The component
+   *  calls this once after the open-time category/stage reconciles settle, so their normalization
+   *  of the loaded mapping isn't mistaken for a user edit and doesn't autosave on open. */
+  function rebaseline(): void {
+    lastSavedJson = snapshot()
+  }
+
+  return { mapping, loading, saving, saved, error, load, save, scheduleSave, flushSave, rebaseline }
 }
