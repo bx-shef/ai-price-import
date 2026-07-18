@@ -116,8 +116,10 @@ AI-импорт документов с табличной частью в Bitri
     вне бандла, `otel-preload-package.json` **точными** версиями ставится в backend-образ). Без
     `OTEL_EXPORTER_OTLP_ENDPOINT` — no-op (поведение не меняется). Ручные спаны на `@opentelemetry/api`
     (no-op без SDK): `withDependencySpan` оборачивает каждый B24 REST (`makeSdkRestCall`/`makeSdkListCall`,
-    `memberId` проброшен из `makePortalSdkCall`), `withSpan('crm-sync',…)` — job-конвейер с исходами
-    (`created`/`lines`/`unmatched`/`idempotent`/`warnings`/`errors`). **PII-защита тройная:** allowlist
+    `memberId` проброшен из `makePortalSdkCall`), `withSpan(…)` — job-спан на **каждую** очередь
+    (`b24-events`/`file-extract`/`agent-run`/`crm-sync`): латентность+исход+`portal.hash` по стадии;
+    у extract/agent — `job.ok`, у crm-sync — исходы записи (`created`/`lines`/`unmatched`/`idempotent`/
+    `warnings`/`errors`). **PII-защита тройная:** allowlist
     наших атрибутов (`telemetryAttributes.ts` `pickSafeAttributes` — поставщика/артикул/цену прикрепить
     нельзя) + redaction-SpanProcessor авто-атрибутов (SQL/URL/токены) + `portal.hash` (SHA-256) вместо
     member_id, `error_kind` вместо текста ошибки. Чистые ядра + тесты (`telemetryAttributes`/`telemetrySpan`)

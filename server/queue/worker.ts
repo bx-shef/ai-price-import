@@ -107,7 +107,12 @@ export function startEventWorker(infra: LiveInfra = buildLiveInfra()): Worker | 
   if (!connection) return null
   const eventDeps = liveEventDeps(infra)
   const events = new Worker(QUEUES.events, async (job) => {
-    await handleEventJob(job.data as EventJob, eventDeps)
+    const data = job.data as EventJob
+    // Job-level trace span (телеметрия) — install/uninstall latency/outcome per portal.
+    await withSpan('b24-events', {
+      'job.queue': 'b24-events',
+      'portal.hash': portalHash(data.memberId)
+    }, () => handleEventJob(data, eventDeps))
   }, { connection })
   // A permanently-failed event (all attempts exhausted) stays in the failed set — B24
   // does not redeliver online events, so surface it loudly for an operator to replay.
@@ -133,13 +138,27 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
   const cc = queueConcurrency() // per-queue env overrides (defaults 4/2/4), #95
 
   const extract = new Worker(QUEUES.extract, async (job) => {
-    // Handled failures set 'error' and return; only an infra throw propagates (→ retry).
-    await handleFileExtractJob(job.data as ExtractJob, fileExtract)
-    await cleanupUpload(job.data as ExtractJob) // success/handled-fail path
+    const data = job.data as ExtractJob
+    // Job-level trace span (телеметрия) — per-portal latency/outcome for the OCR/extract stage;
+    // no-op when telemetry is off. Only safe attrs (queue, hashed portal, handler ok flag).
+    await withSpan('file-extract', {
+      'job.queue': 'file-extract',
+      'portal.hash': portalHash(data.memberId)
+    }, async () => {
+      // Handled failures set 'error' and return {ok:false}; only an infra throw propagates (→ retry).
+      const res = await handleFileExtractJob(data, fileExtract)
+      await cleanupUpload(data) // success/handled-fail path
+      return res
+    }, res => ({ 'job.ok': res.ok }))
   }, { connection, concurrency: cc.extract })
 
   const agent = new Worker(QUEUES.agent, async (job) => {
-    await handleAgentRunJob(job.data as AgentJob, agentRun)
+    const data = job.data as AgentJob
+    // Job-level trace span (телеметрия) — per-portal latency/outcome for the LLM agent stage.
+    await withSpan('agent-run', {
+      'job.queue': 'agent-run',
+      'portal.hash': portalHash(data.memberId)
+    }, () => handleAgentRunJob(data, agentRun), res => ({ 'job.ok': res.ok }))
   }, { connection, concurrency: cc.agent })
 
   const crm = new Worker(QUEUES.crmSync, async (job) => {

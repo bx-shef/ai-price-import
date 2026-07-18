@@ -16,6 +16,7 @@ describe('pickSafeAttributes (manual-span allowlist)', () => {
       'dep.system': 'bitrix24',
       'dep.status': 'ok',
       'job.op_count': 5,
+      'job.ok': true,
       'proc.lines': 12,
       'proc.created': true,
       'portal.hash': 'abc123'
@@ -23,6 +24,7 @@ describe('pickSafeAttributes (manual-span allowlist)', () => {
       'dep.system': 'bitrix24',
       'dep.status': 'ok',
       'job.op_count': 5,
+      'job.ok': true,
       'proc.lines': 12,
       'proc.created': true,
       'portal.hash': 'abc123'
