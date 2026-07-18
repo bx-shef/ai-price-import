@@ -273,11 +273,21 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
   31=инвойс; КП/7 исключён — #135) + `categoryId` (направление из `crm.category.*`; у лида нет) + стадия. Позиции —
   `crm.item.productrow.set` (`ownerType` по типу: D/SI/`T<id>`; **лид — `L`**, live-verified).
 
-  #### Лид как цель (#135) — план, ждёт согласования
+  #### Лид как цель (#135)
 
   **Мотив (решение владельца):** КП импортировать нечего (исходящий документ компании), а вот **лид** —
   осмысленная цель: входящий документ от нового/существующего контрагента заводит лид для квалификации.
   Логика та же, что у сделки, **плюс уточнение по контрагенту**.
+
+  **Согласованные решения:**
+  - **Тип цели задаёт пользователь/админ, не авто-определяем.** Цель выбирает менеджер (override при
+    загрузке) или админ (правила роутинга + дефолт). Наличие компании **НЕ** переключает тип: если
+    сконфигурирован лид — всегда создаём лид (не «сделка при найденной компании»); found/not-found
+    влияет только на `companyId` vs `companyTitle` внутри лида.
+  - **Стадия — пустая** (портальная дефолтная NEW); отдельного поля стадии лида в настройках не даём.
+  - **Из документа — только название контрагента** (`companyTitle`). Контактное лицо / телефон / e-mail /
+    произвольные поля лида — **платная индивидуальная доработка на сервере клиента** (self-hosted, как и
+    подбор договора Q8): «на вашем сервере сделаем что нужно». В generic-облаке — только название.
 
   **Живые факты (`crm.item.fields` etid=1, тестовый портал 2026-07-18):** лид несёт `title`, `companyId`
   (`crm_company`), `opportunity`+`isManualOpportunity`+`currencyId` (сумма как у сделки), `stageId`
@@ -305,12 +315,14 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
     менеджер квалифицирует «сырой» лид. Это **снимает UNMATCHED-тупик** для лид-цели: в отличие от сделки
     (где «не найден» = warning + лид/сделка без компании), лид всегда несёт имя контрагента.
 
-  **Дельта реализации (когда согласуем):** (1) `TargetEntityKind` += `'lead'`, `originStrategy(1)` уже
-  `'origin'` — маркер готов; (2) `ownerTypeCode(1)` → `'L'` (сейчас отдаёт `'T1'`); (3) `supportsOpportunity`
-  += `1` (иначе итог лида = 0); (4) `entityOpenPath(1)` → `/crm/lead/details/<id>/`; (5) в `runCrmSync` —
-  ветка сборки полей для лида (found→`companyId` / not-found→`companyTitle`); (6) UI выбора цели в форме
-  настроек += «Лид»; (7) тесты (found/not-found, marker, ownerType, opportunity) + live-verify создания
-  на тест-портале (OAuth-путь). **Код НЕ трогаем до согласования.**
+  **Реализовано (#135):** (1) `TargetEntityKind` += `'lead'`, `ENTITY_TYPE_ID.lead=1`, `originStrategy(1)`
+  уже `'origin'` — маркер готов; (2) `ownerTypeCode(1)` → `'L'`; (3) `supportsOpportunity(1)` → `true`;
+  (4) `entityOpenPath(1)` → `/crm/lead/details/<id>/`; (5) в `runCrmSync` — ветка полей для лида
+  (found→`companyId` / not-found→`companyTitle`); (6) форма настроек — пресет «Лид»; (7) тесты
+  (found/not-found, non-lead без companyTitle, marker, ownerType, opportunity). **Live-verified на
+  тест-портале** (`B24_HOOK`): `crm.item.add` etid=1 с маркером+`companyTitle`+`opportunity`+валютой →
+  round-trip `crm.item.get` подтвердил персист; `productrow.set ownerType='L'` ОК; поиск по маркеру нашёл
+  созданный лид; очистка `crm.item.delete` ОК.
 - **Модель НДС.** Позиция несёт `taxRate` (ставка) и `taxIncluded` (цена с НДС / без):
   - **Ставки — только из настроек портала Б24** (`crm.vat.list`/`catalog.vat.list`); других ставок нет.
     Ставку из документа сопоставляем с доступными в портале. **Нет такой ставки** (напр. в документе

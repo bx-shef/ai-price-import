@@ -151,6 +151,7 @@ const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: '' }, ...DOCUM
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
 const TARGET_PRESETS = [
+  { id: 1, label: 'Лид' },
   { id: 2, label: 'Сделка' },
   { id: 31, label: 'Смарт-счёт' }
 ]

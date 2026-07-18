@@ -14,6 +14,7 @@ import type { TargetRef } from '~/types/mapping'
  * NOT the bare numeric id (which B24 rejects). ⚠ verify `SI`/`T<id>` live per portal.
  */
 export function ownerTypeCode(entityTypeId: number): string {
+  if (entityTypeId === 1) return 'L' // lead — live-verified ('T1' → ACCESS_DENIED), #135
   if (entityTypeId === 2) return 'D'
   if (entityTypeId === 7) return 'Q'
   if (entityTypeId === 31) return 'SI'
@@ -118,13 +119,13 @@ export function computeOpportunity(rows: Array<Record<string, unknown>>): number
 
 /**
  * Whether we set an explicit `opportunity`+`isManualOpportunity` on this entity type.
- * Only money-bearing STATIC entities always expose the field: deal(2), quote(7),
- * smart-invoice(31). Dynamic smart-processes (entityTypeId ≥ 1000) expose it only when
- * their money toggle is on — setting an absent field can reject the create — so we skip
- * them and let the portal handle the total.
+ * Only money-bearing STATIC entities always expose the field: lead(1), deal(2), quote(7),
+ * smart-invoice(31) — all live-verified via crm.item.fields. Dynamic smart-processes
+ * (entityTypeId ≥ 1000) expose it only when their money toggle is on — setting an absent field
+ * can reject the create — so we skip them and let the portal handle the total.
  */
 export function supportsOpportunity(entityTypeId: number): boolean {
-  return entityTypeId === 2 || entityTypeId === 7 || entityTypeId === 31
+  return entityTypeId === 1 || entityTypeId === 2 || entityTypeId === 7 || entityTypeId === 31
 }
 
 function finite(n: number, fallback = 0): number {

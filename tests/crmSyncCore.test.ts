@@ -215,6 +215,45 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(notifySuccess).not.toHaveBeenCalled()
   })
 
+  // #135 — lead target: contractor nuance (found → companyId / not found → companyTitle).
+  it('lead target, supplier FOUND → companyId set, NO companyTitle, opportunity+marker', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 1 } // lead
+    const deps = baseDeps() // findCompanyByTaxId → 42
+    await runCrmSync('job1', doc, m, {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ entityTypeId: 1 }),
+      expect.objectContaining({
+        companyId: 42,
+        // lead is money-bearing (#135) → explicit total, like a deal
+        opportunity: 200, isManualOpportunity: 'Y', currencyId: 'BYN',
+        originId: 'job1', originatorId: 'ai-price-import'
+      })
+    )
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyTitle: expect.anything() }))
+    // product rows written with the lead ownerType (entityTypeId 1 → 'L' resolved in setRows)
+    expect(deps.setRows).toHaveBeenCalledWith(1, 555, expect.any(Array))
+  })
+
+  it('lead target, supplier NOT found → companyTitle from document, NO companyId (#135 fix)', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 1 } // lead
+    const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
+    const r = await runCrmSync('job1', doc, m, {}, deps)
+    expect(r.created).toBe(true)
+    expect(deps.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ entityTypeId: 1 }),
+      expect.objectContaining({ companyTitle: 'ООО Ромашка' }) // raw lead carries the name
+    )
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyId: expect.anything() }))
+  })
+
+  it('NON-lead target (deal), supplier NOT found → NO companyTitle (unchanged behaviour)', async () => {
+    const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) }) // default target = deal (2)
+    await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyTitle: expect.anything() }))
+  })
+
   it('supplier not found → still creates, warning, no companyId', async () => {
     const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
