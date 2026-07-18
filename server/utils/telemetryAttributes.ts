@@ -34,6 +34,7 @@ export const SAFE_MANUAL_ATTR_KEYS = new Set<string>([
   'job.op_count', // number of items/rows in a batch
   'job.outcome', // 'ok' | 'error'
   'job.error_kind', // sanitized error class on a job span (never the message)
+  'job.ok', // boolean: the handler's own success flag (file-extract/agent-run handled-fail vs ok)
   // import processing OUTCOMES (counts + verdicts, never supplier/article/price)
   'proc.created', // boolean: a CRM entity was created
   'proc.lines', // number of product rows written

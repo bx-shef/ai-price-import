@@ -19,10 +19,15 @@
   `pnpm-lock.yaml`/тестит CI). Поднимает `NodeSDK` + `getNodeAutoInstrumentations()`
   (http/pg/ioredis; `fs` выключен как шум) + OTLP trace/metric экспортёры. Эндпоинт/заголовки — из env.
 - **Ручные спаны** (`@opentelemetry/api`, no-op когда SDK не зарегистрирован):
-  - `withDependencySpan()` — оборачивает **каждый B24 REST-вызов** (`makeSdkRestCall`/`makeSdkListCall`)
-    в спан `dep bitrix24 <method>` со `{system, operation, method, scope, status, error_kind, portal.hash}`;
-  - `withSpan('crm-sync', …)` — **job-спан конвейера записи в CRM** с исходами `{created, lines,
-    unmatched, idempotent, warnings, errors, outcome, portal.hash}`.
+  - `withDependencySpan()` — оборачивает **каждый исходящий вызов к Bitrix** в спан `dep bitrix24 <op>`
+    со `{system, operation, method, scope, status, error_kind, portal.hash}`: все B24 REST
+    (`makeSdkRestCall`/`makeSdkListCall`) **и** OAuth-refresh POST'ы (`oauth.refresh` — keep-alive/reauth;
+    `oauth.install-verify` — привязка member при установке, #162). Непокрытых вызовов Б24 не осталось;
+  - `withSpan(…)` — **job-спан на КАЖДУЮ очередь конвейера** (`b24-events`/`file-extract`/`agent-run`/
+    `crm-sync`): латентность + исход (`job.outcome` ok/error, `job.error_kind`) + `portal.hash` по стадии.
+    У `file-extract`/`agent-run` — флаг `job.ok` (handled-fail vs успех); у `crm-sync` — исходы записи
+    `{created, lines, unmatched, idempotent, warnings, errors}`. Так вся цепочка (приём события →
+    извлечение текста/OCR → прогон агента → запись в CRM) видна в трейсах по стадиям и порталам.
 - **Приватность ([05-data-policy §4](redesign/05-data-policy.md)) — тройная защита коммерческих данных:**
   1. наши спаны эмитят **только allowlist** безопасных ключей (`server/utils/telemetryAttributes.ts`
      `pickSafeAttributes`) — поставщика/артикул/цену/содержимое документа прикрепить физически нельзя;
