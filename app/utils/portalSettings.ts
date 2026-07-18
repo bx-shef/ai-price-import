@@ -37,7 +37,9 @@ function asTarget(v: unknown, fallback: TargetRef): TargetRef {
   const categoryId = Number(o?.categoryId)
   return {
     entityTypeId: etid,
-    ...(o?.categoryId != null && Number.isFinite(categoryId) ? { categoryId } : {}),
+    // Integer (not just finite) so the parser agrees with the editor (rulesToRows/rowsToRules gate
+    // categoryId on Number.isInteger) — a float id can't pass one layer and be dropped by the other.
+    ...(o?.categoryId != null && Number.isInteger(categoryId) ? { categoryId } : {}),
     ...(o?.stageId != null ? { stageId: String(o.stageId) } : {})
   }
 }

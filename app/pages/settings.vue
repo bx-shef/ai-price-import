@@ -4,6 +4,9 @@ import { useSettings } from '~/composables/useSettings'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
+import { useCrmCategories } from '~/composables/useCrmCategories'
+import * as catPicker from '~/utils/categoryPicker'
+import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
 
@@ -150,12 +153,20 @@ const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: '' }, ...DOCUM
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
-// Leads (entityTypeId 1) have no category — clear a leftover categoryId when switching TO a lead
-// so a value carried over from a deal/smart target can't ride into crm.item.add (rejected by B24:
-// «Item has no CATEGORY_ID field», #135). crm-sync guards this too (defence in depth).
+// Switching the entity type invalidates the direction (a deal funnel id doesn't belong to a
+// smart-invoice, and a lead has none — crm.item.add would reject «Item has no CATEGORY_ID field»).
+// Clear categoryId SYNCHRONOUSLY on any change so a stale id can't be saved in the sub-second
+// window before the async category reload reconciles it (crm-sync also guards leads, #135).
 function selectDefaultTarget(id: number): void {
+  if (mapping.value.defaultTarget.entityTypeId !== id) mapping.value.defaultTarget.categoryId = undefined
   mapping.value.defaultTarget.entityTypeId = id
-  if (id === 1) mapping.value.defaultTarget.categoryId = undefined
+}
+/** Rule-row entity change: coerce to a positive int (or null) and clear a now-stale direction. */
+function setRowEntity(row: EditableRoutingRow, v: unknown): void {
+  const n = typeof v === 'number' ? v : Number(v)
+  const next = Number.isInteger(n) && n > 0 ? n : null
+  if (next !== row.entityTypeId) row.categoryId = undefined
+  row.entityTypeId = next
 }
 
 const TARGET_PRESETS = [
@@ -163,6 +174,45 @@ const TARGET_PRESETS = [
   { id: 2, label: 'Сделка' },
   { id: 31, label: 'Смарт-счёт' }
 ]
+
+// Direction (воронка/категория) pickers for routing targets: «тип документа → сущность +
+// НАПРАВЛЕНИЕ» (owner ask). Categories are loaded per entity type from the portal
+// (crm.category.list, frame token) and cached; lead (1) has none → the picker hides. Switching
+// entity type clears a categoryId that isn't valid for the new type (a deal funnel id must not
+// ride onto a smart-invoice / lead). Stage selection is a separate later slice. Outside a portal
+// frame there's no data → the picker stays hidden (like the article picker).
+const { load: loadCrmCategories } = useCrmCategories()
+const catCache = ref<Record<number, CrmCategoryOption[]>>({})
+
+async function ensureCategories(entityTypeId: number | null | undefined): Promise<void> {
+  const etid = Number(entityTypeId)
+  if (!Number.isInteger(etid) || etid <= 0 || etid in catCache.value) return
+  catCache.value[etid] = await loadCrmCategories(etid)
+}
+
+// Thin wrappers over the pure app/utils/categoryPicker helpers (unit-tested there): look the
+// entity's cached funnels up, delegate the transform. `catCache.value[etid]` is `undefined` until
+// loaded (→ reconcile leaves the id) and `[]` once loaded-empty (→ reconcile clears a stale id).
+const catsFor = (entityTypeId: number | null | undefined): CrmCategoryOption[] | undefined => catCache.value[Number(entityTypeId)]
+const categoryItems = (entityTypeId: number | null | undefined) => catPicker.categoryItems(catsFor(entityTypeId))
+const hasCategories = (entityTypeId: number | null | undefined) => catPicker.hasCategories(catsFor(entityTypeId))
+const categoryValue = (target: catPicker.CategoryTarget) => catPicker.categoryValue(target)
+const setCategory = (target: catPicker.CategoryTarget, v: unknown) => catPicker.setCategory(target, v)
+const reconcileCategory = (target: catPicker.CategoryTarget) => catPicker.reconcileCategory(target, catsFor(target.entityTypeId))
+
+// Default target: (re)load directions when its entity changes; reconcile a stale categoryId.
+watch(() => mapping.value.defaultTarget.entityTypeId, async (etid) => {
+  await ensureCategories(etid)
+  reconcileCategory(mapping.value.defaultTarget)
+}, { immediate: true })
+
+// Routing rows: load directions for each row's entity (memoized) and reconcile after load.
+// Runs on seed and on any row edit; ensureCategories short-circuits when already cached.
+watch(routingRows, (rows) => {
+  for (const r of rows) {
+    if (r.entityTypeId) void ensureCategories(r.entityTypeId).then(() => reconcileCategory(r as { entityTypeId: number, categoryId?: number }))
+  }
+}, { deep: true, immediate: true })
 
 const ARTICLE_KIND_ITEMS = [
   { label: 'построчно (текст)', value: 'text' },
@@ -218,6 +268,19 @@ const ON_MISSING_ITEMS = [
             aria-label="ID типа целевой сущности"
           />
         </div>
+        <div
+          v-if="hasCategories(mapping.defaultTarget.entityTypeId)"
+          class="mt-2 flex items-center gap-2"
+        >
+          <span class="text-xs text-gray-500">направление (воронка):</span>
+          <B24Select
+            :model-value="categoryValue(mapping.defaultTarget)"
+            :items="categoryItems(mapping.defaultTarget.entityTypeId)"
+            class="w-56"
+            aria-label="Направление целевой сущности по умолчанию"
+            @update:model-value="(v: unknown) => setCategory(mapping.defaultTarget, v)"
+          />
+        </div>
       </B24FormField>
 
       <!-- Правила маршрутизации -->
@@ -248,10 +311,19 @@ const ON_MISSING_ITEMS = [
               aria-hidden="true"
             >→</span>
             <B24InputNumber
-              v-model="row.entityTypeId"
+              :model-value="row.entityTypeId"
               :min="1"
               class="w-28"
               :aria-label="`Правило ${i + 1}: тип целевой сущности`"
+              @update:model-value="(v: unknown) => setRowEntity(row, v)"
+            />
+            <B24Select
+              v-if="hasCategories(row.entityTypeId)"
+              :model-value="categoryValue(row)"
+              :items="categoryItems(row.entityTypeId)"
+              class="w-48"
+              :aria-label="`Правило ${i + 1}: направление`"
+              @update:model-value="(v: unknown) => setCategory(row, v)"
             />
             <B24Button
               color="air-tertiary-no-accent"
