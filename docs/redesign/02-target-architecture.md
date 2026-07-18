@@ -93,9 +93,20 @@ Claude Code» — из методологии репозитория `ai-agent` 
    цели, и у каждого правила рядом с типом сущности есть пикер направления — список тянется с портала
    (`crm.category.list` по `entityTypeId`, фрейм-токеном: роут `GET /api/crm-categories`, чистое ядро
    `fetchCrmCategories`, admin-гейт). У лида воронок нет → пикер скрыт. Смена типа сущности сбрасывает
-   `categoryId`, невалидный для нового типа. **Стадия (`stageId`)** пока только через `app.option`
-   (следующий слайс). **Ручной выбор цели при загрузке (`manualOverride`) — сделан end-to-end:** на
-   `/import` блок «Куда импортировать» (Авто/Лид/Сделка/Смарт-счёт + пикер направления) → поле `target`
+   `categoryId`, невалидный для нового типа. **Стадия (`stageId`) — тоже выбирается в UI** (каскад от
+   направления): пикер тянет `crm.status.list` с портала (`fetchCrmStages`/`GET /api/crm-stages`, admin,
+   чистое ядро `stagePicker.ts`), `ENTITY_ID` зависит от типа+воронки (live-verified: `DEAL_STAGE`/
+   `DEAL_STAGE_<N>` у сделки, `SMART_INVOICE_STAGE_<cat>` у смарт-счёта, `DYNAMIC_<etid>_STAGE_<cat>` у
+   смарт-процесса). **У лида стадию не выбираем** (`stageEntityId(1)→null`, пикер скрыт, `createTargetItem`
+   не шлёт `stageId`): live-verified — `crm.item.add` для лида **молча игнорирует** `stageId`/`statusId`
+   (лид садится на портальную дефолтную стадию, без ошибки), так что пикер был бы контролом-пустышкой
+   (симметрично carve-out'у `categoryId` лида, #135). Пусто ⇒ дефолтная/первая стадия; смена направления/
+   типа сбрасывает `stageId`; **невалидный/удалённый `stageId` для сделки/смарт-* Б24 тоже игнорирует
+   молча** (создаёт в дефолтной стадии, без reject → нет retry-loop), поэтому `resolveValidTarget`
+   валидирует только `categoryId` (у него невалидное значение реально reject'ит). Есть и у дефолт-цели, и у
+   каждого правила, и в ручном выборе на `/import`.
+   **Ручной выбор цели при загрузке (`manualOverride`) — сделан end-to-end:** на
+   `/import` блок «Куда импортировать» (Авто/Лид/Сделка/Смарт-счёт + пикер направления + стадии) → поле `target`
    (JSON) в `POST /api/import/upload` → чистый валидатор `parseManualTarget` (недоверенный вход) → колонка
    `import_job.manual_override` (JSONB) → `getManualOverride` в agent-run → `RoutingSignals.manualOverride`
    → `resolveTarget` применяет с высшим приоритетом. «Авто» (пусто) ⇒ идём по правилам. Сервер

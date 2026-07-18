@@ -4,8 +4,11 @@ import ChevronLeftMIcon from '@bitrix24/b24icons-vue/outline/ChevronLeftMIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useImport } from '~/composables/useImport'
 import { useCrmCategories } from '~/composables/useCrmCategories'
+import { useCrmStages } from '~/composables/useCrmStages'
 import * as catPicker from '~/utils/categoryPicker'
+import * as stagePicker from '~/utils/stagePicker'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
+import type { CrmStageOption } from '~/utils/stagePicker'
 import type { TargetRef } from '~/types/mapping'
 import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
 
@@ -34,22 +37,48 @@ const TARGET_CHOICES: Array<{ id: number | null, label: string }> = [
   { id: 2, label: 'Сделка' },
   { id: 31, label: 'Смарт-счёт' }
 ]
+// Stage (стадия) cascades from entity + direction (same helpers as settings).
+const { load: loadCrmStages } = useCrmStages()
+const targetStageId = ref<string | undefined>(undefined)
+const stages = ref<CrmStageOption[] | undefined>(undefined)
+async function reloadStages() {
+  targetStageId.value = undefined // entity/direction change → drop the stage
+  stages.value = targetEtid.value ? await loadCrmStages(targetEtid.value, targetCategoryId.value ?? null) : undefined
+}
 async function chooseTarget(id: number | null) {
   targetEtid.value = id
   targetCategoryId.value = undefined // entity switch → drop the direction
+  // Clear the stage SYNCHRONOUSLY before the categories await, so a submit during that gap can't
+  // send the previous entity's stageId with the new entity (reloadStages re-clears after the load).
+  targetStageId.value = undefined
+  stages.value = undefined
   cats.value = id ? await loadCrmCategories(id) : undefined
+  await reloadStages()
 }
 const catItems = computed(() => catPicker.categoryItems(cats.value))
 const showDirection = computed(() => catPicker.hasCategories(cats.value))
 const catValue = computed(() => (targetCategoryId.value == null ? '' : String(targetCategoryId.value)))
-function onCategory(v: unknown) {
+async function onCategory(v: unknown) {
   const t: { categoryId?: number } = { categoryId: targetCategoryId.value }
   catPicker.setCategory(t, v)
   targetCategoryId.value = t.categoryId
+  await reloadStages() // direction change → reload its stages
+}
+const stageItems = computed(() => stagePicker.stageItems(stages.value))
+const showStage = computed(() => stagePicker.hasStages(stages.value))
+const stageValue = computed(() => targetStageId.value ?? '')
+function onStage(v: unknown) {
+  const t: { stageId?: string } = { stageId: targetStageId.value }
+  stagePicker.setStage(t, v)
+  targetStageId.value = t.stageId
 }
 function currentTarget(): TargetRef | null {
   if (!targetEtid.value) return null
-  return { entityTypeId: targetEtid.value, ...(targetCategoryId.value != null ? { categoryId: targetCategoryId.value } : {}) }
+  return {
+    entityTypeId: targetEtid.value,
+    ...(targetCategoryId.value != null ? { categoryId: targetCategoryId.value } : {}),
+    ...(targetStageId.value ? { stageId: targetStageId.value } : {})
+  }
 }
 
 const pending = ref<File[] | null>(null)
@@ -129,6 +158,14 @@ const rows = computed(() => jobs.value.map(job => ({
           class="w-52"
           aria-label="Направление (воронка)"
           @update:model-value="onCategory"
+        />
+        <B24Select
+          v-if="showStage"
+          :model-value="stageValue"
+          :items="stageItems"
+          class="w-48"
+          aria-label="Стадия"
+          @update:model-value="onStage"
         />
       </div>
       <p class="mt-1 text-xs text-gray-400">

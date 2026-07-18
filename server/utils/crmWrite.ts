@@ -80,7 +80,9 @@ export async function createTargetItem(target: TargetRef, fields: Record<string,
   // a stray categoryId — e.g. carried over when a deal routing rule is switched to «Лид» — makes
   // crm.item.add reject with «Item has no CATEGORY_ID field» (live-verified, #135). Skip it for leads.
   if (target.categoryId != null && target.entityTypeId !== 1) (params.fields as Record<string, unknown>).categoryId = target.categoryId
-  if (target.stageId != null) (params.fields as Record<string, unknown>).stageId = target.stageId
+  // Leads ignore the stage on crm.item.add (live-verified: `stageId`/`statusId` both silently
+  // dropped, the lead lands on the portal's default status) — so don't forward it for leads.
+  if (target.stageId != null && target.entityTypeId !== 1) (params.fields as Record<string, unknown>).stageId = target.stageId
   const res = await call('crm.item.add', params) as { item?: { id?: number } }
   const id = res?.item?.id
   if (!id) throw new Error('crm.item.add: no id in result')

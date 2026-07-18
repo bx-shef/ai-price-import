@@ -5,7 +5,10 @@ import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
 import { useCrmCategories } from '~/composables/useCrmCategories'
+import { useCrmStages } from '~/composables/useCrmStages'
 import * as catPicker from '~/utils/categoryPicker'
+import * as stagePicker from '~/utils/stagePicker'
+import type { CrmStageOption } from '~/utils/stagePicker'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
@@ -214,6 +217,39 @@ watch(routingRows, (rows) => {
   }
 }, { deep: true, immediate: true })
 
+// Stage (стадия) picker — cascades from entity + direction («тип → сущность → направление → СТАДИЯ»).
+// crm.status.list ENTITY_ID depends on both, so the cache is keyed by `entityTypeId:categoryId`.
+// Loaded from the portal (frame token) + reconciled when the direction/entity changes; the deal
+// default funnel and leads have stages without a direction. Outside a portal → hidden. Optional
+// (empty = the entity's default/first stage).
+const { load: loadCrmStages } = useCrmStages()
+const stageCache = ref<Record<string, CrmStageOption[]>>({})
+const stageKey = (etid: number | null | undefined, cat: number | null | undefined): string => `${Number(etid)}:${cat ?? ''}`
+async function ensureStages(etid: number | null | undefined, cat: number | null | undefined): Promise<void> {
+  const n = Number(etid)
+  if (!Number.isInteger(n) || n <= 0) return
+  const key = stageKey(etid, cat)
+  if (key in stageCache.value) return
+  stageCache.value[key] = await loadCrmStages(n, cat ?? null)
+}
+const stagesFor = (t: { entityTypeId?: number | null, categoryId?: number }): CrmStageOption[] | undefined => stageCache.value[stageKey(t.entityTypeId, t.categoryId)]
+const stageItemsFor = (t: { entityTypeId?: number | null, categoryId?: number }) => stagePicker.stageItems(stagesFor(t))
+const hasStagesFor = (t: { entityTypeId?: number | null, categoryId?: number }) => stagePicker.hasStages(stagesFor(t))
+const stageValueOf = (t: stagePicker.StageTarget) => stagePicker.stageValue(t)
+const setStageOf = (t: stagePicker.StageTarget, v: unknown) => stagePicker.setStage(t, v)
+const reconcileStageOf = (t: { entityTypeId?: number | null, categoryId?: number, stageId?: string }) => stagePicker.reconcileStage(t, stagesFor(t))
+
+watch(() => [mapping.value.defaultTarget.entityTypeId, mapping.value.defaultTarget.categoryId], async () => {
+  await ensureStages(mapping.value.defaultTarget.entityTypeId, mapping.value.defaultTarget.categoryId)
+  reconcileStageOf(mapping.value.defaultTarget)
+}, { immediate: true })
+
+watch(routingRows, (rows) => {
+  for (const r of rows) {
+    if (r.entityTypeId) void ensureStages(r.entityTypeId, r.categoryId).then(() => reconcileStageOf(r))
+  }
+}, { deep: true, immediate: true })
+
 const ARTICLE_KIND_ITEMS = [
   { label: 'построчно (текст)', value: 'text' },
   { label: 'через разделитель', value: 'string' }
@@ -281,6 +317,19 @@ const ON_MISSING_ITEMS = [
             @update:model-value="(v: unknown) => setCategory(mapping.defaultTarget, v)"
           />
         </div>
+        <div
+          v-if="hasStagesFor(mapping.defaultTarget)"
+          class="mt-2 flex items-center gap-2"
+        >
+          <span class="text-xs text-gray-500">стадия:</span>
+          <B24Select
+            :model-value="stageValueOf(mapping.defaultTarget)"
+            :items="stageItemsFor(mapping.defaultTarget)"
+            class="w-56"
+            aria-label="Стадия целевой сущности по умолчанию"
+            @update:model-value="(v: unknown) => setStageOf(mapping.defaultTarget, v)"
+          />
+        </div>
       </B24FormField>
 
       <!-- Правила маршрутизации -->
@@ -324,6 +373,14 @@ const ON_MISSING_ITEMS = [
               class="w-48"
               :aria-label="`Правило ${i + 1}: направление`"
               @update:model-value="(v: unknown) => setCategory(row, v)"
+            />
+            <B24Select
+              v-if="hasStagesFor(row)"
+              :model-value="stageValueOf(row)"
+              :items="stageItemsFor(row)"
+              class="w-44"
+              :aria-label="`Правило ${i + 1}: стадия`"
+              @update:model-value="(v: unknown) => setStageOf(row, v)"
             />
             <B24Button
               color="air-tertiary-no-accent"
