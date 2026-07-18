@@ -15,7 +15,7 @@ import { query } from '../db/client'
 // no cross-portal reach. NB: the read uses the portal's app-install OAuth token, so it sees
 // catalog metadata regardless of the caller's own CRM rights — acceptable here: the payload
 // is non-sensitive schema (property names/codes, visible to anyone browsing the catalog) and
-// this endpoint backs the ADMIN-gated settings picker (SettingsForm useIsAdmin). It matches
+// this endpoint backs the ADMIN-gated settings picker (settings.vue/useSettings). It matches
 // the app's server-side-OAuth read model (settings/app.option, crm-sync).
 export default defineEventHandler(async (event) => {
   const auth = extractFrameAuth(getHeaders(event) as Record<string, string | undefined>)
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }
   }
-  // Server-side ADMIN gate (mirrors the client-side useIsAdmin on the settings form): the read
+  // Server-side ADMIN gate (mirrors the client-side gate in useSettings/settings.vue): the read
   // runs on the portal's app OAuth token, so reject non-admins rather than let any in-portal
   // user enumerate catalog property metadata.
   if (!resolved.admin) {
