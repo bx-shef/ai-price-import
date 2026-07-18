@@ -8,6 +8,7 @@ import type { RestCall } from './b24Rest'
 // client-bank app.
 
 const ENTITY_PATHS: Record<number, (id: number) => string> = {
+  1: id => `/crm/lead/details/${id}/`, // #135
   2: id => `/crm/deal/details/${id}/`,
   7: id => `/crm/quote/show/${id}/`
 }

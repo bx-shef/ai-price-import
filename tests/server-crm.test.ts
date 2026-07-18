@@ -27,17 +27,18 @@ describe('computeOpportunity', () => {
 })
 
 describe('supportsOpportunity', () => {
-  it('true for deal/quote/smart-invoice, false for smart-process and others', () => {
+  it('true for lead/deal/quote/smart-invoice, false for smart-process and others', () => {
+    expect(supportsOpportunity(1)).toBe(true) // lead — money-bearing, #135 (was false)
     expect(supportsOpportunity(2)).toBe(true)
     expect(supportsOpportunity(7)).toBe(true)
     expect(supportsOpportunity(31)).toBe(true)
     expect(supportsOpportunity(1032)).toBe(false)
-    expect(supportsOpportunity(1)).toBe(false)
   })
 })
 
 describe('crmWrite', () => {
   it('ownerTypeCode', () => {
+    expect(ownerTypeCode(1)).toBe('L') // lead — live-verified ('T1' → ACCESS_DENIED), #135
     expect(ownerTypeCode(2)).toBe('D')
     expect(ownerTypeCode(7)).toBe('Q')
     expect(ownerTypeCode(31)).toBe('SI')
@@ -91,6 +92,7 @@ describe('disk + activity', () => {
     expect(monthlySubfolderName({ getFullYear: () => 2026, getMonth: () => 6 })).toBe('2026-07')
   })
   it('entityOpenPath', () => {
+    expect(entityOpenPath(1, 8)).toBe('/crm/lead/details/8/') // lead, #135
     expect(entityOpenPath(2, 5)).toBe('/crm/deal/details/5/')
     expect(entityOpenPath(1030, 9)).toBe('/crm/type/1030/details/9/')
   })

@@ -68,6 +68,7 @@ export function safeRelativePath(path: string): string {
 /** Portal path to open a created CRM entity (deal/quote/invoice/smart-process). */
 export function entityOpenPath(entityTypeId: number, id: number): string {
   const code = ownerTypeCode(entityTypeId)
+  if (code === 'L') return `/crm/lead/details/${id}/`
   if (code === 'D') return `/crm/deal/details/${id}/`
   if (code === 'Q') return `/crm/quote/show/${id}/`
   // Universal smart-process / smart-invoice detail path.

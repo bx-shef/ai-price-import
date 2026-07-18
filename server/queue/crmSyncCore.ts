@@ -1,5 +1,6 @@
 import type { ExtractedDocument } from '~/types/document'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
+import { ENTITY_TYPE_ID } from '~/config/b24'
 import { resolveTarget, type RoutingSignals } from '~/utils/routing'
 import { resolveMeasure } from '~/utils/units'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
@@ -175,7 +176,15 @@ export async function runCrmSync(
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
       title: `Импорт: ${doc.supplier?.name ?? 'документ'}`.slice(0, 255),
-      ...(companyId ? { companyId } : {}),
+      // Counterparty (#135): supplier FOUND → link companyId (repeat lead / deal on a company).
+      // Supplier NOT found on a LEAD target → fill the lead's own companyTitle from the document
+      // (a "raw" lead a manager qualifies) — this removes the unmatched dead-end that other
+      // targets have. Other target kinds keep the prior behaviour (created without a company).
+      ...(companyId
+        ? { companyId }
+        : (target.entityTypeId === ENTITY_TYPE_ID.lead && doc.supplier?.name
+            ? { companyTitle: doc.supplier.name.slice(0, 255) }
+            : {})),
       ...(doc.currency ? { currencyId: doc.currency } : {}),
       // Set the total explicitly (+ manual flag): live-verified that productrow.set does
       // NOT recompute `opportunity` on portals without trade-accounting → deal would show 0.

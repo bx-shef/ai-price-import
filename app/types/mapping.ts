@@ -2,10 +2,12 @@
 // Pure types — see docs/redesign/02-target-architecture.md §5.
 
 /** CRM entity kinds the import can create.
- *  NB: quote (КП, entityTypeId 7) is intentionally NOT a target — it has no filterable
- *  external-marker field (no originId/originatorId, no xmlId), so retry-idempotency by
- *  B24-search is impossible for it. Revisit when КП support is designed — issue #135. */
-export type TargetEntityKind = 'deal' | 'smart-process' | 'invoice'
+ *  - lead (entityTypeId 1, #135): carries originId/originatorId (marker), so idempotent; the
+ *    supplier nuance (found → companyId / not found → companyTitle) lives in crm-sync.
+ *  - quote (КП, entityTypeId 7) is intentionally NOT a target — no filterable external-marker
+ *    field, AND an incoming counterparty document has nothing to import into an outgoing offer
+ *    (owner decision, #135). */
+export type TargetEntityKind = 'lead' | 'deal' | 'smart-process' | 'invoice'
 
 /** Bitrix24 entityTypeId helpers: deal=2, invoice(smart)=31, smart-process >= 1000.
  *  (quote=7 is not a target — see #135.) */
