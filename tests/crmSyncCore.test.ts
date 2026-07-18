@@ -435,6 +435,66 @@ describe('runCrmSync — products / units / routing', () => {
     expect(r.errors).toHaveLength(0)
   })
 
+  it('autoCreate: unmatched unit created → code used on the row + "создана" warning', async () => {
+    const m = mapping()
+    m.units.autoCreate = true
+    const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
+    const deps = baseDeps({ createMeasure })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    const r = await runCrmSync('j', d, m, {}, deps)
+    expect(createMeasure).toHaveBeenCalledWith('рулон')
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 1001 })
+    expect(r.warnings.some(w => /создана в каталоге/.test(w))).toBe(true)
+  })
+
+  it('autoCreate: unit matched an EXISTING measure (created:false) → "сопоставлена с мерой" warning', async () => {
+    const m = mapping()
+    m.units.autoCreate = true
+    const createMeasure = vi.fn(async () => ({ code: 796, created: false }))
+    const deps = baseDeps({ createMeasure })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт.', vatRate: null }] }
+    const r = await runCrmSync('j', d, m, {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 796 })
+    expect(r.warnings.some(w => /сопоставлена с мерой портала/.test(w))).toBe(true)
+  })
+
+  it('autoCreate: null → default code + "не сопоставлена"; warning deduped across repeated unit', async () => {
+    const m = mapping()
+    m.units.autoCreate = true
+    const createMeasure = vi.fn(async () => null)
+    const deps = baseDeps({ createMeasure })
+    const d: ExtractedDocument = {
+      ...doc,
+      items: [
+        { name: 'x', price: 10, quantity: 1, unit: '???', vatRate: null },
+        { name: 'y', price: 20, quantity: 1, unit: '???', vatRate: null }
+      ]
+    }
+    const r = await runCrmSync('j', d, m, {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: m.units.defaultCode })
+    // same unit on two rows → the "не сопоставлена" warning appears once
+    expect(r.warnings.filter(w => /не сопоставлена/.test(w))).toHaveLength(1)
+  })
+
+  it('autoCreate OFF: createMeasure dep NOT called even if present', async () => {
+    const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
+    const deps = baseDeps({ createMeasure })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    await runCrmSync('j', d, mapping(), {}, deps) // mapping() has autoCreate false by default
+    expect(createMeasure).not.toHaveBeenCalled()
+  })
+
+  it('skip-warn: a SKIPPED row (product not found) does NOT auto-create a measure', async () => {
+    const m = mapping()
+    m.units.autoCreate = true
+    m.product.onMissing = 'skip-warn'
+    const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
+    const deps = baseDeps({ createMeasure }) // findProduct default returns null → row skipped
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    await runCrmSync('j', d, m, {}, deps)
+    expect(createMeasure).not.toHaveBeenCalled()
+  })
+
   it('empty items → creates, no setRows, NO opportunity field', async () => {
     const deps = baseDeps()
     const r = await runCrmSync('j', { ...doc, items: [] }, mapping(), {}, deps)

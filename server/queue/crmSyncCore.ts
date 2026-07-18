@@ -21,6 +21,10 @@ export interface CrmSyncDeps {
   findProduct: (item: ExtractedDocument['items'][number]) => Promise<number | null>
   /** Optional: create a catalog product for onMissing:'create'; returns its id. */
   createProduct?: (item: ExtractedDocument['items'][number]) => Promise<number | null>
+  /** Optional: resolve an unmatched unit to a catalog measure (mapping.units.autoCreate, Q11) —
+   *  find-before-create. Returns `{code, created}` (created=false ⇒ reused an existing measure), or
+   *  null when not creatable / create failed / per-job cap reached (caller uses the default code). */
+  createMeasure?: (unit: string) => Promise<{ code: number, created: boolean } | null>
   portalVatRates: () => Promise<PortalVatRate[]>
   /** Optional: allowed portal currency codes; when provided, an unknown currency is a hard error. */
   portalCurrencies?: () => Promise<string[]>
@@ -127,6 +131,7 @@ export async function runCrmSync(
   }
   const priceIncludesVat = doc.priceIncludesVat === true
   const rows: Array<Record<string, unknown>> = []
+  const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
   let sort = 10
   for (const item of doc.items) {
     const vat = matchVatRate(item.vatRate ?? null, vatRates)
@@ -134,8 +139,6 @@ export async function runCrmSync(
       errors.push(`Ставка НДС ${item.vatRate}% отсутствует в портале (строка «${item.name}»)`)
       continue // hard error already recorded; abort happens below
     }
-    const measure = resolveMeasure(item.unit, mapping.units)
-    if (!measure.matched && item.unit) warnings.push(`Единица «${item.unit}» не сопоставлена — использован дефолт`)
 
     let productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
@@ -147,6 +150,28 @@ export async function runCrmSync(
       if (!productId) warnings.push(`Товар «${item.name}» не создан — внесён как произвольная позиция`)
     }
 
+    // Measure resolved only for a row we're actually writing (a SKIPPED row must not auto-create a
+    // measure — #Q11 security). Auto-create (opt-in) when the unit isn't in the dictionary; best-
+    // effort → a null (not creatable / create failed / cap reached) falls back to the default code.
+    const measure = resolveMeasure(item.unit, mapping.units)
+    let measureCode = measure.code
+    if (!measure.matched && item.unit) {
+      const res = mapping.units.autoCreate && deps.createMeasure ? await deps.createMeasure(item.unit) : null
+      const uKey = item.unit.trim().toLowerCase()
+      if (res) {
+        measureCode = res.code
+        if (!warnedUnits.has(uKey)) {
+          warnings.push(res.created
+            ? `Единица «${item.unit}» создана в каталоге (код ${res.code})`
+            : `Единица «${item.unit}» сопоставлена с мерой портала (код ${res.code})`)
+          warnedUnits.add(uKey)
+        }
+      } else if (!warnedUnits.has(uKey)) {
+        warnings.push(`Единица «${item.unit}» не сопоставлена — использован дефолт`)
+        warnedUnits.add(uKey)
+      }
+    }
+
     if (item.price < 0 || item.quantity < 0) warnings.push(`Отрицательная цена/кол-во в «${item.name}» — обнулено`)
     rows.push(buildProductRow({
       productId: productId && productId > 0 ? productId : undefined,
@@ -155,7 +180,7 @@ export async function runCrmSync(
       quantity: clampNonNeg(item.quantity, 1),
       taxRate: vat ? vat.rate : null,
       priceIncludesVat,
-      measureCode: measure.code
+      measureCode
     }, sort))
     sort += 10
   }
