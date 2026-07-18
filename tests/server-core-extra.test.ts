@@ -124,6 +124,20 @@ describe('configurableActivity deeper', () => {
     const btn = (a.layout as { footer: { buttons: { open: { action: { uri: string } } } } }).footer.buttons.open
     expect(btn.action.uri).toBe('/crm/deal/details/5/')
   })
+  it('BB-neutralises the uploader-controlled title + lines (no [url=…]/mention injection into the timeline)', () => {
+    const a = buildConfigurableActivity({
+      entityTypeId: 2, ownerId: 5,
+      title: 'Импорт: [url=http://evil]ООО[/url]',
+      lines: ['Поставщик: [b]X[/b]', 'Позиций: 3'],
+      openPath: '/crm/deal/details/5/'
+    })
+    const title = (a.layout as { header: { title: string } }).header.title
+    const blocks = (a.layout as { body: { blocks: Record<string, { properties: { value: string } }> } }).body.blocks
+    expect(title).not.toMatch(/\[|\]/) // brackets folded to fullwidth ［ ］
+    expect(title).toContain('［url=http://evil］')
+    expect(blocks.line0!.properties.value).not.toMatch(/\[|\]/)
+    expect(blocks.line0!.properties.value).toContain('［b］X［/b］')
+  })
 })
 
 describe('portalSettings coercion nuances', () => {

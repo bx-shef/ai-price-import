@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-17
+> Last reviewed: 2026-07-18
 
 AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -42,21 +42,25 @@ AI-импорт документов с табличной частью в Bitri
     адаптер `B24OAuth`→`SdkTransport` `{ call, list }`): `call` — одиночный `RestCall`, `list` —
     **полная выборка списка** (`SdkListCall`, SDK сам пагинирует keyset-ом по `ID` через
     `actions.v2.callList.make` — ручной пейджер на этом транспорте не нужен). У SDK встроенный
-    **RestrictionManager** (пер-портальный leaky-bucket
-    лимитер + auto-retry на `QUERY_LIMIT_EXCEEDED`/429/5xx) — решает REST-бюджет при scale-out. Один
-    `B24OAuth` на портал на джобу = пер-портальный лимит + bind-once; рефреш SDK сам,
-    `setCallbackRefreshAuth` → персист (`updateTokensOnRefresh`, UPDATE-only). **Live-верифицирован**
-    на `bel.bitrix24.by` (`pnpm sdk:smoke`: profile+crm.item.list+burst 30 без `QUERY_LIMIT_EXCEEDED`,
-    лимитер троттлит ~12 req/s). SDK-путь строится **per-job** (не мемоизируется, иначе заклинит на
-    устаревшем токене после ротации соседом/кроном). Ручной `makePortalRestCall` удалён. Общий билдер
+    **RestrictionManager** (пер-портальный leaky-bucket лимитер + адаптивный operating-backoff). **In-SDK
+    ретрай ОТКЛЮЧён** (`disableSdkRetry`, #123: `maxRetries:1`, `retryOnNetworkError:false`) — crm-sync
+    создаёт НЕидемпотентные сущности (`crm.item.add`/`crm.product.add`), ретрай такого вызова после
+    client-timeout/504 задвоил бы (Битрикс не гарантит уникальность `originId`/`xmlId`); целый джоб ретраит
+    **BullMQ** (там create идемпотентен — find-before-create по маркеру). Остаются: проактивный rate-throttle,
+    адаптивный backoff, реактивный OAuth-рефреш (`setCallbackRefreshAuth` → персист `updateTokensOnRefresh`,
+    UPDATE-only). **Live-верифицирован** на `bel.bitrix24.by` (`pnpm sdk:smoke`: profile+crm.item.list+burst 30
+    без `QUERY_LIMIT_EXCEEDED`). `makePortalSdkCall` строит `B24OAuth` **на каждый resolver-вызов** (`need()` в
+    джобе перечитывает токен) — мемоизация одного клиента на джобу (единый лимитер-бакет) трекается в **#123**;
+    на процесс НЕ мемоизируем (иначе заклинит на устаревшем токене после ротации соседом/кроном). Ручной
+    `makePortalRestCall` удалён. Общий билдер
     `sdkPortalDeps(SdkInfra)` связывает `SdkPortalDeps` со стором/env — им пользуются и `liveDeps.restResolver`
     (crm-sync), и frame-token роут `catalog-properties` (читает по OAuth-токену портала: `resolveFrameMember`
     верифицирует фрейм-токен → `member_id`, дальше SDK). Чистые мапперы +
     `makeSdkRestCall`/`makeSdkListCall` тестируются фейком; типизация `new B24OAuth` как `OAuthCallClient` —
     compile-time drift-guard (typecheck ловит дрейф API SDK). Для Bitrix24-вызовов в новом коде — предпочитать SDK.
   - **ВСЕ вызовы Б24 идут через `@bitrix24/b24jssdk`** (ручной `fetch`-транспорт `b24Rest.makeRestCall`
-    удалён). Два пути, раньше шедшие мимо SDK, переведены (единый транспорт: RestrictionManager, 30s-таймаут,
-    drift-guard):
+    удалён). Два пути, раньше шедшие мимо SDK, переведены (единый транспорт: RestrictionManager, таймаут REST
+    30s — внутренний axios SDK, refresh — 15s `REST_TIMEOUT_MS`, drift-guard):
     - **Frame/install-токен REST** (`profile`-верификация в `resolveFrameMember`/`verifyInstallToken`,
       `app.option` в роутах `settings.get/post`) → `b24Sdk.makeBareTokenSdkCall(domain, accessToken)`: per-call
       `B24OAuth` с фрейм-токеном, `expires` в 2100 (SDK не рефрешит проактивно) + `setCustomRefreshAuth` →

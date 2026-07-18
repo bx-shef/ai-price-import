@@ -1,6 +1,6 @@
 # План проверок procure-ai
 
-> Last reviewed: 2026-07-16
+> Last reviewed: 2026-07-18
 
 Этот документ — практический чек-лист ручных и автоматических проверок procure-ai по подсистемам. Пользоваться им так: начните с раздела «Быстрый старт (smoke)», убедитесь, что приложение вообще поднимается, затем идите по нужной подсистеме и прогоняйте строки таблицы (колонка «Метка» показывает, что уже покрыто vitest, а что требует ручного прогона, живого портала или LLM-ключа). Документ детализирует три уровня из [`07-testing.md`](07-testing.md): чистое ядро (unit, `pnpm test`), интеграция роутов/пайплайна (ручной прогон бэкенда) и сквозные проверки на живом портале Bitrix24. Каждая метка `[нужен живой портал]` / `[нужен LLM-ключ]` собрана отдельно в разделе «Что заблокировано и почему».
 
@@ -188,7 +188,7 @@
 | `handleCrmSyncJob` | `tests/queueHandlers.test.ts` | Норм→`done`; нет документа→`error` без run; жёсткая ошибка→`error`; идемпотентный→`done` `created:false`; сбой `deleteDocument` не роняет | [авто] |
 | Детерминизм `makeJobId` и др. | — | Прямого юнит-теста нет — предложить добавить | [вручную] |
 | Без `REDIS_URL` | `pnpm dev`, дёрнуть продюсер | `queueEnabled()`=false, `getQueue()`→null, продюсеры no-op, воркеры не стартуют | [вручную] |
-| Redis поднят | `docker compose up redis`, старт бэкенда | Лог `[queue] started 3 pipeline workers`; concurrency extract=4/agent=2/crm=4 (конфигурируется QUEUE_*_CONCURRENCY, GH #95) | [вручную] |
+| Redis поднят | `docker compose up redis`, старт бэкенда | Лог `[queue] throughput workers started (extract/agent/crm-sync)`; concurrency extract=4/agent=2/crm=4 (конфигурируется QUEUE_*_CONCURRENCY, GH #95) | [вручную] |
 | Ретраи инфра-сбоя | Джоба с падающим транспортом | `attempts:3`, backoff 5000ms; после — `onExhausted`: `setJobStatus 'error'` + extract `cleanupUpload` | [вручную] |
 | Джоба без memberId/jobId | — | `onExhausted` тихо выходит, не бросает | [вручную] |
 | Дедуп повторной доставки | enqueue дважды с тем же ключом | Вторая не создаёт дубль | [вручную] |
@@ -283,7 +283,7 @@
 
 ### Деплой и инфраструктура
 
-Файлы: `Dockerfile`, `docker-compose.yml`, `server/api/health.get.ts`, `app/utils/build.ts`, `server/utils/envCheck.ts` (+ плагин), `.github/workflows/{ci,deploy}.yml`. `docker-compose.yml` — dev-only; прод-compose в репозитории нет.
+Файлы: `Dockerfile`, `docker-compose.yml`, `server/api/health.get.ts`, `app/utils/build.ts`, `server/utils/envCheck.ts` (+ плагин), `.github/workflows/{ci,deploy}.yml`. `docker-compose.yml` — dev-only; прод-compose — `docker-compose.prod.yml` (app+backend+db+redis).
 
 | Проверка | Действие | Ожидаемо | Метка |
 |---|---|---|---|

@@ -1,8 +1,12 @@
 import { ownerTypeCode } from './crmWrite'
+import { neutralizeBb } from './chatNotify'
 
 // Build a configurable activity («настраиваемое дело») for crm.activity.configurable.add.
 // The app owns the layout (icon/header/body/footer + «открыть» button). Admin only
 // toggles whether the source file is saved (docs/redesign/02 §«Исходный файл и дело»).
+// SECURITY: the title/body lines carry the uploader-controlled supplier name / document
+// fields, so — like the chat path (chatNotify) — they are BB-neutralised before they reach
+// the CRM timeline, otherwise `[url=…]` / mentions could be injected into the activity.
 
 export interface ActivityLayoutInput {
   entityTypeId: number
@@ -27,7 +31,7 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
     },
     layout: {
       icon: { code: 'document' },
-      header: { title: input.title.slice(0, 255) },
+      header: { title: neutralizeBb(input.title).slice(0, 255) },
       body: {
         // `logo` (LogoDto) is REQUIRED by B24 — a missing logo fails with «Поле logo в
         // BodyDto должно быть заполнено» (verified live on an OAuth portal; the webhook
@@ -39,7 +43,7 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
         blocks: Object.fromEntries(
           (input.lines.length ? input.lines : ['—']).slice(0, 10).map((text, i) => [
             `line${i}`,
-            { type: 'text', properties: { value: String(text).slice(0, 500) } }
+            { type: 'text', properties: { value: neutralizeBb(String(text)).slice(0, 500) } }
           ])
         )
       },
