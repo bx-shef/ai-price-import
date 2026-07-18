@@ -1,4 +1,6 @@
 import type { QueryFn } from './tokenStore'
+import type { TargetRef } from '~/types/mapping'
+import { parseManualTarget } from '~/utils/manualTarget'
 
 // Per-portal import-job tracking over an injected QueryFn (testable without a DB).
 
@@ -12,13 +14,29 @@ export interface ImportJob {
   result: string
 }
 
-export async function createJob(memberId: string, jobId: string, fileName: string, query: QueryFn): Promise<void> {
+export async function createJob(
+  memberId: string,
+  jobId: string,
+  fileName: string,
+  query: QueryFn,
+  manualOverride?: TargetRef | null
+): Promise<void> {
   await query(
-    `INSERT INTO import_job (member_id, job_id, status, file_name)
-     VALUES ($1,$2,'queued',$3)
+    `INSERT INTO import_job (member_id, job_id, status, file_name, manual_override)
+     VALUES ($1,$2,'queued',$3,$4)
      ON CONFLICT (member_id, job_id) DO NOTHING`,
-    [memberId, jobId, fileName]
+    [memberId, jobId, fileName, manualOverride ? JSON.stringify(manualOverride) : null]
   )
+}
+
+/** Read the operator's manual import target for a job (set at upload), or undefined. The stored
+ *  JSON is re-validated through parseManualTarget so a hand-tampered row can't inject a bad target. */
+export async function getManualOverride(memberId: string, jobId: string, query: QueryFn): Promise<TargetRef | undefined> {
+  const { rows } = await query('SELECT manual_override FROM import_job WHERE member_id=$1 AND job_id=$2', [memberId, jobId])
+  const raw = rows[0]?.manual_override
+  if (raw == null) return undefined
+  // pg returns JSONB already parsed (object); tolerate a string too.
+  return parseManualTarget(raw) ?? undefined
 }
 
 export async function setJobStatus(memberId: string, jobId: string, status: JobStatus, result: string, query: QueryFn): Promise<void> {

@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import type { JobStatus } from '~/utils/jobStatus'
+import type { TargetRef } from '~/types/mapping'
 
 // In-portal import client: upload a document and poll job status via the frame-token
 // authenticated API (/api/import/*). Inert outside a portal (no frame auth).
@@ -38,7 +39,7 @@ export function useImport() {
     }
   }
 
-  async function upload(file: File): Promise<boolean> {
+  async function upload(file: File, target?: TargetRef | null): Promise<boolean> {
     const h = await headers()
     if (!h) {
       error.value = 'Импорт доступен только внутри портала Bitrix24'
@@ -48,6 +49,9 @@ export function useImport() {
     try {
       const form = new FormData()
       form.append('file', file)
+      // Optional manual target («куда импортировать») — overrides the routing rules for this job.
+      // The server re-validates it (parseManualTarget); an absent/invalid one just follows the rules.
+      if (target && target.entityTypeId > 0) form.append('target', JSON.stringify(target))
       await $fetch('/api/import/upload', { method: 'POST', headers: h, body: form })
       await refresh()
       return true

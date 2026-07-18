@@ -75,7 +75,12 @@ Claude Code» — из методологии репозитория `ai-agent` 
    (`crm.category.list` по `entityTypeId`, фрейм-токеном: роут `GET /api/crm-categories`, чистое ядро
    `fetchCrmCategories`, admin-гейт). У лида воронок нет → пикер скрыт. Смена типа сущности сбрасывает
    `categoryId`, невалидный для нового типа. **Стадия (`stageId`)** пока только через `app.option`
-   (следующий слайс). Ручной выбор цели при загрузке (`manualOverride`) — тоже следующий слайс.
+   (следующий слайс). **Ручной выбор цели при загрузке (`manualOverride`) — сделан end-to-end:** на
+   `/import` блок «Куда импортировать» (Авто/Лид/Сделка/Смарт-счёт + пикер направления) → поле `target`
+   (JSON) в `POST /api/import/upload` → чистый валидатор `parseManualTarget` (недоверенный вход) → колонка
+   `import_job.manual_override` (JSONB) → `getManualOverride` в agent-run → `RoutingSignals.manualOverride`
+   → `resolveTarget` применяет с высшим приоритетом. «Авто» (пусто) ⇒ идём по правилам. Сервер
+   ре-валидирует сохранённый target (tamper-safe).
 
    **Резолвинг — чистая функция** `resolveTarget({ documentType, text, manualOverride }, rules,
    defaultTarget)` в `app/utils`, покрыта тестами (паттерн матриц/аллокатора эталона). Классификацию

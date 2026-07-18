@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { claimJobNotify, createJob, getJob, listJobs, setJobStatus } from '../server/utils/jobStore'
+import { claimJobNotify, createJob, getJob, getManualOverride, listJobs, setJobStatus } from '../server/utils/jobStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -11,11 +11,24 @@ function fakeQuery(rows: Array<Record<string, unknown>> = []) {
 }
 
 describe('jobStore', () => {
-  it('createJob inserts with ON CONFLICT DO NOTHING', async () => {
+  it('createJob inserts with ON CONFLICT DO NOTHING (no override → null)', async () => {
     const { q, calls } = fakeQuery()
     await createJob('m', 'j1', 'накладная.pdf', q)
     expect(calls[0]!.sql).toContain('ON CONFLICT (member_id, job_id) DO NOTHING')
-    expect(calls[0]!.params).toEqual(['m', 'j1', 'накладная.pdf'])
+    expect(calls[0]!.sql).toContain('manual_override')
+    expect(calls[0]!.params).toEqual(['m', 'j1', 'накладная.pdf', null])
+  })
+  it('createJob serializes a manual override target to JSON', async () => {
+    const { q, calls } = fakeQuery()
+    await createJob('m', 'j1', 'f.pdf', q, { entityTypeId: 2, categoryId: 1 })
+    expect(calls[0]!.params![3]).toBe('{"entityTypeId":2,"categoryId":1}')
+  })
+  it('getManualOverride re-validates the stored row (object → TargetRef; junk → undefined)', async () => {
+    const t = await getManualOverride('m', 'j1', fakeQuery([{ manual_override: { entityTypeId: 31, categoryId: 11 } }]).q)
+    expect(t).toEqual({ entityTypeId: 31, categoryId: 11 })
+    expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: null }]).q)).toBeUndefined()
+    expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: { entityTypeId: 0 } }]).q)).toBeUndefined()
+    expect(await getManualOverride('m', 'x', fakeQuery([]).q)).toBeUndefined()
   })
   it('claimJobNotify: atomic UPDATE guarded by notified=false, RETURNING (#164)', async () => {
     const { q, calls } = fakeQuery([{ job_id: 'j1' }]) // one row back → we won the claim
