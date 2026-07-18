@@ -149,12 +149,17 @@ describe('configurableActivity deeper', () => {
 })
 
 describe('portalSettings coercion nuances', () => {
-  it('keeps categoryId/stageId (stringified), drops bad rule target', () => {
+  it('keeps a string stageId + category, drops a non-string stageId and a bad rule target', () => {
+    // stageId is string-only now (aligned with parseManualTarget) — a numeric stageId is dropped.
     const m = parsePortalSettings({
-      defaultTarget: { entityTypeId: 31, categoryId: 2, stageId: 5 },
+      defaultTarget: { entityTypeId: 31, categoryId: 2, stageId: 'DT31_2:N' },
       routingRules: [{ match: { type: 'x' }, target: { entityTypeId: 0 } }]
     })
-    expect(m.defaultTarget).toEqual({ entityTypeId: 31, categoryId: 2, stageId: '5' })
+    expect(m.defaultTarget).toEqual({ entityTypeId: 31, categoryId: 2, stageId: 'DT31_2:N' })
+    // a non-string stageId (5) is dropped, not stringified
+    expect(parsePortalSettings({ defaultTarget: { entityTypeId: 31, stageId: 5 } }).defaultTarget).toEqual({ entityTypeId: 31 })
+    // a negative categoryId is dropped (≥0 gate, shared with parseManualTarget)
+    expect(parsePortalSettings({ defaultTarget: { entityTypeId: 2, categoryId: -1 } }).defaultTarget).toEqual({ entityTypeId: 2 })
     expect(m.routingRules[0]!.target).toEqual({ entityTypeId: 2 }) // fallback default
   })
   it('chat ids pass-through only when string; saveFile default OFF (opt-in); dictionary non-object → {}', () => {

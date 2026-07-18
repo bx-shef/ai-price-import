@@ -27,6 +27,10 @@ describe('parseManualTarget', () => {
     expect(parseManualTarget({ entityTypeId: 1.5 })).toBeNull()
     expect(parseManualTarget(42)).toBeNull()
   })
+  it('accepts a numeric-string entityTypeId (tamper / pg text) and drops a whitespace-only stageId', () => {
+    expect(parseManualTarget({ entityTypeId: '2' })).toEqual({ entityTypeId: 2 })
+    expect(parseManualTarget({ entityTypeId: 2, stageId: '   ' })).toEqual({ entityTypeId: 2 })
+  })
   it('ignores unknown keys and caps stageId length', () => {
     expect(parseManualTarget({ entityTypeId: 2, evil: 'x', categoryId: 3 })).toEqual({ entityTypeId: 2, categoryId: 3 })
     const t = parseManualTarget({ entityTypeId: 31, stageId: 'x'.repeat(500) })

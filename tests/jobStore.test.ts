@@ -24,8 +24,12 @@ describe('jobStore', () => {
     expect(calls[0]!.params![3]).toBe('{"entityTypeId":2,"categoryId":1}')
   })
   it('getManualOverride re-validates the stored row (object → TargetRef; junk → undefined)', async () => {
-    const t = await getManualOverride('m', 'j1', fakeQuery([{ manual_override: { entityTypeId: 31, categoryId: 11 } }]).q)
+    const scoped = fakeQuery([{ manual_override: { entityTypeId: 31, categoryId: 11 } }])
+    const t = await getManualOverride('m', 'j1', scoped.q)
     expect(t).toEqual({ entityTypeId: 31, categoryId: 11 })
+    // Member+job scoped (a portal can only read its own job's target).
+    expect(scoped.calls[0]!.sql).toContain('member_id=$1 AND job_id=$2')
+    expect(scoped.calls[0]!.params).toEqual(['m', 'j1'])
     expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: null }]).q)).toBeUndefined()
     expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: { entityTypeId: 0 } }]).q)).toBeUndefined()
     expect(await getManualOverride('m', 'x', fakeQuery([]).q)).toBeUndefined()

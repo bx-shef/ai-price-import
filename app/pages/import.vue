@@ -93,8 +93,15 @@ const rows = computed(() => jobs.value.map(job => ({
       Загрузите накладную, счёт, КП или прайс — приложение найдёт контрагента и внесёт товары в CRM.
     </p>
 
-    <div class="mb-4">
-      <p class="mb-1 text-sm font-medium text-gray-700">
+    <div
+      class="mb-4"
+      role="group"
+      aria-labelledby="import-target-label"
+    >
+      <p
+        id="import-target-label"
+        class="mb-1 text-sm font-medium text-gray-700"
+      >
         Куда импортировать
       </p>
       <div class="flex flex-wrap items-center gap-2">
@@ -106,6 +113,14 @@ const rows = computed(() => jobs.value.map(job => ({
           :color="targetEtid === c.id ? 'air-primary' : 'air-tertiary-no-accent'"
           :aria-pressed="targetEtid === c.id"
           @click="() => chooseTarget(c.id)"
+        />
+        <span class="text-xs text-gray-400">или ID (смарт-процесс ≥ 1000):</span>
+        <B24InputNumber
+          :model-value="targetEtid"
+          :min="1"
+          class="w-24"
+          aria-label="ID типа целевой сущности"
+          @update:model-value="(v: unknown) => chooseTarget(typeof v === 'number' && v > 0 ? v : null)"
         />
         <B24Select
           v-if="showDirection"

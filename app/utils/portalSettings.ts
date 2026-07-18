@@ -35,12 +35,15 @@ function asTarget(v: unknown, fallback: TargetRef): TargetRef {
   // settings-form editor (rowsToRules requires an integer) agree — no rule silently drops on save.
   if (!Number.isInteger(etid) || etid <= 0) return fallback
   const categoryId = Number(o?.categoryId)
+  const stageId = typeof o?.stageId === 'string' ? o.stageId.trim() : ''
   return {
     entityTypeId: etid,
-    // Integer (not just finite) so the parser agrees with the editor (rulesToRows/rowsToRules gate
-    // categoryId on Number.isInteger) — a float id can't pass one layer and be dropped by the other.
-    ...(o?.categoryId != null && Number.isInteger(categoryId) ? { categoryId } : {}),
-    ...(o?.stageId != null ? { stageId: String(o.stageId) } : {})
+    // Integer AND ≥0 so this parser, the editor (rulesToRows) and the manual-target validator
+    // (parseManualTarget) share ONE gate — a float/negative id can't pass one layer and be dropped
+    // by another (categoryId 0 = the default deal pipeline, a valid selection).
+    ...(o?.categoryId != null && Number.isInteger(categoryId) && categoryId >= 0 ? { categoryId } : {}),
+    // String-only + trim + cap, matching parseManualTarget (a non-string stageId is meaningless).
+    ...(stageId ? { stageId: stageId.slice(0, 100) } : {})
   }
 }
 
