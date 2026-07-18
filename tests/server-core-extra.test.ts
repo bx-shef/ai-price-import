@@ -72,6 +72,14 @@ describe('createTargetItem branches', () => {
     expect((call.mock.calls[0]![1] as { fields: Record<string, unknown> }).fields.stageId).toBe('DT31_1:N')
     await expect(createTargetItem({ entityTypeId: 2 }, {}, vi.fn().mockResolvedValue({ item: {} }))).rejects.toThrow(/no id/)
   })
+  it('sends categoryId for a deal but SKIPS it for a lead (etid 1 has no CATEGORY_ID, #135)', async () => {
+    const dealCall = vi.fn().mockResolvedValue({ item: { id: 5 } })
+    await createTargetItem({ entityTypeId: 2, categoryId: 7 }, {}, dealCall)
+    expect((dealCall.mock.calls[0]![1] as { fields: Record<string, unknown> }).fields.categoryId).toBe(7)
+    const leadCall = vi.fn().mockResolvedValue({ item: { id: 8 } })
+    await createTargetItem({ entityTypeId: 1, categoryId: 7 }, {}, leadCall) // stray categoryId (carried over)
+    expect((leadCall.mock.calls[0]![1] as { fields: Record<string, unknown> }).fields).not.toHaveProperty('categoryId')
+  })
 })
 
 describe('secretCrypto failure paths', () => {

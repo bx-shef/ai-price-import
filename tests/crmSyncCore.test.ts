@@ -231,8 +231,22 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
       })
     )
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyTitle: expect.anything() }))
+    // marker search runs on the lead type (entityTypeId 1 → origin strategy)
+    expect(deps.findExisting).toHaveBeenCalledWith(1, { '=originId': 'job1', '=originatorId': 'ai-price-import' })
     // product rows written with the lead ownerType (entityTypeId 1 → 'L' resolved in setRows)
     expect(deps.setRows).toHaveBeenCalledWith(1, 555, expect.any(Array))
+  })
+
+  it('lead target, supplier NOT found AND no supplier name → no companyTitle, no crash', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 1 }
+    const noName: ExtractedDocument = { ...doc, supplier: undefined }
+    const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
+    const r = await runCrmSync('job1', noName, m, {}, deps)
+    expect(r.created).toBe(true)
+    // no supplier.name ⇒ companyTitle omitted entirely (never companyTitle:undefined)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyTitle: expect.anything() }))
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyId: expect.anything() }))
   })
 
   it('lead target, supplier NOT found → companyTitle from document, NO companyId (#135 fix)', async () => {

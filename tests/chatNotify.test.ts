@@ -19,6 +19,7 @@ describe('neutralizeBb', () => {
 
 describe('entityLink', () => {
   it('maps deal/quote to detail paths, others to universal type path', () => {
+    expect(entityLink(1, 4)).toBe('/crm/lead/details/4/') // #135
     expect(entityLink(2, 5)).toBe('/crm/deal/details/5/')
     expect(entityLink(7, 9)).toBe('/crm/quote/show/9/')
     expect(entityLink(1032, 3)).toBe('/crm/type/1032/details/3/')

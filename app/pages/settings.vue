@@ -150,6 +150,14 @@ const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: '' }, ...DOCUM
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
+// Leads (entityTypeId 1) have no category — clear a leftover categoryId when switching TO a lead
+// so a value carried over from a deal/smart target can't ride into crm.item.add (rejected by B24:
+// «Item has no CATEGORY_ID field», #135). crm-sync guards this too (defence in depth).
+function selectDefaultTarget(id: number): void {
+  mapping.value.defaultTarget.entityTypeId = id
+  if (id === 1) mapping.value.defaultTarget.categoryId = undefined
+}
+
 const TARGET_PRESETS = [
   { id: 1, label: 'Лид' },
   { id: 2, label: 'Сделка' },
@@ -198,7 +206,7 @@ const ON_MISSING_ITEMS = [
             size="sm"
             :color="mapping.defaultTarget.entityTypeId === p.id ? 'air-primary' : 'air-tertiary-no-accent'"
             :aria-pressed="mapping.defaultTarget.entityTypeId === p.id"
-            @click="() => { mapping.defaultTarget.entityTypeId = p.id }"
+            @click="() => selectDefaultTarget(p.id)"
           />
         </div>
         <div class="mt-2 flex items-center gap-2">
@@ -215,7 +223,7 @@ const ON_MISSING_ITEMS = [
       <!-- Правила маршрутизации -->
       <B24FormField label="Правила маршрутизации (по типу/словам → цель)">
         <p class="mb-2 text-xs text-gray-500">
-          Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: 2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
+          Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: 1 = лид, 2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
         </p>
         <div class="space-y-2">
           <div

@@ -300,12 +300,12 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
   | Поле лида (crm.item, etid=1) | Источник | Условие |
   |---|---|---|
   | `originId` / `originatorId` | `jobId` / originator | всегда (маркер идемпотентности) |
-  | `title` | `Импорт: <поставщик>` (BB-neutralised, ≤255) | всегда |
+  | `title` | `Импорт: <поставщик>` (≤255) | всегда |
   | `opportunity` + `isManualOpportunity:'Y'` | Σ строк (gross, `computeOpportunity`) | если есть строки |
   | `currencyId` | `doc.currency` | если валюта задана |
   | `stageId` | `target.stageId` | опц. (пусто → дефолтная NEW-стадия) |
   | `companyId` | найденная компания (`RQ_INN`) | **только если поставщик НАЙДЕН** |
-  | `companyTitle` | имя поставщика из документа (BB-neutralised, ≤255) | **только если поставщик НЕ найден** |
+  | `companyTitle` | имя поставщика из документа (≤255) | **только если поставщик НЕ найден** |
   | product rows (`ownerType:'L'`) | позиции документа | всегда |
 
   **Уточнение по контрагенту (ключевое отличие от сделки):**
@@ -318,8 +318,11 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
   **Реализовано (#135):** (1) `TargetEntityKind` += `'lead'`, `ENTITY_TYPE_ID.lead=1`, `originStrategy(1)`
   уже `'origin'` — маркер готов; (2) `ownerTypeCode(1)` → `'L'`; (3) `supportsOpportunity(1)` → `true`;
   (4) `entityOpenPath(1)` → `/crm/lead/details/<id>/`; (5) в `runCrmSync` — ветка полей для лида
-  (found→`companyId` / not-found→`companyTitle`); (6) форма настроек — пресет «Лид»; (7) тесты
-  (found/not-found, non-lead без companyTitle, marker, ownerType, opportunity). **Live-verified на
+  (found→`companyId` / not-found→`companyTitle`); (6) форма настроек — пресет «Лид» (+ сброс `categoryId`
+  при переключении на лид); (7) **гард `categoryId` у лида** — `createTargetItem` не шлёт `categoryId` при
+  etid=1 (у лида нет категорий: `crm.item.add` иначе падает «Item has no CATEGORY_ID field», live-verified),
+  защита от значения, унаследованного из dealrouting-правила; (8) тесты
+  (found/not-found, non-lead без companyTitle, no-name, marker, ownerType, opportunity, categoryId-skip). **Live-verified на
   тест-портале** (`B24_HOOK`): `crm.item.add` etid=1 с маркером+`companyTitle`+`opportunity`+валютой →
   round-trip `crm.item.get` подтвердил персист; `productrow.set ownerType='L'` ОК; поиск по маркеру нашёл
   созданный лид; очистка `crm.item.delete` ОК.
