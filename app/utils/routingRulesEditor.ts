@@ -10,9 +10,9 @@ import { MAX_ROUTING_RULES, MAX_RULE_KEYWORDS } from './portalSettings'
 export const DOCUMENT_TYPES = ['накладная', 'счёт', 'КП', 'спецификация', 'прайс'] as const
 
 /** One editable rule row: document type to match (empty = any), keywords (comma/newline text),
- *  and the target entityTypeId (null while unset). `categoryId`/`stageId` are NOT edited by the
- *  UI but ride along so a target that scopes a category/stage (only settable via app.option today)
- *  survives the round-trip instead of being silently stripped on save. */
+ *  the target entityTypeId (null while unset) and its `categoryId` (направление/воронка — now
+ *  picked in the UI from the portal's crm.category.list). `stageId` is still not edited by the UI
+ *  but rides along so a stage-scoped target (settable via app.option) survives the round-trip. */
 export interface EditableRoutingRule {
   type: string
   keywords: string

@@ -4,6 +4,7 @@ import { useSettings } from '~/composables/useSettings'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
+import { useCrmCategories, type CrmCategoryOption } from '~/composables/useCrmCategories'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
 
@@ -164,6 +165,70 @@ const TARGET_PRESETS = [
   { id: 31, label: 'Смарт-счёт' }
 ]
 
+// Direction (воронка/категория) pickers for routing targets: «тип документа → сущность +
+// НАПРАВЛЕНИЕ» (owner ask). Categories are loaded per entity type from the portal
+// (crm.category.list, frame token) and cached; lead (1) has none → the picker hides. Switching
+// entity type clears a categoryId that isn't valid for the new type (a deal funnel id must not
+// ride onto a smart-invoice / lead). Stage selection is a separate later slice. Outside a portal
+// frame there's no data → the picker stays hidden (like the article picker).
+const { load: loadCrmCategories } = useCrmCategories()
+const catCache = ref<Record<number, CrmCategoryOption[]>>({})
+
+async function ensureCategories(entityTypeId: number | null | undefined): Promise<void> {
+  const etid = Number(entityTypeId)
+  if (!Number.isInteger(etid) || etid <= 0 || etid in catCache.value) return
+  catCache.value[etid] = await loadCrmCategories(etid)
+}
+
+/** b24ui Select items for an entity's directions (+ a «по умолчанию» sentinel value ''). */
+function categoryItems(entityTypeId: number | null | undefined): Array<{ label: string, value: string }> {
+  const cats = catCache.value[Number(entityTypeId)] ?? []
+  return [
+    { label: '— направление по умолчанию —', value: '' },
+    ...cats.map(c => ({ label: c.isDefault ? `${c.name} (по умолчанию)` : c.name, value: String(c.id) }))
+  ]
+}
+
+/** True once the entity's directions are LOADED and non-empty (deal/smart-*; lead has none). */
+function hasCategories(entityTypeId: number | null | undefined): boolean {
+  return (catCache.value[Number(entityTypeId)] ?? []).length > 0
+}
+
+/** Current categoryId as the select's string value ('' = default/none). */
+function categoryValue(target: { categoryId?: number }): string {
+  return target.categoryId == null ? '' : String(target.categoryId)
+}
+
+/** Write the select's string value back to a numeric categoryId (or clear on ''). */
+function setCategory(target: { categoryId?: number }, v: unknown): void {
+  const s = typeof v === 'string' ? v : String(v ?? '')
+  target.categoryId = s === '' ? undefined : Number(s)
+}
+
+/** Drop a target's categoryId if it isn't among the LOADED categories for its entity type.
+ *  No-op until the categories are actually loaded (so a freshly-seeded valid id isn't cleared
+ *  during the async gap). */
+function reconcileCategory(target: { entityTypeId: number, categoryId?: number }): void {
+  const etid = Number(target.entityTypeId)
+  if (!(etid in catCache.value)) return // not loaded yet → leave as-is
+  if (target.categoryId == null) return
+  if (!(catCache.value[etid] ?? []).some(c => c.id === target.categoryId)) target.categoryId = undefined
+}
+
+// Default target: (re)load directions when its entity changes; reconcile a stale categoryId.
+watch(() => mapping.value.defaultTarget.entityTypeId, async (etid) => {
+  await ensureCategories(etid)
+  reconcileCategory(mapping.value.defaultTarget)
+}, { immediate: true })
+
+// Routing rows: load directions for each row's entity (memoized) and reconcile after load.
+// Runs on seed and on any row edit; ensureCategories short-circuits when already cached.
+watch(routingRows, (rows) => {
+  for (const r of rows) {
+    if (r.entityTypeId) void ensureCategories(r.entityTypeId).then(() => reconcileCategory(r as { entityTypeId: number, categoryId?: number }))
+  }
+}, { deep: true, immediate: true })
+
 const ARTICLE_KIND_ITEMS = [
   { label: 'построчно (текст)', value: 'text' },
   { label: 'через разделитель', value: 'string' }
@@ -218,6 +283,19 @@ const ON_MISSING_ITEMS = [
             aria-label="ID типа целевой сущности"
           />
         </div>
+        <div
+          v-if="hasCategories(mapping.defaultTarget.entityTypeId)"
+          class="mt-2 flex items-center gap-2"
+        >
+          <span class="text-xs text-gray-500">направление (воронка):</span>
+          <B24Select
+            :model-value="categoryValue(mapping.defaultTarget)"
+            :items="categoryItems(mapping.defaultTarget.entityTypeId)"
+            class="w-56"
+            aria-label="Направление целевой сущности по умолчанию"
+            @update:model-value="(v: unknown) => setCategory(mapping.defaultTarget, v)"
+          />
+        </div>
       </B24FormField>
 
       <!-- Правила маршрутизации -->
@@ -252,6 +330,14 @@ const ON_MISSING_ITEMS = [
               :min="1"
               class="w-28"
               :aria-label="`Правило ${i + 1}: тип целевой сущности`"
+            />
+            <B24Select
+              v-if="hasCategories(row.entityTypeId)"
+              :model-value="categoryValue(row)"
+              :items="categoryItems(row.entityTypeId)"
+              class="w-48"
+              :aria-label="`Правило ${i + 1}: направление`"
+              @update:model-value="(v: unknown) => setCategory(row, v)"
             />
             <B24Button
               color="air-tertiary-no-accent"
