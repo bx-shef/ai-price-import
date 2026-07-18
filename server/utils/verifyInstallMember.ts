@@ -1,6 +1,7 @@
 import { buildRefreshParams, parseTokenResponse, type B24TokenResponse } from './b24Oauth'
 import type { FetchFn } from './b24Rest'
 import { REST_TIMEOUT_MS, isAuthRejection } from './b24Rest'
+import { withDependencySpan } from './telemetrySpan'
 
 // Install-time member_id binding (#162). The first ONAPPINSTALL delivers member_id as a
 // CLIENT-CONTROLLED field; verifyInstallToken proves control of the DOMAIN (a `profile` call)
@@ -23,15 +24,20 @@ const OAUTH_TOKEN_URL = 'https://oauth.bitrix.info/oauth/token/'
 /** Raw OAuth token-refresh POST → parsed JSON. The ONE sanctioned non-SDK B24 call (see header):
  *  the SDK drops the response's member_id, which install-poisoning defence needs. Injected fetch. */
 export function rawOauthRefresh(fetchFn: FetchFn, timeoutMs = REST_TIMEOUT_MS): (params: Record<string, string>) => Promise<unknown> {
-  return async (params) => {
-    const res = await fetchFn(OAUTH_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(params).toString(),
-      signal: AbortSignal.timeout(timeoutMs)
-    })
-    return res.json()
-  }
+  // Span timing/outcome of the install-time OAuth token POST (#162). The params
+  // (client_secret/refresh_token) are NEVER attached to the span — only system/operation.
+  return params => withDependencySpan(
+    { system: 'bitrix24', operation: 'oauth.install-verify', method: 'oauth.refresh' },
+    async () => {
+      const res = await fetchFn(OAUTH_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(params).toString(),
+        signal: AbortSignal.timeout(timeoutMs)
+      })
+      return res.json()
+    }
+  )
 }
 
 export interface InstallMemberDeps {

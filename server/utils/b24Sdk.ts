@@ -347,7 +347,12 @@ export function sdkRefreshTransport(opts: { timeoutMs?: number } = {}): (params:
     client.setCallbackRefreshAuth(async ({ b24OAuthParams }) => {
       captured = b24OAuthParams
     })
-    const authData = await withTimeout(client.auth.refreshAuth(), timeoutMs)
+    // Span the proactive OAuth refresh (keep-alive cron / reauth). Bare refresh — no memberId,
+    // and the params (client_secret/refresh_token) are NEVER attached to the span.
+    const authData = await withDependencySpan(
+      { system: 'bitrix24', operation: 'oauth.refresh', method: 'oauth.refresh' },
+      () => withTimeout(client.auth.refreshAuth(), timeoutMs)
+    )
     return rawTokenFromRefresh(captured, authData)
   }
 }

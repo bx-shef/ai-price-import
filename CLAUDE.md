@@ -115,8 +115,9 @@ AI-импорт документов с табличной частью в Bitri
     авто-инструментирование не перехватит http/pg/ioredis; Nitro-бандлер ломает require-хуки OTel → deps
     вне бандла, `otel-preload-package.json` **точными** версиями ставится в backend-образ). Без
     `OTEL_EXPORTER_OTLP_ENDPOINT` — no-op (поведение не меняется). Ручные спаны на `@opentelemetry/api`
-    (no-op без SDK): `withDependencySpan` оборачивает каждый B24 REST (`makeSdkRestCall`/`makeSdkListCall`,
-    `memberId` проброшен из `makePortalSdkCall`), `withSpan(…)` — job-спан на **каждую** очередь
+    (no-op без SDK): `withDependencySpan` оборачивает каждый исходящий вызов к Б24 — все REST
+    (`makeSdkRestCall`/`makeSdkListCall`, `memberId` проброшен) **и** OAuth-refresh POST'ы
+    (`oauth.refresh`/`oauth.install-verify`); `withSpan(…)` — job-спан на **каждую** очередь
     (`b24-events`/`file-extract`/`agent-run`/`crm-sync`): латентность+исход+`portal.hash` по стадии;
     у extract/agent — `job.ok`, у crm-sync — исходы записи (`created`/`lines`/`unmatched`/`idempotent`/
     `warnings`/`errors`). **PII-защита тройная:** allowlist
