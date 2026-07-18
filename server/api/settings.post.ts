@@ -1,25 +1,26 @@
 import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { extractFrameAuth } from '../utils/frameAuth'
-import { resolveFrameMember } from '../utils/resolveFrameMember'
+import { verifyFrameToken } from '../utils/resolveFrameMember'
 import { writeMapping } from '../utils/appSettings'
-import { query } from '../db/client'
 
 // POST /api/settings — persist the portal mapping. Frame-token authenticated AND admin-gated
-// SERVER-SIDE: resolveFrameMember verifies the frame token controls the portal and reads the
-// caller's ADMIN flag from `profile` (the token is the calling user's), so a non-admin portal user
-// cannot overwrite settings even with a valid frame token. Body normalised before write.
+// SERVER-SIDE: verifyFrameToken confirms the frame token controls the portal and reads the caller's
+// ADMIN flag from `profile` (the token is the calling user's), so a non-admin portal user cannot
+// overwrite settings even with a valid frame token. It does NOT require the portal be installed
+// (member_id) — app.option is scoped by the frame token alone — so an install-race/purge window
+// doesn't reject a valid admin. Body normalised before write.
 export default defineEventHandler(async (event) => {
   const auth = extractFrameAuth(getHeaders(event) as Record<string, string | undefined>)
   if (!auth) {
     setResponseStatus(event, 401)
     return { error: 'frame auth required' }
   }
-  const resolved = await resolveFrameMember(auth, { query })
-  if (!resolved.ok) {
-    setResponseStatus(event, resolved.status ?? 401)
+  const verified = await verifyFrameToken(auth)
+  if (!verified.ok) {
+    setResponseStatus(event, verified.status ?? 401)
     return { error: 'frame verification failed' }
   }
-  if (!resolved.admin) {
+  if (!verified.admin) {
     setResponseStatus(event, 403)
     return { error: 'admin only' }
   }

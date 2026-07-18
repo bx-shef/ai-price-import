@@ -309,12 +309,14 @@ const ON_MISSING_ITEMS = [
     <B24Alert
       v-if="showReadOnly"
       class="mb-4"
-      color="air-primary-alert"
-      title="Только просмотр"
-      description="Изменять настройки импорта может только администратор портала."
+      color="air-primary-warning"
+      variant="soft"
+      title="Настройки доступны только администратору"
+      description="Изменять параметры импорта может только администратор портала Bitrix24."
     />
 
     <div
+      v-if="!showReadOnly"
       class="space-y-6"
       :class="{ 'pointer-events-none opacity-50': loading }"
     >
@@ -571,7 +573,10 @@ const ON_MISSING_ITEMS = [
       </B24FormField>
     </div>
 
-    <div class="mt-8 flex items-center gap-3">
+    <div
+      v-if="!showReadOnly"
+      class="mt-8 flex items-center gap-3"
+    >
       <B24Button
         color="air-primary"
         :loading="saving"
