@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isCreatableUnit, nextMeasureCode, buildMeasureAddParams, MEASURE_CODE_FLOOR, MAX_MEASURE_UNIT_LEN } from '../app/utils/measureCreate'
+import { isCreatableUnit, nextMeasureCode, buildMeasureAddParams, buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MEASURE_CODE_FLOOR, MAX_MEASURE_UNIT_LEN } from '../app/utils/measureCreate'
 
 describe('isCreatableUnit (OCR-noise gate)', () => {
   it('accepts sane unit strings (letters, optional digits/punctuation)', () => {
@@ -39,6 +39,36 @@ describe('nextMeasureCode', () => {
   })
   it('ignores non-integer noise', () => {
     expect(nextMeasureCode([Number.NaN, 1003, 2.5])).toBe(1004)
+  })
+})
+
+describe('normalizeUnitKey', () => {
+  it('trims, lowercases, collapses internal whitespace', () => {
+    expect(normalizeUnitKey('  ШТ ')).toBe('шт')
+    expect(normalizeUnitKey('пог.  м')).toBe('пог. м')
+    expect(normalizeUnitKey(undefined)).toBe('')
+  })
+})
+
+describe('buildMeasureIndex + lookupExistingMeasure (find-before-create)', () => {
+  const rows = [
+    { code: 796, measureTitle: 'Штука', symbol: 'шт' },
+    { code: 6, measureTitle: 'Метр', symbol: 'м' },
+    { code: 'bad' } // ignored — no valid code
+  ]
+  it('collects codes and maps normalized title AND symbol → code', () => {
+    const idx = buildMeasureIndex(rows)
+    expect(idx.codes.sort((a, b) => a - b)).toEqual([6, 796])
+    expect(lookupExistingMeasure('шт', idx)).toBe(796) // by symbol
+    expect(lookupExistingMeasure('  Штука ', idx)).toBe(796) // by title, normalized
+    expect(lookupExistingMeasure('М', idx)).toBe(6)
+  })
+  it('returns null for a unit not present', () => {
+    expect(lookupExistingMeasure('рулон', buildMeasureIndex(rows))).toBeNull()
+  })
+  it('tolerates uppercase field-name variants', () => {
+    const idx = buildMeasureIndex([{ CODE: 200, MEASURE_TITLE: 'Пара', SYMBOL: 'пар' }])
+    expect(lookupExistingMeasure('пар', idx)).toBe(200)
   })
 })
 

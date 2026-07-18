@@ -17,11 +17,12 @@ describe('createMeasureViaRest', () => {
     expect(call).not.toHaveBeenCalled()
   })
 
-  it('retries with the next code on a duplicate-code error, then succeeds', async () => {
+  it('retries with the next code on a duplicate-code error (SDK .code shape), then succeeds', async () => {
     let n = 0
     const call = vi.fn(async (_method: string, params: { fields: { code: number } }) => {
       n++
-      if (n === 1) throw { error: '200600000000', message: 'dup' }
+      // The live SDK throws an AjaxError carrying the numeric code on `.code`.
+      if (n === 1) throw Object.assign(new Error('Duplicate entry for key [code]'), { code: '200600000000' })
       return { measure: { code: params.fields.code } } // portal echoes the sent code
     })
     const code = await createMeasureViaRest('кг', [1000], call)
@@ -32,9 +33,19 @@ describe('createMeasureViaRest', () => {
     expect((call.mock.calls[1]![1] as { fields: { code: number } }).fields.code).toBe(1002)
   })
 
+  it('detects a duplicate by the description text alone (no code field)', async () => {
+    let n = 0
+    const call = vi.fn(async (_method: string, params: { fields: { code: number } }) => {
+      n++
+      if (n === 1) throw new Error('Duplicate entry for key [code]')
+      return { measure: { code: params.fields.code } }
+    })
+    expect(await createMeasureViaRest('кг', [1000], call)).toBe(1002)
+  })
+
   it('gives up (null) after repeated duplicate collisions', async () => {
     const call = vi.fn(async () => {
-      throw { error: '200600000000' }
+      throw Object.assign(new Error('dup'), { code: '200600000000' })
     })
     expect(await createMeasureViaRest('кг', [1000], call)).toBeNull()
     expect(call).toHaveBeenCalledTimes(5)

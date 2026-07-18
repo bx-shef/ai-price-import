@@ -64,3 +64,14 @@ export async function listMeasures(call: RestCall): Promise<MeasureOption[]> {
   })
   return normalizeMeasures(result)
 }
+
+/** Raw measure rows (title/symbol/code) for the auto-create index — NO active filter, so the code
+ *  allocator sees every existing code and find-before-create matches any measure (Q11). */
+export async function fetchMeasureRows(call: RestCall): Promise<Array<Record<string, unknown>>> {
+  const result = await call('catalog.measure.list', {
+    select: ['code', 'measureTitle', 'symbol', 'symbolIntl']
+  })
+  if (Array.isArray(result)) return result as Array<Record<string, unknown>>
+  const wrapped = (result as Record<string, unknown>)?.measures
+  return Array.isArray(wrapped) ? wrapped as Array<Record<string, unknown>> : []
+}

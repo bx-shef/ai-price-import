@@ -13,7 +13,11 @@ const MAX_CODE_ATTEMPTS = 5
 
 function isDuplicateCodeError(e: unknown): boolean {
   const err = e as { error?: unknown, code?: unknown, message?: string }
-  return String(err?.error ?? err?.code ?? '') === DUPLICATE_CODE || (err?.message ?? '').includes(DUPLICATE_CODE)
+  // The SDK throws an AjaxError carrying the numeric code on `.code` (verified against the SDK
+  // source); `.error` and the description text are belt-and-suspenders for other transports.
+  if (String(err?.error ?? err?.code ?? '') === DUPLICATE_CODE) return true
+  const msg = (err?.message ?? '').toLowerCase()
+  return msg.includes(DUPLICATE_CODE) || msg.includes('duplicate entry')
 }
 
 /**

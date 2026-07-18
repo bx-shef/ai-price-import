@@ -20,8 +20,9 @@ import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
 import { findProduct } from '../utils/productLookup'
 import { createProductViaRest } from '../utils/productCreate'
-import { listMeasures } from '../utils/measureList'
+import { fetchMeasureRows } from '../utils/measureList'
 import { createMeasureViaRest } from '../utils/measureCreateWrite'
+import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_MEASURES_PER_JOB, type MeasureIndex } from '~/utils/measureCreate'
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
@@ -213,15 +214,21 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     if (!t) throw new Error('портал не авторизован (нет токена)')
     return t
   }
-  // Auto-create measure state (Q11): the portal's existing measure codes fetched once per job (to
-  // seed the code allocator), plus a per-job cache so a unit repeated across rows creates only once.
-  let measureState: { codes: number[], created: Map<string, number> } | null = null
-  const ensureMeasureState = async (): Promise<{ codes: number[], created: Map<string, number> }> => {
-    if (!measureState) {
-      const existing = await listMeasures((await need()).call)
-      measureState = { codes: existing.map(m => Number(m.value)).filter(c => Number.isInteger(c)), created: new Map() }
+  // Auto-create measure state (Q11): the portal's existing measures indexed once per job — codes
+  // (seed the allocator) + title/symbol → code (FIND-before-create, so a unit already in the catalog
+  // is reused not duplicated; also makes a job retry idempotent). Best-effort: a list failure yields
+  // an EMPTY index (createMeasure then degrades to null → default), never fails the job.
+  let measureIndex: MeasureIndex | null = null
+  let measuresCreated = 0 // distinct auto-creates this job (anti-flood cap)
+  const ensureMeasureIndex = async (): Promise<MeasureIndex> => {
+    if (!measureIndex) {
+      try {
+        measureIndex = buildMeasureIndex(await fetchMeasureRows((await need()).call))
+      } catch {
+        measureIndex = { codes: [], byName: new Map() }
+      }
     }
-    return measureState
+    return measureIndex
   }
   return {
     // One-time finalize claim (#164): the run that wins flips import_job.notified false→true, so
@@ -237,19 +244,21 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     findProduct: async item => findProduct(item, mapping, (await need()).call),
     createProduct: async item => createProductViaRest(item, mapping, (await need()).call),
     // Auto-create measure (opt-in): wired only when enabled so crm-sync's presence check gates it.
-    // Cached per unit (per job); a new code is pushed into `codes` so later units don't reuse it.
+    // Find-before-create against the portal index (reuse → {created:false}); otherwise allocate +
+    // create (→ {created:true}), pushing the new code into the index so repeats/later units reuse it.
+    // Capped per job (anti-flood). null → caller uses the default code.
     createMeasure: mapping.units.autoCreate
       ? async (unit) => {
-        const st = await ensureMeasureState()
-        const key = unit.trim().toLowerCase()
-        const hit = st.created.get(key)
-        if (hit !== undefined) return hit
-        const code = await createMeasureViaRest(unit, st.codes, (await need()).call)
-        if (code) {
-          st.codes.push(code)
-          st.created.set(key, code)
-        }
-        return code
+        const idx = await ensureMeasureIndex()
+        const existing = lookupExistingMeasure(unit, idx)
+        if (existing !== null) return { code: existing, created: false }
+        if (measuresCreated >= MAX_AUTO_MEASURES_PER_JOB) return null // anti-flood cap reached
+        const code = await createMeasureViaRest(unit, idx.codes, (await need()).call)
+        if (code === null) return null
+        idx.codes.push(code)
+        idx.byName.set(normalizeUnitKey(unit), code) // reuse on repeat / retry
+        measuresCreated += 1
+        return { code, created: true }
       }
       : undefined,
     // VAT rates: full-list fetch via the SDK's built-in pagination (SdkListCall).
