@@ -41,14 +41,16 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
   `server`/`letsencrypt`/`…watchtower` из стека currency-converter) — второй раз не запускаем (конфликт
   портов 80/443 и имён). Эти два файла нужны только при развёртывании **чистого** хоста.
 
-  **Развёртывание на общем сервере** (инфра уже есть → шаги 1–5):
+  **Развёртывание на общем сервере** (инфра уже есть → шаги 1–4):
   1. A-запись `price-import.bx-shef.by → <IP>` (общий сервер).
   2. `.env` рядом с `docker-compose.prod.yml` (секреты; см. ниже; `DOMAIN`=`price-import.bx-shef.by`) — в git не коммитим.
-  3. `make prod-up` (`docker compose -f docker-compose.prod.yml up -d`) → acme выпустит TLS автоматически.
-  4. `make proxy-tune` — применить per-vhost тюнинг фронт-прокси (лимит тела + таймаут OCR; см. секцию nginx).
-  5. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
+  3. `make prod-up` (`docker compose -f docker-compose.prod.yml up -d`) → acme выпустит TLS автоматически
+     **и авто-применит per-vhost тюнинг фронт-прокси** (GH #71: `prod-up`/`prod-redeploy` в конце гонят
+     `proxy-tune`, best-effort — если прокси не найден, деплой не падает, только warn). Отдельный
+     `make proxy-tune` больше вручную запускать не нужно; при желании — `make proxy-check` (см. секцию nginx).
+  4. Регистрация приложения в Bitrix24 (OAuth redirect + вебхук `https://price-import.bx-shef.by/api/b24/events`).
 
-  **Чистый хост** (инфры ещё нет → сначала): `make server-up` → `make watchtower-up` → затем шаги 2–5.
+  **Чистый хост** (инфры ещё нет → сначала): `make server-up` → `make watchtower-up` → затем шаги 2–4.
 
 ## Env (полный список — `.env.example`)
 
@@ -179,7 +181,8 @@ nginx-дефолтах** (`client_max_body_size 1m`, `proxy_read_timeout 60s`): 
 нашего vhost — таймаут 300s действует на все роуты домена (не только demo); это осознанный компромисс
 (per-location гранулярности на этом слое нет), app-level держит не-demo роуты на 180s.
 
-Применить в живой прокси:
+Применить в живой прокси (**авто-применяется** в `make prod-up`/`prod-redeploy`, GH #71 — вручную
+нужно только для внепланового применения/отладки):
 
 ```bash
 make proxy-tune     # авто-определяет контейнер прокси (публикует :443) → docker cp → nginx -t →
