@@ -17,9 +17,9 @@
 #   VIBE_PLAN    default bc-micro   (only bc-micro is allowed on RU/BY demo access)
 #   VIBE_REGION  default ru-central1-b
 #   VIBE_RUNTIME default node22
-#   INSTALL_CMD  default: cd /opt/app && corepack enable && pnpm install --frozen-lockfile && pnpm build
+#   INSTALL_CMD  default: cd /opt/app && corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build
 #   PRESTART_CMD default: (empty) — put pg/redis provisioning + apt toolchain here
-#   START_CMD    default: cd /opt/app && HOST=0.0.0.0 PORT=3000 node .output/server/index.mjs
+#   START_CMD    default: cd /opt/app && HOME=/root HOST=0.0.0.0 PORT=3000 node .output/server/index.mjs
 #   PORT         default 3000  (Black Hole always tunnels :3000 — don't change without reason)
 #   ACCESS_POLICY  default PUBLIC — REQUIRED for self-OAuth B24 apps (webhook + cross-portal iframe)
 #
@@ -37,13 +37,24 @@ BASE="${VIBE_BASE:-https://vibecode.bitrix24.tech/v1}"
 PLAN="${VIBE_PLAN:-bc-micro}"
 REGION="${VIBE_REGION:-ru-central1-b}"
 RUNTIME="${VIBE_RUNTIME:-node22}"
-INSTALL_CMD="${INSTALL_CMD:-cd /opt/app && corepack enable && pnpm install --frozen-lockfile && pnpm build}"
+# --prod=false: nuxt build loads build-only modules (@nuxt/eslint) that live in devDependencies —
+# if the platform defaults NODE_ENV=production for `install`, a prod-only install drops them and
+# `pnpm build` fails "Cannot find module '@nuxt/eslint'". Force devDeps in for the build.
+INSTALL_CMD="${INSTALL_CMD:-cd /opt/app && corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build}"
 PRESTART_CMD="${PRESTART_CMD:-}"
-START_CMD="${START_CMD:-cd /opt/app && HOST=0.0.0.0 PORT=3000 node .output/server/index.mjs}"
+# HOME=/root: the extraction agent (Claude Code CLI) writes its config under $HOME/.claude on first
+# run; set it explicitly so a scrubbed start env can't leave HOME unset (matches the Dockerfile).
+START_CMD="${START_CMD:-cd /opt/app && HOME=/root HOST=0.0.0.0 PORT=3000 node .output/server/index.mjs}"
 PORT="${PORT:-3000}"
 ACCESS_POLICY="${ACCESS_POLICY:-PUBLIC}"
 
-api() { curl -fsS -H "X-Api-Key: $VIBE_KEY" "$@"; }
+# The deploy-body Python heredoc below reads these from os.environ. Plain shell vars are NOT
+# inherited by a child process, so EXPORT them — without this the body build dies KeyError:'RUNTIME'.
+export RUNTIME INSTALL_CMD START_CMD PORT ENV_JSON SOURCE_URL PRESTART_CMD
+
+# --connect-timeout bounds a hung connect so the 90×10s wait loop can't stall forever (no --max-time:
+# the deploy POST with ?stream=false blocks until install+build finish, which legitimately takes minutes).
+api() { curl -fsS --connect-timeout 15 -H "X-Api-Key: $VIBE_KEY" "$@"; }
 
 echo "==> Looking up server '$APP_NAME'"
 sid="$(APP_NAME="$APP_NAME" api "$BASE/infra/servers" | python3 -c '
@@ -90,7 +101,7 @@ api -X PATCH "$BASE/infra/servers/$sid/access-policy" -H 'Content-Type: applicat
 
 echo "==> Deploying"
 body="$(python3 - <<'PY'
-import json, os
+import json, os, shlex
 d = {
     "source":  {"url": os.environ["SOURCE_URL"]},
     "runtime": os.environ["RUNTIME"],
@@ -99,6 +110,15 @@ d = {
     "port":    int(os.environ["PORT"]),
     "env":     json.loads(os.environ["ENV_JSON"]),
 }
+# NUXT_PUBLIC_SITE_URL is baked at BUILD time: /install is prerendered and reads
+# config.public.siteUrl from the frozen payload, so a runtime-only env var does NOT re-inject it
+# (the served install/index.html keeps siteUrl:"" and /install refuses to bind the B24 event
+# handlers). Bake it into the build command when known — so a (re)deploy with the appUrl set in
+# ENV_JSON produces an ABSOLUTE handler URL regardless of whether the platform passes the deploy
+# `env` into the install step. See docs/DEPLOY_VIBECODE.md §NUXT_PUBLIC_SITE_URL.
+site = d["env"].get("NUXT_PUBLIC_SITE_URL", "")
+if site and "pnpm build" in d["install"]:
+    d["install"] = d["install"].replace("pnpm build", "NUXT_PUBLIC_SITE_URL=" + shlex.quote(site) + " pnpm build", 1)
 pre = os.environ.get("PRESTART_CMD", "")
 if pre:
     d["preStart"] = pre
@@ -113,3 +133,5 @@ api -X POST "$BASE/infra/servers/$sid/deploy?stream=false" \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print("==> appUrl:",d.get("data",{}).get("appUrl","<none>"))'
 
 echo "==> Done. Health: curl https://app-${sid}.vibecode.bitrix24.tech/api/health  (URL is in appUrl above)"
+echo "==> FIRST DEPLOY: open <appUrl>/install and confirm «Обработчик событий» shows an ABSOLUTE URL"
+echo "    (empty ⇒ NUXT_PUBLIC_SITE_URL was not set in ENV_JSON before this build — set it and redeploy)."

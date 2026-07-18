@@ -136,12 +136,15 @@ AI-импорт документов с табличной частью в Bitri
   при repo-переменной `VIBECODE_DEPLOY==true`, основной GHCR/Watchtower-путь не трогает; в Docker-образ не
   попадают). Порт из client-bank #319. Проверено локально: `pnpm build` (preset `node-server`) →
   `node .output/server/index.mjs` отдаёт **и лендинг, и in-portal, и `/api/*`** из одного процесса
-  (`/`,`/app`,`/import`,`/settings`,`/metrics`,`/login`,`/install` GET **и POST** = 200, `/api/health` = ok;
-  `/api/ready` у нас нет). pg/redis + OCR-тулчейн + `@anthropic-ai/claude-code` провижнятся на VM в `preStart`,
-  миграции в процессе на старте. ⚠ Без nginx нет hash-CSP/security-заголовков/`limit_req` — паритет
-  безопасности в Nitro (`routeRules`) — follow-up; служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed**
-  (nginx для неё не нужен). Env под PUBLIC: `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль),
-  `ANTHROPIC_*`, `B24_TOKEN_ENC_KEY` (32 байта), `NUXT_PUBLIC_SITE_URL=<appUrl>`.
+  (`/`,`/app`,`/import`,`/settings`,`/metrics`,`/login`,`/queues`,`/install` GET **и POST** = 200,
+  `/api/health` = ok; `/api/ready` у нас нет). pg/redis + OCR-тулчейн + `@anthropic-ai/claude-code`
+  провижнятся на VM в `preStart`, миграции в процессе на старте. ⚠ Без nginx нет CSP/security-заголовков/
+  `limit_req` — паритет безопасности в Nitro (`routeRules`) — follow-up; служебная зона (`/api/ops/*`,
+  `/api/queues`) **fail-closed** (nginx для неё не нужен), но **демо `/api/demo/*`** теряет пер-IP троттл
+  (неаутентифицированный OCR/LLM-расход) — гейт перед боевым PUBLIC. ⚠ `NUXT_PUBLIC_SITE_URL` пекётся на
+  **build** (пререндер `/install`) — скрипт запекает его в `pnpm build` из `ENV_JSON`. Env под PUBLIC:
+  `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль), `ANTHROPIC_*`, `B24_TOKEN_ENC_KEY`
+  (32 байта), `NUXT_PUBLIC_SITE_URL=<appUrl>`.
 
 ## Команды
 
