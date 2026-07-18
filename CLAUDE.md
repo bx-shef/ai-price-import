@@ -129,6 +129,22 @@ AI-импорт документов с табличной частью в Bitri
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
 - `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).
+- **Альтернативный таргет деплоя — Битрикс24 Вайбкод Black Hole** (закрытый Bitrix-Cloud VM по REST,
+  без SSH, приложение **одним Nitro-процессом на :3000**): [`docs/DEPLOY_VIBECODE.md`](docs/DEPLOY_VIBECODE.md).
+  `deploy/vibecode-deploy.sh` (идемпотентный: найти сервер по имени / создать / ждать `CONNECTED` /
+  `access-policy=PUBLIC` / deploy) + `.github/workflows/deploy-vibecode.yml` (**opt-in**: джоба идёт только
+  при repo-переменной `VIBECODE_DEPLOY==true`, основной GHCR/Watchtower-путь не трогает; в Docker-образ не
+  попадают). Порт из client-bank #319. Проверено локально: `pnpm build` (preset `node-server`) →
+  `node .output/server/index.mjs` отдаёт **и лендинг, и in-portal, и `/api/*`** из одного процесса
+  (`/`,`/app`,`/import`,`/settings`,`/metrics`,`/login`,`/queues`,`/install` GET **и POST** = 200,
+  `/api/health` = ok; `/api/ready` у нас нет). pg/redis + OCR-тулчейн + `@anthropic-ai/claude-code`
+  провижнятся на VM в `preStart`, миграции в процессе на старте. ⚠ Без nginx нет CSP/security-заголовков/
+  `limit_req` — паритет безопасности в Nitro (`routeRules`) — follow-up; служебная зона (`/api/ops/*`,
+  `/api/queues`) **fail-closed** (nginx для неё не нужен), но **демо `/api/demo/*`** теряет пер-IP троттл
+  (неаутентифицированный OCR/LLM-расход) — гейт перед боевым PUBLIC. ⚠ `NUXT_PUBLIC_SITE_URL` пекётся на
+  **build** (пререндер `/install`) — скрипт запекает его в `pnpm build` из `ENV_JSON`. Env под PUBLIC:
+  `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль), `ANTHROPIC_*`, `B24_TOKEN_ENC_KEY`
+  (32 байта), `NUXT_PUBLIC_SITE_URL=<appUrl>`.
 
 ## Команды
 

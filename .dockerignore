@@ -9,6 +9,7 @@ docs
 screenshots
 tests
 telemetry-station
+deploy
 *.md
 .env
 .env.*

@@ -272,6 +272,17 @@ docker-gen (рестарт не нужен). Три варианта по воз
 - Схема БД применяется идемпотентно плагином на старте (`server/plugins/migrate`); ретенция — TTL-свип
   ежечасно (`server/plugins/retention`) + полная очистка при `ONAPPUNINSTALL`.
 
+## Альтернативный таргет — Битрикс24 Вайбкод Black Hole
+
+Помимо основного пути (GHCR + Watchtower за nginx-proxy, выше) приложение можно выгрузить в
+**закрытый Bitrix-Cloud VM** (Vibecode Black Hole) по REST, без SSH — **одним Nitro-процессом на
+:3000** (тот же `pnpm build` → `node .output/server/index.mjs` отдаёт и лендинг, и in-portal, и
+`/api/*`; pg/redis+OCR-тулчейн провижнятся на VM в `preStart`, миграции в процессе на старте).
+Артефакты — `deploy/vibecode-deploy.sh` + `.github/workflows/deploy-vibecode.yml` (**opt-in**:
+`VIBECODE_DEPLOY==true`, основной путь не трогает; в Docker-образ не попадают). ⚠ Без nginx нет
+CSP/security-заголовков/login-rate-limit — паритет в Nitro — follow-up; служебная зона fail-closed
+(nginx для неё не нужен). Полный runbook и env — [`docs/DEPLOY_VIBECODE.md`](../DEPLOY_VIBECODE.md).
+
 ## Дальше (масштаб)
 
 Вынести воркеры пайплайна в отдельный контейнер (сейчас поднимаются in-process плагином `queue`),
