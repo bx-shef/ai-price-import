@@ -9,7 +9,7 @@ import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
-import { claimJobNotify, setJobStatus } from '../utils/jobStore'
+import { claimJobNotify, getManualOverride, setJobStatus } from '../utils/jobStore'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
 import { findExistingItemId } from '../utils/originLookup'
@@ -189,6 +189,9 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
     saveDocument: (m, j, stored) => saveDocument(m, j, stored, infra.query),
     enqueueCrmSync: (m, j) => enqueueCrmSync({ memberId: m, jobId: j }),
     failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, infra.query),
+    // Operator's manual import target (set at upload) → RoutingSignals.manualOverride, which
+    // resolveTarget applies with top priority over the routing rules (#135 routing slice 2).
+    getManualOverride: (m, j) => getManualOverride(m, j, infra.query),
     deleteText: (m, j) => deleteText(m, j, infra.query),
     markProcessing: (m, j) => setJobStatus(m, j, 'processing', '', infra.query)
   }

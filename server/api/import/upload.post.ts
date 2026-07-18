@@ -7,6 +7,7 @@ import { nodeFileIO } from '../../utils/nodeFileIO'
 import { enqueueExtract } from '../../queue/producers'
 import { queueEnabled } from '../../queue/connection'
 import { MAX_UPLOAD_BYTES, validateUploadFile } from '~/utils/importUpload'
+import { parseManualTarget } from '~/utils/manualTarget'
 import { query } from '../../db/client'
 
 // POST /api/import/upload — in-portal document upload. Frame-token authenticated and
@@ -50,8 +51,14 @@ export default defineEventHandler(async (event) => {
     return { error: v.error }
   }
 
+  // Optional manual target («куда импортировать» chosen by the operator) — a `target` form field
+  // carrying JSON {entityTypeId, categoryId?, stageId?}. Untrusted → validated to a safe TargetRef
+  // (or dropped) by parseManualTarget; when set it overrides the routing rules for THIS job only.
+  const targetPart = form?.find(p => p.name === 'target')
+  const manualOverride = targetPart?.data?.length ? parseManualTarget(targetPart.data.toString('utf8')) : null
+
   const jobId = randomUUID()
-  await createJob(member.memberId, jobId, file.filename, query)
+  await createJob(member.memberId, jobId, file.filename, query, manualOverride)
   await saveUpload(member.memberId, jobId, file.data, nodeFileIO)
   await enqueueExtract({ memberId: member.memberId, jobId, fileId: file.filename })
   return { jobId, status: 'queued' }
