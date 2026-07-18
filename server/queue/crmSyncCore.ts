@@ -1,7 +1,7 @@
 import type { ExtractedDocument } from '~/types/document'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { ENTITY_TYPE_ID } from '~/config/b24'
-import { resolveTarget, type RoutingSignals } from '~/utils/routing'
+import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
 import { resolveMeasure } from '~/utils/units'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
@@ -24,6 +24,9 @@ export interface CrmSyncDeps {
   portalVatRates: () => Promise<PortalVatRate[]>
   /** Optional: allowed portal currency codes; when provided, an unknown currency is a hard error. */
   portalCurrencies?: () => Promise<string[]>
+  /** Valid category (воронка) ids for an entity type (crm.category.list) — used to fall back off a
+   *  DELETED funnel (rule/default → deal/direction-0). Optional: absent ⇒ no direction validation. */
+  listCategoryIds?: (entityTypeId: number) => Promise<number[]>
   createTarget: (target: TargetRef, fields: Record<string, unknown>) => Promise<number>
   setRows: (entityTypeId: number, entityId: number, rows: Array<Record<string, unknown>>) => Promise<void>
   /** One error-chat message per document (batched). Supplier name for BB-safe context. */
@@ -78,7 +81,19 @@ export async function runCrmSync(
 ): Promise<CrmSyncResult> {
   const warnings: string[] = []
   const errors: string[] = []
-  const target = resolveTarget(signals, mapping.routingRules, mapping.defaultTarget)
+  const resolved = resolveTarget(signals, mapping.routingRules, mapping.defaultTarget)
+  // Guard the resolved direction against a DELETED funnel (settings not fixed after the воронка was
+  // removed in CRM): rule/manual with a gone direction → default target → deal/direction-0. No-op
+  // when a target pins no categoryId, or when direction validation isn't wired (tests). Fail-open.
+  let target = resolved
+  if (deps.listCategoryIds) {
+    target = await resolveValidTarget(resolved, mapping.defaultTarget, deps.listCategoryIds)
+    // Surface the redirect so it's NOT silent: the operator sees the document landed in a fallback
+    // target (its chosen/rule direction — or entity — was gone). Warning, not error: import proceeds.
+    if (target.entityTypeId !== resolved.entityTypeId || target.categoryId !== resolved.categoryId) {
+      warnings.push('Направление цели недоступно (воронка удалена в CRM) — импорт направлен в запасную цель')
+    }
+  }
 
   // Idempotency requires a filterable marker on the target type (originId/xmlId). A markerless
   // type (originSearchFilter → null; e.g. quote/7, or a nonsensical target set via free entityTypeId

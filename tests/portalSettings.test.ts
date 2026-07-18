@@ -5,7 +5,7 @@ describe('parsePortalSettings', () => {
   it('empty/invalid → safe defaults', () => {
     expect(parsePortalSettings(null)).toEqual(defaultMapping())
     expect(parsePortalSettings('nope')).toEqual(defaultMapping())
-    expect(parsePortalSettings({}).defaultTarget).toEqual({ entityTypeId: 2 })
+    expect(parsePortalSettings({}).defaultTarget).toEqual({ entityTypeId: 2, categoryId: 0 })
   })
 
   it('coerces article/product/units', () => {
@@ -37,7 +37,7 @@ describe('parsePortalSettings', () => {
 
   it('bad target entityTypeId falls back to default', () => {
     const m = parsePortalSettings({ defaultTarget: { entityTypeId: -1 } })
-    expect(m.defaultTarget).toEqual({ entityTypeId: 2 })
+    expect(m.defaultTarget).toEqual({ entityTypeId: 2, categoryId: 0 })
   })
   it('caps a bloated routingRules array (DoS bound #83)', () => {
     const rules = Array.from({ length: 5000 }, () => ({ match: { type: 'x' }, target: { entityTypeId: 2 } }))
