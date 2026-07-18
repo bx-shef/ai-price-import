@@ -19,7 +19,10 @@ import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEd
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
 
-const { mapping, loading, saving, saved, error, load, save, scheduleSave, flushSave, rebaseline } = useSettings()
+const { mapping, loading, saving, saved, error, isAdmin, load, save, scheduleSave, flushSave, rebaseline } = useSettings()
+// Show the "read-only for non-admins" notice once settings have loaded (in a portal) and the
+// caller isn't an admin. Writes are also blocked server-side + in useSettings.
+const showReadOnly = computed(() => !loading.value && !error.value && !isAdmin.value)
 onMounted(async () => {
   await load()
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
@@ -303,6 +306,14 @@ const ON_MISSING_ITEMS = [
       :title="error"
     />
 
+    <B24Alert
+      v-if="showReadOnly"
+      class="mb-4"
+      color="air-primary-alert"
+      title="Только просмотр"
+      description="Изменять настройки импорта может только администратор портала."
+    />
+
     <div
       class="space-y-6"
       :class="{ 'pointer-events-none opacity-50': loading }"
@@ -564,7 +575,7 @@ const ON_MISSING_ITEMS = [
       <B24Button
         color="air-primary"
         :loading="saving"
-        :disabled="saving || loading"
+        :disabled="saving || loading || !isAdmin"
         :label="saving ? 'Сохранение…' : 'Сохранить сейчас'"
         @click="save"
       />

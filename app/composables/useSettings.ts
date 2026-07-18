@@ -24,6 +24,9 @@ export function useSettings() {
   const saving = ref(false)
   const saved = ref(false)
   const error = ref('')
+  // Whether the CALLING portal user is an admin (from GET /api/settings, verified server-side).
+  // Non-admins may view settings but not save — writes are also enforced admin-only on the server.
+  const isAdmin = ref(false)
   // Autosave gates: `ready` (don't autosave before the first load) + `lastSavedJson` (echo guard).
   const ready = ref(false)
   let lastSavedJson = ''
@@ -46,8 +49,9 @@ export function useSettings() {
     }
     loading.value = true
     try {
-      const res = await $fetch<{ mapping: PortalMapping }>('/api/settings', { headers: h })
+      const res = await $fetch<{ mapping: PortalMapping, admin?: boolean }>('/api/settings', { headers: h })
       mapping.value = res.mapping
+      isAdmin.value = res.admin === true
       lastSavedJson = snapshot() // baseline: nothing to autosave until the user actually edits
       ready.value = true
       error.value = ''
@@ -62,6 +66,11 @@ export function useSettings() {
     const h = await headers()
     if (!h) {
       error.value = 'Настройки доступны только внутри портала Bitrix24'
+      return
+    }
+    if (!isAdmin.value) {
+      // The server enforces this too (403); block client-side so we don't spam a doomed POST.
+      error.value = 'Сохранять настройки может только администратор портала'
       return
     }
     // Serialize saves: if one is already in flight, re-arm the debounce and bail. Overlapping POSTs
@@ -98,8 +107,10 @@ export function useSettings() {
     }
   }
 
-  /** Arm autosave after an edit. No-op before the first load, or when nothing changed (echo guard). */
+  /** Arm autosave after an edit. No-op for a non-admin (can't save), before the first load, or when
+   *  nothing changed (echo guard). */
   function scheduleSave(): void {
+    if (!isAdmin.value) return
     if (!shouldAutosave(snapshot(), lastSavedJson, ready.value)) return
     saved.value = false
     debouncer.schedule()
@@ -117,5 +128,5 @@ export function useSettings() {
     lastSavedJson = snapshot()
   }
 
-  return { mapping, loading, saving, saved, error, load, save, scheduleSave, flushSave, rebaseline }
+  return { mapping, loading, saving, saved, error, isAdmin, load, save, scheduleSave, flushSave, rebaseline }
 }
