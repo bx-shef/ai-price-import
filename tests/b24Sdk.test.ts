@@ -269,6 +269,66 @@ describe('createPortalSdkResolver (per-portal memoization, #123/#163)', () => {
     await resolver('m1')
     expect(build).toHaveBeenCalledTimes(2)
   })
+
+  it('EVICTS on a failed LIST too (parity with call — the wedge heals either way)', async () => {
+    const bad: SdkTransport = {
+      call: vi.fn(async () => ({})),
+      list: vi.fn(async () => {
+        throw new Error('boom')
+      })
+    }
+    const good = fakeTransport(2)
+    const build = vi.fn(async () => (build.mock.calls.length === 1 ? bad : good))
+    const resolver = createPortalSdkResolver(build, () => 1000, 60_000)
+    const t1 = await resolver('m1')
+    await expect(t1!.list('crm.vat.list')).rejects.toThrow('boom') // evict-on-error via list
+    await resolver('m1')
+    expect(build).toHaveBeenCalledTimes(2) // rebuilt inside the TTL because list failed
+  })
+
+  it('does NOT evict a FRESH client when a STALE (already-replaced) client later errors (identity check)', async () => {
+    const stale = fakeTransport(1, true) // .call throws
+    const fresh = fakeTransport(2)
+    let n = 0
+    const build = vi.fn(async () => (++n === 1 ? stale : fresh))
+    let clock = 1000
+    const resolver = createPortalSdkResolver(build, () => clock, 60_000)
+    const t1 = await resolver('m1') // caches `stale`
+    clock += 60_001 // lapse TTL
+    const t2 = await resolver('m1') // rebuilds → caches `fresh` (build #2)
+    expect(t2).not.toBe(t1)
+    // Now fire the STALE client's error. Its evictSelf must find `fresh` in the map (not `stale`)
+    // and NO-OP — else it would wrongly drop the fresh client.
+    await expect(t1!.call('crm.item.list')).rejects.toThrow('boom')
+    await resolver('m1') // still inside `fresh`'s TTL → must be served from cache (no rebuild)
+    expect(build).toHaveBeenCalledTimes(2) // 2, not 3 → fresh survived the stale error
+  })
+
+  it('serves at just-under TTL and rebuilds at exactly TTL (boundary of `< ttlMs`)', async () => {
+    const build = vi.fn(async () => fakeTransport(1))
+    let clock = 1000
+    const resolver = createPortalSdkResolver(build, () => clock, 60_000)
+    await resolver('m1')
+    clock += 59_999 // < ttlMs → cached
+    await resolver('m1')
+    expect(build).toHaveBeenCalledTimes(1)
+    clock = 1000 + 60_000 // exactly ttlMs → 60000 < 60000 is false → rebuild
+    await resolver('m1')
+    expect(build).toHaveBeenCalledTimes(2)
+  })
+
+  it('sweeps TTL-lapsed entries on insert so idle portals do not accumulate (bounded working set)', async () => {
+    let n = 0
+    const build = vi.fn(async () => fakeTransport(++n))
+    let clock = 1000
+    const resolver = createPortalSdkResolver(build, () => clock, 60_000)
+    await resolver('m1')
+    await resolver('m2')
+    expect(resolver.size()).toBe(2)
+    clock += 60_001 // both m1 and m2 lapse
+    await resolver('m3') // insert triggers a sweep of the expired m1/m2
+    expect(resolver.size()).toBe(1) // only the freshly-built m3 remains — idle ones reclaimed
+  })
 })
 
 describe('makeSdkRestCall', () => {

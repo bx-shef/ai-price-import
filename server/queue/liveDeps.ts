@@ -88,7 +88,12 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
  * this client's in-memory refresh token stale) by TWO valves: a short TTL (SDK_CLIENT_TTL_MS) and
  * EVICT-ON-ERROR (a failed call drops the client, so the next resolve rebuilds from the current DB
  * token at once — no permanent invalid_grant wedge). `loadToken` is one cheap query;
- * refresh-persist is UPDATE-only (never resurrects a purged portal). */
+ * refresh-persist is UPDATE-only (never resurrects a purged portal).
+ *
+ * NB (accepted): the crm-sync and file-extract dep builders each construct their OWN resolver
+ * (their own cache), so a portal hit by BOTH queues at once briefly has two limiter buckets. The
+ * SDK backs off on QUERY_LIMIT_EXCEEDED and the two queues rarely co-fire on one portal, so this
+ * is left as-is rather than threading one shared resolver through both builders. */
 function restResolver(infra: LiveInfra): PortalSdkResolver {
   const deps = sdkPortalDeps(infra)
   return createPortalSdkResolver(memberId => makePortalSdkCall(memberId, deps), infra.now)

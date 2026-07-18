@@ -388,6 +388,8 @@ export interface PortalSdkResolver {
   (memberId: string): Promise<SdkTransport | null>
   /** Drop the cached client for a portal (e.g. on uninstall, or to force a rebuild). */
   evict: (memberId: string) => void
+  /** Live count of cached clients — for observability / tests (bounds the working set). */
+  size: () => number
 }
 
 /** Build a resolver that memoizes the per-portal `SdkTransport` so ONE `B24OAuth` (one
@@ -441,6 +443,15 @@ export function createPortalSdkResolver(
       }
     }
     const entry: Entry = { transport, builtAt: now() }
+    // Bound the cache to the ACTIVE working set: sweep TTL-lapsed entries on every insert. A
+    // portal touched once then idle would otherwise linger forever (holding a live B24OAuth +
+    // decrypted refresh token) — lazy per-key TTL only reclaims a key that's re-resolved. O(n)
+    // per build, n = portals seen within one TTL window. `evict()` (uninstall/cutover) is the
+    // only OTHER reclaim path; this makes long-idle portals self-reclaim regardless.
+    const cutoff = now() - ttlMs
+    for (const [k, e] of cache) {
+      if (e.builtAt <= cutoff) cache.delete(k)
+    }
     cache.set(memberId, entry)
     return transport
   }
@@ -449,5 +460,6 @@ export function createPortalSdkResolver(
   resolver.evict = (memberId: string): void => {
     cache.delete(memberId)
   }
+  resolver.size = (): number => cache.size
   return resolver
 }
