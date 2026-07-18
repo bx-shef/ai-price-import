@@ -48,6 +48,10 @@ async function reloadStages() {
 async function chooseTarget(id: number | null) {
   targetEtid.value = id
   targetCategoryId.value = undefined // entity switch → drop the direction
+  // Clear the stage SYNCHRONOUSLY before the categories await, so a submit during that gap can't
+  // send the previous entity's stageId with the new entity (reloadStages re-clears after the load).
+  targetStageId.value = undefined
+  stages.value = undefined
   cats.value = id ? await loadCrmCategories(id) : undefined
   await reloadStages()
 }

@@ -45,6 +45,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 409)
     return { error: 'portal not authorised (no token)' }
   }
-  // fetchCrmstages never throws (→ [] on any issue), so an empty list just means "no stages to pick".
+  // fetchCrmStages never throws (→ [] on any issue), so an empty list just means "no stages to pick".
   return { stages: await fetchCrmStages(entityTypeId, categoryId, transport.call) }
 })
