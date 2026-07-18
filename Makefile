@@ -26,8 +26,12 @@ build-local:
 # хостовый подхватывает контейнеры по метке com.centurylinklabs.watchtower.enable.
 
 ## Запустить / обновить весь prod-стек (app + backend + db + redis)
+## + авто-применить тюнинг фронт-прокси (GH #71: чтобы не забыть `proxy-tune` вручную и
+## чтобы настройка сама восстанавливалась после сноса тома `vhost.d`). Best-effort: если
+## прокси не найден (напр. чистый хост, прокси ещё не поднят) — деплой НЕ падает, только warn.
 prod-up:
 	docker compose -f docker-compose.prod.yml up -d
+	@$(MAKE) --no-print-directory proxy-tune || echo "⚠ proxy-tune не применён (прокси :443 не найден?) — примени вручную: make proxy-tune"
 
 prod-down:
 	docker compose -f docker-compose.prod.yml down
@@ -37,10 +41,12 @@ prod-pull:
 	docker compose -f docker-compose.prod.yml pull
 
 ## Принудительно обновить прямо сейчас (не дожидаясь Watchtower)
+## Тюнинг прокси авто-применяется в конце (GH #71, best-effort — см. prod-up).
 prod-redeploy:
 	docker compose -f docker-compose.prod.yml pull && \
 	docker compose -f docker-compose.prod.yml up -d && \
 	docker image prune -f
+	@$(MAKE) --no-print-directory proxy-tune || echo "⚠ proxy-tune не применён — примени вручную: make proxy-tune"
 
 logs:
 	docker compose -f docker-compose.prod.yml logs -f app backend
