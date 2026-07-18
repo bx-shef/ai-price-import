@@ -40,10 +40,16 @@ CREATE TABLE IF NOT EXISTS import_job (
   status       TEXT NOT NULL DEFAULT 'queued',
   file_name    TEXT NOT NULL DEFAULT '',
   result       TEXT NOT NULL DEFAULT '',
+  -- Write-once finalize claim (#164): flipped false→true by the run that first delivers the
+  -- success chat message + timeline дело, so a retry resuming after a post-create failure
+  -- (setRows threw) still finalizes exactly once and a redelivery of a done job doesn't re-post.
+  notified     BOOLEAN NOT NULL DEFAULT false,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (member_id, job_id)
 );
+-- Backfill the column on portals created before #164 (idempotent — no-op once present).
+ALTER TABLE import_job ADD COLUMN IF NOT EXISTS notified BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS import_text (
   member_id  TEXT NOT NULL,

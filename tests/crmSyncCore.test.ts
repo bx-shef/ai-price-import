@@ -159,6 +159,45 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(deps.setRows).toHaveBeenCalledWith(2, 999, expect.any(Array))
   })
 
+  // #164 — the one-time finalize claim overrides the `created` gate so a retry resuming after a
+  // post-create failure (setRows threw on attempt 1) still delivers the chat + timeline дело.
+  it('claimFinalize wins on a RESUME (created=false) → notify + activity STILL fire (#164 fix)', async () => {
+    const notifySuccess = vi.fn(async () => {})
+    const writeActivity = vi.fn(async () => {})
+    const claimFinalize = vi.fn(async () => true) // this run wins the claim
+    const deps = baseDeps({
+      findExisting: vi.fn(async () => 900 as number | null), // resume: entity already created
+      notifySuccess, writeActivity, claimFinalize
+    })
+    const r = await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(r.created).toBe(false) // it was a resume…
+    expect(claimFinalize).toHaveBeenCalledTimes(1)
+    expect(notifySuccess).toHaveBeenCalledTimes(1) // …but the notice is no longer lost
+    expect(writeActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('claimFinalize already taken (false) → skip both EVEN when created=true (no double post)', async () => {
+    const notifySuccess = vi.fn(async () => {})
+    const writeActivity = vi.fn(async () => {})
+    const claimFinalize = vi.fn(async () => false) // a prior run already finalized
+    const deps = baseDeps({ notifySuccess, writeActivity, claimFinalize })
+    const r = await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(r.created).toBe(true)
+    expect(claimFinalize).toHaveBeenCalledTimes(1)
+    expect(notifySuccess).not.toHaveBeenCalled()
+    expect(writeActivity).not.toHaveBeenCalled()
+  })
+
+  it('claimFinalize is claimed AFTER setRows and NOT on a hard-error abort (no spurious claim)', async () => {
+    const claimFinalize = vi.fn(async () => true)
+    // VAT 25 is not in the portal → hard error → abort before create/setRows.
+    const bad: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт', vatRate: 25 }] }
+    const deps = baseDeps({ claimFinalize })
+    const r = await runCrmSync('job1', bad, mapping(), {}, deps)
+    expect(r.created).toBe(false)
+    expect(claimFinalize).not.toHaveBeenCalled() // nothing was created → nothing to finalize
+  })
+
   it('supplier not found → still creates, warning, no companyId', async () => {
     const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
