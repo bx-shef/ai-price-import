@@ -4,7 +4,9 @@ import { useSettings } from '~/composables/useSettings'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
-import { useCrmCategories, type CrmCategoryOption } from '~/composables/useCrmCategories'
+import { useCrmCategories } from '~/composables/useCrmCategories'
+import * as catPicker from '~/utils/categoryPicker'
+import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
 
@@ -151,12 +153,20 @@ const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: '' }, ...DOCUM
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
-// Leads (entityTypeId 1) have no category — clear a leftover categoryId when switching TO a lead
-// so a value carried over from a deal/smart target can't ride into crm.item.add (rejected by B24:
-// «Item has no CATEGORY_ID field», #135). crm-sync guards this too (defence in depth).
+// Switching the entity type invalidates the direction (a deal funnel id doesn't belong to a
+// smart-invoice, and a lead has none — crm.item.add would reject «Item has no CATEGORY_ID field»).
+// Clear categoryId SYNCHRONOUSLY on any change so a stale id can't be saved in the sub-second
+// window before the async category reload reconciles it (crm-sync also guards leads, #135).
 function selectDefaultTarget(id: number): void {
+  if (mapping.value.defaultTarget.entityTypeId !== id) mapping.value.defaultTarget.categoryId = undefined
   mapping.value.defaultTarget.entityTypeId = id
-  if (id === 1) mapping.value.defaultTarget.categoryId = undefined
+}
+/** Rule-row entity change: coerce to a positive int (or null) and clear a now-stale direction. */
+function setRowEntity(row: EditableRoutingRow, v: unknown): void {
+  const n = typeof v === 'number' ? v : Number(v)
+  const next = Number.isInteger(n) && n > 0 ? n : null
+  if (next !== row.entityTypeId) row.categoryId = undefined
+  row.entityTypeId = next
 }
 
 const TARGET_PRESETS = [
@@ -180,40 +190,15 @@ async function ensureCategories(entityTypeId: number | null | undefined): Promis
   catCache.value[etid] = await loadCrmCategories(etid)
 }
 
-/** b24ui Select items for an entity's directions (+ a «по умолчанию» sentinel value ''). */
-function categoryItems(entityTypeId: number | null | undefined): Array<{ label: string, value: string }> {
-  const cats = catCache.value[Number(entityTypeId)] ?? []
-  return [
-    { label: '— направление по умолчанию —', value: '' },
-    ...cats.map(c => ({ label: c.isDefault ? `${c.name} (по умолчанию)` : c.name, value: String(c.id) }))
-  ]
-}
-
-/** True once the entity's directions are LOADED and non-empty (deal/smart-*; lead has none). */
-function hasCategories(entityTypeId: number | null | undefined): boolean {
-  return (catCache.value[Number(entityTypeId)] ?? []).length > 0
-}
-
-/** Current categoryId as the select's string value ('' = default/none). */
-function categoryValue(target: { categoryId?: number }): string {
-  return target.categoryId == null ? '' : String(target.categoryId)
-}
-
-/** Write the select's string value back to a numeric categoryId (or clear on ''). */
-function setCategory(target: { categoryId?: number }, v: unknown): void {
-  const s = typeof v === 'string' ? v : String(v ?? '')
-  target.categoryId = s === '' ? undefined : Number(s)
-}
-
-/** Drop a target's categoryId if it isn't among the LOADED categories for its entity type.
- *  No-op until the categories are actually loaded (so a freshly-seeded valid id isn't cleared
- *  during the async gap). */
-function reconcileCategory(target: { entityTypeId: number, categoryId?: number }): void {
-  const etid = Number(target.entityTypeId)
-  if (!(etid in catCache.value)) return // not loaded yet → leave as-is
-  if (target.categoryId == null) return
-  if (!(catCache.value[etid] ?? []).some(c => c.id === target.categoryId)) target.categoryId = undefined
-}
+// Thin wrappers over the pure app/utils/categoryPicker helpers (unit-tested there): look the
+// entity's cached funnels up, delegate the transform. `catCache.value[etid]` is `undefined` until
+// loaded (→ reconcile leaves the id) and `[]` once loaded-empty (→ reconcile clears a stale id).
+const catsFor = (entityTypeId: number | null | undefined): CrmCategoryOption[] | undefined => catCache.value[Number(entityTypeId)]
+const categoryItems = (entityTypeId: number | null | undefined) => catPicker.categoryItems(catsFor(entityTypeId))
+const hasCategories = (entityTypeId: number | null | undefined) => catPicker.hasCategories(catsFor(entityTypeId))
+const categoryValue = (target: catPicker.CategoryTarget) => catPicker.categoryValue(target)
+const setCategory = (target: catPicker.CategoryTarget, v: unknown) => catPicker.setCategory(target, v)
+const reconcileCategory = (target: catPicker.CategoryTarget) => catPicker.reconcileCategory(target, catsFor(target.entityTypeId))
 
 // Default target: (re)load directions when its entity changes; reconcile a stale categoryId.
 watch(() => mapping.value.defaultTarget.entityTypeId, async (etid) => {
@@ -326,10 +311,11 @@ const ON_MISSING_ITEMS = [
               aria-hidden="true"
             >→</span>
             <B24InputNumber
-              v-model="row.entityTypeId"
+              :model-value="row.entityTypeId"
               :min="1"
               class="w-28"
               :aria-label="`Правило ${i + 1}: тип целевой сущности`"
+              @update:model-value="(v: unknown) => setRowEntity(row, v)"
             />
             <B24Select
               v-if="hasCategories(row.entityTypeId)"

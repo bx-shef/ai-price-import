@@ -1,16 +1,13 @@
 import { useB24 } from './useB24'
 import { buildFrameHeaders } from '~/utils/frameHeaders'
+import type { CrmCategoryOption } from '~/utils/categoryPicker'
 
 // Load a portal's CRM categories (воронки/направления) for a target entity type, so the settings
 // routing UI can offer a direction picker («тип документа → сущность + направление»). Frame-token
 // auth (same model as useSettings/useCatalogProperties). Inert outside a portal (no frame auth) →
 // empty list, so the picker just shows no directions instead of erroring.
 
-export interface CrmCategoryOption {
-  id: number
-  name: string
-  isDefault: boolean
-}
+export type { CrmCategoryOption }
 
 export function useCrmCategories() {
   const { init, auth } = useB24()
