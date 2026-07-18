@@ -3,7 +3,7 @@
 `Последняя ревизия: 2026-06-23`
 
 Что держать под контролем после запуска и как обновлять систему. Первичная подготовка сервера — в
-[`SERVER_SETUP.md`](SERVER_SETUP.md); on-call по MCP (алерты→действие) — в [`../mcp/docs/RUNBOOK.md`](../mcp/docs/RUNBOOK.md).
+[`SERVER_SETUP.md`](SERVER_SETUP.md); on-call по MCP (алерты→действие) — в [`../mcp/docs/RUNBOOK.md`](../legacy/mcp/docs/RUNBOOK.md).
 
 ## TL;DR
 
@@ -25,7 +25,7 @@ make prod-redeploy  # форс-обновление образов сейчас 
 - **Кому писать при инциденте** (прод недоступен / `/health` ≠ 200 / сделки не создаются): `<имя · чат/телефон>`.
 - **Окно реакции:** `<напр. рабочие часы / 24×7>`.
 - Маршрут от сотрудника: ошибка в приложении → повторить загрузку → если повторяется, написать администратору (контакт выше). То же — в [`USER_GUIDE.md`](USER_GUIDE.md).
-- Технический разбор инцидента (алерт→действие, откат) — [`../mcp/docs/RUNBOOK.md`](../mcp/docs/RUNBOOK.md).
+- Технический разбор инцидента (алерт→действие, откат) — [`../mcp/docs/RUNBOOK.md`](../legacy/mcp/docs/RUNBOOK.md).
 
 ## 1. Что крутится в проде
 
@@ -171,7 +171,7 @@ REST-контроллеры (`shef:purchase.api.*`) живут на портал
 
 ## 4. Откат (rollback)
 
-CI не ходит на прод по SSH — откат ручной (подробно в [`../mcp/docs/RUNBOOK.md#rollback`](../mcp/docs/RUNBOOK.md#rollback)):
+CI не ходит на прод по SSH — откат ручной (подробно в [`../mcp/docs/RUNBOOK.md#rollback`](../legacy/mcp/docs/RUNBOOK.md#rollback)):
 ```bash
 # 1) остановить Watchtower, чтобы не перекатил обратно на :latest
 docker stop procure-watchtower
@@ -207,7 +207,7 @@ TLS-сертификаты принадлежат стеку `procure-proxy` —
 
 - [`USER_GUIDE.md`](USER_GUIDE.md) — руководство пользователя/админа (как пользоваться, go-live, рост точности).
 - [`SERVER_SETUP.md`](SERVER_SETUP.md) — первичная подготовка сервера + два compose-стека.
-- [`../mcp/docs/RUNBOOK.md`](../mcp/docs/RUNBOOK.md) — on-call: алерт→действие, откат, разбор по логам.
-- [`../mcp/docs/DEPLOYMENT.md`](../mcp/docs/DEPLOYMENT.md) — деплой MCP-образа.
+- [`../mcp/docs/RUNBOOK.md`](../legacy/mcp/docs/RUNBOOK.md) — on-call: алерт→действие, откат, разбор по логам.
+- [`../mcp/docs/DEPLOYMENT.md`](../legacy/mcp/docs/DEPLOYMENT.md) — деплой MCP-образа.
 - [`BITRIX24_APP_SETUP.md`](BITRIX24_APP_SETUP.md) — приложение/портал. [`FEEDBACK.md`](FEEDBACK.md) — каналы отзывов.
 - [`PARSING_PERFORMANCE.md`](PARSING_PERFORMANCE.md) — «быстро/медленно», калибровка порогов.

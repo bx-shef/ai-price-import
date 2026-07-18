@@ -63,4 +63,4 @@ make metrics-reset   # сбросить только счётчики /metrics (
 - **Пауза сервиса** — `MAINTENANCE_MODE=true` в `.env.prod` + `make prod-redeploy`: приложение отдаёт заглушку и `503` на API, но `/health` остаётся 200 и данные целы. Снять — `false` + redeploy. Полное выключение — `make prod-down`.
 
 ## Куда смотреть при инциденте
-On-call «алерт → действие», разбор по логам, откат — [`../mcp/docs/RUNBOOK.md`](../mcp/docs/RUNBOOK.md). Контакт эскалации — OPERATIONS §0.
+On-call «алерт → действие», разбор по логам, откат — [`../mcp/docs/RUNBOOK.md`](../legacy/mcp/docs/RUNBOOK.md). Контакт эскалации — OPERATIONS §0.

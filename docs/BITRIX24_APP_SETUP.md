@@ -95,7 +95,7 @@ curl -X POST 'https://<portal>/rest/<user_id>/<webhook_code>/shef.purchase.api.p
 …либо через **Браузер REST-запросов** на портале («Разработчикам» → «Другое»). Метод вернёт
 `{ ok, created[], existing[], failed[], checklist[] }`; каталог, воронку «Закупки» и реквизит
 `RQ_INN` он не создаёт молча, а отдаёт в `checklist` для ручной проверки. Список полей и детали —
-[`b24-controller/README.md`](../b24-controller/README.md).
+[`b24-controller/README.md`](../legacy/b24-controller/README.md).
 
 ## Проверка
 

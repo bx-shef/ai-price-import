@@ -1,6 +1,6 @@
 # Целевая архитектура (редизайн procure-ai)
 
-> Last reviewed: 2026-07-16
+> Last reviewed: 2026-07-18
 
 Как должно быть после редизайна. Синтез двух референсов: раскладка/дисциплина/лендинг/деплой —
 из эталона `client-bank-alfa-by` (облачное приложение Маркета Б24); слой «изолированный MCP + агент
@@ -244,7 +244,7 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
 Для этого в `portal_tokens` храним `refreshed_at` (когда последний раз получили пару) и/или
 `refresh_expires_at` (= `refreshed_at + 180d`). Ошибка продления (`PAYMENT_REQUIRED`, приложение
 удалено, истёк период) → помечаем портал неактивным + метрика/алерт, не роняем крон. Крон живёт в
-`server/queue/cron.ts`/плагине (как демо-крон эталона); реализация — чистая `selectTokensNearExpiry`
+плагине `plugins/queue.ts` (как демо-крон эталона; отдельного `server/queue/cron.ts` нет); реализация — чистая `selectTokensNearExpiry`
 + DI-рефреш (юнит-тесты без сети).
 
 **Запись в CRM (только стандартный REST через MCP):**
@@ -457,13 +457,13 @@ REST, эта модель авторизации) — этап 6.
 ### 7.3. Наблюдаемость (технический слой)
 
 - `GET /api/health` — liveness (`{status,time,commit}`), docker healthcheck.
-- Счётчики очередей BullMQ (`waiting/active/completed/failed/delayed`) → `server/queue/stats.ts` → ECharts.
+- Счётчики очередей BullMQ (`waiting/active/completed/failed/delayed`) → `server/queue/stats.ts` → рендер b24ui/HTML-карточками (графической библиотеки нет; `echarts` не подключён).
 
 ### 7.4. Страница оператора (как в эталоне)
 
 Служебная зона за **авторизацией оператора** (HMAC-cookie сессия, `/login`, rate-limit — модель
 эталона `client-bank-alfa-by`), отдельно от in-portal-страниц:
-- **`/queues`** — живой мониторинг очередей (ECharts); эндпоинты `/api/queues` (токен-заголовок,
+- **`/queues`** — живой мониторинг очередей (b24ui/HTML-карточки, без графической библиотеки); эндпоинты `/api/queues` (токен-заголовок,
   nginx `deny all`) и `/api/ops/queues` (сессия оператора).
 
 Отдельной «очереди ручного разбора» **нет** (решение Q13): все исходы определены (предупреждения в
