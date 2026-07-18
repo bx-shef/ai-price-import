@@ -160,7 +160,7 @@ describe('portalSettings coercion nuances', () => {
     expect(parsePortalSettings({ defaultTarget: { entityTypeId: 31, stageId: 5 } }).defaultTarget).toEqual({ entityTypeId: 31 })
     // a negative categoryId is dropped (≥0 gate, shared with parseManualTarget)
     expect(parsePortalSettings({ defaultTarget: { entityTypeId: 2, categoryId: -1 } }).defaultTarget).toEqual({ entityTypeId: 2 })
-    expect(m.routingRules[0]!.target).toEqual({ entityTypeId: 2 }) // fallback default
+    expect(m.routingRules[0]!.target).toEqual({ entityTypeId: 2, categoryId: 0 }) // fallback default (deal/0)
   })
   it('chat ids pass-through only when string; saveFile default OFF (opt-in); dictionary non-object → {}', () => {
     expect(parsePortalSettings({ notifyChatId: 'chat1', errorChatId: 5 }).notifyChatId).toBe('chat1')

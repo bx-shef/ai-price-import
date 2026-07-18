@@ -17,6 +17,7 @@ import { bumpCounter, METRICS } from '../utils/metricsStore'
 import { readMapping } from '../utils/appSettings'
 import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
+import { fetchCrmCategories } from '../utils/categoryLookup'
 import { findProduct } from '../utils/productLookup'
 import { createProductViaRest } from '../utils/productCreate'
 import { fetchVatRates } from '../utils/portalVat'
@@ -226,6 +227,9 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     // VAT rates: full-list fetch via the SDK's built-in pagination (SdkListCall).
     portalVatRates: async () => fetchVatRates((await need()).list),
     portalCurrencies: async () => fetchCurrencies((await need()).call),
+    // Valid funnel ids for an entity type → crm-sync falls back off a DELETED direction
+    // (rule/default → deal/direction-0). One crm.category.list only when a target pins a categoryId.
+    listCategoryIds: async entityTypeId => (await fetchCrmCategories(entityTypeId, (await need()).call)).map(c => c.id),
     createTarget: async (target, fields) => createTargetItem(target, fields, (await need()).call),
     setRows: async (etid, id, rows) => setProductRows(etid, id, rows, (await need()).call),
     reportErrors: async (messages, supplierName) => {

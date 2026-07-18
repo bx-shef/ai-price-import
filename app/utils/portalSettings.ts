@@ -1,9 +1,12 @@
 import type { PortalMapping, RoutingRule, TargetRef } from '~/types/mapping'
+import { FALLBACK_TARGET } from './routing'
 
 // Parse raw app.option JSON into a validated PortalMapping with safe defaults.
 // Never trust stored/user data — coerce and default. Pure (docs/redesign 02 §5).
 
-const DEFAULT_TARGET: TargetRef = { entityTypeId: 2 } // deal
+// Fallback default target when app.option has none / a broken one: deal, direction 0 (Default
+// pipeline) — the same hard anchor crm-sync falls back to when a funnel is deleted (routing.ts).
+const DEFAULT_TARGET: TargetRef = FALLBACK_TARGET
 
 // DoS bounds (#83): app.option is admin-controlled, so a bloated blob (huge routingRules /
 // unit dictionary) would pin CPU/memory while a worker parses it once per job. Cap the

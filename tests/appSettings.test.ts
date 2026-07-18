@@ -11,11 +11,11 @@ describe('readMapping', () => {
   })
   it('handles object result and junk → safe defaults', async () => {
     expect((await readMapping(vi.fn().mockResolvedValue({ saveFile: false }))).saveFile).toBe(false)
-    expect((await readMapping(vi.fn().mockResolvedValue('not json'))).defaultTarget).toEqual({ entityTypeId: 2 })
+    expect((await readMapping(vi.fn().mockResolvedValue('not json'))).defaultTarget).toEqual({ entityTypeId: 2, categoryId: 0 })
   })
   it('unset option ("" / null) → defaults (first-run path)', async () => {
-    expect((await readMapping(vi.fn().mockResolvedValue(''))).defaultTarget).toEqual({ entityTypeId: 2 })
-    expect((await readMapping(vi.fn().mockResolvedValue(null))).defaultTarget).toEqual({ entityTypeId: 2 })
+    expect((await readMapping(vi.fn().mockResolvedValue(''))).defaultTarget).toEqual({ entityTypeId: 2, categoryId: 0 })
+    expect((await readMapping(vi.fn().mockResolvedValue(null))).defaultTarget).toEqual({ entityTypeId: 2, categoryId: 0 })
   })
 })
 
@@ -24,7 +24,7 @@ describe('writeMapping', () => {
     const call = vi.fn().mockResolvedValue(true)
     const out = await writeMapping(call, { defaultTarget: { entityTypeId: -1 }, routingRules: [{ match: {}, target: { entityTypeId: 5 } }] })
     // bad default → 2; empty-condition rule dropped
-    expect(out.defaultTarget).toEqual({ entityTypeId: 2 })
+    expect(out.defaultTarget).toEqual({ entityTypeId: 2, categoryId: 0 })
     expect(out.routingRules).toEqual([])
     const [method, params] = call.mock.calls[0]!
     expect(method).toBe('app.option.set')
