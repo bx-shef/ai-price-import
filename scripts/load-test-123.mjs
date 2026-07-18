@@ -13,8 +13,18 @@ import { readFileSync } from 'node:fs'
 import { B24Hook } from '@bitrix24/b24jssdk'
 
 const hookUrl = (() => {
-  const m = readFileSync('.env.b24test', 'utf8').match(/^\s*B24_TEST_WEBHOOK=(.+)$/m)
-  if (!m) throw new Error('B24_TEST_WEBHOOK not set in .env.b24test')
+  // Prefer the B24_HOOK env var (the live test-portal webhook per CLAUDE.md); fall back to the
+  // git-ignored .env.b24test file (B24_TEST_WEBHOOK). Either is a full incoming-webhook URL.
+  const fromEnv = (process.env.B24_HOOK ?? '').trim()
+  if (fromEnv) return fromEnv.replace(/^["']|["']$/g, '')
+  let file
+  try {
+    file = readFileSync('.env.b24test', 'utf8')
+  } catch {
+    throw new Error('no webhook: set B24_HOOK env var or B24_TEST_WEBHOOK in .env.b24test')
+  }
+  const m = file.match(/^\s*B24_TEST_WEBHOOK=(.+)$/m)
+  if (!m) throw new Error('B24_TEST_WEBHOOK not set in .env.b24test (and B24_HOOK env var empty)')
   return m[1].trim().replace(/^["']|["']$/g, '')
 })()
 
