@@ -367,3 +367,99 @@ export function sdkPortalDeps(infra: SdkInfra): SdkPortalDeps {
     encrypt: plain => encryptSecret(plain, infra.encKey)
   }
 }
+
+// ── Per-portal transport memoization (#123 / #163) ────────────────────────────────────────
+// Without this, liveDeps.restResolver built a FRESH B24OAuth on EVERY resolver call, and a
+// crm-sync job calls the resolver ~9 times (each `need()` in liveCrmSyncDeps) — 9 clients per
+// job, i.e. 9 leaky-bucket rate-limiter buckets + 9 token loads, defeating the documented
+// "one client per job" invariant and raising the QUERY_LIMIT_EXCEEDED risk at scale-out.
+// createPortalSdkResolver memoizes ONE client per portal so all those calls share a single
+// bucket + a single token load. Ported from bx-shef/client-bank-alfa-by (portalSdkResolver.ts).
+
+/** Per-portal SDK-transport TTL (#123 / #163). One memoized `B24OAuth` per member lives this
+ *  long: every resolver call within a crm-sync job (and across close-together jobs for the same
+ *  portal) then shares one rate-limiter bucket + one token load. Kept SHORT so an external
+ *  refresh-token rotation (a peer replica or the keep-alive cron #175) can't wedge a stale client
+ *  for long — and evict-on-error heals it immediately on the first failed call regardless. */
+export const SDK_CLIENT_TTL_MS = 60_000
+
+/** A memoizing portal-transport resolver: `(memberId) → SdkTransport | null`, plus `evict`. */
+export interface PortalSdkResolver {
+  (memberId: string): Promise<SdkTransport | null>
+  /** Drop the cached client for a portal (e.g. on uninstall, or to force a rebuild). */
+  evict: (memberId: string) => void
+  /** Live count of cached clients — for observability / tests (bounds the working set). */
+  size: () => number
+}
+
+/** Build a resolver that memoizes the per-portal `SdkTransport` so ONE `B24OAuth` (one
+ *  leaky-bucket limiter, one token load) serves every call for a portal within the TTL — the
+ *  "one client per job" invariant (#123). Two valves keep this short-lived cache safe against an
+ *  EXTERNAL refresh-token rotation (which would leave this client's in-memory refresh token stale
+ *  → invalid_grant forever if cached naively):
+ *    - EVICT-ON-ERROR: any failed call/list drops its cached entry, so the NEXT resolve rebuilds
+ *      from the CURRENT DB token at once. Identity-checked so a late error from an already-replaced
+ *      client can't evict the fresh one.
+ *    - TTL backstop: even a client that never errors is rebuilt after `ttlMs`.
+ *  `build` is injected (defaults to a makePortalSdkCall binding at the call site) so the resolver
+ *  is unit-testable with a fake transport and a controllable clock. This is NOT a naive
+ *  process-lifetime cache — the TTL + evict make it self-healing after a rotation. */
+export function createPortalSdkResolver(
+  build: (memberId: string) => Promise<SdkTransport | null>,
+  now: () => number = Date.now,
+  ttlMs: number = SDK_CLIENT_TTL_MS
+): PortalSdkResolver {
+  interface Entry { transport: SdkTransport, builtAt: number }
+  const cache = new Map<string, Entry>()
+
+  const ensure = async (memberId: string): Promise<SdkTransport | null> => {
+    const cached = cache.get(memberId)
+    if (cached && now() - cached.builtAt < ttlMs) return cached.transport
+    // TTL lapsed / first use: drop any stale entry BEFORE rebuilding so a build failure never
+    // leaves an expired client resolvable (and evict-by-identity below stays unambiguous).
+    if (cached) cache.delete(memberId)
+    const raw = await build(memberId)
+    if (!raw) return null
+    const evictSelf = (): void => {
+      // Identity-checked: only drop THIS entry, never a fresher client that already replaced it.
+      if (cache.get(memberId) === entry) cache.delete(memberId)
+    }
+    const transport: SdkTransport = {
+      call: async (method, params) => {
+        try {
+          return await raw.call(method, params)
+        } catch (e) {
+          evictSelf()
+          throw e
+        }
+      },
+      list: async (method, params, opts) => {
+        try {
+          return await raw.list(method, params, opts)
+        } catch (e) {
+          evictSelf()
+          throw e
+        }
+      }
+    }
+    const entry: Entry = { transport, builtAt: now() }
+    // Bound the cache to the ACTIVE working set: sweep TTL-lapsed entries on every insert. A
+    // portal touched once then idle would otherwise linger forever (holding a live B24OAuth +
+    // decrypted refresh token) — lazy per-key TTL only reclaims a key that's re-resolved. O(n)
+    // per build, n = portals seen within one TTL window. `evict()` (uninstall/cutover) is the
+    // only OTHER reclaim path; this makes long-idle portals self-reclaim regardless.
+    const cutoff = now() - ttlMs
+    for (const [k, e] of cache) {
+      if (e.builtAt <= cutoff) cache.delete(k)
+    }
+    cache.set(memberId, entry)
+    return transport
+  }
+
+  const resolver = ((memberId: string) => ensure(memberId)) as PortalSdkResolver
+  resolver.evict = (memberId: string): void => {
+    cache.delete(memberId)
+  }
+  resolver.size = (): number => cache.size
+  return resolver
+}

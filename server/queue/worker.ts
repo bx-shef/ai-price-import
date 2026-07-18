@@ -44,6 +44,43 @@ export function queueConcurrency(env: Record<string, string | undefined> = proce
   }
 }
 
+// ── crm-sync stalled-reprocessing guard (#163, Part 1) ────────────────────────────────────
+// crm-sync idempotency is find-before-create by a B24 marker (originLookup → crm.item.list, then
+// crm.item.add). That is a TOCTOU: it protects SEQUENTIAL retries (crash recovery — a committed
+// create leaves the marker, so the retry finds it) but NOT CONCURRENT reprocessing of one job.
+// BullMQ redelivers a job to a SECOND worker once the first worker's lock is deemed STALLED; if
+// the first is still mid-`crm.item.add`, both find "not created" and both create → a DUPLICATE
+// entity (Bitrix does not enforce originId/xmlId uniqueness).
+//
+// A pg advisory lock around find→create would serialize it fully, but it must HOLD a pooled
+// connection across the REST create — and the pool is `max: 5` (db/client.ts), so at crm
+// concurrency 4 that starves the pool (getDocument / setJobStatus / metrics / token loads all
+// block). Rejected for that reason (issue option 1's "держит pooled pg-соединение" caveat).
+//
+// Instead we shut the false-stall window without touching pg: BullMQ RENEWS a job's lock every
+// lockDuration/2 while the async handler runs, and crm-sync's awaits are REST I/O (they do not
+// block the event loop), so the renewal timer keeps firing — a LIVE worker only stalls if its
+// loop is blocked > lockDuration/2. Raising lockDuration well above worst-case create latency +
+// GC jitter makes a false stall of a live crm worker effectively impossible, so the second worker
+// never runs concurrently with the first → no duplicate. maxStalledCount:1 bounds a GENUINELY
+// crashed job to one recovery redelivery, which find-before-create makes safe (a committed create
+// left the marker → the redelivery finds it). Residual (accepted): a real >30s event-loop block
+// AND an in-flight uncommitted create on the same tick — vanishingly unlikely in the dedicated
+// crm worker container (OCR CPU lives in the extract worker), and self-corrects on the next retry.
+export const CRM_LOCK_DURATION_MS = 60_000
+export const CRM_STALLED_INTERVAL_MS = 60_000
+export const CRM_MAX_STALLED_COUNT = 1
+
+/** BullMQ lock options for the crm-sync worker (#163). `stalledInterval >= lockDuration` is
+ *  required so the stall scan never races ahead of the lock's own lifetime. Pure → unit-tested. */
+export function crmLockTuning(): { lockDuration: number, stalledInterval: number, maxStalledCount: number } {
+  return {
+    lockDuration: CRM_LOCK_DURATION_MS,
+    stalledInterval: CRM_STALLED_INTERVAL_MS,
+    maxStalledCount: CRM_MAX_STALLED_COUNT
+  }
+}
+
 /** Assemble LiveInfra from the environment (the single place pipeline secrets are read). */
 export function buildLiveInfra(): LiveInfra {
   return {
@@ -105,7 +142,9 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
 
   const crm = new Worker(QUEUES.crmSync, async (job) => {
     await handleCrmSyncJob(job.data as CrmSyncJob, crmSync)
-  }, { connection, concurrency: cc.crm })
+    // Lock tuning shrinks the stalled-reprocessing window that could duplicate a CRM entity
+    // (#163) — see crmLockTuning above for why a pg advisory lock was rejected (pool max 5).
+  }, { connection, concurrency: cc.crm, ...crmLockTuning() })
 
   // On PERMANENT failure (retries exhausted), guarantee a terminal status the /status
   // view can show, and drop the uploaded bytes (an unhandled throw skipped cleanup).

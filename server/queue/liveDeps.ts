@@ -6,7 +6,7 @@ import { ensureFreshToken } from '../utils/ensureAccessToken'
 import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
 import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
-import { makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type SdkTransport } from '../utils/b24Sdk'
+import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { setJobStatus } from '../utils/jobStore'
@@ -80,15 +80,23 @@ function ensureDeps(infra: LiveInfra): EnsureDeps {
 /** Per-portal RestCall resolver — @bitrix24/b24jssdk transport (built-in RestrictionManager:
  * per-portal leaky-bucket rate limiter + retry-backoff on QUERY_LIMIT_EXCEEDED/429/5xx).
  *
- * Builds a FRESH `B24OAuth` per crm-sync job (NOT cached): the client reads+decrypts the
- * refresh token once and holds it in memory (reactive refresh), so a process-lifetime cache
- * would wedge on a STALE token after any external rotation (a peer replica or the keep-alive
- * cron rotates it → the cached client would fail invalid_grant forever). Per-job means each
- * job re-reads the current DB token, so a rotation is observed next job. `loadToken` is one
- * cheap query; refresh-persist is UPDATE-only (never resurrects a purged portal). */
-function restResolver(infra: LiveInfra): (memberId: string) => Promise<SdkTransport | null> {
+ * MEMOIZES one `B24OAuth` per portal (createPortalSdkResolver, #123/#163): a crm-sync job calls
+ * the resolver ~9 times (each `need()` in liveCrmSyncDeps), so building fresh per call meant 9
+ * clients/job — 9 rate-limiter buckets + 9 token loads, defeating the "one client per job"
+ * invariant. Now those calls share ONE bucket + ONE token load. The cache is kept safe against an
+ * external refresh-token rotation (a peer replica or the keep-alive cron #175 rotates it, leaving
+ * this client's in-memory refresh token stale) by TWO valves: a short TTL (SDK_CLIENT_TTL_MS) and
+ * EVICT-ON-ERROR (a failed call drops the client, so the next resolve rebuilds from the current DB
+ * token at once — no permanent invalid_grant wedge). `loadToken` is one cheap query;
+ * refresh-persist is UPDATE-only (never resurrects a purged portal).
+ *
+ * NB (accepted): the crm-sync and file-extract dep builders each construct their OWN resolver
+ * (their own cache), so a portal hit by BOTH queues at once briefly has two limiter buckets. The
+ * SDK backs off on QUERY_LIMIT_EXCEEDED and the two queues rarely co-fire on one portal, so this
+ * is left as-is rather than threading one shared resolver through both builders. */
+function restResolver(infra: LiveInfra): PortalSdkResolver {
   const deps = sdkPortalDeps(infra)
-  return memberId => makePortalSdkCall(memberId, deps)
+  return createPortalSdkResolver(memberId => makePortalSdkCall(memberId, deps), infra.now)
 }
 
 /** Load the portal mapping via server-side REST (falls back to defaults). */

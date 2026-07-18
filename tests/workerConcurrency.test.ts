@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_QUEUE_CONCURRENCY, concurrencyFromEnv, queueConcurrency } from '../server/queue/worker'
+import {
+  CRM_LOCK_DURATION_MS,
+  MAX_QUEUE_CONCURRENCY,
+  concurrencyFromEnv,
+  crmLockTuning,
+  queueConcurrency
+} from '../server/queue/worker'
 
 describe('queueConcurrency (env-overridable worker concurrency, GH #95)', () => {
   it('defaults to 4/2/4 when env is empty', () => {
@@ -22,5 +28,20 @@ describe('queueConcurrency (env-overridable worker concurrency, GH #95)', () => 
     expect(concurrencyFromEnv({ K: '999999' }, 'K', 4)).toBe(MAX_QUEUE_CONCURRENCY)
     expect(concurrencyFromEnv({ K: String(MAX_QUEUE_CONCURRENCY + 1) }, 'K', 4)).toBe(MAX_QUEUE_CONCURRENCY)
     expect(concurrencyFromEnv({ K: String(MAX_QUEUE_CONCURRENCY) }, 'K', 4)).toBe(MAX_QUEUE_CONCURRENCY)
+  })
+})
+
+describe('crmLockTuning (stalled-reprocessing dup guard, GH #163)', () => {
+  it('raises the crm lock above the BullMQ default (30s) to keep a live worker from false-stalling', () => {
+    const t = crmLockTuning()
+    expect(t.lockDuration).toBe(CRM_LOCK_DURATION_MS)
+    expect(t.lockDuration).toBeGreaterThan(30_000) // > BullMQ default → renewal window widened
+  })
+  it('keeps stalledInterval >= lockDuration (the stall scan must not outrun the lock lifetime)', () => {
+    const t = crmLockTuning()
+    expect(t.stalledInterval).toBeGreaterThanOrEqual(t.lockDuration)
+  })
+  it('bounds a genuinely crashed job to a single recovery redelivery', () => {
+    expect(crmLockTuning().maxStalledCount).toBe(1)
   })
 })
