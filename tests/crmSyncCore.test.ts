@@ -435,6 +435,37 @@ describe('runCrmSync — products / units / routing', () => {
     expect(r.errors).toHaveLength(0)
   })
 
+  it('autoCreate: unmatched unit → createMeasure code used on the row + info warning', async () => {
+    const m = mapping()
+    m.units.autoCreate = true
+    const createMeasure = vi.fn(async () => 1001)
+    const deps = baseDeps({ createMeasure })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    const r = await runCrmSync('j', d, m, {}, deps)
+    expect(createMeasure).toHaveBeenCalledWith('рулон')
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 1001 })
+    expect(r.warnings.some(w => /создана в каталоге/.test(w))).toBe(true)
+  })
+
+  it('autoCreate: createMeasure returns null → default code + "не сопоставлена" warning', async () => {
+    const m = mapping()
+    m.units.autoCreate = true
+    const createMeasure = vi.fn(async () => null)
+    const deps = baseDeps({ createMeasure })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: '???', vatRate: null }] }
+    const r = await runCrmSync('j', d, m, {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: m.units.defaultCode })
+    expect(r.warnings.some(w => /не сопоставлена/.test(w))).toBe(true)
+  })
+
+  it('autoCreate OFF: createMeasure dep NOT called even if present', async () => {
+    const createMeasure = vi.fn(async () => 1001)
+    const deps = baseDeps({ createMeasure })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    await runCrmSync('j', d, mapping(), {}, deps) // mapping() has autoCreate false by default
+    expect(createMeasure).not.toHaveBeenCalled()
+  })
+
   it('empty items → creates, no setRows, NO opportunity field', async () => {
     const deps = baseDeps()
     const r = await runCrmSync('j', { ...doc, items: [] }, mapping(), {}, deps)

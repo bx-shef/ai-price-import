@@ -20,6 +20,8 @@ import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
 import { findProduct } from '../utils/productLookup'
 import { createProductViaRest } from '../utils/productCreate'
+import { listMeasures } from '../utils/measureList'
+import { createMeasureViaRest } from '../utils/measureCreateWrite'
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
@@ -211,6 +213,16 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     if (!t) throw new Error('портал не авторизован (нет токена)')
     return t
   }
+  // Auto-create measure state (Q11): the portal's existing measure codes fetched once per job (to
+  // seed the code allocator), plus a per-job cache so a unit repeated across rows creates only once.
+  let measureState: { codes: number[], created: Map<string, number> } | null = null
+  const ensureMeasureState = async (): Promise<{ codes: number[], created: Map<string, number> }> => {
+    if (!measureState) {
+      const existing = await listMeasures((await need()).call)
+      measureState = { codes: existing.map(m => Number(m.value)).filter(c => Number.isInteger(c)), created: new Map() }
+    }
+    return measureState
+  }
   return {
     // One-time finalize claim (#164): the run that wins flips import_job.notified false→true, so
     // the success chat + timeline дело fire exactly once even when a retry resumes after a
@@ -224,6 +236,22 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
     findProduct: async item => findProduct(item, mapping, (await need()).call),
     createProduct: async item => createProductViaRest(item, mapping, (await need()).call),
+    // Auto-create measure (opt-in): wired only when enabled so crm-sync's presence check gates it.
+    // Cached per unit (per job); a new code is pushed into `codes` so later units don't reuse it.
+    createMeasure: mapping.units.autoCreate
+      ? async (unit) => {
+        const st = await ensureMeasureState()
+        const key = unit.trim().toLowerCase()
+        const hit = st.created.get(key)
+        if (hit !== undefined) return hit
+        const code = await createMeasureViaRest(unit, st.codes, (await need()).call)
+        if (code) {
+          st.codes.push(code)
+          st.created.set(key, code)
+        }
+        return code
+      }
+      : undefined,
     // VAT rates: full-list fetch via the SDK's built-in pagination (SdkListCall).
     portalVatRates: async () => fetchVatRates((await need()).list),
     portalCurrencies: async () => fetchCurrencies((await need()).call),

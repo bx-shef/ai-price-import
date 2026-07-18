@@ -21,6 +21,9 @@ export interface CrmSyncDeps {
   findProduct: (item: ExtractedDocument['items'][number]) => Promise<number | null>
   /** Optional: create a catalog product for onMissing:'create'; returns its id. */
   createProduct?: (item: ExtractedDocument['items'][number]) => Promise<number | null>
+  /** Optional: auto-create a catalog measure for an unmatched unit (mapping.units.autoCreate, Q11);
+   *  returns its code, or null when not creatable / create failed (caller uses the default code). */
+  createMeasure?: (unit: string) => Promise<number | null>
   portalVatRates: () => Promise<PortalVatRate[]>
   /** Optional: allowed portal currency codes; when provided, an unknown currency is a hard error. */
   portalCurrencies?: () => Promise<string[]>
@@ -135,7 +138,19 @@ export async function runCrmSync(
       continue // hard error already recorded; abort happens below
     }
     const measure = resolveMeasure(item.unit, mapping.units)
-    if (!measure.matched && item.unit) warnings.push(`Единица «${item.unit}» не сопоставлена — использован дефолт`)
+    let measureCode = measure.code
+    if (!measure.matched && item.unit) {
+      // Auto-create the measure in the portal catalog (opt-in `mapping.units.autoCreate`, Q11) so
+      // the unit isn't silently defaulted. Best-effort: a null (not creatable / create failed) falls
+      // back to the default code + the same warning as before.
+      const created = mapping.units.autoCreate && deps.createMeasure ? await deps.createMeasure(item.unit) : null
+      if (created) {
+        measureCode = created
+        warnings.push(`Единица «${item.unit}» создана в каталоге (код ${created})`)
+      } else {
+        warnings.push(`Единица «${item.unit}» не сопоставлена — использован дефолт`)
+      }
+    }
 
     let productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
@@ -155,7 +170,7 @@ export async function runCrmSync(
       quantity: clampNonNeg(item.quantity, 1),
       taxRate: vat ? vat.rate : null,
       priceIncludesVat,
-      measureCode: measure.code
+      measureCode
     }, sort))
     sort += 10
   }
