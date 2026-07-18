@@ -53,12 +53,20 @@ AI-импорт документов с табличной частью в Bitri
     ретрай ОТКЛЮЧён** (`disableSdkRetry`, #123: `maxRetries:1`, `retryOnNetworkError:false`) — crm-sync
     создаёт НЕидемпотентные сущности (`crm.item.add`/`crm.product.add`), ретрай такого вызова после
     client-timeout/504 задвоил бы (Битрикс не гарантит уникальность `originId`/`xmlId`); целый джоб ретраит
-    **BullMQ** (там create идемпотентен — find-before-create по маркеру). Остаются: проактивный rate-throttle,
+    **BullMQ** (там create идемпотентен — find-before-create по маркеру). Find-before-create — TOCTOU: защищает
+    **последовательные** ретраи (crash-recovery), но не **конкурентную** stalled-переобработку одного джоба
+    (#163). Полный advisory-lock отклонён — держал бы pooled pg-соединение на REST-create при `pool max 5` →
+    голодание пула на scale-out; вместо этого **тюнинг BullMQ-лока crm-воркера** (`crmLockTuning`:
+    `lockDuration` 60с > дефолт 30с — живой воркер продлевает лок и не «протухает» ложно → второй воркер не
+    стартует конкурентно; `maxStalledCount:1` — один recovery-редоставки для реально упавшего джоба). Остаются: проактивный rate-throttle,
     адаптивный backoff, реактивный OAuth-рефреш (`setCallbackRefreshAuth` → персист `updateTokensOnRefresh`,
     UPDATE-only). **Live-верифицирован** на `bel.bitrix24.by` (`pnpm sdk:smoke`: profile+crm.item.list+burst 30
-    без `QUERY_LIMIT_EXCEEDED`). `makePortalSdkCall` строит `B24OAuth` **на каждый resolver-вызов** (`need()` в
-    джобе перечитывает токен) — мемоизация одного клиента на джобу (единый лимитер-бакет) трекается в **#123**;
-    на процесс НЕ мемоизируем (иначе заклинит на устаревшем токене после ротации соседом/кроном). Ручной
+    без `QUERY_LIMIT_EXCEEDED`). `makePortalSdkCall` строит `B24OAuth`; резолвер `createPortalSdkResolver` (#123/#163,
+    порт из client-bank) **мемоизирует один клиент на портал** (единый лимитер-бакет + одна загрузка токена
+    на джобу — раньше `need()` строил ~9 клиентов на джобу). Кэш безопасен при внешней ротации
+    refresh-токена (сосед/keep-alive-крон) двумя клапанами: короткий **TTL** (`SDK_CLIENT_TTL_MS` 60с) +
+    **evict-on-error** (упавший вызов дропает клиент → следующий resolve пересобирает из свежего DB-токена
+    сразу, без вечного `invalid_grant`). На процесс с forever-кэшем НЕ полагаемся — самозаживает. Ручной
     `makePortalRestCall` удалён. Общий билдер
     `sdkPortalDeps(SdkInfra)` связывает `SdkPortalDeps` со стором/env — им пользуются и `liveDeps.restResolver`
     (crm-sync), и frame-token роут `catalog-properties` (читает по OAuth-токену портала: `resolveFrameMember`

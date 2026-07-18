@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildRefreshPersist,
+  createPortalSdkResolver,
   makePortalSdkCall,
   makeSdkListCall,
   makeSdkRestCall,
@@ -11,7 +12,8 @@ import {
   type OAuthCallClient,
   type SdkAjaxResult,
   type SdkListResult,
-  type SdkPortalDeps
+  type SdkPortalDeps,
+  type SdkTransport
 } from '../server/utils/b24Sdk'
 import { parseTokenResponse } from '../server/utils/b24Oauth'
 import type { B24OAuthParams } from '@bitrix24/b24jssdk'
@@ -189,6 +191,83 @@ describe('rawTokenFromRefresh (SDK refresh → raw token JSON, #b24jssdk)', () =
     expect(raw.refresh_token).toBeUndefined()
     // The downstream guard must reject it (would otherwise UPDATE the portal row to empty creds).
     expect(() => parseTokenResponse(raw)).toThrow(/invalid token response/)
+  })
+})
+
+describe('createPortalSdkResolver (per-portal memoization, #123/#163)', () => {
+  // A fake transport whose call/list can be told to throw, and which records identity so the
+  // test can prove memoization (same object) vs rebuild (new object).
+  function fakeTransport(id: number, throwOnCall = false): SdkTransport {
+    return {
+      call: vi.fn(async () => {
+        if (throwOnCall) throw new Error('boom')
+        return { id }
+      }),
+      list: vi.fn(async () => [{ id }])
+    }
+  }
+
+  it('memoizes ONE transport per portal within the TTL (build runs once for N calls)', async () => {
+    const build = vi.fn(async () => fakeTransport(1))
+    let clock = 1000
+    const resolver = createPortalSdkResolver(build, () => clock, 60_000)
+    const a = await resolver('m1')
+    const b = await resolver('m1')
+    clock += 59_000 // still inside the TTL
+    const c = await resolver('m1')
+    expect(build).toHaveBeenCalledTimes(1) // one client for all three resolves
+    expect(a).toBe(b)
+    expect(b).toBe(c)
+  })
+
+  it('rebuilds after the TTL lapses (backstop against a stale in-memory token)', async () => {
+    const build = vi.fn(async () => fakeTransport(1))
+    let clock = 1000
+    const resolver = createPortalSdkResolver(build, () => clock, 60_000)
+    await resolver('m1')
+    clock += 60_001 // past the TTL
+    await resolver('m1')
+    expect(build).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps separate clients per portal', async () => {
+    let n = 0
+    const build = vi.fn(async () => fakeTransport(++n))
+    const resolver = createPortalSdkResolver(build, () => 1000, 60_000)
+    const a = await resolver('m1')
+    const b = await resolver('m2')
+    expect(a).not.toBe(b)
+    expect(build).toHaveBeenCalledTimes(2)
+  })
+
+  it('EVICTS on a failed call so the NEXT resolve rebuilds from a fresh token (#163 wedge heal)', async () => {
+    const bad = fakeTransport(1, true) // its .call throws
+    const good = fakeTransport(2)
+    const build = vi.fn(async () => (build.mock.calls.length === 1 ? bad : good))
+    const resolver = createPortalSdkResolver(build, () => 1000, 60_000)
+    const t1 = await resolver('m1')
+    await expect(t1!.call('crm.item.list')).rejects.toThrow('boom') // triggers evict-on-error
+    const t2 = await resolver('m1')
+    expect(build).toHaveBeenCalledTimes(2) // rebuilt despite being inside the TTL
+    expect(t2).not.toBe(t1)
+    await expect(t2!.call('crm.item.list')).resolves.toEqual({ id: 2 })
+  })
+
+  it('returns null when the portal has no token (build → null), without caching', async () => {
+    const build = vi.fn(async () => null)
+    const resolver = createPortalSdkResolver(build, () => 1000, 60_000)
+    expect(await resolver('m1')).toBeNull()
+    expect(await resolver('m1')).toBeNull()
+    expect(build).toHaveBeenCalledTimes(2) // a null build is not memoized (retried next time)
+  })
+
+  it('evict() drops the cached client so the next resolve rebuilds', async () => {
+    const build = vi.fn(async () => fakeTransport(1))
+    const resolver = createPortalSdkResolver(build, () => 1000, 60_000)
+    await resolver('m1')
+    resolver.evict('m1')
+    await resolver('m1')
+    expect(build).toHaveBeenCalledTimes(2)
   })
 })
 
