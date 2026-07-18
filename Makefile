@@ -1,6 +1,6 @@
 .PHONY: dev build-local check \
         prod-up prod-down prod-pull prod-redeploy logs ps \
-        server-up server-down watchtower-up watchtower-down proxy-tune proxy-untune
+        server-up server-down watchtower-up watchtower-down proxy-tune proxy-untune proxy-check
 
 # Обёртки над командами разработки и деплоя. Подробности — docs/redesign/09-deploy.md.
 # Прод-цели читают переменные из ./.env (см. .env.example: NUXT_PUBLIC_SITE_URL,
@@ -120,3 +120,8 @@ proxy-untune:
 	else \
 		docker exec "$(PROXY_CONTAINER)" nginx -t && docker exec "$(PROXY_CONTAINER)" nginx -s reload; \
 	fi
+
+## Проверить, что per-vhost тюнинг фронт-прокси ЖИВ (GH #71): >2МБ POST не 413, health 200.
+## Запускать ПОСЛЕ деплоя или когда вернулись 413/504. Домен берётся из PROXY_VHOST.
+proxy-check:
+	sh scripts/proxy-healthcheck.sh $(PROXY_VHOST)
