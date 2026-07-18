@@ -109,6 +109,20 @@ AI-импорт документов с табличной частью в Bitri
     суточный крон рефрешит **только** порталы у истечения (`selectTokensNearExpiry` по `updated_at`,
     порог ~3 д, батч-кап 50) — иначе простаивающий портал теряет refresh_token на 180-й день. Гейт на
     `B24_CLIENT_ID/SECRET`, каденция `TOKEN_KEEPALIVE_HOURS` (дефолт 24, кламп [1h,168h]).
+  - **Глубокая телеметрия — OpenTelemetry** ([`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md), вектор
+    Bitrix `b24-ai-starter-otel`; порт из client-bank PR #317/#318). **Слайс 1 (app-side) — DEFAULT OFF:**
+    бутстрап `otel.instrument.mjs` грузится через `NODE_OPTIONS=--import` **до** приложения (иначе
+    авто-инструментирование не перехватит http/pg/ioredis; Nitro-бандлер ломает require-хуки OTel → deps
+    вне бандла, `otel-preload-package.json` **точными** версиями ставится в backend-образ). Без
+    `OTEL_EXPORTER_OTLP_ENDPOINT` — no-op (поведение не меняется). Ручные спаны на `@opentelemetry/api`
+    (no-op без SDK): `withDependencySpan` оборачивает каждый B24 REST (`makeSdkRestCall`/`makeSdkListCall`,
+    `memberId` проброшен из `makePortalSdkCall`), `withSpan('crm-sync',…)` — job-конвейер с исходами
+    (`created`/`lines`/`unmatched`/`idempotent`/`warnings`/`errors`). **PII-защита тройная:** allowlist
+    наших атрибутов (`telemetryAttributes.ts` `pickSafeAttributes` — поставщика/артикул/цену прикрепить
+    нельзя) + redaction-SpanProcessor авто-атрибутов (SQL/URL/токены) + `portal.hash` (SHA-256) вместо
+    member_id, `error_kind` вместо текста ошибки. Чистые ядра + тесты (`telemetryAttributes`/`telemetrySpan`)
+    + parity-тест против inline-списка бутстрапа. **Слайс 2 — общая станция** (`telemetry-station/`:
+    otel-collector-contrib + ClickHouse 72ч + Grafana, отдельный деплой, вне build-context/CI).
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
 - `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).

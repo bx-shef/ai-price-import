@@ -8,6 +8,7 @@ legacy
 docs
 screenshots
 tests
+telemetry-station
 *.md
 .env
 .env.*

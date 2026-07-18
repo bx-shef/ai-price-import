@@ -25,6 +25,7 @@ import { B24RestError, REST_TIMEOUT_MS, isSafeB24Domain } from './b24Rest'
 import type { PortalToken, QueryFn, SaveTokenInput } from './tokenStore'
 import { getToken, updateTokensOnRefresh } from './tokenStore'
 import { decryptSecret, encryptSecret } from './secretCrypto'
+import { withDependencySpan } from './telemetrySpan'
 
 /** B24 OAuth server endpoint (constant — the SDK refreshes tokens against it). */
 const B24_SERVER_ENDPOINT = 'https://oauth.bitrix.info/rest/'
@@ -130,30 +131,38 @@ export function buildRefreshPersist(save: (input: SaveTokenInput) => Promise<voi
  *  return the UNWRAPPED `result` (ai-price-import's contract — callers cast it directly, e.g.
  *  `crm.product.list` → array). Throws the SDK's error messages so a failed call fails the
  *  crm-sync job for a clean retry, same as the hand-rolled `makeRestCall`. */
-export function makeSdkRestCall(client: OAuthCallClient): RestCall {
-  return async (method, params) => {
-    const res = await client.actions.v2.call.make({ method, params })
-    if (!res.isSuccess) throw new Error(res.getErrorMessages().join('; ') || `B24 REST ${method} failed`)
-    const data = (res.getData() ?? {}) as { result?: unknown }
-    return data.result
-  }
+export function makeSdkRestCall(client: OAuthCallClient, opts: { memberId?: string } = {}): RestCall {
+  return (method, params) => withDependencySpan(
+    // system/method/scope describe the SHAPE of the call; portal is hashed. Params (which can
+    // carry supplier/article/price in a filter) are NEVER attached — see telemetryAttributes.
+    { system: 'bitrix24', operation: method, method, scope: method.split('.')[0], memberId: opts.memberId },
+    async () => {
+      const res = await client.actions.v2.call.make({ method, params })
+      if (!res.isSuccess) throw new Error(res.getErrorMessages().join('; ') || `B24 REST ${method} failed`)
+      const data = (res.getData() ?? {}) as { result?: unknown }
+      return data.result
+    }
+  )
 }
 
 /** Wrap a B24 OAuth client's `callList.make` as our `SdkListCall`: page through ALL rows
  *  (the SDK's built-in pagination) and return the flat array. `opts.idKey`/`opts.listKey`
  *  map to the SDK's `idKey`/`customKeyForResult` (grouped methods like
  *  catalog.productProperty.list need both). Non-array data (empty portal) → `[]`. */
-export function makeSdkListCall(client: OAuthCallClient): SdkListCall {
-  return async (method, params, opts) => {
-    const res = await client.actions.v2.callList.make({
-      method,
-      params,
-      ...(opts?.idKey ? { idKey: opts.idKey } : {}),
-      ...(opts?.listKey ? { customKeyForResult: opts.listKey } : {})
-    })
-    const data = res.getData()
-    return Array.isArray(data) ? data : []
-  }
+export function makeSdkListCall(client: OAuthCallClient, spanOpts: { memberId?: string } = {}): SdkListCall {
+  return (method, params, opts) => withDependencySpan(
+    { system: 'bitrix24', operation: method, method, scope: method.split('.')[0], memberId: spanOpts.memberId },
+    async () => {
+      const res = await client.actions.v2.callList.make({
+        method,
+        params,
+        ...(opts?.idKey ? { idKey: opts.idKey } : {}),
+        ...(opts?.listKey ? { customKeyForResult: opts.listKey } : {})
+      })
+      const data = res.getData()
+      return Array.isArray(data) ? data : []
+    }
+  )
 }
 
 /** I/O the portal-bound factory needs, injected for testability. The SDK client itself is
@@ -200,7 +209,7 @@ export async function makePortalSdkCall(memberId: string, deps: SdkPortalDeps): 
   )
   client.setCallbackRefreshAuth(buildRefreshPersist(deps.saveToken, { now: deps.now, encrypt: deps.encrypt }))
   disableSdkRetry(client)
-  return { call: makeSdkRestCall(client), list: makeSdkListCall(client) }
+  return { call: makeSdkRestCall(client, { memberId }), list: makeSdkListCall(client, { memberId }) }
 }
 
 // ── Bare-token transport (frame / install access token) ──────────────────────────────────

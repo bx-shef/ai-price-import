@@ -36,10 +36,22 @@ ENV UPLOAD_DIR=/data/uploads
 ENV HOME=/root
 RUN mkdir -p /data/uploads /root/.claude
 COPY --from=build /app/.output ./.output
+# OTel bootstrap (телеметрия): loaded via NODE_OPTIONS=--import BEFORE the app so
+# auto-instrumentation can hook http/pg/ioredis at module load. Its deps must live OUTSIDE the
+# Nitro bundle (the bundler breaks OTel's require hooks), so install just this small set here.
+# Fully INERT unless OTEL_EXPORTER_OTLP_ENDPOINT is set (the file no-ops) — the default deploy
+# is unchanged. See docs/OBSERVABILITY.md.
+COPY otel.instrument.mjs /app/otel.instrument.mjs
+COPY otel-preload-package.json ./package.json
+RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
+# Absolute path: --import resolves relative to CWD, so an absolute path stays correct regardless
+# of where node is launched from. Quote the value: the ENV KEY=VALUE form treats a space as a
+# second var separator, so the `--import <path>` value MUST be quoted.
+ENV NODE_OPTIONS="--import /app/otel.instrument.mjs"
 EXPOSE 3000
 # Liveness is GET /api/health (docs/redesign 02).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD NODE_OPTIONS= node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", ".output/server/index.mjs"]
 
 # ── app: the front reverse proxy (behind the shared nginx-proxy) ──────────────

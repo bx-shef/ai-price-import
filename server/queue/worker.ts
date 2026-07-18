@@ -9,6 +9,8 @@ import { setJobStatus } from '../utils/jobStore'
 import { query } from '../db/client'
 import { makeAgentSpawn } from '../agent/spawn'
 import { liveExtractRunners } from '../utils/extractRunners'
+import { withSpan } from '../utils/telemetrySpan'
+import { portalHash } from '../utils/telemetryAttributes'
 
 // BullMQ workers binding the pure handlers to live infra. Thin glue — the logic lives
 // in the (tested) handlers; validated by typecheck. Started in-process by the queue plugin.
@@ -141,7 +143,22 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
   }, { connection, concurrency: cc.agent })
 
   const crm = new Worker(QUEUES.crmSync, async (job) => {
-    await handleCrmSyncJob(job.data as CrmSyncJob, crmSync)
+    const data = job.data as CrmSyncJob
+    // Job-level trace span (телеметрия) — no-op unless telemetry is on. Only SAFE shape/outcome
+    // attributes (counts, hashed portal); never document / supplier / product content.
+    await withSpan('crm-sync', {
+      'job.queue': 'crm-sync',
+      'portal.hash': portalHash(data.memberId)
+    }, () => handleCrmSyncJob(data, crmSync), result => result
+      ? {
+          'proc.created': result.created,
+          'proc.lines': result.rowCount,
+          'proc.unmatched': result.unmatched,
+          'proc.idempotent': result.idempotent,
+          'proc.warnings': result.warnings.length,
+          'proc.errors': result.errors.length
+        }
+      : {})
     // Lock tuning shrinks the stalled-reprocessing window that could duplicate a CRM entity
     // (#163) — see crmLockTuning above for why a pg advisory lock was rejected (pool max 5).
   }, { connection, concurrency: cc.crm, ...crmLockTuning() })
