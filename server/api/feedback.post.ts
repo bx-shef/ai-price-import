@@ -3,9 +3,15 @@ import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { resolveFeedbackConfig } from '../utils/feedbackConfig'
 import { postFeedbackIssue } from '../utils/feedbackGithub'
 import { buildFeedbackIssue, normalizeKind } from '~/utils/feedback'
+import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
+import { getJob } from '../utils/jobStore'
+import { resolveFeedbackEntity } from '../utils/feedbackEntity'
 import type { FetchFn } from '../utils/b24Rest'
+
+/** jobId shape accepted for the DB lookup (matches the builder's context validation). */
+const JOB_ID_RE = /^[A-Za-z0-9-]{1,64}$/
 
 // POST /api/feedback — employee 👍/👎 + comment on the import result → a GitHub issue in the
 // configured PRIVATE receiving repo (#182 channel «сотрудник»). Frame-token authenticated (the
@@ -35,15 +41,26 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return { error: 'неизвестная оценка' }
   }
-  // Context (jobId/file/entity/version) is client-supplied and rendered inert by the builder; the
+  // Context (jobId/file/version) is client-supplied and rendered inert by the builder; the
   // receiving repo is private so client data is permitted (see feedback.ts module header).
   const c = raw?.context ?? {}
+  // Entity link (#192 п.2): resolve the CREATED entity SERVER-SIDE from the job's stored result,
+  // NOT from the client (durable + trustworthy). Best-effort — a missing/expired job or a run that
+  // created nothing simply yields no link. The jobId is client-supplied → validate before the query.
+  const jobId = typeof c.jobId === 'string' && JOB_ID_RE.test(c.jobId) ? c.jobId : ''
+  let entity: { entityType?: string, entityId?: string, entityUrl?: string } = {}
+  if (jobId) {
+    try {
+      const job = await getJob(member.memberId, jobId, query)
+      if (job) entity = resolveFeedbackEntity(parseJobResult(job.result), auth.domain)
+    } catch { /* best-effort: no link rather than a failed submission */ }
+  }
   const payload = buildFeedbackIssue(kind, raw?.comment, {
     jobId: c.jobId,
     fileName: c.fileName,
-    entityType: c.entityType,
-    entityId: c.entityId,
-    entityUrl: c.entityUrl,
+    entityType: entity.entityType,
+    entityId: entity.entityId,
+    entityUrl: entity.entityUrl,
     appVersion: c.appVersion
   })
   const result = await postFeedbackIssue(config, payload, globalThis.fetch as unknown as FetchFn)

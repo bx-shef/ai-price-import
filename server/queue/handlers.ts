@@ -80,7 +80,7 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
   await deps.setJobStatus(
     job.memberId, job.jobId,
     result.created || !result.errors.length ? 'done' : 'error',
-    JSON.stringify({ entityId: result.entityId, created: result.created, warnings: result.warnings, errors: result.errors })
+    JSON.stringify({ entityTypeId: result.entityTypeId, entityId: result.entityId, created: result.created, warnings: result.warnings, errors: result.errors })
   )
   // Dashboard counters. `errors` is bumped upstream (reportErrors) — not here.
   //  - Idempotent redelivery (job already processed): the whole document was SKIPPED — count

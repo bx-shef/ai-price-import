@@ -20,6 +20,8 @@ export function jobStatusMeta(status: string): JobStatusMeta {
 }
 
 export interface JobResultView {
+  /** CRM entity type id of the created entity (deal 2 / lead 1 / smart-process …), when known. */
+  entityTypeId?: number
   entityId?: number
   created?: boolean
   warnings: string[]
@@ -30,7 +32,7 @@ export interface JobResultView {
 
 /**
  * Parse the job `result` column into a view model. crm-sync writes JSON
- * ({entityId, created, warnings, errors}); earlier stages write a bare error
+ * ({entityTypeId, entityId, created, warnings, errors}); earlier stages write a bare error
  * string. Never throws — a non-JSON result becomes `message`.
  */
 export function parseJobResult(result: string): JobResultView {
@@ -40,6 +42,7 @@ export function parseJobResult(result: string): JobResultView {
   try {
     const o = JSON.parse(raw) as Record<string, unknown>
     return {
+      ...(typeof o.entityTypeId === 'number' && o.entityTypeId > 0 ? { entityTypeId: o.entityTypeId } : {}),
       ...(typeof o.entityId === 'number' && o.entityId > 0 ? { entityId: o.entityId } : {}),
       ...(typeof o.created === 'boolean' ? { created: o.created } : {}),
       warnings: Array.isArray(o.warnings) ? o.warnings.map(String) : [],

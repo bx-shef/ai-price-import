@@ -20,6 +20,13 @@ describe('parseJobResult', () => {
     const r = parseJobResult(JSON.stringify({ entityId: 555, created: true, warnings: ['w'], errors: [] }))
     expect(r).toEqual({ entityId: 555, created: true, warnings: ['w'], errors: [] })
   })
+  it('surfaces entityTypeId when present (#192 п.2), drops it when 0/absent', () => {
+    expect(parseJobResult(JSON.stringify({ entityTypeId: 2, entityId: 5, created: true, warnings: [], errors: [] })))
+      .toEqual({ entityTypeId: 2, entityId: 5, created: true, warnings: [], errors: [] })
+    // absent entityTypeId → not in the view (back-compat with pre-#192 rows)
+    expect(parseJobResult(JSON.stringify({ entityId: 5, created: true, warnings: [], errors: [] })).entityTypeId).toBeUndefined()
+    expect(parseJobResult(JSON.stringify({ entityTypeId: 0, entityId: 5, created: true, warnings: [], errors: [] })).entityTypeId).toBeUndefined()
+  })
   it('treats a bare error string as a message', () => {
     expect(parseJobResult('извлечение текста: pdftotext missing')).toEqual({ warnings: [], errors: [], message: 'извлечение текста: pdftotext missing' })
   })
