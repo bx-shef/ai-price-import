@@ -193,7 +193,7 @@ onMounted(runInstall)
     <!-- Bottom-right corner: build commit (like the landing footer) + a diagnostics modal trigger.
          Kept out of the main flow — install runs headless and B24 reloads the frame on finish, so
          diagnostics are a support aid, not part of the flow. -->
-    <div class="fixed bottom-3 right-3 flex items-center gap-3 text-xs">
+    <div class="fixed bottom-3 right-3 z-10 flex items-center gap-3 text-xs">
       <a
         :href="buildHref"
         target="_blank"
