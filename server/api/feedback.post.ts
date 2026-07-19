@@ -1,8 +1,8 @@
 import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { resolveFeedbackConfig } from '../utils/feedbackConfig'
-import { findFeedbackIssueByCode, postFeedbackIssue } from '../utils/feedbackGithub'
-import { buildFeedbackIssue, feedbackDedupCode, normalizeKind } from '~/utils/feedback'
+import { postFeedbackIssue } from '../utils/feedbackGithub'
+import { buildFeedbackIssue, normalizeKind } from '~/utils/feedback'
 import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
@@ -52,16 +52,10 @@ export default defineEventHandler(async (event) => {
   const jobId = typeof c.jobId === 'string' && JOB_ID_RE.test(c.jobId) ? c.jobId : ''
   const attachFile = raw?.attachFile === true
   const fetchImpl = globalThis.fetch as unknown as FetchFn
-  // Dedup (#192) FIRST, before any job-context DB reads: a stable code from portal + jobId is embedded
-  // in the issue title. If an issue with this code already exists (same file already rated), SKIP here —
-  // don't file a duplicate, re-count telemetry, or waste the getJob/getDiskFileUrl reads below.
-  // Fail-open: a search error yields no code-match and we proceed (a rare dup beats a lost report).
-  const dedupCode = feedbackDedupCode(member.memberId, jobId)
-  if (dedupCode) {
-    const existing = await findFeedbackIssueByCode(config, dedupCode, fetchImpl)
-    if (existing.found) return { ok: true, duplicate: true, number: existing.number, url: existing.url }
-  }
-  // Server-resolved context from the job's DURABLE row (never trusted from the client): the created
+  // Duplicate suppression lives on the CLIENT (localStorage): the widget won't offer feedback twice
+  // for a jobId it already sent. No server-side search-before-create — it cost a GitHub Search call
+  // per submit and was only best-effort anyway (eventual-consistency). Server just files the issue.
+  // Server-resolved context from the job's row (never trusted from the client): the created
   // entity link (#192 п.2), the triage outcome (#192 п.1) and — only with the employee's explicit
   // consent (#192 п.3) — the source-file link that was archived to the portal Disk. Best-effort:
   // a missing/expired job simply yields no extra context.
@@ -95,7 +89,7 @@ export default defineEventHandler(async (event) => {
     entityId: entity.entityId,
     entityUrl: entity.entityUrl,
     appVersion: c.appVersion
-  }, dedupCode)
+  })
   const result = await postFeedbackIssue(config, payload, fetchImpl)
   if (result.ok) {
     // Telemetry (#192 п.4): record the fact that a rating was sent — BOTH 👍 and 👎, so the
