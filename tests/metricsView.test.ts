@@ -3,11 +3,17 @@ import { formatRate, summarizeMetrics } from '../app/utils/metricsView'
 
 describe('summarizeMetrics', () => {
   it('orders + labels the known counters, ignores extras', () => {
-    const s = summarizeMetrics({ docs: 10, created: 8, lines: 42, unmatched: 1, skipped: 2, errors: 1, bogus: 99 })
-    expect(s.rows.map(r => r.key)).toEqual(['docs', 'created', 'lines', 'unmatched', 'skipped', 'errors'])
+    const s = summarizeMetrics({ docs: 10, created: 8, lines: 42, unmatched: 1, skipped: 2, errors: 1, feedback_up: 3, feedback_down: 1, bogus: 99 })
+    expect(s.rows.map(r => r.key)).toEqual(['docs', 'created', 'lines', 'unmatched', 'skipped', 'errors', 'feedback_up', 'feedback_down'])
     expect(s.rows.find(r => r.key === 'lines')?.value).toBe(42)
     expect(s.rows.some(r => r.key === 'bogus')).toBe(false)
     expect(s.rows.find(r => r.key === 'docs')?.label).toBe('Документов обработано')
+  })
+  it('surfaces feedback counters with 👍/👎 labels (#192 п.4)', () => {
+    const s = summarizeMetrics({ feedback_up: 4, feedback_down: 2 })
+    expect(s.rows.find(r => r.key === 'feedback_up')).toEqual({ key: 'feedback_up', label: 'Отзывов 👍', value: 4 })
+    expect(s.rows.find(r => r.key === 'feedback_down')).toEqual({ key: 'feedback_down', label: 'Отзывов 👎', value: 2 })
+    expect(s.empty).toBe(false)
   })
   it('successRate = created/docs, capped at 1', () => {
     expect(summarizeMetrics({ docs: 10, created: 8 }).successRate).toBe(0.8)
@@ -36,7 +42,7 @@ describe('summarizeMetrics', () => {
   })
   it('null/undefined input → all-zero empty summary', () => {
     expect(summarizeMetrics(null).empty).toBe(true)
-    expect(summarizeMetrics(undefined).rows).toHaveLength(6)
+    expect(summarizeMetrics(undefined).rows).toHaveLength(8)
   })
 })
 

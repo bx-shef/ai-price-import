@@ -4,6 +4,7 @@ import { resolveFeedbackConfig } from '../utils/feedbackConfig'
 import { postFeedbackIssue } from '../utils/feedbackGithub'
 import { buildFeedbackIssue, normalizeKind } from '~/utils/feedback'
 import { query } from '../db/client'
+import { METRICS, bumpCounter } from '../utils/metricsStore'
 import type { FetchFn } from '../utils/b24Rest'
 
 // POST /api/feedback — employee 👍/👎 + comment on the import result → a GitHub issue in the
@@ -46,7 +47,14 @@ export default defineEventHandler(async (event) => {
     appVersion: c.appVersion
   })
   const result = await postFeedbackIssue(config, payload, globalThis.fetch as unknown as FetchFn)
-  if (result.ok) return { ok: true, number: result.number }
+  if (result.ok) {
+    // Telemetry (#192 п.4): record the fact that a rating was sent — BOTH 👍 and 👎, so the
+    // /metrics dashboard shows feedback volume, not just problems. Best-effort: a counter write
+    // must never fail an already-created issue.
+    await bumpCounter(member.memberId, kind === 'up' ? METRICS.feedbackUp : METRICS.feedbackDown, 1, query)
+      .catch(() => {})
+    return { ok: true, number: result.number }
+  }
   // Never surface GitHub's body/URL/token — only a generic message + the retry hint.
   console.warn(`[feedback] github issue failed: status=${result.status} retryable=${result.retryable}`)
   setResponseStatus(event, result.retryable ? 502 : 500)

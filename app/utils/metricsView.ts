@@ -24,7 +24,9 @@ const METRIC_LABELS: Array<{ key: string, label: string }> = [
   { key: 'lines', label: 'Позиций внесено' },
   { key: 'unmatched', label: 'Поставщик не найден' },
   { key: 'skipped', label: 'Повторы (дубликаты)' },
-  { key: 'errors', label: 'Ошибок' }
+  { key: 'errors', label: 'Ошибок' },
+  { key: 'feedback_up', label: 'Отзывов 👍' },
+  { key: 'feedback_down', label: 'Отзывов 👎' }
 ]
 
 /** Coerce a stored counter to a non-negative integer (defensive against bad/absent values). */
