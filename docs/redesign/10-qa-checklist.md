@@ -84,7 +84,8 @@
 | `planExtraction`/`extractText` маршрутизация | `tests/textExtract.test.ts` | По расширению; цифровой PDF→pdfToText, скан-PDF→OCR, порог `MIN_PDF_TEXT`=32 без OCR, unsupported→throw с именем | [авто] |
 | `decodeBytes` | `tests/decodeBytes.test.ts` | UTF-8 цел; невалидный UTF-8→1251; литеральный U+FFFD не переключает; пустой→'' | [авто] |
 | `handleFileExtractJob` | `tests/pipelineHandlers.test.ts` | Успех→saveText+enqueue; пустой→failJob; >`MAX_DOCUMENT_TEXT`=500000→failJob; бросок→failJob | [авто] |
-| `jobStore` | `tests/jobStore.test.ts` | `createJob` ON CONFLICT; `listJobs` member-scoped DESC, LIMIT [1,200] | [авто] |
+| `jobStore` (Redis+TTL, #B/#D) | `tests/jobStore.test.ts` | `createJob`→`getJob` round-trip; member+job scoped (нет кросс-портала); `setJobStatus` не теряет `fileName`; `claimJobNotify` once-only (HSETNX); TTL-eviction `getJob`→null. **Нет `listJobs`** — списка на сервере больше нет | [авто] |
+| `importHistory` (localStorage, #D) | `tests/importHistory.test.ts` | add/list newest-first; дедуп по `jobId`; флаг `feedback` round-trip + upsert; TTL 7д prune; кап 50; битый JSON→[] | [авто] |
 | Фрейм-авторизация | `tests/resolveFrameMember.test.ts`, `tests/frameAuth.test.ts` | verify→member_id; 401 отказ токена; 502 транспорт; 401 портал не установлен; SSRF-гард домена | [авто] |
 | upload без авторизации | `curl -X POST :3000/api/import/upload -F file=@doc.pdf` | 401 `{error:"frame auth required"}` | [вручную] |
 | upload с не-b24 доменом | curl `X-B24-Domain: evil.com` | 401 (SSRF-гард) | [вручную] |
@@ -94,11 +95,12 @@
 | upload без `file`/пустой | POST без части / 0 байт | 400 «файл не передан» | [вручную] |
 | upload запрещённое расширение | POST `.exe`/`.zip`/`.txt` | 400 «Неподдерживаемый формат: .<ext>» | [вручную] |
 | upload двойная граница размера ~20.5МБ | Файл между `MAX_UPLOAD_BYTES` и +1МБ | Пред-проверка пройдёт, `validateUploadFile` → 400 «больше 20 МБ» | [вручную] |
-| upload happy-path | POST корректный `.pdf` ≤20МБ | 200 `{jobId, status:"queued"}`; файл на диске; строка `import_job`; задача в очереди | [нужен живой портал] |
+| upload happy-path | POST корректный `.pdf` ≤20МБ | 200 `{jobId, status:"queued"}`; файл на диске; **Redis-хеш** `import:job:{member}:{jobId}` (не Postgres); клиент кладёт `jobId` в **localStorage**; задача в очереди | [нужен живой портал] |
 | upload подделка member_id | POST с member_id в теле | Игнорируется — берётся из `resolveFrameMember` | [вручную/код-ревью] |
-| status без авторизации | `GET /api/import/status` | 401 «frame auth required» | [вручную] |
-| status свой портал | GET Bearer+домен | `{jobs:[…]}` только своего портала, новые сверху, ≤50 | [нужен живой портал] |
-| status изоляция порталов | GET из портала A | Задачи B не видны | [нужен живой портал] |
+| status без авторизации | `GET /api/import/status?ids=…` | 401 «frame auth required» | [вручную] |
+| status по своим id (#D) | `GET …/status?ids=a,b,c` Bearer+домен | `{jobs:[…]}` — статусы **только запрошенных** заданий этого портала (`getJob` per-id, `Promise.all`); список ведёт **браузер** (localStorage), серверного списка нет; невалидные id отфильтрованы, кап 50 | [нужен живой портал] |
+| status изоляция порталов | GET из портала A с `ids` задания портала B | Задачи B не видны (`getJob` member-scoped → пусто) | [нужен живой портал] |
+| **история/статус на клиенте (#D)** | Загрузить файл → **перезагрузить страницу `/app`** | Задание **остаётся** в списке (из localStorage), статус до-опрашивается по `id`; после TTL (7д localStorage / 48ч серверный статус) — исчезает. Другой браузер/устройство историю НЕ видит | [нужен живой портал] |
 | Извлечение: цифровой PDF | Загрузить PDF с текстовым слоем | `pdftotext -layout` даёт текст, OCR не вызывается | [нужен бинарями] |
 | Извлечение: скан-PDF / изображение | Загрузить скан / `.png`/`.jpg` | Фолбэк на OCR, rus/bel/kaz/eng | [нужен бинарями] |
 | Извлечение: скан-PDF через растеризацию (GH #100) | Загрузить PDF-скан (без цифрового текста) | `ocr` определяет `%PDF-` → `pdftoppm` постранично → OCR каждой страницы; НЕ падает «Pdf reading is not supported»; кап `MAX_OCR_PDF_PAGES` | [нужен бинарями] |
@@ -214,7 +216,7 @@
 | `extractEvent`/`safeEqual` | `tests/b24Events.test.ts` | Нормализация формы; constant-time, fail-closed на длине/пустом | [авто] |
 | `decideB24Event` статусы | `tests/b24Events.test.ts` | 400 нет event/member; 503 нет ожид. токена; 403 mismatch; 200 register/unregister; чужое событие→ignore | [авто] |
 | `saveToken` write-once | `tests/server-glue.test.ts` | `ON CONFLICT (member_id)` + `COALESCE(NULLIF(...))`; `getToken`/`getApplicationToken` null при отсутствии | [авто] |
-| `deletePortal` порядок очистки | `tests/server-glue.test.ts` | `portal_tokens, job_result, metrics_counter, import_job, import_text, import_doc`, `params=['m1']` | [авто] |
+| `deletePortal` порядок очистки | `tests/server-glue.test.ts` | `portal_tokens, job_result, metrics_counter, import_text, import_doc, portal_app_rating`, `params=['m1']`. **`import_job` НЕ чистится** (Redis+TTL, таблица удалена — DELETE по ней бросил бы) | [авто] |
 | Register | `curl -X POST` ONAPPINSTALL с env-токеном | 200 `{ok:true}`; строка в `portal_tokens`, refresh зашифрован | [вручную] |
 | TOFU: чужой токен при установленном портале | Повторный POST с другим токеном | 403 `action:'ignore'` (сверка со stored, не env) | [вручную] |
 | Unregister | POST ONAPPUNINSTALL с верным токеном | 200; `deletePortal` + `purgePortalFiles` снёс каталог | [вручную] |
