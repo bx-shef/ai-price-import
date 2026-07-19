@@ -1,6 +1,6 @@
 # Визуальная верификация (Definition of Done)
 
-> Last reviewed: 2026-07-11
+> Last reviewed: 2026-07-19
 
 > **ВАЖНО:** после любой правки UI/CSS/вёрстки снять скриншот результата и
 > **посмотреть на пиксели** до того, как считать задачу выполненной — не доверять
@@ -34,11 +34,17 @@ Chromium окружения (`PLAYWRIGHT_BROWSERS_PATH`), через `playwright
 - [ ] In-portal страницы (`/app`,`/settings`,`/import`) рендерятся и вне фрейма
       (`useB24().init()` — no-op без портала) — проверяем именно standalone-скрин.
 
-## Известное (тема)
+## Тема (light/dark)
 
-In-portal страницы (`/app`,`/settings`,`/import`,`/login`,`/queues`) сейчас **light-only**
-в standalone: `app.config.ts` с нативным `colorMode` b24ui пока не заведён, поэтому
-`useColorMode()` — no-op stub, и `prefers-color-scheme: dark` их не переключает. Тёмная
-тема лендинга (`/`) — независимая, задаётся классом-скоупом `.landing-shell`, поэтому
-работает. В реальном портале Б24 тема приходит из фрейма. Доведение in-portal-темы —
-дизайн-задача (отложено, приоритет «должно работать» выше).
+In-portal страницы (`/app`,`/settings`,`/import`,`/login`,`/queues`,`/metrics`) —
+**light/dark-auto**: заведён `app/app.config.ts` (нативный `colorMode` b24ui: `colorMode: true`,
+`colorModeInitialValue: 'auto'`) + FOUC-гард `theme-init` в `app.vue` (ставит класс `.dark`/`.light`
+до первого кадра по сохранённому/OS `prefers-color-scheme`), а `clear.vue` обёрнут в `<B24App>` и
+красится семантическими токенами `--ui-color-*` (не сырыми Tailwind-грэями). В реальном портале Б24
+тема приходит из фрейма (OS/портал), standalone — по `prefers-color-scheme`. Лендинг (`/`) пинит свою
+тёмную оболочку через `htmlAttrs data-force-dark` (её `theme-init` уважает).
+
+> ⚠ **Флейки скриншотов тёмной темы.** Иногда `pnpm screenshot` ловит момент до применения `.dark`
+> (гонка `networkidle` × гидрации b24ui colorMode) → `*.dark.png` выходит идентичным `*.light.png`.
+> Проверка: `md5sum <slug>.desktop.{light,dark}.png` — если одинаковые, перезапустить `pnpm screenshot
+> /<route>` (одиночный роут стабильно рендерит тёмную). Это артефакт харнесса, не баг страницы.
