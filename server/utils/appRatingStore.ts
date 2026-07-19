@@ -1,5 +1,6 @@
 import type { QueryFn } from './tokenStore'
 import type { AppRatingState } from './appRatingPolicy'
+import type { RatingStatusRow } from './appRatingStatus'
 
 // Per-portal app-rating state over an injected QueryFn (testable without a DB). Keyed by member_id,
 // like portal_tokens — the rating fact is kept «рядом с авторизацией». All writes are UPSERTs so a
@@ -40,6 +41,30 @@ export async function markOpened(memberId: string, query: QueryFn): Promise<void
        WHERE portal_app_rating.reviewed = false`,
     [memberId]
   )
+}
+
+/** List rating state for every INSTALLED portal (LEFT JOIN → portals with no row yet show as
+ *  «not prompted»). NON-SECRET fields only (domain + timestamps, no tokens). Powers the operator
+ *  management card on /queues. Capped like listPortalStatus. */
+export async function listRatingStatus(query: QueryFn, limit = 500): Promise<RatingStatusRow[]> {
+  const cap = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 5000) : 500
+  const { rows } = await query(
+    `SELECT t.member_id, t.domain,
+            (EXTRACT(EPOCH FROM r.prompted_at) * 1000)::bigint AS prompted_at_ms,
+            (EXTRACT(EPOCH FROM r.opened_at)   * 1000)::bigint AS opened_at_ms,
+            COALESCE(r.reviewed, false) AS reviewed
+     FROM portal_tokens t
+     LEFT JOIN portal_app_rating r ON r.member_id = t.member_id
+     ORDER BY t.domain ASC, t.member_id ASC LIMIT $1`,
+    [cap]
+  )
+  return rows.map(r => ({
+    memberId: String(r.member_id ?? ''),
+    domain: String(r.domain ?? ''),
+    promptedAtMs: r.prompted_at_ms == null ? null : Number(r.prompted_at_ms),
+    openedAtMs: r.opened_at_ms == null ? null : Number(r.opened_at_ms),
+    reviewed: r.reviewed === true
+  }))
 }
 
 /** MANUAL (owner op): mark a confirmed review → terminal, never prompt again. */

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { clearOpened, getRatingState, markOpened, markPrompted, markReviewed } from '../server/utils/appRatingStore'
+import { clearOpened, getRatingState, listRatingStatus, markOpened, markPrompted, markReviewed } from '../server/utils/appRatingStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -21,6 +21,26 @@ describe('getRatingState', () => {
     expect(st?.promptedAt?.toISOString()).toBe('2026-07-10T00:00:00.000Z')
     expect(st?.openedAt).toBeNull()
     expect(st?.reviewed).toBe(false)
+  })
+})
+
+describe('listRatingStatus', () => {
+  it('LEFT JOINs portal_tokens and maps null timestamps', async () => {
+    const { q, calls } = fakeQuery([
+      { member_id: 'm1', domain: 'a.bitrix24.by', prompted_at_ms: '1700000000000', opened_at_ms: null, reviewed: false },
+      { member_id: 'm2', domain: 'b.bitrix24.by', prompted_at_ms: null, opened_at_ms: null, reviewed: true }
+    ])
+    const out = await listRatingStatus(q)
+    expect(calls[0]!.sql).toContain('LEFT JOIN portal_app_rating')
+    expect(calls[0]!.sql).toContain('FROM portal_tokens')
+    expect(out[0]).toEqual({ memberId: 'm1', domain: 'a.bitrix24.by', promptedAtMs: 1700000000000, openedAtMs: null, reviewed: false })
+    expect(out[1]!.reviewed).toBe(true)
+    expect(out[1]!.promptedAtMs).toBeNull()
+  })
+  it('caps the limit', async () => {
+    const { q, calls } = fakeQuery([])
+    await listRatingStatus(q, 99999)
+    expect(calls[0]!.params).toEqual([5000])
   })
 })
 

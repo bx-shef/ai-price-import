@@ -185,7 +185,10 @@ export async function deletePortal(memberId: string, query: QueryFn, eventTs = 0
       [memberId, eventTs]
     )
   }
-  for (const table of ['portal_tokens', 'job_result', 'metrics_counter', 'import_job', 'import_text', 'import_doc', 'portal_app_rating']) {
+  // NOTE: import_job is intentionally absent — it was dropped (#202, moved to Redis+TTL). Listing a
+  // non-existent table here would make DELETE raise 42P01 and abort the purge AFTER portal_tokens is
+  // already gone, orphaning client documents (import_text/import_doc) — a data-minimisation breach.
+  for (const table of ['portal_tokens', 'job_result', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating']) {
     await query(`DELETE FROM ${table} WHERE member_id = $1`, [memberId])
   }
 }

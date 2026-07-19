@@ -125,7 +125,9 @@ AI-импорт документов с табличной частью в Bitri
     чистая `shouldPrompt` (`prompted_at` троттлит показ ≤1 раза в `RATING_REPROMPT_DAYS`=4д; `opened_at`
     глушит до **ручной** проверки; `reviewed` — терминально). Роуты `GET /api/app-rating` (read-only `{show}`)
     / `POST` (`prompted`/`opened`) — фрейм-токен (`resolveFrameMember`). Факт отзыва Маркет по REST не отдаёт →
-    проверяем вручную SQL'ом (`markReviewed`/`clearOpened`). Гифка-подсказка `public/app-rating-demo.gif`
+    владелец подтверждает **из UI оператора** (`/queues`, карточка «Оценки приложения», паттерн reauth):
+    `GET/POST /api/ops/app-rating` (сессия оператора, чистые `appRatingStatus`/`appRatingOpsHandler` →
+    `markReviewed`/`clearOpened`), SQL — запасной путь. Гифка-подсказка `public/app-rating-demo.gif`
     (сжата Pillow, ленивая загрузка).
   - **Глубокая телеметрия — OpenTelemetry** ([`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md), вектор
     Bitrix `b24-ai-starter-otel`; порт из client-bank PR #317/#318). **Слайс 1 (app-side) — DEFAULT OFF:**
