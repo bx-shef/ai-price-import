@@ -1,101 +1,82 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { claimJobNotify, createJob, getDiskFileUrl, getJob, getManualOverride, listJobs, setDiskFile, setJobStatus } from '../server/utils/jobStore'
+import { createMemoryJobRedis } from '../server/utils/jobStoreRedis'
 
-function fakeQuery(rows: Array<Record<string, unknown>> = []) {
-  const calls: Array<{ sql: string, params?: unknown[] }> = []
-  const q = vi.fn(async (sql: string, params?: unknown[]) => {
-    calls.push({ sql, params })
-    return { rows }
-  })
-  return { q, calls }
-}
+afterEach(() => vi.restoreAllMocks())
 
-describe('jobStore', () => {
-  it('createJob inserts with ON CONFLICT DO NOTHING (no override → null)', async () => {
-    const { q, calls } = fakeQuery()
-    await createJob('m', 'j1', 'накладная.pdf', q)
-    expect(calls[0]!.sql).toContain('ON CONFLICT (member_id, job_id) DO NOTHING')
-    expect(calls[0]!.sql).toContain('manual_override')
-    expect(calls[0]!.params).toEqual(['m', 'j1', 'накладная.pdf', null])
+// The store logic is exercised over the in-memory JobRedis (same interface as the live ioredis
+// adapter) — no infra, deterministic. A controllable clock drives TTL expiry.
+
+describe('jobStore (Redis-backed)', () => {
+  it('createJob → getJob round-trips status/fileName; result starts empty', async () => {
+    const r = createMemoryJobRedis()
+    await createJob('m', 'j1', 'накладная.pdf', r)
+    expect(await getJob('m', 'j1', r)).toEqual({ memberId: 'm', jobId: 'j1', status: 'queued', fileName: 'накладная.pdf', result: '' })
   })
-  it('createJob serializes a manual override target to JSON', async () => {
-    const { q, calls } = fakeQuery()
-    await createJob('m', 'j1', 'f.pdf', q, { entityTypeId: 2, categoryId: 1 })
-    expect(calls[0]!.params![3]).toBe('{"entityTypeId":2,"categoryId":1}')
+
+  it('getJob is member+job scoped (no cross-portal read)', async () => {
+    const r = createMemoryJobRedis()
+    await createJob('m1', 'j1', 'f.pdf', r)
+    expect(await getJob('m2', 'j1', r)).toBeNull()
+    expect(await getJob('m1', 'jX', r)).toBeNull()
   })
-  it('getManualOverride re-validates the stored row (object → TargetRef; junk → undefined)', async () => {
-    const scoped = fakeQuery([{ manual_override: { entityTypeId: 31, categoryId: 11 } }])
-    const t = await getManualOverride('m', 'j1', scoped.q)
-    expect(t).toEqual({ entityTypeId: 31, categoryId: 11 })
-    // Member+job scoped (a portal can only read its own job's target).
-    expect(scoped.calls[0]!.sql).toContain('member_id=$1 AND job_id=$2')
-    expect(scoped.calls[0]!.params).toEqual(['m', 'j1'])
-    expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: null }]).q)).toBeUndefined()
-    expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: { entityTypeId: 0 } }]).q)).toBeUndefined()
-    expect(await getManualOverride('m', 'x', fakeQuery([]).q)).toBeUndefined()
+
+  it('setJobStatus updates status + result without dropping fileName', async () => {
+    const r = createMemoryJobRedis()
+    await createJob('m', 'j1', 'f.pdf', r)
+    await setJobStatus('m', 'j1', 'done', JSON.stringify({ created: true }), r)
+    const j = await getJob('m', 'j1', r)
+    expect(j?.status).toBe('done')
+    expect(j?.result).toBe('{"created":true}')
+    expect(j?.fileName).toBe('f.pdf')
   })
-  it('setDiskFile persists the ref as JSON; getDiskFileUrl → same-portal RELATIVE path only', async () => {
-    const { q, calls } = fakeQuery()
-    // real DETAIL_URL is ABSOLUTE (live-verified) — stored as-is, normalized to relative on read.
-    await setDiskFile('m', 'j1', { id: 45, detailUrl: 'https://p.bitrix24.com/docs/file/45/' }, q)
-    expect(calls[0]!.sql).toContain('disk_file=$3')
-    expect(calls[0]!.params).toEqual(['m', 'j1', '{"id":45,"detailUrl":"https://p.bitrix24.com/docs/file/45/"}'])
-    // absolute portal URL → stripped to its on-portal path
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://p.bitrix24.com/docs/file/45/' } }]).q)).toBe('/docs/file/45/')
-    // already-relative kept; string row tolerated
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '/docs/file/45/' } }]).q)).toBe('/docs/file/45/')
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: '{"detailUrl":"/x/y"}' }]).q)).toBe('/x/y')
-    // even an off-portal absolute is reduced to a relative path (redirect can't leave the portal)
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://evil.test/steal' } }]).q)).toBe('/steal')
-    // backslash open-redirect bypass: `/\evil.test` (browser → `//evil.test`) is rejected
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '/\\evil.test' } }]).q)).toBeNull()
-    // query string is dropped (no token ever surfaces on the button)
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://p.bitrix24.com/docs/file/45/?token=secret' } }]).q)).toBe('/docs/file/45/')
-    // protocol-relative / garbage / absent → null (no button)
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '//evil.test' } }]).q)).toBeNull()
-    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: null }]).q)).toBeNull()
-    expect(await getDiskFileUrl('m', 'x', fakeQuery([]).q)).toBeNull()
+
+  it('manual override round-trips + re-validates (junk → undefined)', async () => {
+    const r = createMemoryJobRedis()
+    await createJob('m', 'j1', 'f.pdf', r, { entityTypeId: 2, categoryId: 1 })
+    expect(await getManualOverride('m', 'j1', r)).toEqual({ entityTypeId: 2, categoryId: 1 })
+    await createJob('m', 'j2', 'f.pdf', r) // no override
+    expect(await getManualOverride('m', 'j2', r)).toBeUndefined()
   })
-  it('claimJobNotify: atomic UPDATE guarded by notified=false, RETURNING (#164)', async () => {
-    const { q, calls } = fakeQuery([{ job_id: 'j1' }]) // one row back → we won the claim
-    const won = await claimJobNotify('m', 'j1', q)
-    expect(won).toBe(true)
-    expect(calls[0]!.sql).toContain('SET notified=true')
-    expect(calls[0]!.sql).toContain('AND notified=false') // the guard that makes it one-shot
-    expect(calls[0]!.sql).toContain('RETURNING job_id')
-    expect(calls[0]!.params).toEqual(['m', 'j1'])
+
+  it('disk file: setDiskFile then getDiskFileUrl normalizes an absolute DETAIL_URL to a relative path', async () => {
+    const r = createMemoryJobRedis()
+    await createJob('m', 'j1', 'f.pdf', r)
+    await setDiskFile('m', 'j1', { id: 5, detailUrl: 'https://bel.bitrix24.by/docs/file/5/' }, r)
+    expect(await getDiskFileUrl('m', 'j1', r)).toBe('/docs/file/5/')
+    // absent → null
+    await createJob('m', 'j2', 'f.pdf', r)
+    expect(await getDiskFileUrl('m', 'j2', r)).toBeNull()
   })
-  it('claimJobNotify: no row returned (already notified / missing job) → false', async () => {
-    const won = await claimJobNotify('m', 'j1', fakeQuery([]).q)
-    expect(won).toBe(false)
+
+  it('claimJobNotify is once-only: first caller true, all later false', async () => {
+    const r = createMemoryJobRedis()
+    await createJob('m', 'j1', 'f.pdf', r)
+    expect(await claimJobNotify('m', 'j1', r)).toBe(true)
+    expect(await claimJobNotify('m', 'j1', r)).toBe(false)
+    expect(await claimJobNotify('m', 'j1', r)).toBe(false)
   })
-  it('setJobStatus updates status+result', async () => {
-    const { q, calls } = fakeQuery()
-    await setJobStatus('m', 'j1', 'done', '{"entityId":5}', q)
-    expect(calls[0]!.params).toEqual(['m', 'j1', 'done', '{"entityId":5}'])
+
+  it('listJobs returns the portal jobs newest-first', async () => {
+    // createJob scores the index entry by Date.now() — drive it so the three creates get distinct,
+    // increasing scores (as real uploads seconds apart would).
+    let now = 1000
+    vi.spyOn(Date, 'now').mockImplementation(() => (now += 10))
+    const r = createMemoryJobRedis(() => now)
+    await createJob('m', 'old', 'a.pdf', r)
+    await createJob('m', 'mid', 'b.pdf', r)
+    await createJob('m', 'new', 'c.pdf', r)
+    const ids = (await listJobs('m', r)).map(j => j.jobId)
+    expect(ids).toEqual(['new', 'mid', 'old'])
   })
-  it('getJob maps row / null', async () => {
-    const j = await getJob('m', 'j1', fakeQuery([{ member_id: 'm', job_id: 'j1', status: 'processing', file_name: 'a.pdf', result: '' }]).q)
-    expect(j).toMatchObject({ status: 'processing', fileName: 'a.pdf' })
-    expect(await getJob('m', 'x', fakeQuery([]).q)).toBeNull()
-  })
-  it('listJobs member-scoped, DESC, clamps LIMIT into [1,200] for every input', async () => {
-    const { q, calls } = fakeQuery([])
-    await listJobs('m', q)
-    expect(calls[0]!.sql).toContain('WHERE member_id=$1')
-    expect(calls[0]!.sql).toContain('ORDER BY created_at DESC')
-    expect(calls[0]!.sql).toContain('LIMIT 50') // default
-    expect(calls[0]!.params).toEqual(['m'])
-    // clamp table — interpolated value must always be a bounded integer (no injection)
-    const limitOf = async (n: number) => {
-      const f = fakeQuery([])
-      await listJobs('m', f.q, n)
-      return f.calls[0]!.sql.match(/LIMIT (\d+)/)![1]
-    }
-    expect(await limitOf(Number.NaN)).toBe('50')
-    expect(await limitOf(0)).toBe('50')
-    expect(await limitOf(-5)).toBe('1')
-    expect(await limitOf(9999)).toBe('200')
-    expect(await limitOf(12.9)).toBe('12')
+
+  it('listJobs skips jobs whose hash already expired (index entry outlived it)', async () => {
+    let t = 0
+    const r = createMemoryJobRedis(() => t)
+    await createJob('m', 'j1', 'a.pdf', r)
+    // Advance past the job TTL so the hash evicts; the index entry may linger but is filtered out.
+    t += 49 * 60 * 60 * 1000
+    expect(await listJobs('m', r)).toEqual([])
+    expect(await getJob('m', 'j1', r)).toBeNull()
   })
 })

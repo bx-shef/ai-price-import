@@ -1,10 +1,17 @@
-import type { QueryFn } from './tokenStore'
 import type { DiskFileRef } from './disk'
 import type { TargetRef } from '~/types/mapping'
 import { isRelativePath } from './configurableActivity'
 import { parseManualTarget } from '~/utils/manualTarget'
 
-// Per-portal import-job tracking over an injected QueryFn (testable without a DB).
+// Per-portal import-job tracking over an injected JobRedis (testable without infra).
+//
+// STORAGE (#B): jobs live in REDIS with a TTL — NOT Postgres — so nothing accumulates (native PX
+// expiry, no sweep) and no per-portal table grows unbounded. Each job is a hash
+// `import:job:{member}:{jobId}` (status/fileName/result/manualOverride/diskFile/notified/createdAt);
+// a per-member ZSET index `import:jobs:{member}` (score = createdAt, capped) powers listJobs. The raw
+// bytes / extracted text still live elsewhere and are deleted at their own stages (docs/redesign 05);
+// this is only the lightweight status/meta the /app view polls. Clients aren't launched yet, so there
+// is no data to migrate off the dropped table.
 
 export type JobStatus = 'queued' | 'extracting' | 'processing' | 'done' | 'error'
 
@@ -16,43 +23,79 @@ export interface ImportJob {
   result: string
 }
 
+/**
+ * Minimal Redis surface the job store needs — injected so the store stays pure/testable with a fake
+ * (no ioredis import here; the live adapter lives in jobStoreRedis.ts). All methods are job-oriented
+ * so the fake is trivial. `put` writes a subset of hash fields + refreshes TTL; `claim` is an atomic
+ * once-only set (HSETNX) for the finalize guard; the index methods keep a capped recent-jobs list.
+ */
+export interface JobRedis {
+  /** HSET the given fields on the hash + (re)set its TTL. Partial updates are fine. */
+  put: (key: string, fields: Record<string, string>, ttlMs: number) => Promise<void>
+  /** HGETALL → field map, or null when the hash is absent/expired. */
+  getAll: (key: string) => Promise<Record<string, string> | null>
+  /** HSETNX field='1' + refresh TTL. Returns true only for the FIRST caller (atomic claim). */
+  claim: (key: string, field: string, ttlMs: number) => Promise<boolean>
+  /** ZADD jobId with score, trim to the newest `cap`, refresh the index TTL. */
+  indexAdd: (indexKey: string, jobId: string, score: number, cap: number, ttlMs: number) => Promise<void>
+  /** ZREVRANGE the newest up-to-`limit` jobIds. */
+  indexList: (indexKey: string, limit: number) => Promise<string[]>
+}
+
+/** Job TTL (ms). A job lives for minutes; the generous default keeps a finished result pollable well
+ *  past the client's window, then Redis evicts it — nothing accumulates. Env-overridable. */
+export const JOB_TTL_MS = (() => {
+  const h = Number(process.env.IMPORT_JOB_TTL_HOURS)
+  const hours = Number.isFinite(h) && h > 0 ? Math.min(h, 720) : 48
+  return hours * 60 * 60 * 1000
+})()
+
+/** Recent-jobs index cap per portal (listJobs shows the newest N). */
+const INDEX_CAP = 200
+
+const jobKey = (memberId: string, jobId: string): string => `import:job:${memberId}:${jobId}`
+const indexKey = (memberId: string): string => `import:jobs:${memberId}`
+
 export async function createJob(
   memberId: string,
   jobId: string,
   fileName: string,
-  query: QueryFn,
+  redis: JobRedis,
   manualOverride?: TargetRef | null
 ): Promise<void> {
-  await query(
-    `INSERT INTO import_job (member_id, job_id, status, file_name, manual_override)
-     VALUES ($1,$2,'queued',$3,$4)
-     ON CONFLICT (member_id, job_id) DO NOTHING`,
-    [memberId, jobId, fileName, manualOverride ? JSON.stringify(manualOverride) : null]
-  )
+  const createdAt = Date.now()
+  await redis.put(jobKey(memberId, jobId), {
+    status: 'queued',
+    fileName,
+    result: '',
+    createdAt: String(createdAt),
+    ...(manualOverride ? { manualOverride: JSON.stringify(manualOverride) } : {})
+  }, JOB_TTL_MS)
+  await redis.indexAdd(indexKey(memberId), jobId, createdAt, INDEX_CAP, JOB_TTL_MS)
 }
 
 /** Read the operator's manual import target for a job (set at upload), or undefined. The stored
- *  JSON is re-validated through parseManualTarget so a hand-tampered row can't inject a bad target. */
-export async function getManualOverride(memberId: string, jobId: string, query: QueryFn): Promise<TargetRef | undefined> {
-  const { rows } = await query('SELECT manual_override FROM import_job WHERE member_id=$1 AND job_id=$2', [memberId, jobId])
-  const raw = rows[0]?.manual_override
-  if (raw == null) return undefined
-  // pg returns JSONB already parsed (object); tolerate a string too.
-  return parseManualTarget(raw) ?? undefined
+ *  JSON is re-validated through parseManualTarget so a hand-tampered value can't inject a bad target. */
+export async function getManualOverride(memberId: string, jobId: string, redis: JobRedis): Promise<TargetRef | undefined> {
+  const h = await redis.getAll(jobKey(memberId, jobId))
+  const raw = h?.manualOverride
+  if (!raw) return undefined
+  try {
+    return parseManualTarget(JSON.parse(raw)) ?? undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Persist the archived source-file ref (id + DETAIL_URL) for a job — best-effort (#129 follow-up:
- *  crm-sync links it on the timeline дело). Stored as JSON in `import_job.disk_file`. */
-export async function setDiskFile(memberId: string, jobId: string, ref: DiskFileRef, query: QueryFn): Promise<void> {
-  await query(
-    'UPDATE import_job SET disk_file=$3, updated_at=now() WHERE member_id=$1 AND job_id=$2',
-    [memberId, jobId, JSON.stringify({ id: ref.id, detailUrl: ref.detailUrl })]
-  )
+ *  crm-sync links it on the timeline дело). Stored as JSON in the `diskFile` hash field. */
+export async function setDiskFile(memberId: string, jobId: string, ref: DiskFileRef, redis: JobRedis): Promise<void> {
+  await redis.put(jobKey(memberId, jobId), { diskFile: JSON.stringify({ id: ref.id, detailUrl: ref.detailUrl }) }, JOB_TTL_MS)
 }
 
 /** Normalize a Disk DETAIL_URL to a same-portal RELATIVE path. `disk.folder.uploadfile` returns an
  *  ABSOLUTE URL (`https://<portal>/docs/file/…`, live-verified), so we strip it to its path — a
- *  relative `/…` redirect can never leave the portal, so this is SSRF-safe even for a tampered row.
+ *  relative `/…` redirect can never leave the portal, so this is SSRF-safe even for a tampered value.
  *  Returns null for anything that can't be reduced to a clean leading-slash path. */
 export function detailUrlToRelative(url: unknown): string | null {
   if (typeof url !== 'string' || !url) return null
@@ -68,68 +111,63 @@ export function detailUrlToRelative(url: unknown): string | null {
 }
 
 /** Read the archived source file's DETAIL_URL for a job as a same-portal RELATIVE path, or null. */
-export async function getDiskFileUrl(memberId: string, jobId: string, query: QueryFn): Promise<string | null> {
-  const { rows } = await query('SELECT disk_file FROM import_job WHERE member_id=$1 AND job_id=$2', [memberId, jobId])
-  const raw = rows[0]?.disk_file
-  if (raw == null) return null
-  let obj: unknown = raw
-  if (typeof raw === 'string') {
-    try {
-      obj = JSON.parse(raw)
-    } catch {
-      return null
-    }
+export async function getDiskFileUrl(memberId: string, jobId: string, redis: JobRedis): Promise<string | null> {
+  const h = await redis.getAll(jobKey(memberId, jobId))
+  const raw = h?.diskFile
+  if (!raw) return null
+  try {
+    return detailUrlToRelative((JSON.parse(raw) as { detailUrl?: unknown })?.detailUrl)
+  } catch {
+    return null
   }
-  return detailUrlToRelative((obj as { detailUrl?: unknown })?.detailUrl)
 }
 
-export async function setJobStatus(memberId: string, jobId: string, status: JobStatus, result: string, query: QueryFn): Promise<void> {
-  await query(
-    'UPDATE import_job SET status=$3, result=$4, updated_at=now() WHERE member_id=$1 AND job_id=$2',
-    [memberId, jobId, status, result]
-  )
+export async function setJobStatus(memberId: string, jobId: string, status: JobStatus, result: string, redis: JobRedis): Promise<void> {
+  await redis.put(jobKey(memberId, jobId), { status, result }, JOB_TTL_MS)
 }
 
 /**
- * Atomically CLAIM the one-time «finalize» (success chat + timeline дело) for a job (#164).
- * Flips `notified` false→true in a single UPDATE and RETURNs the row only to the winner, so
- * exactly one run finalizes even under a retry that resumes after a post-create failure or a
- * concurrent stalled redelivery: the first caller gets `true`, everyone after gets `false`.
- * A missing job row (anomalous — the row is created at ingestion) also yields `false` → the
- * notification is skipped rather than risking a post without a tracked job (fail toward
- * «missed notice over double post», the accepted trade in #164).
+ * Atomically CLAIM the one-time «finalize» (success chat + timeline дело) for a job (#164): HSETNX the
+ * `notified` field — exactly one caller flips absent→'1' and gets `true`, everyone after gets `false`.
+ * So a retry resuming after a post-create failure, or a concurrent stalled redelivery, still finalizes
+ * exactly once. If Redis is unavailable the claim returns false → fail toward «missed notice over
+ * double post» (the accepted trade in #164).
+ *
+ * NB (TTL-bounded, #B): the claim now lives on the job hash, so the once-only memory lasts JOB_TTL_MS
+ * (default 48h), not 30 days as the old Postgres row did. This is safe because BullMQ's own job
+ * retention window is far shorter than the TTL — a redelivery arrives (and re-claims) only while the
+ * hash is still alive. A redelivery AFTER the hash expired (astronomically rare — the BullMQ job is
+ * long gone by then) would re-claim and re-post; bump IMPORT_JOB_TTL_HOURS if you configure unusually
+ * long queue retention.
  */
-export async function claimJobNotify(memberId: string, jobId: string, query: QueryFn): Promise<boolean> {
-  const { rows } = await query(
-    `UPDATE import_job SET notified=true, updated_at=now()
-     WHERE member_id=$1 AND job_id=$2 AND notified=false
-     RETURNING job_id`,
-    [memberId, jobId]
-  )
-  return rows.length > 0
+export async function claimJobNotify(memberId: string, jobId: string, redis: JobRedis): Promise<boolean> {
+  return redis.claim(jobKey(memberId, jobId), 'notified', JOB_TTL_MS)
 }
 
-function mapJob(r: Record<string, unknown>): ImportJob {
+function mapJob(memberId: string, jobId: string, h: Record<string, string>): ImportJob {
   return {
-    memberId: String(r.member_id),
-    jobId: String(r.job_id),
-    status: String(r.status) as JobStatus,
-    fileName: String(r.file_name ?? ''),
-    result: String(r.result ?? '')
+    memberId,
+    jobId,
+    status: (h.status || 'queued') as JobStatus,
+    fileName: h.fileName ?? '',
+    result: h.result ?? ''
   }
 }
 
-/** Recent jobs for a portal (newest first), for the in-portal status view. */
-export async function listJobs(memberId: string, query: QueryFn, limit = 50): Promise<ImportJob[]> {
+/** Recent jobs for a portal (newest first), for the in-portal status view. Expired jobs whose hash
+ *  already evicted are skipped (the index entry outlives the hash briefly; it self-trims on cap/TTL). */
+export async function listJobs(memberId: string, redis: JobRedis, limit = 50): Promise<ImportJob[]> {
   const capped = Math.max(1, Math.min(200, Math.trunc(limit) || 50))
-  const { rows } = await query(
-    `SELECT * FROM import_job WHERE member_id=$1 ORDER BY created_at DESC LIMIT ${capped}`,
-    [memberId]
-  )
-  return rows.map(mapJob)
+  const ids = await redis.indexList(indexKey(memberId), capped)
+  const out: ImportJob[] = []
+  for (const jobId of ids) {
+    const h = await redis.getAll(jobKey(memberId, jobId))
+    if (h && Object.keys(h).length) out.push(mapJob(memberId, jobId, h))
+  }
+  return out
 }
 
-export async function getJob(memberId: string, jobId: string, query: QueryFn): Promise<ImportJob | null> {
-  const { rows } = await query('SELECT * FROM import_job WHERE member_id=$1 AND job_id=$2', [memberId, jobId])
-  return rows[0] ? mapJob(rows[0]) : null
+export async function getJob(memberId: string, jobId: string, redis: JobRedis): Promise<ImportJob | null> {
+  const h = await redis.getAll(jobKey(memberId, jobId))
+  return h && Object.keys(h).length ? mapJob(memberId, jobId, h) : null
 }

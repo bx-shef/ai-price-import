@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { extractFrameAuth } from '../../utils/frameAuth'
 import { resolveFrameMember } from '../../utils/resolveFrameMember'
 import { createJob } from '../../utils/jobStore'
+import { jobRedis } from '../../utils/jobStoreRedis'
 import { saveUpload } from '../../utils/fileStore'
 import { nodeFileIO } from '../../utils/nodeFileIO'
 import { enqueueExtract } from '../../queue/producers'
@@ -58,7 +59,7 @@ export default defineEventHandler(async (event) => {
   const manualOverride = targetPart?.data?.length ? parseManualTarget(targetPart.data.toString('utf8')) : null
 
   const jobId = randomUUID()
-  await createJob(member.memberId, jobId, file.filename, query, manualOverride)
+  await createJob(member.memberId, jobId, file.filename, jobRedis, manualOverride)
   await saveUpload(member.memberId, jobId, file.data, nodeFileIO)
   await enqueueExtract({ memberId: member.memberId, jobId, fileId: file.filename })
   return { jobId, status: 'queued' }

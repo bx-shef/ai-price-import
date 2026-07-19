@@ -10,6 +10,7 @@ import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTr
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { claimJobNotify, getDiskFileUrl, getManualOverride, setDiskFile, setJobStatus } from '../utils/jobStore'
+import { jobRedis } from '../utils/jobStoreRedis'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
 import { findExistingItemId } from '../utils/originLookup'
@@ -159,8 +160,8 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
     extractText: (m, j, fileId) => extractText(uploadPath(m, j), fileId, infra.runners),
     saveText: (m, j, text) => saveText(m, j, text, infra.query),
     enqueueAgentRun: (m, j) => enqueueAgent({ memberId: m, jobId: j }),
-    failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, infra.query),
-    markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', infra.query),
+    failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, jobRedis),
+    markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', jobRedis),
     // Archive the source file to the portal's common Disk when `saveFile` is on. One transport
     // is resolved and shared by the mapping read and the Disk upload (no double token-load); the
     // raw bytes come from the upload dir (this is the last stage where they exist). A Disk hiccup
@@ -174,7 +175,7 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
       // token-refresh path (#35); the lock ignores the injected QueryFn (no DB work in the archive).
       serialize: (key, fn) => withAdvisoryLock(key, () => fn()),
       // Persist the archived file ref so crm-sync can link it on the timeline дело (#129 follow-up).
-      recordDiskFile: (m, j, ref) => setDiskFile(m, j, ref, infra.query),
+      recordDiskFile: (m, j, ref) => setDiskFile(m, j, ref, jobRedis),
       now: infra.now
     })
   }
@@ -194,12 +195,12 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
     },
     saveDocument: (m, j, stored) => saveDocument(m, j, stored, infra.query),
     enqueueCrmSync: (m, j) => enqueueCrmSync({ memberId: m, jobId: j }),
-    failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, infra.query),
+    failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, jobRedis),
     // Operator's manual import target (set at upload) → RoutingSignals.manualOverride, which
     // resolveTarget applies with top priority over the routing rules (#135 routing slice 2).
-    getManualOverride: (m, j) => getManualOverride(m, j, infra.query),
+    getManualOverride: (m, j) => getManualOverride(m, j, jobRedis),
     deleteText: (m, j) => deleteText(m, j, infra.query),
-    markProcessing: (m, j) => setJobStatus(m, j, 'processing', '', infra.query)
+    markProcessing: (m, j) => setJobStatus(m, j, 'processing', '', jobRedis)
   }
 }
 
@@ -236,7 +237,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     // One-time finalize claim (#164): the run that wins flips import_job.notified false→true, so
     // the success chat + timeline дело fire exactly once even when a retry resumes after a
     // post-create failure. Atomic UPDATE → race-safe against a concurrent stalled redelivery.
-    claimFinalize: () => claimJobNotify(memberId, jobId, infra.query),
+    claimFinalize: () => claimJobNotify(memberId, jobId, jobRedis),
     // Idempotency by B24 marker search (originId/xmlId) — no local checkpoint. The originator
     // code (env, defaults to the repo code) namespaces our marker so it never matches a portal's
     // own external-source data.
@@ -293,7 +294,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount }) => {
       // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
       // Best-effort — a lookup failure just omits the button, never fails the import.
-      const sourceFileUrl = await getDiskFileUrl(memberId, jobId, infra.query).catch(() => null)
+      const sourceFileUrl = await getDiskFileUrl(memberId, jobId, jobRedis).catch(() => null)
       const params = buildConfigurableActivity({
         entityTypeId,
         ownerId: entityId,
@@ -314,7 +315,7 @@ export function liveCrmSyncHandlerDeps(infra: LiveInfra): HandlerDeps {
     getMapping: m => loadMapping(m, rest),
     getDocument: (m, j) => getDocument(m, j, infra.query),
     crmSyncDeps: (m, j, mapping) => liveCrmSyncDeps(m, j, mapping, rest, infra),
-    setJobStatus: (m, j, status, result) => setJobStatus(m, j, status, result, infra.query),
+    setJobStatus: (m, j, status, result) => setJobStatus(m, j, status, result, jobRedis),
     deleteDocument: (m, j) => deleteDocument(m, j, infra.query),
     bumpMetrics: async (m, deltas) => {
       for (const [name, by] of Object.entries(deltas)) await bumpCounter(m, name, by, infra.query)
