@@ -95,3 +95,24 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     defaultTarget: asTarget(o.defaultTarget, DEFAULT_TARGET)
   }
 }
+
+/** Whether the admin has configured ANYTHING beyond the pristine defaults. Returns false only when
+ *  the mapping is byte-for-byte the out-of-the-box default (defaultMapping) — i.e. the portal admin
+ *  has never touched settings. The in-portal home page uses this to nudge an admin to set things up
+ *  (and to tell a non-admin the app isn't configured yet) before the first import. Pure — any single
+ *  meaningful setting (article field, a chat, a routing rule, a custom target/strategy/unit) flips it
+ *  to true, so a partially-configured portal is never falsely reported as «not configured». */
+export function isPortalConfigured(m: PortalMapping): boolean {
+  if (m.article.field.trim()) return true
+  if (m.notifyChatId || m.errorChatId) return true
+  if (m.routingRules.length > 0) return true
+  if (Object.keys(m.units.dictionary).length > 0) return true
+  if (m.saveFile) return true
+  if (m.product.by !== 'article' || m.product.onMissing !== 'skip-warn') return true
+  if (m.units.defaultCode !== 796 || m.units.autoCreate) return true
+  // Default target moved off the fallback anchor (deal / direction 0 / no stage)? categoryId 0 IS
+  // the anchor (default deal pipeline), so only a non-zero funnel or a set stage counts as configured.
+  const t = m.defaultTarget
+  if (t.entityTypeId !== DEFAULT_TARGET.entityTypeId || (t.categoryId ?? 0) !== 0 || t.stageId) return true
+  return false
+}

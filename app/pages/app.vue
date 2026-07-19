@@ -5,6 +5,8 @@ import CirclePlusIcon from '@bitrix24/b24icons-vue/outline/CirclePlusIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
+import { useSettings } from '~/composables/useSettings'
+import { isPortalConfigured } from '~/utils/portalSettings'
 import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
 import { formatMinutes } from '~/utils/savings'
 
@@ -15,9 +17,21 @@ useHead({ title: 'Импорт документов — обзор' })
 
 const { jobs, loading, error, refresh } = useImport()
 const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
-onMounted(() => {
+
+// Setup gate: the app works on defaults, but before the first import an admin should configure it
+// (article field, target, chats). On load we read the portal settings; if nothing has been touched
+// (pristine defaults) we nudge — an admin to open /settings, a non-admin to ask their admin. Only
+// when settings actually loaded IN the portal (`settingsLoaded` — no frame → error → no nudge).
+const { mapping, isAdmin, error: settingsError, load: loadSettings } = useSettings()
+const settingsLoaded = ref(false)
+const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
+
+onMounted(async () => {
   refresh()
   loadMetrics()
+  await loadSettings()
+  // Loaded successfully inside the portal (a frame error means standalone/no-auth → don't nudge).
+  settingsLoaded.value = !settingsError.value
 })
 
 // Two-step reset (no window.confirm): click «Сбросить» → confirm inline. Keep the
@@ -90,6 +104,30 @@ const toneClass: Record<string, string> = {
         />
       </div>
     </div>
+
+    <!-- Setup nudge: shown until the admin configures the app (pristine defaults). Admin gets a
+         call-to-action to /settings; a non-admin is told to ask their portal admin. -->
+    <B24Alert
+      v-if="needsSetup"
+      class="mb-4"
+      :color="isAdmin ? 'air-primary-warning' : 'air-primary-copilot'"
+      :title="isAdmin ? 'Приложение не настроено' : 'Приложение ещё не настроено'"
+      :description="isAdmin
+        ? 'Задайте настройки импорта (поле артикула, целевую сущность, чаты уведомлений) перед первой загрузкой документа.'
+        : 'Обратитесь к администратору портала — настройки импорта ещё не заданы.'"
+    >
+      <template
+        v-if="isAdmin"
+        #actions
+      >
+        <B24Button
+          label="Настроить"
+          to="/settings"
+          color="air-primary"
+          size="sm"
+        />
+      </template>
+    </B24Alert>
 
     <div class="grid grid-cols-3 gap-3">
       <div
