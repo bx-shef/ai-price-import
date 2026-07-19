@@ -34,6 +34,13 @@ describe('ImportJobItem', () => {
     expect(w.find('[aria-label^="Стадия:"]').exists()).toBe(false)
   })
 
+  it('done → «разбор» shows supplier + line count with Russian plural', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"created":true,"supplier":"ООО Ромашка","lines":3,"warnings":[],"errors":[]}') } })
+    const text = w.text()
+    expect(text).toContain('поставщик: ООО Ромашка')
+    expect(text).toContain('3 позиции')
+  })
+
   it('done with warnings → lists them', async () => {
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":["НДС не найден"],"errors":[]}') } })
     expect(w.text()).toContain('НДС не найден')
