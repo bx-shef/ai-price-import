@@ -10,11 +10,14 @@ useHead({ title: 'Очереди импорта', meta: [{ name: 'robots', conte
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
 interface PortalStatus { memberId: string, domain: string, ageDays: number, expiresInDays: number, health: 'ok' | 'near-expiry' | 'stale' }
+type RatingState = 'reviewed' | 'opened' | 'prompted' | 'none'
+interface RatingStatus { memberId: string, domain: string, state: RatingState, promptedAtMs: number | null, openedAtMs: number | null }
 
 const { authenticated, check, logout } = useAuth()
 const router = useRouter()
 const queues = ref<QueueCounts[]>([])
 const portals = ref<PortalStatus[]>([])
+const ratings = ref<RatingStatus[]>([])
 const error = ref('')
 const loading = ref(false)
 
@@ -29,6 +32,16 @@ const HEALTH_META: Record<PortalStatus['health'], { label: string, cls: string }
   'ok': { label: 'активен', cls: 'text-(--ui-color-accent-main-success)' },
   'near-expiry': { label: 'скоро истекает', cls: 'text-(--ui-color-accent-main-warning)' },
   'stale': { label: 'нужна переустановка', cls: 'text-(--ui-color-accent-main-alert)' }
+}
+// «Оцените приложение» lifecycle per portal — the owner manages it here instead of running SQL.
+const RATING_META: Record<RatingState, { label: string, cls: string }> = {
+  opened: { label: 'открыл Маркет — проверьте отзыв', cls: 'text-(--ui-color-accent-main-warning)' },
+  prompted: { label: 'показан, Маркет не открыл', cls: 'text-(--ui-color-base-3)' },
+  none: { label: 'ещё не показывался', cls: 'text-(--ui-color-base-4)' },
+  reviewed: { label: 'отзыв подтверждён', cls: 'text-(--ui-color-accent-main-success)' }
+}
+function fmtDate(ms: number | null): string {
+  return ms ? new Date(ms).toLocaleDateString('ru-RU') : '—'
 }
 
 async function load() {
@@ -52,6 +65,34 @@ async function load() {
     const t = await $fetch<{ portals: PortalStatus[] }>('/api/ops/tokens')
     portals.value = t.portals
   } catch { /* non-fatal */ }
+  // App-rating state — best-effort too (independent card).
+  try {
+    const a = await $fetch<{ portals: RatingStatus[] }>('/api/ops/app-rating')
+    ratings.value = a.portals
+  } catch { /* non-fatal */ }
+}
+
+// Owner control of the review lifecycle from the UI (no SQL): confirm a review (terminal) or reset
+// the flag so the modal shows again.
+const ratingBusy = ref<string>('') // member_id currently mutating (disables its buttons)
+const ratingMsg = ref<string>('')
+async function setRating(memberId: string, action: 'reviewed' | 'reset') {
+  ratingBusy.value = memberId
+  ratingMsg.value = ''
+  try {
+    await $fetch('/api/ops/app-rating', { method: 'POST', body: { memberId, action } })
+    ratingMsg.value = action === 'reviewed' ? 'Отмечено как «отзыв оставлен»' : 'Флаг сброшен — попап покажется снова'
+    await load() // re-pull so the row reflects the new state
+  } catch (e) {
+    const code = (e as { statusCode?: number })?.statusCode
+    if (code === 401) {
+      await router.push('/login')
+      return
+    }
+    ratingMsg.value = 'Не удалось изменить статус'
+  } finally {
+    ratingBusy.value = ''
+  }
 }
 
 // Force-refresh one portal's OAuth token from the UI (#132) — no SSH, no secret in the browser.
@@ -194,6 +235,67 @@ onMounted(async () => {
               :label="reauthing === p.memberId ? 'Обновление…' : 'Переавторизовать'"
               :aria-label="`Переавторизовать портал ${p.domain}`"
               @click="() => reauth(p.memberId)"
+            />
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Оценки приложения — управление жизненным циклом «оцените приложение» вручную (не через SQL) -->
+    <div
+      v-if="ratings.length"
+      class="mt-8"
+    >
+      <h2 class="mb-1 text-sm font-semibold text-(--ui-color-base-2)">
+        Оценки приложения
+      </h2>
+      <p class="mb-3 text-xs text-(--ui-color-base-4)">
+        После клика «Оценить» проверьте отзыв в Маркете и отметьте: «Отзыв оставлен» (попап больше не
+        покажется) или «Сбросить» (покажется снова).
+      </p>
+      <p
+        v-if="ratingMsg"
+        class="mb-2 text-xs text-(--ui-color-base-3)"
+        role="status"
+      >
+        {{ ratingMsg }}
+      </p>
+      <div class="space-y-2">
+        <div
+          v-for="r in ratings"
+          :key="r.memberId"
+          class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-(--ui-color-base-5) p-3"
+        >
+          <span class="flex flex-col">
+            <span class="text-sm font-medium">{{ r.domain }}</span>
+            <span class="text-xs text-(--ui-color-base-4)">
+              показан: {{ fmtDate(r.promptedAtMs) }} · открыл: {{ fmtDate(r.openedAtMs) }}
+            </span>
+          </span>
+          <span class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span
+              class="text-sm"
+              :class="RATING_META[r.state].cls"
+            >{{ RATING_META[r.state].label }}</span>
+            <B24Button
+              v-if="r.state !== 'reviewed'"
+              color="air-tertiary-no-accent"
+              size="xs"
+              :loading="ratingBusy === r.memberId"
+              :disabled="ratingBusy !== ''"
+              label="Отзыв оставлен"
+              :aria-label="`Отметить, что портал ${r.domain} оставил отзыв`"
+              @click="() => setRating(r.memberId, 'reviewed')"
+            />
+            <B24Button
+              v-if="r.state === 'opened' || r.state === 'prompted'"
+              color="air-tertiary-no-accent"
+              size="xs"
+              :loading="ratingBusy === r.memberId"
+              :disabled="ratingBusy !== ''"
+              label="Сбросить"
+              :aria-label="`Сбросить флаг оценки для портала ${r.domain}`"
+              @click="() => setRating(r.memberId, 'reset')"
             />
           </span>
         </div>

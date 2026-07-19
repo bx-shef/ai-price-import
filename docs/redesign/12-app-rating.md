@@ -44,25 +44,33 @@
 Оба роута аутентифицированы **фрейм-токеном** (`resolveFrameMember` → `member_id` из проверенного
 домена; клиентский `member_id` не в доверии). Вне портала / без `DATABASE_URL` — инертно (`show:false`).
 
-## Ручная проверка факта отзыва (через ~4 дня)
+## Управление из UI оператора (не через SQL)
 
-Отзыв в Маркете подтверждается **вручную** (у REST нет надёжного «этот портал оставил отзыв»).
-Через ~`RATING_REPROMPT_DAYS` после клика проверяем витрину и правим строку SQL:
+Отзыв в Маркете подтверждается **вручную** (у REST нет надёжного «этот портал оставил отзыв»), но
+владелец **не пишет SQL** — управляет со страницы оператора `/queues`, карточка **«Оценки
+приложения»** (рядом с «Авторизацией порталов», тот же паттерн, что кнопка reauth):
+
+- по каждому установленному порталу видно состояние: `ещё не показывался` / `показан` /
+  **`открыл Маркет — проверьте отзыв`** (наверху списка) / `отзыв подтверждён`, + даты показа/клика;
+- через ~`RATING_REPROMPT_DAYS` после клика проверяем витрину и жмём:
+  - **«Отзыв оставлен»** → `reviewed=true` (терминально, попап больше не показываем);
+  - **«Сбросить»** → снимаем `opened_at`/`prompted_at` (попап покажется снова при следующем импорте).
+
+Роуты (сессия оператора, cookie `OP_COOKIE`, как у `/api/ops/tokens`), только несекретные поля:
+
+- `GET /api/ops/app-rating` → `{ portals: [{ memberId, domain, state, promptedAtMs, openedAtMs }] }`
+  (`listRatingStatus` LEFT JOIN `portal_tokens` → видны и порталы без строки; `buildRatingStatuses`
+  сортирует «требует внимания» первыми).
+- `POST /api/ops/app-rating { memberId, action: 'reviewed' | 'reset' }` (`handleAppRatingOp` →
+  `markReviewed` / `clearOpened`; валидация hex-`member_id`).
+
+Прямой SQL остаётся запасным путём (те же функции `markReviewed` / `clearOpened`):
 
 ```sql
--- отзыв появился → закрываем навсегда:
 UPDATE portal_app_rating SET reviewed = true, updated_at = now() WHERE member_id = '<member_id>';
-
--- отзыва нет → снимаем флаг, попап вернётся на следующем интервале:
 UPDATE portal_app_rating SET opened_at = NULL, prompted_at = NULL, updated_at = now()
-WHERE member_id = '<member_id>' AND reviewed = false;
-
--- кто кликнул «Оценить», но ещё не проверен:
-SELECT member_id, opened_at FROM portal_app_rating WHERE opened_at IS NOT NULL AND reviewed = false;
+  WHERE member_id = '<member_id>' AND reviewed = false;
 ```
-
-Те же операции доступны как функции `markReviewed` / `clearOpened` (`server/utils/appRatingStore.ts`)
-для будущего ops-роута.
 
 ## Настройка
 
@@ -90,6 +98,9 @@ SELECT member_id, opened_at FROM portal_app_rating WHERE opened_at IS NOT NULL A
 - `server/utils/appRatingPolicy.ts` — чистое решение `shouldPrompt` (+ тесты).
 - `server/utils/appRatingStore.ts` — состояние через инъекцию `QueryFn` (+ тесты).
 - `server/api/app-rating.get.ts` / `.post.ts` — фрейм-токен-роуты (read / prompted+opened).
+- `server/utils/appRatingStatus.ts` + `appRatingOpsHandler.ts` — чистые ядра ops-управления (+ тесты).
+- `server/api/ops/app-rating.get.ts` / `.post.ts` — ops-роуты (сессия оператора) для карточки на `/queues`.
 - `app/composables/useAppRating.ts` — клиент (check/markPrompted/openMarket через `slider.openPath`).
 - `app/components/AppRatingModal.vue` — **переиспользуемый** попап на `B24Modal`.
+- `app/pages/queues.vue` — карточка «Оценки приложения» (управление вручную).
 - `app/config/b24.ts` — `marketDetailPath`; `nuxt.config.ts` — `public.b24MarketCode`.
