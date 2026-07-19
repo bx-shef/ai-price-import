@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { claimJobNotify, createJob, getDiskFileUrl, getJob, getManualOverride, listJobs, setDiskFile, setJobStatus } from '../server/utils/jobStore'
+import { describe, expect, it } from 'vitest'
+import { claimJobNotify, createJob, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus } from '../server/utils/jobStore'
 import { createMemoryJobRedis } from '../server/utils/jobStoreRedis'
-
-afterEach(() => vi.restoreAllMocks())
 
 // The store logic is exercised over the in-memory JobRedis (same interface as the live ioredis
 // adapter) — no infra, deterministic. A controllable clock drives TTL expiry.
@@ -57,26 +55,12 @@ describe('jobStore (Redis-backed)', () => {
     expect(await claimJobNotify('m', 'j1', r)).toBe(false)
   })
 
-  it('listJobs returns the portal jobs newest-first', async () => {
-    // createJob scores the index entry by Date.now() — drive it so the three creates get distinct,
-    // increasing scores (as real uploads seconds apart would).
-    let now = 1000
-    vi.spyOn(Date, 'now').mockImplementation(() => (now += 10))
-    const r = createMemoryJobRedis(() => now)
-    await createJob('m', 'old', 'a.pdf', r)
-    await createJob('m', 'mid', 'b.pdf', r)
-    await createJob('m', 'new', 'c.pdf', r)
-    const ids = (await listJobs('m', r)).map(j => j.jobId)
-    expect(ids).toEqual(['new', 'mid', 'old'])
-  })
-
-  it('listJobs skips jobs whose hash already expired (index entry outlived it)', async () => {
+  it('getJob returns null once the job hash expires past its TTL (nothing accumulates)', async () => {
     let t = 0
     const r = createMemoryJobRedis(() => t)
     await createJob('m', 'j1', 'a.pdf', r)
-    // Advance past the job TTL so the hash evicts; the index entry may linger but is filtered out.
-    t += 49 * 60 * 60 * 1000
-    expect(await listJobs('m', r)).toEqual([])
+    expect(await getJob('m', 'j1', r)).not.toBeNull()
+    t += 49 * 60 * 60 * 1000 // past the 48h default TTL
     expect(await getJob('m', 'j1', r)).toBeNull()
   })
 })

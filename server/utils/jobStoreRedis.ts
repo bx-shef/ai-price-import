@@ -50,23 +50,6 @@ export function createIoredisJobRedis(conn: RedisOptions): JobRedis {
         warn('claim', e)
         return false // fail toward «missed notice over double post» (#164)
       }
-    },
-    async indexAdd(index, jobId, score, cap, ttlMs) {
-      try {
-        await client.zadd(index, score, jobId)
-        await client.zremrangebyrank(index, 0, -(cap + 1)) // keep only the newest `cap`
-        await client.pexpire(index, ttlMs)
-      } catch (e) {
-        warn('indexAdd', e)
-      }
-    },
-    async indexList(index, limit) {
-      try {
-        return await client.zrevrange(index, 0, limit - 1)
-      } catch (e) {
-        warn('indexList', e)
-        return []
-      }
     }
   }
 }
@@ -76,21 +59,11 @@ export function createIoredisJobRedis(conn: RedisOptions): JobRedis {
  *  nothing accumulates in-process either. */
 export function createMemoryJobRedis(now: () => number = Date.now): JobRedis {
   const hashes = new Map<string, { fields: Record<string, string>, exp: number }>()
-  const indexes = new Map<string, { entries: Map<string, number>, exp: number }>()
   const liveHash = (key: string) => {
     const e = hashes.get(key)
     if (!e) return null
     if (e.exp <= now()) {
       hashes.delete(key)
-      return null
-    }
-    return e
-  }
-  const liveIndex = (key: string) => {
-    const e = indexes.get(key)
-    if (!e) return null
-    if (e.exp <= now()) {
-      indexes.delete(key)
       return null
     }
     return e
@@ -114,22 +87,6 @@ export function createMemoryJobRedis(now: () => number = Date.now): JobRedis {
       e.exp = now() + ttlMs
       hashes.set(key, e)
       return fresh
-    },
-    async indexAdd(index, jobId, score, cap, ttlMs) {
-      const e = liveIndex(index) ?? { entries: new Map<string, number>(), exp: 0 }
-      e.entries.set(jobId, score)
-      if (e.entries.size > cap) {
-        // keep the newest `cap` by score
-        const keep = [...e.entries.entries()].sort((a, b) => b[1] - a[1]).slice(0, cap)
-        e.entries = new Map(keep)
-      }
-      e.exp = now() + ttlMs
-      indexes.set(index, e)
-    },
-    async indexList(index, limit) {
-      const e = liveIndex(index)
-      if (!e) return []
-      return [...e.entries.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => id)
     }
   }
 }

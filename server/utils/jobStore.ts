@@ -5,13 +5,13 @@ import { parseManualTarget } from '~/utils/manualTarget'
 
 // Per-portal import-job tracking over an injected JobRedis (testable without infra).
 //
-// STORAGE (#B): jobs live in REDIS with a TTL — NOT Postgres — so nothing accumulates (native PX
-// expiry, no sweep) and no per-portal table grows unbounded. Each job is a hash
-// `import:job:{member}:{jobId}` (status/fileName/result/manualOverride/diskFile/notified/createdAt);
-// a per-member ZSET index `import:jobs:{member}` (score = createdAt, capped) powers listJobs. The raw
-// bytes / extracted text still live elsewhere and are deleted at their own stages (docs/redesign 05);
-// this is only the lightweight status/meta the /app view polls. Clients aren't launched yet, so there
-// is no data to migrate off the dropped table.
+// STORAGE (#B/#D): jobs live in REDIS with a TTL — NOT Postgres — so nothing accumulates (native PX
+// expiry, no sweep). Each job is a hash `import:job:{member}:{jobId}` (status/fileName/result/
+// manualOverride/diskFile/notified/createdAt). There is NO server-side per-portal list: the employee's
+// browser keeps its own job list in localStorage (app/utils/importHistory.ts) and polls status BY ID
+// (getJob) — the status list is only useful to the person who ran the import. The raw bytes / extracted
+// text live elsewhere and are deleted at their own stages (docs/redesign 05); this is only the
+// lightweight per-job status the client polls.
 
 export type JobStatus = 'queued' | 'extracting' | 'processing' | 'done' | 'error'
 
@@ -36,10 +36,6 @@ export interface JobRedis {
   getAll: (key: string) => Promise<Record<string, string> | null>
   /** HSETNX field='1' + refresh TTL. Returns true only for the FIRST caller (atomic claim). */
   claim: (key: string, field: string, ttlMs: number) => Promise<boolean>
-  /** ZADD jobId with score, trim to the newest `cap`, refresh the index TTL. */
-  indexAdd: (indexKey: string, jobId: string, score: number, cap: number, ttlMs: number) => Promise<void>
-  /** ZREVRANGE the newest up-to-`limit` jobIds. */
-  indexList: (indexKey: string, limit: number) => Promise<string[]>
 }
 
 /** Job TTL (ms). A job lives for minutes; the generous default keeps a finished result pollable well
@@ -50,11 +46,7 @@ export const JOB_TTL_MS = (() => {
   return hours * 60 * 60 * 1000
 })()
 
-/** Recent-jobs index cap per portal (listJobs shows the newest N). */
-const INDEX_CAP = 200
-
 const jobKey = (memberId: string, jobId: string): string => `import:job:${memberId}:${jobId}`
-const indexKey = (memberId: string): string => `import:jobs:${memberId}`
 
 export async function createJob(
   memberId: string,
@@ -63,15 +55,13 @@ export async function createJob(
   redis: JobRedis,
   manualOverride?: TargetRef | null
 ): Promise<void> {
-  const createdAt = Date.now()
   await redis.put(jobKey(memberId, jobId), {
     status: 'queued',
     fileName,
     result: '',
-    createdAt: String(createdAt),
+    createdAt: String(Date.now()),
     ...(manualOverride ? { manualOverride: JSON.stringify(manualOverride) } : {})
   }, JOB_TTL_MS)
-  await redis.indexAdd(indexKey(memberId), jobId, createdAt, INDEX_CAP, JOB_TTL_MS)
 }
 
 /** Read the operator's manual import target for a job (set at upload), or undefined. The stored
@@ -152,19 +142,6 @@ function mapJob(memberId: string, jobId: string, h: Record<string, string>): Imp
     fileName: h.fileName ?? '',
     result: h.result ?? ''
   }
-}
-
-/** Recent jobs for a portal (newest first), for the in-portal status view. Expired jobs whose hash
- *  already evicted are skipped (the index entry outlives the hash briefly; it self-trims on cap/TTL). */
-export async function listJobs(memberId: string, redis: JobRedis, limit = 50): Promise<ImportJob[]> {
-  const capped = Math.max(1, Math.min(200, Math.trunc(limit) || 50))
-  const ids = await redis.indexList(indexKey(memberId), capped)
-  const out: ImportJob[] = []
-  for (const jobId of ids) {
-    const h = await redis.getAll(jobKey(memberId, jobId))
-    if (h && Object.keys(h).length) out.push(mapJob(memberId, jobId, h))
-  }
-  return out
 }
 
 export async function getJob(memberId: string, jobId: string, redis: JobRedis): Promise<ImportJob | null> {

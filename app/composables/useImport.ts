@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { jobStatusMeta, type JobStatus } from '~/utils/jobStatus'
+import { addImportJob, importJobIds, readHistory } from '~/utils/importHistory'
 import type { TargetRef } from '~/types/mapping'
 
 // In-portal import client: upload a document and poll job status via the frame-token
@@ -68,10 +69,27 @@ export function useImport() {
       error.value = 'Импорт доступен только внутри портала Bitrix24'
       return
     }
+    // The client owns the job list (localStorage) — poll status only for OUR jobIds. No server list.
+    const store = typeof window !== 'undefined' ? window.localStorage : null
+    const ids = store ? importJobIds(store) : []
+    if (!ids.length) {
+      jobs.value = []
+      error.value = ''
+      return
+    }
     loading.value = true
     try {
-      const res = await $fetch<{ jobs: ImportJobView[] }>('/api/import/status', { headers: h })
-      jobs.value = res.jobs
+      const res = await $fetch<{ jobs: ImportJobView[] }>('/api/import/status', { headers: h, query: { ids: ids.join(',') } })
+      // Merge: server gives the live status/result; localStorage gives the fileName we remembered
+      // (and preserves display order = newest-first). Jobs whose server status expired just drop off.
+      const local = store ? readHistory(store) : []
+      const byId = new Map(res.jobs.map(j => [j.jobId, j]))
+      jobs.value = local
+        .filter(e => byId.has(e.jobId))
+        .map((e) => {
+          const j = byId.get(e.jobId)!
+          return { jobId: j.jobId, status: j.status, fileName: e.fileName || j.fileName, result: j.result }
+        })
       error.value = ''
     } catch (e) {
       error.value = fetchErrorMessage(e, 'Не удалось получить статус импорта')
@@ -93,7 +111,9 @@ export function useImport() {
       // Optional manual target («куда импортировать») — overrides the routing rules for this job.
       // The server re-validates it (parseManualTarget); an absent/invalid one just follows the rules.
       if (target && target.entityTypeId > 0) form.append('target', JSON.stringify(target))
-      await $fetch('/api/import/upload', { method: 'POST', headers: h, body: form })
+      const res = await $fetch<{ jobId?: string }>('/api/import/upload', { method: 'POST', headers: h, body: form })
+      // Remember this job in the browser (it's the client's own history now — no server list).
+      if (typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name)
       await refresh()
       scheduleNext() // the new job is queued → start following its progress
       return true
