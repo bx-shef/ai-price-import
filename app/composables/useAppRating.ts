@@ -3,6 +3,7 @@ import { useRuntimeConfig } from '#imports'
 import { useB24 } from './useB24'
 import { buildFrameHeaders } from '~/utils/frameHeaders'
 import { marketDetailPath } from '~/config/b24'
+import { LANDING_MARKET_CODE } from '~/utils/landing'
 
 // In-portal «оцените приложение» client. Whether to show the modal is decided SERVER-SIDE
 // (per-portal state in portal_app_rating, see server/utils/appRating*); this composable only:
@@ -13,7 +14,9 @@ import { marketDetailPath } from '~/config/b24'
 
 export function useAppRating() {
   const { init, get, auth } = useB24()
-  const marketCode = String(useRuntimeConfig().public.b24MarketCode || '')
+  // Default to the app's real Market slug (single source of truth in landing.ts); an env override
+  // (NUXT_PUBLIC_B24_MARKET_CODE) can point at a different listing if the app is ever re-published.
+  const marketCode = String(useRuntimeConfig().public.b24MarketCode || LANDING_MARKET_CODE)
   const path = marketDetailPath(marketCode)
 
   // Instance-local (not module-level) so there is no shared singleton across SSR requests or across

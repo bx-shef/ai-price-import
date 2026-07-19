@@ -59,8 +59,12 @@ export const LANDING_MARKET_PROMO = {
 export const LANDING_INTEGRATORS
   = 'Внедряете Bitrix24 клиентам? Подключим AI-импорт документов под их процессы — свои поля, сущности и источники — и развернём в вашем контуре.'
 
-/** Bitrix24 Marketplace listing of this app (owner-provided slug `shef.priceimport`). */
-export const LANDING_MARKET_URL = 'https://www.bitrix24.ru/apps/app/shef.priceimport/'
+/** Bitrix24 Market listing code (slug) of this app — the single source of truth also used to build
+ *  the in-portal «оцените приложение» openPath and the public listing URL below. */
+export const LANDING_MARKET_CODE = 'shef.priceimport'
+
+/** Bitrix24 Marketplace listing of this app (public витрина URL). */
+export const LANDING_MARKET_URL = `https://www.bitrix24.ru/apps/app/${LANDING_MARKET_CODE}/`
 
 /**
  * Absolute URL of the OG share image for scrapers. `siteUrl` is set via

@@ -66,9 +66,11 @@ SELECT member_id, opened_at FROM portal_app_rating WHERE opened_at IS NOT NULL A
 
 ## Настройка
 
-- `NUXT_PUBLIC_B24_MARKET_CODE` — код листинга приложения в Маркете (напр. `bx-shef.ai_price_import`).
-  **Пусто → попап выключен** (нечего оценивать, пока приложение не опубликовано). Путь к детальной
-  странице строит `marketDetailPath(code)` (`app/config/b24.ts`).
+- Код листинга по умолчанию — реальный слаг приложения `shef.priceimport` (единый источник —
+  `LANDING_MARKET_CODE` в `app/utils/landing.ts`, оттуда же строится публичный URL витрины). Путь к
+  детальной странице строит `marketDetailPath(code)` (`app/config/b24.ts`).
+- `NUXT_PUBLIC_B24_MARKET_CODE` — **override** кода (напр. при перепубликации на другой листинг).
+  Пусто → используется слаг по умолчанию, попап **включён**.
 
 ## Визуальная подсказка (гиф/видео)
 

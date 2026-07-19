@@ -119,7 +119,8 @@ AI-импорт документов с табличной частью в Bitri
   - **Попап «оцените приложение»** ([`docs/redesign/12-app-rating.md`](docs/redesign/12-app-rating.md)):
     переиспользуемый `AppRatingModal.vue` (на `B24Modal`) на `/app` всплывает **после успешного импорта**
     и по кнопке открывает детальную страницу Маркета через `frame.slider.openPath('/marketplace/detail/<code>/')`
-    (`marketDetailPath`, код — `NUXT_PUBLIC_B24_MARKET_CODE`, пусто → выключено). Решение показа — **на
+    (`marketDetailPath`; код по умолчанию — реальный слаг `shef.priceimport` из `LANDING_MARKET_CODE`,
+    override — `NUXT_PUBLIC_B24_MARKET_CODE`). Решение показа — **на
     сервере**, рядом с авторизацией: таблица `portal_app_rating` (ключ `member_id`, чистится при uninstall) +
     чистая `shouldPrompt` (`prompted_at` троттлит показ ≤1 раза в `RATING_REPROMPT_DAYS`=4д; `opened_at`
     глушит до **ручной** проверки; `reviewed` — терминально). Роуты `GET /api/app-rating` (read-only `{show}`)

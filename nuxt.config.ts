@@ -27,9 +27,9 @@ export default defineNuxtConfig({
       // Client-exposed; correctly overridden by NUXT_PUBLIC_-prefixed env at runtime.
       siteUrl: '',
       commitSha: 'dev',
-      // Bitrix24 Market listing code of THIS app (e.g. «bx-shef.ai_price_import»). Drives the
-      // in-portal «оцените приложение» modal — empty → the prompt is OFF (nothing to rate yet).
-      // Set NUXT_PUBLIC_B24_MARKET_CODE once the app is published to the Market.
+      // Bitrix24 Market listing code override for the «оцените приложение» modal. Empty → the
+      // composable falls back to the app's real slug (LANDING_MARKET_CODE in landing.ts). Set
+      // NUXT_PUBLIC_B24_MARKET_CODE only to point at a different listing (e.g. a re-publish).
       b24MarketCode: '',
       // Yandex.Metrika id (empty → useMetrikaGoal no-ops; landing analytics optional).
       metrikaId: '',
