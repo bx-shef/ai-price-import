@@ -46,6 +46,29 @@ export function normalizeKind(kind: unknown): FeedbackKind | null {
 export interface IssuePayload { title: string, body: string, labels: string[] }
 
 /**
+ * Stable, opaque dedup code for a feedback issue (#192): derived from the portal id + jobId (jobId is
+ * a per-file UUID, so this identifies one result row). Embedded in the issue TITLE as `[code]` so the
+ * server can search-before-create and skip duplicates. PRIVACY: it is a one-way hash — neither the
+ * portal id nor the jobId can be read back from it (belt-and-suspenders; the receiving repo is private
+ * anyway). Not cryptographic — two 32-bit FNV-1a streams combined → ~64-bit space, collision-safe for
+ * a per-repo dedup key. Returns '' when either input is empty (→ no dedup, plain title).
+ */
+export function feedbackDedupCode(portalId: unknown, jobId: unknown): string {
+  const p = String(portalId ?? '')
+  const j = String(jobId ?? '')
+  if (!p || !j) return ''
+  const s = `${p}\n${j}`
+  let h1 = 0x811c9dc5
+  let h2 = 0x243f6a88
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    h1 = Math.imul(h1 ^ c, 0x01000193)
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b)
+  }
+  return ((h1 >>> 0).toString(36) + (h2 >>> 0).toString(36)).slice(0, 10)
+}
+
+/**
  * Optional import context attached to the feedback issue so triage can trace it back to a run.
  * PRIVACY: these fields may carry client data (file name, deal id) — they are ONLY rendered because
  * the receiving repo is PRIVATE (see the module header). Every value is stripped + escaped + capped
@@ -91,13 +114,16 @@ function contextLine(label: string, value: unknown): string | null {
  * made fully inert (newlines collapsed + wrapped in an inline code span — see contextLine) so a
  * client-supplied value can't inject markdown. Absent/empty context → the section is omitted.
  */
-export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context: FeedbackContext = {}): IssuePayload {
+export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context: FeedbackContext = {}, dedupCode = ''): IssuePayload {
   const safe = escapeHtml(sanitizeComment(comment)).trim() || '(без текста)'
   const firstLine = safe.split('\n', 1)[0]!.slice(0, 80).trim()
   const kindWord = FEEDBACK_KINDS[kind]
-  const title = firstLine && firstLine !== '(без текста)'
-    ? `${kindWord} · ${firstLine}`.slice(0, 120)
-    : `Отзыв сотрудника — ${kindWord}`.slice(0, 120)
+  // Reserve room for the `[code] ` prefix so the dedup marker is never truncated off the 120-char title.
+  const prefix = dedupCode ? `[${dedupCode}] ` : ''
+  const base = firstLine && firstLine !== '(без текста)'
+    ? `${kindWord} · ${firstLine}`
+    : `Отзыв сотрудника — ${kindWord}`
+  const title = `${prefix}${base}`.slice(0, 120)
   const contextLines = [
     contextLine('Статус разбора', context.status),
     contextLine('Исход', context.outcome),
