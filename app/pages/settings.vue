@@ -295,7 +295,7 @@ const ON_MISSING_ITEMS = [
     <h1 class="mb-1 text-xl font-semibold">
       Настройки импорта
     </h1>
-    <p class="mb-5 text-sm text-gray-500">
+    <p class="mb-5 text-sm text-(--ui-color-base-3)">
       Куда и как приложение вносит товары из документов в вашем портале.
     </p>
 
@@ -334,7 +334,7 @@ const ON_MISSING_ITEMS = [
           />
         </div>
         <div class="mt-2 flex items-center gap-2">
-          <span class="text-xs text-gray-500">или ID типа (смарт-процесс ≥ 1000):</span>
+          <span class="text-xs text-(--ui-color-base-3)">или ID типа (смарт-процесс ≥ 1000):</span>
           <B24InputNumber
             v-model="mapping.defaultTarget.entityTypeId"
             :min="1"
@@ -346,7 +346,7 @@ const ON_MISSING_ITEMS = [
           v-if="hasCategories(mapping.defaultTarget.entityTypeId)"
           class="mt-2 flex items-center gap-2"
         >
-          <span class="text-xs text-gray-500">направление (воронка):</span>
+          <span class="text-xs text-(--ui-color-base-3)">направление (воронка):</span>
           <B24Select
             :model-value="categoryValue(mapping.defaultTarget)"
             :items="categoryItems(mapping.defaultTarget.entityTypeId)"
@@ -359,7 +359,7 @@ const ON_MISSING_ITEMS = [
           v-if="hasStagesFor(mapping.defaultTarget)"
           class="mt-2 flex items-center gap-2"
         >
-          <span class="text-xs text-gray-500">стадия:</span>
+          <span class="text-xs text-(--ui-color-base-3)">стадия:</span>
           <B24Select
             :model-value="stageValueOf(mapping.defaultTarget)"
             :items="stageItemsFor(mapping.defaultTarget)"
@@ -372,7 +372,7 @@ const ON_MISSING_ITEMS = [
 
       <!-- Правила маршрутизации -->
       <B24FormField label="Правила маршрутизации (по типу/словам → цель)">
-        <p class="mb-2 text-xs text-gray-500">
+        <p class="mb-2 text-xs text-(--ui-color-base-3)">
           Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: 1 = лид, 2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
         </p>
         <div class="space-y-2">
@@ -394,7 +394,7 @@ const ON_MISSING_ITEMS = [
               :aria-label="`Правило ${i + 1}: ключевые слова`"
             />
             <span
-              class="text-gray-400"
+              class="text-(--ui-color-base-4)"
               aria-hidden="true"
             >→</span>
             <B24InputNumber
@@ -474,7 +474,7 @@ const ON_MISSING_ITEMS = [
       <!-- Единицы измерения -->
       <B24FormField label="Единицы измерения">
         <div class="flex flex-wrap items-center gap-2">
-          <span class="text-xs text-gray-500">По умолчанию (если единица не сопоставлена):</span>
+          <span class="text-xs text-(--ui-color-base-3)">По умолчанию (если единица не сопоставлена):</span>
           <B24Select
             v-model="defaultMeasure"
             :items="measureItems"
@@ -484,7 +484,7 @@ const ON_MISSING_ITEMS = [
           />
         </div>
 
-        <p class="mt-3 mb-1 text-xs text-gray-500">
+        <p class="mt-3 mb-1 text-xs text-(--ui-color-base-3)">
           Сопоставление единиц из документа с единицами Б24:
         </p>
         <div class="space-y-2">
@@ -500,7 +500,7 @@ const ON_MISSING_ITEMS = [
               :aria-label="`Единица ${i + 1}: из документа`"
             />
             <span
-              class="text-gray-400"
+              class="text-(--ui-color-base-4)"
               aria-hidden="true"
             >→</span>
             <B24Select
@@ -552,7 +552,7 @@ const ON_MISSING_ITEMS = [
           placeholder="Выберите чат для уведомлений об импорте…"
           @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
         />
-        <p class="mt-1 text-xs text-gray-500">
+        <p class="mt-1 text-xs text-(--ui-color-base-3)">
           Куда слать сообщение после успешной записи документа. Пусто — не уведомляем.
         </p>
       </B24FormField>
@@ -567,7 +567,7 @@ const ON_MISSING_ITEMS = [
           placeholder="Выберите чат для сообщений об ошибках…"
           @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
         />
-        <p class="mt-1 text-xs text-gray-500">
+        <p class="mt-1 text-xs text-(--ui-color-base-3)">
           Куда слать сообщение, если документ не удалось внести (нет ставки НДС, валюты и т.п.). Пусто — не уведомляем.
         </p>
       </B24FormField>
@@ -586,7 +586,7 @@ const ON_MISSING_ITEMS = [
       />
       <span
         class="text-sm"
-        :class="saving ? 'text-gray-500' : 'text-green-600'"
+        :class="saving ? 'text-(--ui-color-base-3)' : 'text-(--ui-color-accent-main-success)'"
         role="status"
         aria-live="polite"
       >

@@ -48,17 +48,17 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
   >
     <p
       v-if="sent"
-      class="text-green-600"
+      class="text-(--ui-color-accent-main-success)"
       role="status"
     >
       Спасибо за отзыв!
     </p>
     <template v-else>
-      <div class="flex items-center gap-2 text-gray-400">
+      <div class="flex items-center gap-2 text-(--ui-color-base-4)">
         <span>Результат помог?</span>
         <button
           type="button"
-          class="rounded px-1.5 py-0.5 hover:bg-gray-100 disabled:opacity-50"
+          class="rounded px-1.5 py-0.5 hover:bg-(--ui-color-base-5) disabled:opacity-50"
           :disabled="sending"
           aria-label="Хорошо"
           @click="rate('up')"
@@ -67,7 +67,7 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
         </button>
         <button
           type="button"
-          class="rounded px-1.5 py-0.5 hover:bg-gray-100 disabled:opacity-50"
+          class="rounded px-1.5 py-0.5 hover:bg-(--ui-color-base-5) disabled:opacity-50"
           :disabled="sending"
           aria-label="Плохо"
           @click="rate('down')"
@@ -78,7 +78,7 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
       <!-- Ошибка отправки (в т.ч. для 👍-пути, где нет поля комментария). -->
       <p
         v-if="error && !open"
-        class="mt-1 text-red-500"
+        class="mt-1 text-(--ui-color-accent-main-alert)"
         role="alert"
       >
         {{ error }}
@@ -93,7 +93,7 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
           maxlength="5000"
           aria-label="Что пошло не так"
           placeholder="Что пошло не так? (необязательно)"
-          class="w-full rounded border border-gray-200 p-1.5 text-xs"
+          class="w-full rounded border border-(--ui-color-base-5) p-1.5 text-xs"
         />
         <div class="flex items-center gap-2">
           <B24Button
@@ -106,7 +106,7 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
           />
           <span
             v-if="error"
-            class="text-red-500"
+            class="text-(--ui-color-accent-main-alert)"
             role="alert"
           >{{ error }}</span>
         </div>

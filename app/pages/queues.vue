@@ -26,9 +26,9 @@ const LABELS: Record<string, string> = {
 }
 // Non-secret auth health (#132) — the token itself is never sent here.
 const HEALTH_META: Record<PortalStatus['health'], { label: string, cls: string }> = {
-  'ok': { label: 'активен', cls: 'text-green-600' },
-  'near-expiry': { label: 'скоро истекает', cls: 'text-amber-600' },
-  'stale': { label: 'нужна переустановка', cls: 'text-red-600' }
+  'ok': { label: 'активен', cls: 'text-(--ui-color-accent-main-success)' },
+  'near-expiry': { label: 'скоро истекает', cls: 'text-(--ui-color-accent-main-warning)' },
+  'stale': { label: 'нужна переустановка', cls: 'text-(--ui-color-accent-main-alert)' }
 }
 
 async function load() {
@@ -128,32 +128,32 @@ onMounted(async () => {
       <div
         v-for="q in queues"
         :key="q.name"
-        class="rounded-xl border border-gray-200 p-4"
+        class="rounded-xl border border-(--ui-color-base-5) p-4"
       >
         <div class="mb-2 flex items-center justify-between">
           <span class="text-sm font-medium">{{ LABELS[q.name] || q.name }}</span>
-          <span class="text-xs text-gray-400">{{ q.name }}</span>
+          <span class="text-xs text-(--ui-color-base-4)">{{ q.name }}</span>
         </div>
         <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm">
-          <span class="text-gray-600">ожидают: <b class="text-gray-900">{{ q.waiting }}</b></span>
-          <span class="text-blue-600">в работе: <b>{{ q.active }}</b></span>
-          <span class="text-green-600">готово: <b>{{ q.completed }}</b></span>
-          <span class="text-red-600">ошибки: <b>{{ q.failed }}</b></span>
+          <span class="text-(--ui-color-base-3)">ожидают: <b>{{ q.waiting }}</b></span>
+          <span class="text-(--ui-color-accent-main-primary)">в работе: <b>{{ q.active }}</b></span>
+          <span class="text-(--ui-color-accent-main-success)">готово: <b>{{ q.completed }}</b></span>
+          <span class="text-(--ui-color-accent-main-alert)">ошибки: <b>{{ q.failed }}</b></span>
           <span
             v-if="q.delayed"
-            class="text-amber-600"
+            class="text-(--ui-color-accent-main-warning)"
           >отложено: <b>{{ q.delayed }}</b></span>
         </div>
-        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-(--ui-color-base-5)">
           <div
-            class="h-full bg-blue-500"
+            class="h-full bg-(--ui-color-accent-main-primary)"
             :style="{ width: Math.min(100, (q.waiting + q.active) * 8) + '%' }"
           />
         </div>
       </div>
       <p
         v-if="!queues.length && !error"
-        class="rounded-lg border border-gray-200 p-6 text-center text-sm text-gray-400"
+        class="rounded-lg border border-(--ui-color-base-5) p-6 text-center text-sm text-(--ui-color-base-4)"
       >
         Нет данных по очередям
       </p>
@@ -164,12 +164,12 @@ onMounted(async () => {
       v-if="portals.length"
       class="mt-8"
     >
-      <h2 class="mb-3 text-sm font-semibold text-gray-700">
+      <h2 class="mb-3 text-sm font-semibold text-(--ui-color-base-2)">
         Авторизация порталов
       </h2>
       <p
         v-if="reauthMsg"
-        class="mb-2 text-xs text-gray-500"
+        class="mb-2 text-xs text-(--ui-color-base-3)"
         role="status"
       >
         {{ reauthMsg }}
@@ -178,12 +178,12 @@ onMounted(async () => {
         <div
           v-for="p in portals"
           :key="p.memberId"
-          class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-gray-200 p-3"
+          class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-(--ui-color-base-5) p-3"
         >
           <span class="text-sm font-medium">{{ p.domain }}</span>
           <span class="flex flex-wrap items-center gap-x-4 text-sm">
             <span :class="HEALTH_META[p.health].cls">{{ HEALTH_META[p.health].label }}</span>
-            <span class="text-gray-500">{{
+            <span class="text-(--ui-color-base-3)">{{
               p.expiresInDays > 0 ? `refresh_token ≈ ${p.expiresInDays} дн.` : 'срок истёк'
             }}</span>
             <B24Button

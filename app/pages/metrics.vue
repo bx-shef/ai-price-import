@@ -35,13 +35,13 @@ async function doReset(): Promise<void> {
         <h1 class="text-xl font-semibold">
           Метрики импорта
         </h1>
-        <p class="mt-1 text-sm text-gray-500">
+        <p class="mt-1 text-sm text-(--ui-color-base-3)">
           Что приложение сделало для вашего портала.
         </p>
       </div>
       <NuxtLink
         to="/app"
-        class="text-sm text-blue-600 hover:underline"
+        class="text-sm text-(--ui-color-accent-main-primary) hover:underline"
       >
         ← К обзору
       </NuxtLink>
@@ -57,57 +57,57 @@ async function doReset(): Promise<void> {
 
     <!-- Экономия (мотивирующая) -->
     <div class="grid grid-cols-2 gap-3">
-      <div class="rounded-lg bg-green-50 p-4">
-        <div class="text-2xl font-semibold text-green-700">
+      <div class="rounded-lg bg-(--ui-color-accent-soft-green-2) p-4">
+        <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
           {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
         </div>
-        <div class="mt-1 text-xs text-gray-500">
+        <div class="mt-1 text-xs text-(--ui-color-base-3)">
           Сэкономлено времени
         </div>
       </div>
-      <div class="rounded-lg bg-green-50 p-4">
-        <div class="text-2xl font-semibold text-green-700">
+      <div class="rounded-lg bg-(--ui-color-accent-soft-green-2) p-4">
+        <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
           {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
         </div>
-        <div class="mt-1 text-xs text-gray-500">
+        <div class="mt-1 text-xs text-(--ui-color-base-3)">
           Сэкономлено денег (оценка)
         </div>
       </div>
     </div>
 
     <!-- Успешность -->
-    <div class="mt-3 rounded-lg border border-gray-200 p-4">
+    <div class="mt-3 rounded-lg border border-(--ui-color-base-5) p-4">
       <div class="flex items-baseline justify-between">
-        <span class="text-sm text-gray-600">Успешно создано в CRM</span>
-        <span class="text-lg font-semibold text-gray-800">{{ formatRate(summary.successRate) }}</span>
+        <span class="text-sm text-(--ui-color-base-3)">Успешно создано в CRM</span>
+        <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
       </div>
-      <p class="mt-1 text-xs text-gray-400">
+      <p class="mt-1 text-xs text-(--ui-color-base-4)">
         Доля обработанных документов, по которым создана сущность в CRM.
       </p>
     </div>
 
     <!-- Детальная разбивка -->
-    <div class="mt-3 rounded-lg border border-gray-200">
-      <div class="border-b border-gray-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+    <div class="mt-3 rounded-lg border border-(--ui-color-base-5)">
+      <div class="border-b border-(--ui-color-base-5) px-4 py-2 text-xs font-semibold uppercase tracking-wide text-(--ui-color-base-4)">
         Счётчики
       </div>
       <p
         v-if="summary.empty"
-        class="px-4 py-6 text-center text-sm text-gray-400"
+        class="px-4 py-6 text-center text-sm text-(--ui-color-base-4)"
       >
         Пока нет данных — загрузите первый документ.
       </p>
       <ul
         v-else
-        class="divide-y divide-gray-100"
+        class="divide-y divide-(--ui-color-base-5)"
       >
         <li
           v-for="row in summary.rows"
           :key="row.key"
           class="flex items-center justify-between px-4 py-2.5 text-sm"
         >
-          <span class="text-gray-600">{{ row.label }}</span>
-          <span class="font-semibold text-gray-800 tabular-nums">{{ row.value }}</span>
+          <span class="text-(--ui-color-base-3)">{{ row.label }}</span>
+          <span class="font-semibold text-(--ui-color-base-1) tabular-nums">{{ row.value }}</span>
         </li>
       </ul>
     </div>
@@ -130,7 +130,7 @@ async function doReset(): Promise<void> {
           @click="() => { confirmReset = true }"
         />
         <template v-else>
-          <span class="text-sm text-gray-600">Сбросить метрики?</span>
+          <span class="text-sm text-(--ui-color-base-3)">Сбросить метрики?</span>
           <B24Button
             color="air-primary-alert"
             size="sm"
