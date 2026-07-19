@@ -47,6 +47,10 @@ describe('jobStore', () => {
     expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: '{"detailUrl":"/x/y"}' }]).q)).toBe('/x/y')
     // even an off-portal absolute is reduced to a relative path (redirect can't leave the portal)
     expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://evil.test/steal' } }]).q)).toBe('/steal')
+    // backslash open-redirect bypass: `/\evil.test` (browser → `//evil.test`) is rejected
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '/\\evil.test' } }]).q)).toBeNull()
+    // query string is dropped (no token ever surfaces on the button)
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://p.bitrix24.com/docs/file/45/?token=secret' } }]).q)).toBe('/docs/file/45/')
     // protocol-relative / garbage / absent → null (no button)
     expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '//evil.test' } }]).q)).toBeNull()
     expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: null }]).q)).toBeNull()

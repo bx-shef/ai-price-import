@@ -51,6 +51,8 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
           ])
         )
       },
+      // B24 allows at most TWO footer buttons — «Открыть» + optional «Исходный файл». Do NOT add a
+      // third here (it would be silently dropped / rejected by the timeline layout).
       footer: {
         buttons: {
           open: {
@@ -75,9 +77,12 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
   }
 }
 
-/** Whether a path is a safe same-portal relative path (leading `/`, not protocol-relative `//`). */
+/** Whether a path is a safe same-portal relative path: a leading `/` followed by a char that is
+ *  NOT `/` or `\`. Rejecting the backslash too matters because browsers normalize `/\host` → `//host`
+ *  (protocol-relative) → an off-portal redirect; `[^/\\]` closes that. Shared with the URL
+ *  normalizer (jobStore.detailUrlToRelative) so the SSRF-relevant guard lives in ONE place. */
 export function isRelativePath(path: string): boolean {
-  return /^\/[^/]/.test(path)
+  return /^\/[^/\\]/.test(path)
 }
 
 /** Guard: only allow a same-portal relative path (no scheme, no protocol-relative). */

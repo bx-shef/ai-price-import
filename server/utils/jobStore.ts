@@ -1,6 +1,7 @@
 import type { QueryFn } from './tokenStore'
 import type { DiskFileRef } from './disk'
 import type { TargetRef } from '~/types/mapping'
+import { isRelativePath } from './configurableActivity'
 import { parseManualTarget } from '~/utils/manualTarget'
 
 // Per-portal import-job tracking over an injected QueryFn (testable without a DB).
@@ -55,12 +56,12 @@ export async function setDiskFile(memberId: string, jobId: string, ref: DiskFile
  *  Returns null for anything that can't be reduced to a clean leading-slash path. */
 export function detailUrlToRelative(url: unknown): string | null {
   if (typeof url !== 'string' || !url) return null
-  if (/^\/[^/]/.test(url)) return url // already a relative path
+  if (isRelativePath(url)) return url // already a safe relative path (shared guard)
   try {
-    const u = new URL(url) // absolute → take path (+query); host is discarded, so redirect stays on-portal
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
-    const path = u.pathname + u.search
-    return /^\/[^/]/.test(path) ? path : null
+    const u = new URL(url) // absolute → take the PATH only; host+query discarded, so the redirect
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null // stays on-portal and can't
+    const path = u.pathname // ever surface a query token (DETAIL_URL has none, DOWNLOAD_URL isn't stored)
+    return isRelativePath(path) ? path : null
   } catch {
     return null // protocol-relative («//host») / garbage → no button
   }
