@@ -9,7 +9,7 @@ import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
-import { claimJobNotify, getManualOverride, setJobStatus } from '../utils/jobStore'
+import { claimJobNotify, getDiskFileUrl, getManualOverride, setDiskFile, setJobStatus } from '../utils/jobStore'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
 import { findExistingItemId } from '../utils/originLookup'
@@ -173,6 +173,8 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
       // shared app/month folders (B24 Disk has no atomic create-if-absent). Same primitive as the
       // token-refresh path (#35); the lock ignores the injected QueryFn (no DB work in the archive).
       serialize: (key, fn) => withAdvisoryLock(key, () => fn()),
+      // Persist the archived file ref so crm-sync can link it on the timeline дело (#129 follow-up).
+      recordDiskFile: (m, j, ref) => setDiskFile(m, j, ref, infra.query),
       now: infra.now
     })
   }
@@ -289,12 +291,16 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     // Configurable timeline activity on the created entity (crm.activity.configurable.add,
     // OAuth app context — verified live). Best-effort; runCrmSync swallows failures.
     writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount }) => {
+      // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
+      // Best-effort — a lookup failure just omits the button, never fails the import.
+      const sourceFileUrl = await getDiskFileUrl(memberId, jobId, infra.query).catch(() => null)
       const params = buildConfigurableActivity({
         entityTypeId,
         ownerId: entityId,
         title: `Импорт: ${supplierName ?? 'документ'}`,
         lines: [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : [])],
-        openPath: entityOpenPath(entityTypeId, entityId)
+        openPath: entityOpenPath(entityTypeId, entityId),
+        ...(sourceFileUrl ? { sourceFileUrl } : {})
       })
       await (await need()).call('crm.activity.configurable.add', params)
     }

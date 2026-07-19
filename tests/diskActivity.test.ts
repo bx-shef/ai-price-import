@@ -46,11 +46,11 @@ describe('disk — saveSourceFileToDisk (composition)', () => {
       if (method === 'disk.storage.getlist') return [{ ID: '3', ENTITY_TYPE: 'common', NAME: 'Shared', ROOT_OBJECT_ID: '3' }]
       if (method === 'disk.folder.getchildren') return [] // nothing exists → create each
       if (method === 'disk.folder.addsubfolder') return { ID: params.data?.NAME === DISK_APP_FOLDER ? '39' : '77' }
-      if (method === 'disk.folder.uploadfile') return { ID: '45' }
+      if (method === 'disk.folder.uploadfile') return { ID: '45', DETAIL_URL: '/company/personal/user/1/disk/file/45/' }
       return null
     })
-    const id = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'н/акл:адная.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
-    expect(id).toBe(45)
+    const ref = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'н/акл:адная.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
+    expect(ref).toEqual({ id: 45, detailUrl: '/company/personal/user/1/disk/file/45/' })
     expect(call).toHaveBeenCalledWith('disk.folder.addsubfolder', { id: 3, data: { NAME: DISK_APP_FOLDER } }) // app folder under root
     expect(call).toHaveBeenCalledWith('disk.folder.addsubfolder', { id: 39, data: { NAME: '2026-07' } }) // month under app folder
     expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 77, data: { NAME: 'н_акл:адная.pdf' }, fileContent: ['н_акл:адная.pdf', 'QQ=='] })
@@ -65,12 +65,12 @@ describe('disk — saveSourceFileToDisk (composition)', () => {
       if (method === 'disk.folder.getchildren') return [
         { ID: '39', NAME: DISK_APP_FOLDER, TYPE: 'folder' },
         { ID: '77', NAME: '2026-07', TYPE: 'folder' },
-        { ID: '46', NAME: 'j1__doc.pdf', TYPE: 'file' } // already archived by a prior attempt
+        { ID: '46', NAME: 'j1__doc.pdf', TYPE: 'file', DETAIL_URL: '/company/disk/file/46/' } // already archived by a prior attempt
       ]
       return null
     })
-    const id = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'j1__doc.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
-    expect(id).toBe(46)
+    const ref = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'j1__doc.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
+    expect(ref).toEqual({ id: 46, detailUrl: '/company/disk/file/46/' })
     expect(call).not.toHaveBeenCalledWith('disk.folder.uploadfile', expect.anything())
   })
 })
@@ -130,12 +130,31 @@ describe('disk — makeSaveSourceFile (file-extract wiring)', () => {
     expect(serialize).toHaveBeenCalledWith('disk-archive:m', expect.any(Function))
     expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', expect.anything()) // upload still happened
   })
+  it('records the archived file ref (id + DETAIL_URL) so crm-sync can link it on the дело', async () => {
+    const call = vi.fn(async (method: string, params: { data?: { NAME?: string } }) => {
+      if (method === 'disk.storage.getlist') return [{ ID: '3', ENTITY_TYPE: 'common', NAME: 'S', ROOT_OBJECT_ID: '3' }]
+      if (method === 'disk.folder.getchildren') return []
+      if (method === 'disk.folder.addsubfolder') return { ID: params.data?.NAME === DISK_APP_FOLDER ? '39' : '77' }
+      if (method === 'disk.folder.uploadfile') return { ID: '45', DETAIL_URL: '/company/disk/file/45/' }
+      return null
+    })
+    const recordDiskFile = vi.fn(async () => {})
+    const hook = makeSaveSourceFile({
+      resolveCall: async () => ({ call }),
+      loadMapping: async () => ({ saveFile: true }),
+      readBytes: async () => new Uint8Array([65]),
+      recordDiskFile,
+      now: () => Date.UTC(2026, 6, 1)
+    })
+    await hook('m', 'j1', 'doc.pdf')
+    expect(recordDiskFile).toHaveBeenCalledWith('m', 'j1', { id: 45, detailUrl: '/company/disk/file/45/' })
+  })
 })
 
 describe('disk — uploadFile', () => {
   it('uploads base64 as [name, content] (live-verified param shape)', async () => {
-    const call = vi.fn(async () => ({ ID: '91' }))
-    expect(await uploadFile(89, 'doc.pdf', 'Qk9G', call)).toBe(91)
+    const call = vi.fn(async () => ({ ID: '91', DETAIL_URL: '/company/disk/file/91/' }))
+    expect(await uploadFile(89, 'doc.pdf', 'Qk9G', call)).toEqual({ id: 91, detailUrl: '/company/disk/file/91/' })
     expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', {
       id: 89,
       data: { NAME: 'doc.pdf' },
@@ -166,6 +185,23 @@ describe('configurableActivity', () => {
     const params = buildConfigurableActivity({ entityTypeId: 2, ownerId: 5, title: 'x', lines: [], openPath: '/crm/deal/details/5/' }) as Record<string, Record<string, unknown>>
     const blocks = ((params.layout as Record<string, Record<string, Record<string, unknown>>>).body.blocks) as Record<string, unknown>
     expect(Object.keys(blocks).length).toBeGreaterThanOrEqual(1)
+  })
+  it('adds an «Исходный файл» button ONLY for a valid same-portal DETAIL_URL', () => {
+    const withFile = buildConfigurableActivity({
+      entityTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/',
+      sourceFileUrl: '/company/personal/user/1/disk/file/45/'
+    }) as Record<string, Record<string, Record<string, Record<string, Record<string, unknown>>>>>
+    expect(withFile.layout.footer.buttons.sourceFile).toMatchObject({
+      title: 'Исходный файл', action: { type: 'redirect', uri: '/company/personal/user/1/disk/file/45/' }
+    })
+    // protocol-relative / absolute DETAIL_URL is dropped (no off-portal redirect button)
+    const hostile = buildConfigurableActivity({
+      entityTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', sourceFileUrl: '//evil.test/x'
+    }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>
+    expect(hostile.layout.footer.buttons.sourceFile).toBeUndefined()
+    // absent → no button
+    const none = buildConfigurableActivity({ entityTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/' }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>
+    expect(none.layout.footer.buttons.sourceFile).toBeUndefined()
   })
   it('safeRelativePath rejects absolute/scheme URLs', () => {
     expect(safeRelativePath('/crm/deal/details/5/')).toBe('/crm/deal/details/5/')

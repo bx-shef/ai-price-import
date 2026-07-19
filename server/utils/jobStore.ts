@@ -1,4 +1,5 @@
 import type { QueryFn } from './tokenStore'
+import type { DiskFileRef } from './disk'
 import type { TargetRef } from '~/types/mapping'
 import { parseManualTarget } from '~/utils/manualTarget'
 
@@ -37,6 +38,48 @@ export async function getManualOverride(memberId: string, jobId: string, query: 
   if (raw == null) return undefined
   // pg returns JSONB already parsed (object); tolerate a string too.
   return parseManualTarget(raw) ?? undefined
+}
+
+/** Persist the archived source-file ref (id + DETAIL_URL) for a job — best-effort (#129 follow-up:
+ *  crm-sync links it on the timeline дело). Stored as JSON in `import_job.disk_file`. */
+export async function setDiskFile(memberId: string, jobId: string, ref: DiskFileRef, query: QueryFn): Promise<void> {
+  await query(
+    'UPDATE import_job SET disk_file=$3, updated_at=now() WHERE member_id=$1 AND job_id=$2',
+    [memberId, jobId, JSON.stringify({ id: ref.id, detailUrl: ref.detailUrl })]
+  )
+}
+
+/** Normalize a Disk DETAIL_URL to a same-portal RELATIVE path. `disk.folder.uploadfile` returns an
+ *  ABSOLUTE URL (`https://<portal>/docs/file/…`, live-verified), so we strip it to its path — a
+ *  relative `/…` redirect can never leave the portal, so this is SSRF-safe even for a tampered row.
+ *  Returns null for anything that can't be reduced to a clean leading-slash path. */
+export function detailUrlToRelative(url: unknown): string | null {
+  if (typeof url !== 'string' || !url) return null
+  if (/^\/[^/]/.test(url)) return url // already a relative path
+  try {
+    const u = new URL(url) // absolute → take path (+query); host is discarded, so redirect stays on-portal
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
+    const path = u.pathname + u.search
+    return /^\/[^/]/.test(path) ? path : null
+  } catch {
+    return null // protocol-relative («//host») / garbage → no button
+  }
+}
+
+/** Read the archived source file's DETAIL_URL for a job as a same-portal RELATIVE path, or null. */
+export async function getDiskFileUrl(memberId: string, jobId: string, query: QueryFn): Promise<string | null> {
+  const { rows } = await query('SELECT disk_file FROM import_job WHERE member_id=$1 AND job_id=$2', [memberId, jobId])
+  const raw = rows[0]?.disk_file
+  if (raw == null) return null
+  let obj: unknown = raw
+  if (typeof raw === 'string') {
+    try {
+      obj = JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+  return detailUrlToRelative((obj as { detailUrl?: unknown })?.detailUrl)
 }
 
 export async function setJobStatus(memberId: string, jobId: string, status: JobStatus, result: string, query: QueryFn): Promise<void> {

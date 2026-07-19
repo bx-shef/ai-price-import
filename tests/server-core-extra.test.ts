@@ -45,7 +45,7 @@ describe('disk async (fake RestCall)', () => {
   })
   it('uploadFile passes fileContent tuple', async () => {
     const call = vi.fn().mockResolvedValue({ ID: '77' })
-    expect(await uploadFile(3, 'inv.pdf', 'BASE64', call)).toBe(77)
+    expect(await uploadFile(3, 'inv.pdf', 'BASE64', call)).toEqual({ id: 77, detailUrl: '' })
     expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 3, data: { NAME: 'inv.pdf' }, fileContent: ['inv.pdf', 'BASE64'] })
   })
 })

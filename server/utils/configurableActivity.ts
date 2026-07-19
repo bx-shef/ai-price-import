@@ -17,6 +17,10 @@ export interface ActivityLayoutInput {
   lines: string[]
   /** Deep link to open the created entity (path in portal). */
   openPath: string
+  /** Optional in-portal link to the archived SOURCE file on the Disk (its DETAIL_URL). When set
+   *  (and a valid same-portal relative path), a «Исходный файл» button is added to the timeline
+   *  дело so the operator can open the original document (#129 follow-up). */
+  sourceFileUrl?: string
 }
 
 /** Build the crm.activity.configurable.add params. Pure. */
@@ -53,16 +57,32 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
             title: 'Открыть',
             type: 'primary',
             action: { type: 'redirect', uri: safeRelativePath(input.openPath) }
-          }
+          },
+          // Link to the archived source file — only when the DETAIL_URL is a valid same-portal
+          // relative path (never a scheme/protocol-relative URL that could redirect off-portal).
+          ...(input.sourceFileUrl && isRelativePath(input.sourceFileUrl)
+            ? {
+                sourceFile: {
+                  title: 'Исходный файл',
+                  type: 'secondary',
+                  action: { type: 'redirect', uri: input.sourceFileUrl }
+                }
+              }
+            : {})
         }
       }
     }
   }
 }
 
+/** Whether a path is a safe same-portal relative path (leading `/`, not protocol-relative `//`). */
+export function isRelativePath(path: string): boolean {
+  return /^\/[^/]/.test(path)
+}
+
 /** Guard: only allow a same-portal relative path (no scheme, no protocol-relative). */
 export function safeRelativePath(path: string): string {
-  return /^\/[^/]/.test(path) ? path : '/crm/'
+  return isRelativePath(path) ? path : '/crm/'
 }
 
 /** Portal path to open a created CRM entity (deal/quote/invoice/smart-process). */
