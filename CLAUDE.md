@@ -144,6 +144,17 @@ AI-импорт документов с табличной частью в Bitri
     member_id, `error_kind` вместо текста ошибки. Чистые ядра + тесты (`telemetryAttributes`/`telemetrySpan`)
     + parity-тест против inline-списка бутстрапа. **Слайс 2 — общая станция** (`telemetry-station/`:
     otel-collector-contrib + ClickHouse 72ч + Grafana, отдельный деплой, вне build-context/CI).
+  - **Трекинг задания импорта — Redis+TTL, НЕ Postgres** (`utils/jobStore.ts` + `utils/jobStoreRedis.ts`):
+    статус/мета каждого задания (`status`/`fileName`/`result`/`manualOverride`/`diskFile`/`notified`)
+    живёт в Redis-хеше `import:job:{member}:{jobId}` с native PX-expiry (TTL `IMPORT_JOB_TTL_HOURS`, дефолт
+    48ч), пер-портальный ZSET-индекс `import:jobs:{member}` (score=createdAt, кап 200) питает `listJobs`.
+    Таблица Postgres `import_job` **удалена** (`DROP TABLE IF EXISTS` в `schema.ts`; клиентов ещё не
+    запускали — мигрировать нечего) → **ничего не копится** (Redis сам вытесняет, свип не нужен;
+    `retentionSweep` больше её не чистит). `JobRedis` инъектируется (DI) — чистое ядро тестируется
+    `createMemoryJobRedis`; прод — ioredis на том же `REDIS_URL`, что BullMQ; без Redis — in-memory
+    фолбэк (single-instance). Финализация once-only (`claimJobNotify`, #164) — `HSETNX` (атомарно),
+    но память ограничена TTL (см. JSDoc). **Демо (`/api/demo/*`) на свой `demoJobStore`** —
+    `import_job`/`jobStore` не трогает.
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
 - `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).

@@ -6,6 +6,7 @@ import type { AgentJob, CrmSyncJob, EventJob, ExtractJob } from './topology'
 import { handleAgentRunJob, handleCrmSyncJob, handleEventJob, handleFileExtractJob } from './handlers'
 import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveEventDeps, liveFileExtractDeps, type LiveInfra } from './liveDeps'
 import { setJobStatus } from '../utils/jobStore'
+import { jobRedis } from '../utils/jobStoreRedis'
 import { query } from '../db/client'
 import { makeAgentSpawn } from '../agent/spawn'
 import { liveExtractRunners } from '../utils/extractRunners'
@@ -200,7 +201,7 @@ function onExhausted(worker: Worker, infra: LiveInfra, cleanup?: (data: { member
     const data = job.data as { memberId?: string, jobId?: string }
     if (!data?.memberId || !data?.jobId) return
     const reason = `сбой обработки: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`
-    await setJobStatus(data.memberId, data.jobId, 'error', reason, infra.query).catch(() => {})
+    await setJobStatus(data.memberId, data.jobId, 'error', reason, jobRedis).catch(() => {})
     if (cleanup) await cleanup({ memberId: data.memberId, jobId: data.jobId }).catch(() => {})
   })
 }

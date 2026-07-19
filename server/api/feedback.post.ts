@@ -7,6 +7,7 @@ import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
 import { getDiskFileUrl, getJob } from '../utils/jobStore'
+import { jobRedis } from '../utils/jobStoreRedis'
 import { absPortalUrl, resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
 import type { FetchFn } from '../utils/b24Rest'
 
@@ -69,7 +70,7 @@ export default defineEventHandler(async (event) => {
   let fileUrl: string | undefined
   if (jobId) {
     try {
-      const job = await getJob(member.memberId, jobId, query)
+      const job = await getJob(member.memberId, jobId, jobRedis)
       if (job) {
         const view = parseJobResult(job.result)
         entity = resolveFeedbackEntity(view, auth.domain)
@@ -77,7 +78,7 @@ export default defineEventHandler(async (event) => {
         if (attachFile) {
           // getDiskFileUrl returns a same-portal RELATIVE path (SSRF-guarded) or null (file not
           // archived — the raw upload is deleted after extraction, so only Disk-saved files survive).
-          const rel = await getDiskFileUrl(member.memberId, jobId, query)
+          const rel = await getDiskFileUrl(member.memberId, jobId, jobRedis)
           if (rel) fileUrl = absPortalUrl(rel, auth.domain)
         }
       }

@@ -13,8 +13,8 @@ export default defineNitroPlugin(() => {
     try {
       const r = await sweepExpired(query)
       const files = await sweepOldUploads()
-      if (r.text || r.docs || r.jobs || files) {
-        console.info(`[retention] swept text=${r.text} docs=${r.docs} jobs=${r.jobs} files=${files}`)
+      if (r.text || r.docs || files) {
+        console.info(`[retention] swept text=${r.text} docs=${r.docs} files=${files}`)
       }
     } catch (e) {
       console.error('[retention] sweep failed:', e instanceof Error ? e.message : e)
