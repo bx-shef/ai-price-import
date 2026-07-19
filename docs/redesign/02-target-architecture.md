@@ -107,8 +107,8 @@ Claude Code» — из методологии репозитория `ai-agent` 
    каждого правила, и в ручном выборе при загрузке на `/app`.
    **Ручной выбор цели при загрузке (`manualOverride`) — сделан end-to-end:** на
    `/app` свёрнутый блок «Куда импортировать» (Авто/Лид/Сделка/Смарт-счёт + пикер направления + стадии) → поле `target`
-   (JSON) в `POST /api/import/upload` → чистый валидатор `parseManualTarget` (недоверенный вход) → колонка
-   `import_job.manual_override` (JSONB) → `getManualOverride` в agent-run → `RoutingSignals.manualOverride`
+   (JSON) в `POST /api/import/upload` → чистый валидатор `parseManualTarget` (недоверенный вход) → поле
+   `manualOverride` Redis-задания (`jobStore`, #B/#D — не Postgres) → `getManualOverride` в agent-run → `RoutingSignals.manualOverride`
    → `resolveTarget` применяет с высшим приоритетом. «Авто» (пусто) ⇒ идём по правилам. Сервер
    ре-валидирует сохранённый target (tamper-safe).
 
@@ -382,7 +382,7 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
   `ownerTypeId`+`ownerId` = цель; `layout` **задаёт приложение** — иконка, ссылка «открыть»,
   краткие итоги; можно вшить кнопку/`openRestApp`). **Привязка файла к делу (#129 follow-up):** архив
   на Диске отдаёт `DETAIL_URL` (у `uploadfile` — **абсолютный** `https://<портал>/docs/file/…`,
-  live-verified), сохраняется в `import_job.disk_file`; при записи дела `crm-sync` читает его и
+  live-verified), сохраняется в поле `diskFile` Redis-задания (`jobStore`, #B/#D); при записи дела `crm-sync` читает его и
   добавляет кнопку **«Исходный файл»** в `footer.buttons` — URL нормализуется в **относительный** путь
   портала (`detailUrlToRelative`: редирект не уходит с портала; невалидный/протокол-относительный →
   кнопки нет). **Админ настраивает только «сохранять файл или нет»** (тумблер) — сам вид дела не настраивается. **Комментарий в таймлайн и UF-поле в сущности НЕ
