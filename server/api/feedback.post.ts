@@ -6,8 +6,8 @@ import { buildFeedbackIssue, normalizeKind } from '~/utils/feedback'
 import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
-import { getJob } from '../utils/jobStore'
-import { resolveFeedbackEntity } from '../utils/feedbackEntity'
+import { getDiskFileUrl, getJob } from '../utils/jobStore'
+import { absPortalUrl, resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
 import type { FetchFn } from '../utils/b24Rest'
 
 /** jobId shape accepted for the DB lookup (matches the builder's context validation). */
@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const raw = await readBody(event).catch(() => null) as
-    { kind?: unknown, comment?: unknown, context?: Record<string, unknown> } | null
+    { kind?: unknown, comment?: unknown, attachFile?: unknown, context?: Record<string, unknown> } | null
   const kind = normalizeKind(raw?.kind)
   if (!kind) {
     setResponseStatus(event, 400)
@@ -44,20 +44,38 @@ export default defineEventHandler(async (event) => {
   // Context (jobId/file/version) is client-supplied and rendered inert by the builder; the
   // receiving repo is private so client data is permitted (see feedback.ts module header).
   const c = raw?.context ?? {}
-  // Entity link (#192 п.2): resolve the CREATED entity SERVER-SIDE from the job's stored result,
-  // NOT from the client (durable + trustworthy). Best-effort — a missing/expired job or a run that
-  // created nothing simply yields no link. The jobId is client-supplied → validate before the query.
+  // Server-resolved context from the job's DURABLE row (never trusted from the client): the created
+  // entity link (#192 п.2), the triage outcome (#192 п.1) and — only with the employee's explicit
+  // consent (#192 п.3) — the source-file link that was archived to the portal Disk. Best-effort:
+  // a missing/expired job simply yields no extra context. jobId is client-supplied → validate first.
   const jobId = typeof c.jobId === 'string' && JOB_ID_RE.test(c.jobId) ? c.jobId : ''
+  const attachFile = raw?.attachFile === true
   let entity: { entityType?: string, entityId?: string, entityUrl?: string } = {}
+  let outcome: { status?: string, outcome?: string, notes?: string } = {}
+  let fileUrl: string | undefined
   if (jobId) {
     try {
       const job = await getJob(member.memberId, jobId, query)
-      if (job) entity = resolveFeedbackEntity(parseJobResult(job.result), auth.domain)
-    } catch { /* best-effort: no link rather than a failed submission */ }
+      if (job) {
+        const view = parseJobResult(job.result)
+        entity = resolveFeedbackEntity(view, auth.domain)
+        outcome = resolveFeedbackOutcome(view, job.status)
+        if (attachFile) {
+          // getDiskFileUrl returns a same-portal RELATIVE path (SSRF-guarded) or null (file not
+          // archived — the raw upload is deleted after extraction, so only Disk-saved files survive).
+          const rel = await getDiskFileUrl(member.memberId, jobId, query)
+          if (rel) fileUrl = absPortalUrl(rel, auth.domain)
+        }
+      }
+    } catch { /* best-effort: less context rather than a failed submission */ }
   }
   const payload = buildFeedbackIssue(kind, raw?.comment, {
     jobId: c.jobId,
     fileName: c.fileName,
+    status: outcome.status,
+    outcome: outcome.outcome,
+    notes: outcome.notes,
+    fileUrl,
     entityType: entity.entityType,
     entityId: entity.entityId,
     entityUrl: entity.entityUrl,

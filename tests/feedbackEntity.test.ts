@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { entityTypeLabel, resolveFeedbackEntity } from '../server/utils/feedbackEntity'
+import { absPortalUrl, entityTypeLabel, resolveFeedbackEntity, resolveFeedbackOutcome } from '../server/utils/feedbackEntity'
 import type { JobResultView } from '../app/utils/jobStatus'
 
 const view = (o: Partial<JobResultView>): JobResultView => ({ warnings: [], errors: [], ...o })
@@ -38,5 +38,37 @@ describe('resolveFeedbackEntity', () => {
     expect(resolveFeedbackEntity(view({ created: true, entityId: 42 }), 'x.bitrix24.by')).toEqual({})
     expect(resolveFeedbackEntity(view({ created: true, entityTypeId: 2 }), 'x.bitrix24.by')).toEqual({})
     expect(resolveFeedbackEntity(view({ created: true, entityTypeId: 2, entityId: 0 }), 'x.bitrix24.by')).toEqual({})
+  })
+})
+
+describe('absPortalUrl', () => {
+  it('absolutises a relative path against the domain, falls back when empty', () => {
+    expect(absPortalUrl('/docs/file/1/', 'acme.bitrix24.by')).toBe('https://acme.bitrix24.by/docs/file/1/')
+    expect(absPortalUrl('/docs/file/1/', '')).toBe('/docs/file/1/')
+    expect(absPortalUrl('/docs/file/1/', null)).toBe('/docs/file/1/')
+  })
+})
+
+describe('resolveFeedbackOutcome (#192 п.1)', () => {
+  it('done + created → status «Готово», outcome «Сущность создана»', () => {
+    const r = resolveFeedbackOutcome(view({ created: true }), 'done')
+    expect(r.status).toBe('Готово')
+    expect(r.outcome).toBe('Сущность создана')
+  })
+  it('done + not created → outcome «Сущность не создана»', () => {
+    expect(resolveFeedbackOutcome(view({ created: false }), 'done').outcome).toBe('Сущность не создана')
+  })
+  it('joins warnings + errors into notes', () => {
+    const r = resolveFeedbackOutcome(view({ created: true, warnings: ['Поставщик не найден'], errors: ['Валюта XXX отсутствует'] }), 'done')
+    expect(r.notes).toBe('Поставщик не найден; Валюта XXX отсутствует')
+  })
+  it('bare error message (pre-crm-sync failure) → «Ошибка обработки» + message as notes', () => {
+    const r = resolveFeedbackOutcome(view({ message: 'документ не найден' }), 'error')
+    expect(r).toEqual({ status: 'Ошибка', outcome: 'Ошибка обработки', notes: 'документ не найден' })
+  })
+  it('non-terminal (in-flight) run → status only, no outcome yet', () => {
+    const r = resolveFeedbackOutcome(view({}), 'processing')
+    expect(r.status).toBe('Распознавание и запись')
+    expect(r.outcome).toBeUndefined()
   })
 })

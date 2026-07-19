@@ -87,6 +87,18 @@ describe('feedback — buildFeedbackIssue', () => {
     // exactly one REAL Комментарий heading — the forged one is now literal text inside backticks
     expect(p.body.match(/^\*\*Комментарий:\*\*$/gm)).toHaveLength(1)
   })
+  it('renders the разбор block (status/outcome/notes) and the source-file link (#192 п.1/п.3), inert', () => {
+    const p = buildFeedbackIssue('down', 'плохо', {
+      status: 'Готово',
+      outcome: 'Сущность создана',
+      notes: 'Поставщик не найден; Валюта XXX отсутствует',
+      fileUrl: 'https://bel.bitrix24.by/docs/file/123/'
+    })
+    expect(p.body).toContain('- **Статус разбора:** `Готово`')
+    expect(p.body).toContain('- **Исход:** `Сущность создана`')
+    expect(p.body).toContain('- **Замечания:** `Поставщик не найден; Валюта XXX отсутствует`')
+    expect(p.body).toContain('- **Исходный файл:** `https://bel.bitrix24.by/docs/file/123/`')
+  })
   it('omits the Контекст section entirely when no context is given', () => {
     expect(buildFeedbackIssue('up', 'ok').body).not.toContain('**Контекст:**')
     expect(buildFeedbackIssue('up', 'ok', {}).body).not.toContain('**Контекст:**')
