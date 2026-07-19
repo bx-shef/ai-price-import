@@ -26,53 +26,55 @@ async function submit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-    <form
-      class="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
-      @submit.prevent="submit"
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <B24Card
+      variant="outline"
+      class="w-full max-w-sm"
     >
-      <h1 class="mb-1 text-lg font-semibold">
-        Вход для оператора
-      </h1>
-      <p class="mb-5 text-sm text-gray-500">
-        Служебная зона мониторинга импорта.
-      </p>
+      <form @submit.prevent="submit">
+        <h1 class="mb-1 text-lg font-semibold">
+          Вход для оператора
+        </h1>
+        <p class="mb-5 text-sm text-(--ui-color-base-3)">
+          Служебная зона мониторинга импорта.
+        </p>
 
-      <B24Alert
-        v-if="!enabled"
-        class="mb-4"
-        color="air-primary-warning"
-        title="Вход оператора отключён администратором."
-      />
-
-      <B24FormField label="Пароль">
-        <B24Input
-          v-model="password"
-          type="password"
-          autocomplete="current-password"
-          placeholder="••••••••"
-          class="w-full"
-        />
-      </B24FormField>
-
-      <div aria-live="assertive">
         <B24Alert
-          v-if="error"
-          class="mt-2"
-          color="air-primary-alert"
-          :title="error"
+          v-if="!enabled"
+          class="mb-4"
+          color="air-primary-warning"
+          title="Вход оператора отключён администратором."
         />
-      </div>
 
-      <B24Button
-        type="submit"
-        class="mt-5"
-        color="air-primary"
-        block
-        :loading="busy"
-        :disabled="busy || !password"
-        :label="busy ? 'Вход…' : 'Войти'"
-      />
-    </form>
+        <B24FormField label="Пароль">
+          <B24Input
+            v-model="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="••••••••"
+            class="w-full"
+          />
+        </B24FormField>
+
+        <div aria-live="assertive">
+          <B24Alert
+            v-if="error"
+            class="mt-2"
+            color="air-primary-alert"
+            :title="error"
+          />
+        </div>
+
+        <B24Button
+          type="submit"
+          class="mt-5"
+          color="air-primary"
+          block
+          :loading="busy"
+          :disabled="busy || !password"
+          :label="busy ? 'Вход…' : 'Войти'"
+        />
+      </form>
+    </B24Card>
   </div>
 </template>

@@ -6,6 +6,7 @@ import { useB24 } from '~/composables/useB24'
 import { B24_BOUND_EVENTS, B24_EVENT_HANDLER_PATH, B24_REQUIRED_SCOPES } from '~/config/b24'
 import { buildEventBindCalls, isBindableHandlerUrl, type EventBinding } from '~/utils/b24EventBind'
 import { LANDING_TITLE } from '~/utils/landing'
+import { shortSha, commitUrl } from '~/utils/build'
 
 // B24 install handler (Marketplace field «Путь к обработчику установки»). Runs INSIDE the
 // portal iframe during install: registers the server-event handlers (ONAPPINSTALL /
@@ -27,6 +28,11 @@ const inFrame = computed(() => !!frame.value)
 const config = useRuntimeConfig()
 const stripTrailing = (u: string) => u.replace(/\/+$/, '')
 const configuredSiteUrl = stripTrailing((config.public.siteUrl as string) || '')
+
+// Build commit (footer «сборка <sha>» → GitHub, same as the landing) + diagnostics modal state.
+const buildSha = computed(() => shortSha(config.public.commitSha as string))
+const buildHref = computed(() => commitUrl(config.public.commitSha as string))
+const diagOpen = ref(false)
 const appUrl = import.meta.dev && typeof window !== 'undefined'
   ? stripTrailing(`${window.location.origin}${window.location.pathname.replace(/\/install\/?$/, '')}`)
   : configuredSiteUrl
@@ -182,14 +188,30 @@ onMounted(runInstall)
       >
         {{ caption }}
       </p>
+    </div>
 
-      <B24Accordion
-        :items="[{ label: 'Диагностика', value: 'diag', slot: 'diag' }]"
-        type="multiple"
-        class="mt-4 w-full"
+    <!-- Bottom-right corner: build commit (like the landing footer) + a diagnostics modal trigger.
+         Kept out of the main flow — install runs headless and B24 reloads the frame on finish, so
+         diagnostics are a support aid, not part of the flow. -->
+    <div class="fixed bottom-3 right-3 z-10 flex items-center gap-3 text-xs">
+      <a
+        :href="buildHref"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="font-mono text-(--ui-color-base-4) hover:text-(--ui-color-base-1) hover:underline"
+      >сборка {{ buildSha || 'dev' }}</a>
+      <B24Modal
+        v-model:open="diagOpen"
+        title="Диагностика (для техподдержки)"
       >
-        <template #diag>
-          <div class="flex flex-col gap-3 p-2 font-mono text-sm">
+        <B24Button
+          label="Диагностика"
+          color="air-tertiary-no-accent"
+          size="xs"
+        />
+
+        <template #body>
+          <div class="flex flex-col gap-3 font-mono text-sm">
             <div class="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
               <span class="text-(--ui-color-base-3)">Режим:</span>
               <span>{{ diagnostics.mode }}</span>
@@ -251,7 +273,7 @@ onMounted(runInstall)
             </div>
           </div>
         </template>
-      </B24Accordion>
+      </B24Modal>
     </div>
   </div>
 </template>

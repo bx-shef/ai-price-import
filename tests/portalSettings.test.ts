@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultMapping, parsePortalSettings } from '../app/utils/portalSettings'
+import { defaultMapping, isPortalConfigured, parsePortalSettings } from '../app/utils/portalSettings'
 
 describe('parsePortalSettings', () => {
   it('empty/invalid → safe defaults', () => {
@@ -51,5 +51,32 @@ describe('parsePortalSettings', () => {
     })
     expect(m.routingRules[0]!.match.keywords!.length).toBe(100)
     expect(Object.keys(m.units.dictionary).length).toBe(1000)
+  })
+})
+
+describe('isPortalConfigured', () => {
+  it('pristine defaults → not configured', () => {
+    expect(isPortalConfigured(defaultMapping())).toBe(false)
+    expect(isPortalConfigured(parsePortalSettings(null))).toBe(false)
+    expect(isPortalConfigured(parsePortalSettings({}))).toBe(false)
+  })
+  it('any single meaningful setting flips it to configured', () => {
+    const cfg = (patch: Record<string, unknown>) => isPortalConfigured(parsePortalSettings({ ...patch }))
+    expect(cfg({ article: { field: 'PROPERTY_123' } })).toBe(true)
+    expect(cfg({ notifyChatId: 'chat42' })).toBe(true)
+    expect(cfg({ errorChatId: 'chat7' })).toBe(true)
+    expect(cfg({ routingRules: [{ match: { type: 'накладная' }, target: { entityTypeId: 2 } }] })).toBe(true)
+    expect(cfg({ units: { dictionary: { шт: 796 } } })).toBe(true)
+    expect(cfg({ saveFile: true })).toBe(true)
+    expect(cfg({ product: { by: 'name', onMissing: 'skip-warn' } })).toBe(true)
+    expect(cfg({ product: { by: 'article', onMissing: 'create' } })).toBe(true)
+    expect(cfg({ units: { defaultCode: 166 } })).toBe(true)
+    expect(cfg({ units: { autoCreate: true } })).toBe(true)
+    expect(cfg({ defaultTarget: { entityTypeId: 31 } })).toBe(true) // moved off the deal anchor
+    expect(cfg({ defaultTarget: { entityTypeId: 2, categoryId: 3 } })).toBe(true) // non-default funnel
+    expect(cfg({ defaultTarget: { entityTypeId: 2, categoryId: 0, stageId: 'NEW' } })).toBe(true)
+  })
+  it('an empty article field / whitespace stays not-configured', () => {
+    expect(isPortalConfigured(parsePortalSettings({ article: { field: '   ' } }))).toBe(false)
   })
 })

@@ -89,11 +89,12 @@ async function onPicked(files: File[] | null | undefined) {
   pending.value = null
 }
 
-const toneClass: Record<string, string> = {
-  neutral: 'bg-gray-100 text-gray-600',
-  info: 'bg-blue-100 text-blue-700',
-  success: 'bg-green-100 text-green-700',
-  danger: 'bg-red-100 text-red-700'
+// Status tone → b24ui B24Badge air-color (theme-aware).
+const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-primary-alert' | 'air-secondary'> = {
+  neutral: 'air-secondary',
+  info: 'air-primary',
+  success: 'air-primary-success',
+  danger: 'air-primary-alert'
 }
 
 // Parse each job's result once (not 3× per row in the template).
@@ -118,7 +119,7 @@ const rows = computed(() => jobs.value.map(job => ({
     <h1 class="mb-1 text-xl font-semibold">
       Импорт документов
     </h1>
-    <p class="mb-5 text-sm text-gray-500">
+    <p class="mb-5 text-sm text-(--ui-color-base-3)">
       Загрузите накладную, счёт, КП или прайс — приложение найдёт контрагента и внесёт товары в CRM.
     </p>
 
@@ -129,7 +130,7 @@ const rows = computed(() => jobs.value.map(job => ({
     >
       <p
         id="import-target-label"
-        class="mb-1 text-sm font-medium text-gray-700"
+        class="mb-1 text-sm font-medium text-(--ui-color-base-2)"
       >
         Куда импортировать
       </p>
@@ -143,7 +144,7 @@ const rows = computed(() => jobs.value.map(job => ({
           :aria-pressed="targetEtid === c.id"
           @click="() => chooseTarget(c.id)"
         />
-        <span class="text-xs text-gray-400">или ID (смарт-процесс ≥ 1000):</span>
+        <span class="text-xs text-(--ui-color-base-4)">или ID (смарт-процесс ≥ 1000):</span>
         <B24InputNumber
           :model-value="targetEtid"
           :min="1"
@@ -168,7 +169,7 @@ const rows = computed(() => jobs.value.map(job => ({
           @update:model-value="onStage"
         />
       </div>
-      <p class="mt-1 text-xs text-gray-400">
+      <p class="mt-1 text-xs text-(--ui-color-base-4)">
         По умолчанию — по правилам маршрутизации из настроек.
       </p>
     </div>
@@ -192,7 +193,7 @@ const rows = computed(() => jobs.value.map(job => ({
     />
 
     <div class="mt-6 mb-2 flex items-center justify-between">
-      <h2 class="text-sm font-semibold text-gray-700">
+      <h2 class="text-sm font-semibold text-(--ui-color-base-2)">
         Последние загрузки
       </h2>
       <B24Button
@@ -206,10 +207,10 @@ const rows = computed(() => jobs.value.map(job => ({
       />
     </div>
 
-    <ul class="divide-y rounded-lg border border-gray-200">
+    <ul class="divide-y divide-(--ui-color-base-5) rounded-lg border border-(--ui-color-base-5)">
       <li
         v-if="!jobs.length"
-        class="p-4 text-center text-sm text-gray-400"
+        class="p-4 text-center text-sm text-(--ui-color-base-4)"
       >
         Пока нет загрузок
       </li>
@@ -224,23 +225,23 @@ const rows = computed(() => jobs.value.map(job => ({
           </p>
           <p
             v-if="row.result.errors.length"
-            class="truncate text-xs text-red-500"
+            class="truncate text-xs text-(--ui-color-accent-main-alert)"
           >
             {{ row.result.errors[0] }}
           </p>
           <p
             v-else-if="row.result.message"
-            class="truncate text-xs text-gray-500"
+            class="truncate text-xs text-(--ui-color-base-3)"
           >
             {{ row.result.message }}
           </p>
         </div>
-        <span
-          class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
-          :class="toneClass[row.meta.tone]"
-        >
-          {{ row.meta.label }}
-        </span>
+        <B24Badge
+          class="shrink-0"
+          :label="row.meta.label"
+          :color="badgeColor[row.meta.tone]"
+          size="sm"
+        />
       </li>
     </ul>
   </div>

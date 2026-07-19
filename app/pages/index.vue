@@ -21,7 +21,10 @@ import { B24_BOOKING_URL } from '~/utils/booking'
 // two-column hero), reusing this project's blocks and content; accent stays cyan.
 useHead({
   title: 'AI-импорт документов в Bitrix24',
-  bodyAttrs: { class: 'bg-[#05010f]' }
+  bodyAttrs: { class: 'bg-[#05010f]' },
+  // The landing shell is hardcoded dark (vibecode hex) — pin dark so app.vue's theme-init keeps b24ui
+  // components on dark tokens here regardless of the visitor's OS theme (in-portal pages stay auto).
+  htmlAttrs: { 'data-force-dark': 'true' }
 })
 
 useCardGlow()
