@@ -27,6 +27,10 @@ export default defineNuxtConfig({
       // Client-exposed; correctly overridden by NUXT_PUBLIC_-prefixed env at runtime.
       siteUrl: '',
       commitSha: 'dev',
+      // Bitrix24 Market listing code override for the «оцените приложение» modal. Empty → the
+      // composable falls back to the app's real slug (LANDING_MARKET_CODE in landing.ts). Set
+      // NUXT_PUBLIC_B24_MARKET_CODE only to point at a different listing (e.g. a re-publish).
+      b24MarketCode: '',
       // Yandex.Metrika id (empty → useMetrikaGoal no-ops; landing analytics optional).
       metrikaId: '',
       // Embedded Bitrix24 CRM web-form (BriefForm) — client & partner enquiries.

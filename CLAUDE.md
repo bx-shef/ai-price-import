@@ -9,7 +9,8 @@ AI-импорт документов с табличной частью в Bitri
 > **Идёт редизайн.** Полное описание проекта, процесса, архитектуры, стека и решений —
 > в [`docs/redesign/`](docs/redesign/README.md) (00 старая арх. → 01 карта → 02 целевая арх. →
 > 03 стек → 04 маркетинг → 05 политика данных → 06 мультиязычность → 07 план тестирования →
-> 08 демо на лендинге → 09 деплой → 10 чек-лист проверок → 11 тарифы/self-hosted). Держим их синхронно.
+> 08 демо на лендинге → 09 деплой → 10 чек-лист проверок → 11 тарифы/self-hosted →
+> 12 попап оценки в Маркете). Держим их синхронно.
 
 ## Раскладка
 
@@ -115,6 +116,17 @@ AI-импорт документов с табличной частью в Bitri
     суточный крон рефрешит **только** порталы у истечения (`selectTokensNearExpiry` по `updated_at`,
     порог ~3 д, батч-кап 50) — иначе простаивающий портал теряет refresh_token на 180-й день. Гейт на
     `B24_CLIENT_ID/SECRET`, каденция `TOKEN_KEEPALIVE_HOURS` (дефолт 24, кламп [1h,168h]).
+  - **Попап «оцените приложение»** ([`docs/redesign/12-app-rating.md`](docs/redesign/12-app-rating.md)):
+    переиспользуемый `AppRatingModal.vue` (на `B24Modal`) на `/app` всплывает **после успешного импорта**
+    и по кнопке открывает детальную страницу Маркета через `frame.slider.openPath('/marketplace/detail/<code>/')`
+    (`marketDetailPath`; код по умолчанию — реальный слаг `shef.priceimport` из `LANDING_MARKET_CODE`,
+    override — `NUXT_PUBLIC_B24_MARKET_CODE`). Решение показа — **на
+    сервере**, рядом с авторизацией: таблица `portal_app_rating` (ключ `member_id`, чистится при uninstall) +
+    чистая `shouldPrompt` (`prompted_at` троттлит показ ≤1 раза в `RATING_REPROMPT_DAYS`=4д; `opened_at`
+    глушит до **ручной** проверки; `reviewed` — терминально). Роуты `GET /api/app-rating` (read-only `{show}`)
+    / `POST` (`prompted`/`opened`) — фрейм-токен (`resolveFrameMember`). Факт отзыва Маркет по REST не отдаёт →
+    проверяем вручную SQL'ом (`markReviewed`/`clearOpened`). Гифка-подсказка `public/app-rating-demo.gif`
+    (сжата Pillow, ленивая загрузка).
   - **Глубокая телеметрия — OpenTelemetry** ([`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md), вектор
     Bitrix `b24-ai-starter-otel`; порт из client-bank PR #317/#318). **Слайс 1 (app-side) — DEFAULT OFF:**
     бутстрап `otel.instrument.mjs` грузится через `NODE_OPTIONS=--import` **до** приложения (иначе

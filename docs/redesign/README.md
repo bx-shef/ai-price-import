@@ -26,6 +26,7 @@ MCP-HTTP-сервера): распознаёт документ в JSON, а де
 | [`09-deploy.md`](09-deploy.md) | Деплой: Docker-образ (с бинарями извлечения), compose, env, nginx (проксирование `/api`, `limit_req` входа, CSP iframe), health, миграции |
 | [`10-qa-checklist.md`](10-qa-checklist.md) | Детальный чек-лист проверок по подсистемам (команды, ожидаемо, метки авто/вручную/живой портал/LLM) — дополняет 07 |
 | [`11-pricing-selfhosted.md`](11-pricing-selfhosted.md) | Черновик ТЗ калькулятора + чек-лист self-hosted оффера (облако↔свой сервер, данные, юр-модель РФ/РБ) — GH #96 |
+| [`12-app-rating.md`](12-app-rating.md) | Попап «оцените приложение» в Маркете: `AppRatingModal`, состояние `portal_app_rating`, троттлинг/ручная проверка, `openPath` |
 
 ## Референсы
 
