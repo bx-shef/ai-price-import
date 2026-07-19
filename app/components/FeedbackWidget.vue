@@ -13,12 +13,14 @@ onMounted(ensureEnabled)
 
 const open = ref(false) // comment box shown
 const comment = ref('')
+const attachFile = ref(false) // consent to attach the source-file link (#192 п.3)
 const sending = ref(false)
 const sent = ref(false)
 const error = ref('')
 
 async function rate(kind: 'up' | 'down'): Promise<void> {
-  // 👎 → ask what went wrong before sending (a comment makes negative feedback actionable).
+  // 👎 → ask what went wrong before sending (a comment makes negative feedback actionable). The
+  // file-attach consent lives in this box too — 👍 stays an instant, no-friction positive signal.
   if (kind === 'down' && !open.value) {
     open.value = true
     return
@@ -30,7 +32,7 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
     const ok = await submit(kind, comment.value.trim() || undefined, {
       jobId: props.jobId,
       fileName: props.fileName
-    })
+    }, attachFile.value)
     if (ok) sent.value = true
     else error.value = 'Отзыв доступен только внутри портала Bitrix24'
   } catch {
@@ -94,6 +96,12 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
           aria-label="Что пошло не так"
           placeholder="Что пошло не так? (необязательно)"
           class="w-full rounded border border-(--ui-color-base-5) p-1.5 text-xs"
+        />
+        <B24Checkbox
+          v-model="attachFile"
+          size="xs"
+          label="Приложить исходный файл"
+          description="Ссылка на файл в задаче (если он был сохранён на Диск портала)"
         />
         <div class="flex items-center gap-2">
           <B24Button

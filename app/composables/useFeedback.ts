@@ -39,15 +39,17 @@ export function useFeedback() {
   }
 
   /**
-   * Send a rating (+ optional comment + import context). Throws on failure; returns false outside a
-   * portal. Context (jobId/file) traces the issue back to a run — permitted because the receiving
-   * repo is private (see feedback.ts). Empty/undefined fields are dropped by the server builder.
+   * Send a rating (+ optional comment + import context + file-attach consent). Throws on failure;
+   * returns false outside a portal. Context (jobId/file) traces the issue back to a run — permitted
+   * because the receiving repo is private (see feedback.ts). `attachFile` is the employee's explicit
+   * consent (#192 п.3) to include the source-file link (server attaches it only if the file was
+   * archived to the portal Disk). Empty/undefined fields are dropped by the server builder.
    */
-  async function submit(kind: 'up' | 'down', comment?: string, context?: FeedbackSubmitContext): Promise<boolean> {
+  async function submit(kind: 'up' | 'down', comment?: string, context?: FeedbackSubmitContext, attachFile?: boolean): Promise<boolean> {
     await init()
     const headers = buildFrameHeaders(auth())
     if (!headers) return false // outside a portal — no frame token
-    await $fetch('/api/feedback', { method: 'POST', headers, body: { kind, comment, context } })
+    await $fetch('/api/feedback', { method: 'POST', headers, body: { kind, comment, context, attachFile: attachFile === true } })
     return true
   }
 

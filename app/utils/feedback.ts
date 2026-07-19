@@ -54,9 +54,15 @@ export interface IssuePayload { title: string, body: string, labels: string[] }
 export interface FeedbackContext {
   jobId?: unknown
   fileName?: unknown
+  /** Triage status of the run (#192 п.1): human status + outcome + notes, resolved server-side. */
+  status?: unknown
+  outcome?: unknown
+  notes?: unknown
   entityType?: unknown
   entityId?: unknown
   entityUrl?: unknown
+  /** Durable link to the source file on the portal Disk (#192 п.3), attached only with consent. */
+  fileUrl?: unknown
   appVersion?: unknown
 }
 
@@ -80,7 +86,8 @@ function contextLine(label: string, value: unknown): string | null {
  * Build the { title, body, labels } for the GitHub issue from a validated kind + raw comment +
  * optional import context. The comment is sanitized here (do not assume a pre-sanitized value — this
  * is exported). Body wraps the comment in <pre><code> so backticks/asterisks/HTML are inert. Context
- * lines (jobId/file/entity/version) are rendered ONLY because the receiving repo is private; each is
+ * lines (status/outcome/notes/jobId/file/entity/version) are rendered ONLY because the receiving repo
+ * is private; each is
  * made fully inert (newlines collapsed + wrapped in an inline code span — see contextLine) so a
  * client-supplied value can't inject markdown. Absent/empty context → the section is omitted.
  */
@@ -92,8 +99,12 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
     ? `${kindWord} · ${firstLine}`.slice(0, 120)
     : `Отзыв сотрудника — ${kindWord}`.slice(0, 120)
   const contextLines = [
+    contextLine('Статус разбора', context.status),
+    contextLine('Исход', context.outcome),
+    contextLine('Замечания', context.notes),
     contextLine('Задача (jobId)', context.jobId),
     contextLine('Файл', context.fileName),
+    contextLine('Исходный файл', context.fileUrl),
     contextLine('Сущность', context.entityType),
     contextLine('ID сущности', context.entityId),
     contextLine('Ссылка', context.entityUrl),
