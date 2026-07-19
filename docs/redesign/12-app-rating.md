@@ -67,7 +67,10 @@
 Прямой SQL остаётся запасным путём (те же функции `markReviewed` / `clearOpened`):
 
 ```sql
-UPDATE portal_app_rating SET reviewed = true, updated_at = now() WHERE member_id = '<member_id>';
+-- как markReviewed (UPSERT — работает и для портала без строки, state=none):
+INSERT INTO portal_app_rating (member_id, reviewed) VALUES ('<member_id>', true)
+  ON CONFLICT (member_id) DO UPDATE SET reviewed = true, updated_at = now();
+-- как clearOpened:
 UPDATE portal_app_rating SET opened_at = NULL, prompted_at = NULL, updated_at = now()
   WHERE member_id = '<member_id>' AND reviewed = false;
 ```

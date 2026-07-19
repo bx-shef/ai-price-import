@@ -32,6 +32,20 @@ describe('buildRatingStatuses', () => {
     expect(out.map(s => s.state)).toEqual(['opened', 'prompted', 'none', 'reviewed'])
   })
 
+  it('a reviewed portal that also has opened_at set sorts to the bottom (reviewed wins)', () => {
+    const out = buildRatingStatuses([
+      row({ domain: 'b-reviewed-and-opened', reviewed: true, openedAtMs: 99 }),
+      row({ domain: 'a-opened', openedAtMs: 10 })
+    ])
+    expect(out.map(s => s.state)).toEqual(['opened', 'reviewed'])
+    expect(out[1]!.domain).toBe('b-reviewed-and-opened')
+  })
+
+  it('passes prompted/opened timestamps through to the output', () => {
+    const out = buildRatingStatuses([row({ domain: 'a', promptedAtMs: 111, openedAtMs: 222 })])
+    expect(out[0]).toMatchObject({ promptedAtMs: 111, openedAtMs: 222 })
+  })
+
   it('breaks ties within a state by domain', () => {
     const out = buildRatingStatuses([
       row({ domain: 'beta', promptedAtMs: 1 }),
