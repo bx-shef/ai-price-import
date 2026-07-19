@@ -22,7 +22,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
       poppler-utils \
       libreoffice-calc libreoffice-writer \
-      tesseract-ocr tesseract-ocr-rus tesseract-ocr-bel tesseract-ocr-kaz \
+      tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-bel tesseract-ocr-kaz \
       fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 # Headless extraction agent (AGENT_BIN=claude): the Claude Code CLI, spawned per job
@@ -35,6 +35,24 @@ ENV UPLOAD_DIR=/data/uploads
 # passes HOME through, and Claude Code writes its config under $HOME/.claude on first run.
 ENV HOME=/root
 RUN mkdir -p /data/uploads /root/.claude
+# Fail the build FAST if the extraction toolchain is broken. A package rename / partial install
+# would otherwise pass `docker build` and only surface at RUNTIME («fragile binary env» risk from the
+# review). Assert every binary the file-extract worker spawns is present AND runnable, plus all four
+# OCR languages (rus/bel/kaz/eng — docs/redesign 06 §6). NB: poppler's `pdftotext -v`/`pdftoppm -v`
+# exit non-zero (99) even when healthy, so we grep the version line through a pipe — grep's status
+# governs (no pipefail), which both ignores poppler's exit code and proves the binary actually ran.
+# Each check greps the version LINE (tool name + a version digit), not the bare name: a present-but-
+# unrunnable binary prints «<tool>: error while loading shared libraries…» which contains the name
+# but no «<tool> <digit>», so it correctly fails. libreoffice --version is wrapped in `timeout` in
+# case a broken profile-init hangs (a hang would otherwise stall the build).
+RUN set -eu; \
+    pdftotext -v 2>&1 | grep -qiE 'pdftotext version [0-9]'; \
+    pdftoppm -v 2>&1 | grep -qiE 'pdftoppm version [0-9]'; \
+    timeout 60 libreoffice --version 2>&1 | grep -qiE 'libreoffice [0-9]'; \
+    tesseract --version 2>&1 | grep -qiE 'tesseract [0-9]'; \
+    claude --version >/dev/null; \
+    langs="$(tesseract --list-langs 2>&1)"; \
+    for l in rus bel kaz eng; do echo "$langs" | grep -qx "$l" || { echo "missing tesseract lang: $l" >&2; exit 1; }; done
 COPY --from=build /app/.output ./.output
 # OTel bootstrap (телеметрия): loaded via NODE_OPTIONS=--import BEFORE the app so
 # auto-instrumentation can hook http/pg/ioredis at module load. Its deps must live OUTSIDE the
