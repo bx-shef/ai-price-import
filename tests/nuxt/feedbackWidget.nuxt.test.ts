@@ -39,7 +39,8 @@ describe('FeedbackWidget', () => {
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, expect.any(Object))
+    // 👍 stays instant and never attaches a file (consent lives in the 👎 box) → attachFile false.
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, expect.any(Object), false)
     expect(w.text()).toContain('Спасибо')
   })
 
@@ -47,7 +48,7 @@ describe('FeedbackWidget', () => {
     const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-7', fileName: 'счёт.xlsx' } })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-7', fileName: 'счёт.xlsx' })
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-7', fileName: 'счёт.xlsx' }, false)
   })
 
   it('👎 opens the comment box; the «Отправить» button sends with the comment', async () => {
@@ -57,7 +58,18 @@ describe('FeedbackWidget', () => {
     await w.find('textarea').setValue('НДС не тот')
     await clickText(w, 'Отправить') // the real primary submit control
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object))
+    // File-attach consent defaults OFF → attachFile false unless the employee ticks the box.
+    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object), false)
+    expect(w.text()).toContain('Спасибо')
+  })
+
+  it('👎 with the file-consent checkbox ticked sends attachFile=true (#192 п.3)', async () => {
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-9' } })
+    await w.find('button[aria-label="Плохо"]').trigger('click') // open the box (checkbox appears)
+    await w.find('[role="checkbox"]').trigger('click') // B24Checkbox toggles v-model on click
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(h.submit).toHaveBeenCalledWith('down', undefined, { jobId: 'job-9', fileName: undefined }, true)
     expect(w.text()).toContain('Спасибо')
   })
 

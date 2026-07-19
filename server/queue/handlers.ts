@@ -80,7 +80,19 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
   await deps.setJobStatus(
     job.memberId, job.jobId,
     result.created || !result.errors.length ? 'done' : 'error',
-    JSON.stringify({ entityId: result.entityId, created: result.created, warnings: result.warnings, errors: result.errors })
+    // entityTypeId (#192 п.2 — feedback entity link) + supplier name + line count so the /app «разбор»
+    // shows what was recognised, not just the id. Portal's own document data, read back only by the
+    // same portal's frame token (member-scoped) and rendered auto-escaped — no cross-tenant exposure.
+    JSON.stringify({
+      entityTypeId: result.entityTypeId,
+      entityId: result.entityId,
+      created: result.created,
+      // Cap the supplier name so a pathological document can't bloat the result column / the UI.
+      ...(loaded.doc.supplier?.name ? { supplier: loaded.doc.supplier.name.slice(0, 120) } : {}),
+      lines: result.rowCount,
+      warnings: result.warnings,
+      errors: result.errors
+    })
   )
   // Dashboard counters. `errors` is bumped upstream (reportErrors) — not here.
   //  - Idempotent redelivery (job already processed): the whole document was SKIPPED — count

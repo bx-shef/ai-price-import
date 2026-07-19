@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ImportJobView } from '~/composables/useImport'
-import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
+import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
 
 // One row in «Последние операции»: shows the file, a per-STAGE progress stepper while the job runs
@@ -81,9 +81,25 @@ const stepDot: Record<string, string> = {
       v-else-if="!result.errors.length && !progress.failed"
       class="text-xs text-(--ui-color-base-3)"
     >
-      <span v-if="result.entityId">Создано в CRM · сущность #{{ result.entityId }}</span>
-      <span v-else-if="result.message">{{ result.message }}</span>
-      <span v-else>Документ обработан</span>
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span
+          v-if="result.entityId"
+          class="text-(--ui-color-accent-main-success)"
+        >Создано в CRM · сущность #{{ result.entityId }}</span>
+        <span v-else-if="result.message">{{ result.message }}</span>
+        <span v-else>Документ обработан</span>
+        <!-- «распознан» (not «привязан»): the name is what the AI read from the document — the company
+             may or may not have matched in CRM (the unmatched warning below clarifies). -->
+        <span
+          v-if="result.supplier"
+          class="min-w-0 break-words"
+        >· распознан поставщик: {{ result.supplier }}</span>
+        <!-- 0 lines on a created entity is notable (ничего не импортировалось) → surface as a warning. -->
+        <span
+          v-if="result.lines != null"
+          :class="result.lines === 0 ? 'text-(--ui-color-accent-main-warning)' : ''"
+        >· {{ result.lines }} {{ pluralRu(result.lines, ['позиция', 'позиции', 'позиций']) }}</span>
+      </div>
       <ul
         v-if="result.warnings.length"
         class="mt-1 list-disc pl-4 text-(--ui-color-accent-main-warning)"
