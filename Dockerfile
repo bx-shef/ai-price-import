@@ -35,6 +35,20 @@ ENV UPLOAD_DIR=/data/uploads
 # passes HOME through, and Claude Code writes its config under $HOME/.claude on first run.
 ENV HOME=/root
 RUN mkdir -p /data/uploads /root/.claude
+# Fail the build FAST if the extraction toolchain is broken. A package rename / partial install
+# would otherwise pass `docker build` and only surface at RUNTIME («fragile binary env» risk from the
+# review). Assert every binary the file-extract worker spawns is present AND runnable, plus all four
+# OCR languages (rus/bel/kaz/eng — docs/redesign 06 §6). NB: poppler's `pdftotext -v`/`pdftoppm -v`
+# exit non-zero (99) even when healthy, so we grep the version line through a pipe — grep's status
+# governs (no pipefail), which both ignores poppler's exit code and proves the binary actually ran.
+RUN set -eu; \
+    pdftotext -v 2>&1 | grep -qi 'pdftotext version'; \
+    pdftoppm -v 2>&1 | grep -qi 'pdftoppm version'; \
+    libreoffice --version 2>&1 | grep -qi 'libreoffice'; \
+    tesseract --version 2>&1 | grep -qi 'tesseract'; \
+    claude --version >/dev/null; \
+    langs="$(tesseract --list-langs 2>&1)"; \
+    for l in rus bel kaz eng; do echo "$langs" | grep -qx "$l" || { echo "missing tesseract lang: $l" >&2; exit 1; }; done
 COPY --from=build /app/.output ./.output
 # OTel bootstrap (телеметрия): loaded via NODE_OPTIONS=--import BEFORE the app so
 # auto-instrumentation can hook http/pg/ioredis at module load. Its deps must live OUTSIDE the
