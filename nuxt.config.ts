@@ -27,6 +27,10 @@ export default defineNuxtConfig({
       // Client-exposed; correctly overridden by NUXT_PUBLIC_-prefixed env at runtime.
       siteUrl: '',
       commitSha: 'dev',
+      // Bitrix24 Market listing code of THIS app (e.g. «bx-shef.ai_price_import»). Drives the
+      // in-portal «оцените приложение» modal — empty → the prompt is OFF (nothing to rate yet).
+      // Set NUXT_PUBLIC_B24_MARKET_CODE once the app is published to the Market.
+      b24MarketCode: '',
       // Yandex.Metrika id (empty → useMetrikaGoal no-ops; landing analytics optional).
       metrikaId: '',
       // Embedded Bitrix24 CRM web-form (BriefForm) — client & partner enquiries.

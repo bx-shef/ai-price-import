@@ -132,6 +132,11 @@ const stats = computed(() => {
   }
   return s
 })
+
+// Trigger the «оцените приложение» modal only once the user has clearly benefited — at least one
+// successful import (this session or in history). The actual show/throttle/verification decision is
+// server-side (portal_app_rating); AppRatingModal just reacts to this trigger. See docs/redesign/12.
+const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.value.created || 0) > 0)
 </script>
 
 <template>
@@ -395,5 +400,9 @@ const stats = computed(() => {
 
     <!-- Маркетинг: self-hosted оффер «развернём на вашем сервере» (внизу, ненавязчиво). -->
     <SelfHostedPromo />
+
+    <!-- «Оцените приложение»: всплывает после успешного импорта (когда польза очевидна). Показ/
+         троттлинг/верификация — на сервере (portal_app_rating). Инертен вне портала. -->
+    <AppRatingModal :trigger="hasSuccessfulImport" />
   </div>
 </template>

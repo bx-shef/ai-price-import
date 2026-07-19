@@ -11,6 +11,15 @@ export const B24_EVENT_HANDLER_PATH = '/api/b24/events'
 /** Events bound on install. */
 export const B24_BOUND_EVENTS = ['ONAPPINSTALL', 'ONAPPUNINSTALL'] as const
 
+/** Build the portal-relative path to this app's Bitrix24 Market detail page. Passed to the frame
+ *  SDK's `slider.openPath` so the user lands on the listing where they can leave a rating/review.
+ *  The path shape is fixed by Bitrix24; `code` is the app's Market listing code (see nuxt.config
+ *  `b24MarketCode`). Returns null for an empty code (feature off). */
+export function marketDetailPath(code: string): string | null {
+  const c = code.trim()
+  return c ? `/marketplace/detail/${c}/` : null
+}
+
 /** Bitrix24 entityTypeId constants used as import targets.
  *  quote (7) is intentionally excluded — no filterable external-marker field, and an incoming
  *  counterparty document has nothing to import into an outgoing offer (see #135).

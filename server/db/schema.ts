@@ -86,4 +86,21 @@ CREATE TABLE IF NOT EXISTS metrics_counter (
   value      BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (member_id, name)
 );
+
+-- App-rating prompt state, one row per portal (kept «рядом с авторизацией», keyed like it by
+-- member_id). Drives the in-portal «оцените приложение» modal:
+--   prompted_at — last time the modal was shown (throttle: не чаще одного раза в RATING_REPROMPT_DAYS);
+--   opened_at   — when the user clicked «Оценить» and we opened the Market detail page. While set,
+--                 the modal is suppressed until an owner MANUALLY verifies the review (see docs);
+--   reviewed    — set MANUALLY (true) once a real Market review is confirmed → terminal, never prompt again.
+-- Manual verification (docs/redesign/12): if after ~RATING_REPROMPT_DAYS no review appeared, clear
+-- opened_at (UPDATE ... SET opened_at=NULL) so the modal returns; if it did, set reviewed=true.
+CREATE TABLE IF NOT EXISTS portal_app_rating (
+  member_id   TEXT PRIMARY KEY,
+  prompted_at TIMESTAMPTZ,
+  opened_at   TIMESTAMPTZ,
+  reviewed    BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `
