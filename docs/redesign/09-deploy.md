@@ -12,11 +12,13 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 (лендинг, `/app`, `/import`, `/settings`, `/login`, `/queues`) **и** API/пайплайн. Рядом:
 - **Postgres** — токены порталов, задачи, извлечённый текст/структура, метрики (миграции идемпотентны, на старте).
 - **Redis** — очереди BullMQ (`b24-events`/`file-extract`/`agent-run`/`crm-sync`). Без него пайплайн выключен, загрузка отдаёт 503.
-- Бинарники извлечения — **в образе** (`poppler-utils`, `libreoffice`, `tesseract-ocr` + `rus/bel/kaz`,
-  eng — в базовом пакете). **Fail-fast проверка на сборке:** отдельный `RUN` в backend-стадии
-  Dockerfile прогоняет `pdftotext`/`pdftoppm`/`libreoffice`/`tesseract`/`claude` и сверяет наличие всех
-  4 OCR-языков (`--list-langs`) — сломанный/переименованный пакет роняет `docker build`, а не рантайм
-  (poppler `-v` возвращает 99 даже здоровый → грепаем строку версии через пайп, exit-код игнорируется).
+- Бинарники извлечения — **в образе** (`poppler-utils`, `libreoffice`, `tesseract-ocr` + явные
+  языковые пакеты `eng/rus/bel/kaz`). **Fail-fast проверка наличия и запускаемости на сборке:** отдельный
+  `RUN` в backend-стадии Dockerfile прогоняет `pdftotext`/`pdftoppm`/`libreoffice`/`tesseract`/`claude` и
+  сверяет все 4 OCR-языка (`--list-langs`) — сломанный/переименованный пакет роняет `docker build`, а не
+  рантайм. Нюансы: грепаем строку **версии** (имя+цифра, не голое имя — иначе «error loading shared
+  libraries» прошло бы), poppler `-v` даёт 99 даже здоровый → пайп на `grep` (его exit-код и решает),
+  `libreoffice --version` под `timeout` (страховка от зависшего first-run профиля).
 - **Агент-экстрактор** (`AGENT_BIN=claude`) — CLI `@anthropic-ai/claude-code` **в образе** (глобально);
   гоняется против DeepSeek по `ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL`. Без него пайплайн падает
   «spawn claude ENOENT». `HOME` задан (`/root`) — Claude Code пишет конфиг в `$HOME/.claude`.
