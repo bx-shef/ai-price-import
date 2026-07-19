@@ -197,8 +197,9 @@ pnpm check        # lint + typecheck + test
 секцию «Контекст» (jobId/файл/сущность/ссылка/версия), **каждое поле stripHostileChars+escapeHtml+кап 300** (как
 комментарий). Разрешено, т.к. репо-приёмник **приватный**; пустые поля — секция опускается целиком.
 **Репо-приёмник — `bx-shef/ai-price-import-feedback`** (приватный, владелец).
-**Осталось для включения:** `GITHUB_FEEDBACK_TOKEN` (Issues R/W) + `GITHUB_FEEDBACK_REPO=bx-shef/ai-price-import-feedback`
-в env прода; live-verify POST по включённому каналу.
+**✅ Канал включён и live-verified end-to-end (2026-07-19):** `GITHUB_FEEDBACK_TOKEN` + `GITHUB_FEEDBACK_REPO`
+настроены, сотрудник создал реальные отзывы **через приложение** — issue завелись в приёмнике (метки
+`user-feedback`+`feedback:down`, контекст jobId/файл отрендерен инертно).
 
 - [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — **ingestion**: три канала #182 (сотрудник 👍/👎, агент
   `feedback[]`, MCP-матчинг) → issue в репо-приёмнике (`GITHUB_FEEDBACK_REPO`).
