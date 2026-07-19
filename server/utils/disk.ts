@@ -40,20 +40,26 @@ export async function ensureSubfolder(folderId: number, name: string, call: Rest
 /** Find a FILE (not folder) by exact name under a folder; returns its id or null.
  *  Filters by NAME server-side so the check stays correct even when the month folder holds
  *  more than B24's default list page (~50) — no client-side pagination needed (cf. #87). */
-export async function findChildFile(folderId: number, name: string, call: RestCall): Promise<number | null> {
-  const children = await call('disk.folder.getchildren', { id: folderId, filter: { NAME: name } }) as Array<{ ID: string, NAME: string, TYPE: string }>
+export async function findChildFile(folderId: number, name: string, call: RestCall): Promise<DiskFileRef | null> {
+  const children = await call('disk.folder.getchildren', { id: folderId, filter: { NAME: name } }) as Array<{ ID: string, NAME: string, TYPE: string, DETAIL_URL?: string }>
   const existing = (children ?? []).find(c => c.TYPE === 'file' && c.NAME === name)
-  return existing ? Number(existing.ID) : null
+  return existing ? { id: Number(existing.ID), detailUrl: String(existing.DETAIL_URL ?? '') } : null
 }
 
-/** Upload a base64 file into a folder; returns the disk file id. */
-export async function uploadFile(folderId: number, fileName: string, base64: string, call: RestCall): Promise<number> {
+/** A saved Disk file: its id + `DETAIL_URL` (in-portal "open" link, for the timeline дело button). */
+export interface DiskFileRef {
+  id: number
+  detailUrl: string
+}
+
+/** Upload a base64 file into a folder; returns the disk file id + its DETAIL_URL. */
+export async function uploadFile(folderId: number, fileName: string, base64: string, call: RestCall): Promise<DiskFileRef> {
   const res = await call('disk.folder.uploadfile', {
     id: folderId,
     data: { NAME: fileName },
     fileContent: [fileName, base64]
-  }) as { ID: string }
-  return Number(res.ID)
+  }) as { ID: string, DETAIL_URL?: string }
+  return { id: Number(res.ID), detailUrl: String(res.DETAIL_URL ?? '') }
 }
 
 /**
@@ -76,7 +82,7 @@ export async function uploadFile(folderId: number, fileName: string, base64: str
 export async function saveSourceFileToDisk(
   input: { base64: string, fileName: string, date: { getFullYear: () => number, getMonth: () => number } },
   call: RestCall
-): Promise<number> {
+): Promise<DiskFileRef> {
   const storages = await call('disk.storage.getlist') as DiskStorage[] | undefined
   const common = pickCommonStorage(storages ?? [])
   const rootId = Number(common?.ROOT_OBJECT_ID)
@@ -106,6 +112,9 @@ export interface SaveSourceFileDeps {
    * races. Omitted in tests (runs `fn` inline) — the pure composition doesn't need a lock.
    */
   serialize?: (key: string, fn: () => Promise<void>) => Promise<void>
+  /** Optional: persist the archived file ref (id + DETAIL_URL) so crm-sync can link it on the
+   *  timeline дело (#129 follow-up). Best-effort — a persistence failure must not fail the import. */
+  recordDiskFile?: (memberId: string, jobId: string, ref: DiskFileRef) => Promise<void>
   now: () => number
 }
 
@@ -123,13 +132,18 @@ export function makeSaveSourceFile(deps: SaveSourceFileDeps): (memberId: string,
     const mapping = await deps.loadMapping(t.call)
     if (!mapping.saveFile) return
     const bytes = await deps.readBytes(memberId, jobId)
-    const write = () => saveSourceFileToDisk(
-      { base64: Buffer.from(bytes).toString('base64'), fileName: `${jobId}__${fileId}`, date: new Date(deps.now()) },
-      t.call
-    ).then(() => {})
+    let ref: DiskFileRef | null = null
+    const write = async (): Promise<void> => {
+      ref = await saveSourceFileToDisk(
+        { base64: Buffer.from(bytes).toString('base64'), fileName: `${jobId}__${fileId}`, date: new Date(deps.now()) },
+        t.call
+      )
+    }
     // Serialize only the Disk write (folder walk + upload) per portal — the mapping read and
     // byte read above don't touch the shared folders, so they stay outside the lock.
     if (deps.serialize) await deps.serialize(`disk-archive:${memberId}`, write)
     else await write()
+    // Persist the ref (outside the lock) so crm-sync can add an «Исходный файл» link to the дело.
+    if (ref && deps.recordDiskFile) await deps.recordDiskFile(memberId, jobId, ref)
   }
 }

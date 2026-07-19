@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { claimJobNotify, createJob, getJob, getManualOverride, listJobs, setJobStatus } from '../server/utils/jobStore'
+import { claimJobNotify, createJob, getDiskFileUrl, getJob, getManualOverride, listJobs, setDiskFile, setJobStatus } from '../server/utils/jobStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -33,6 +33,28 @@ describe('jobStore', () => {
     expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: null }]).q)).toBeUndefined()
     expect(await getManualOverride('m', 'j1', fakeQuery([{ manual_override: { entityTypeId: 0 } }]).q)).toBeUndefined()
     expect(await getManualOverride('m', 'x', fakeQuery([]).q)).toBeUndefined()
+  })
+  it('setDiskFile persists the ref as JSON; getDiskFileUrl → same-portal RELATIVE path only', async () => {
+    const { q, calls } = fakeQuery()
+    // real DETAIL_URL is ABSOLUTE (live-verified) — stored as-is, normalized to relative on read.
+    await setDiskFile('m', 'j1', { id: 45, detailUrl: 'https://p.bitrix24.com/docs/file/45/' }, q)
+    expect(calls[0]!.sql).toContain('disk_file=$3')
+    expect(calls[0]!.params).toEqual(['m', 'j1', '{"id":45,"detailUrl":"https://p.bitrix24.com/docs/file/45/"}'])
+    // absolute portal URL → stripped to its on-portal path
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://p.bitrix24.com/docs/file/45/' } }]).q)).toBe('/docs/file/45/')
+    // already-relative kept; string row tolerated
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '/docs/file/45/' } }]).q)).toBe('/docs/file/45/')
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: '{"detailUrl":"/x/y"}' }]).q)).toBe('/x/y')
+    // even an off-portal absolute is reduced to a relative path (redirect can't leave the portal)
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://evil.test/steal' } }]).q)).toBe('/steal')
+    // backslash open-redirect bypass: `/\evil.test` (browser → `//evil.test`) is rejected
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '/\\evil.test' } }]).q)).toBeNull()
+    // query string is dropped (no token ever surfaces on the button)
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: 'https://p.bitrix24.com/docs/file/45/?token=secret' } }]).q)).toBe('/docs/file/45/')
+    // protocol-relative / garbage / absent → null (no button)
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: { detailUrl: '//evil.test' } }]).q)).toBeNull()
+    expect(await getDiskFileUrl('m', 'j1', fakeQuery([{ disk_file: null }]).q)).toBeNull()
+    expect(await getDiskFileUrl('m', 'x', fakeQuery([]).q)).toBeNull()
   })
   it('claimJobNotify: atomic UPDATE guarded by notified=false, RETURNING (#164)', async () => {
     const { q, calls } = fakeQuery([{ job_id: 'j1' }]) // one row back → we won the claim

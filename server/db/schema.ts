@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS import_job (
   -- Manual import target chosen by the operator at upload (entityTypeId/categoryId/stageId JSON) —
   -- overrides the routing rules for this one job. NULL = follow the rules / default target.
   manual_override JSONB,
+  -- Archived source-file ref ({id, detailUrl}) when the portal's saveFile is on (#129 follow-up) —
+  -- crm-sync links it as an «Исходный файл» button on the timeline дело. NULL = not archived.
+  disk_file JSONB,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (member_id, job_id)
@@ -54,6 +57,7 @@ CREATE TABLE IF NOT EXISTS import_job (
 -- Backfill the columns on portals created before the feature (idempotent — no-op once present).
 ALTER TABLE import_job ADD COLUMN IF NOT EXISTS notified BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE import_job ADD COLUMN IF NOT EXISTS manual_override JSONB;
+ALTER TABLE import_job ADD COLUMN IF NOT EXISTS disk_file JSONB;
 -- Close the one-time deploy window: rows that reached a terminal state BEFORE #164 backfill to
 -- notified=false, so a stalled redelivery across the deploy could re-post a chat/дело for an
 -- already-finished job. Mark every terminal job as finalized. The "notified=false" guard makes
