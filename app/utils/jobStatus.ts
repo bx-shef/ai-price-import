@@ -1,4 +1,4 @@
-// Pure presentation model for import-job status (shared by /app and /import UI).
+// Pure presentation model for import-job status (used by the /app upload/status UI).
 // Mirrors server JobStatus; keeps label/tone/terminal logic testable and out of components.
 
 export type JobStatus = 'queued' | 'extracting' | 'processing' | 'done' | 'error'

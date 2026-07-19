@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
+import ChevronDownMIcon from '@bitrix24/b24icons-vue/outline/ChevronDownMIcon'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
@@ -208,7 +209,8 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
     <!-- Optional target override, collapsed by default (default = portal routing rules). -->
     <div class="mt-2">
       <B24Button
-        :label="showTarget ? 'Скрыть выбор цели' : 'Куда импортировать? (по умолчанию — по правилам)'"
+        :icon="ChevronDownMIcon"
+        :label="showTarget ? 'Скрыть выбор цели' : 'Куда импортировать? · по правилам'"
         color="air-tertiary-no-accent"
         size="xs"
         :aria-expanded="showTarget"
@@ -242,7 +244,7 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
             v-if="showDirection"
             :model-value="catValue"
             :items="catItems"
-            class="w-52"
+            class="w-full sm:w-52"
             aria-label="Направление (воронка)"
             @update:model-value="onCategory"
           />
@@ -250,7 +252,7 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
             v-if="showStage"
             :model-value="stageValue"
             :items="stageItems"
-            class="w-48"
+            class="w-full sm:w-48"
             aria-label="Стадия"
             @update:model-value="onStage"
           />
@@ -300,7 +302,7 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
           v-if="!jobs.length"
           class="p-6 text-center text-sm text-(--ui-color-base-4)"
         >
-          Пока нет загрузок — перетащите документ выше.
+          Пока нет загрузок — перетащите или сфотографируйте документ выше.
         </li>
         <li
           v-for="row in rows"

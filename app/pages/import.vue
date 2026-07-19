@@ -5,7 +5,15 @@ import { onMounted } from 'vue'
 // Kept as a redirect so old bookmarks / the marketplace handler URL don't 404. Prerendered shell;
 // the redirect runs client-side (static host has no server redirect).
 definePageMeta({ layout: 'clear' })
-useHead({ title: 'Импорт документов', meta: [{ name: 'robots', content: 'noindex' }] })
+// `http-equiv=refresh` is a no-JS fallback (marketplace handler / crawlers): redirects even before
+// the client router runs. The onMounted replace handles the normal JS path (cleaner history entry).
+useHead({
+  title: 'Импорт документов',
+  meta: [
+    { name: 'robots', content: 'noindex' },
+    { 'http-equiv': 'refresh', 'content': '0; url=/app' }
+  ]
+})
 
 const router = useRouter()
 onMounted(() => {
