@@ -6,7 +6,9 @@ import { useMetrikaGoal } from '~/composables/useMetrikaGoal'
 // self-hosted («развернём на вашем сервере») offer to high-volume portals. Honest message per
 // docs/redesign/11-pricing-selfhosted.md — no «за секунды», and the data caveat (text still goes
 // to the LLM provider) is stated so we don't mislead. CTA → the offer site's brief.
-const OFFER_BRIEF_URL = 'https://offer.bx-shef.by/#brief'
+// UTM (query BEFORE the #hash so analytics reads it) makes the click measurable on the offer site —
+// in-portal Metrika self-disables, so reachGoal() is a no-op here; the UTM is the real attribution.
+const OFFER_BRIEF_URL = 'https://offer.bx-shef.by/?utm_source=b24app&utm_medium=selfhosted_banner#brief'
 const { reachGoal } = useMetrikaGoal() // no-op inside the B24 iframe (Metrika self-disables there)
 </script>
 

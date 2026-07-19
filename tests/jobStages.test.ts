@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { jobProgress } from '../app/utils/jobStages'
 
 describe('jobProgress', () => {
-  it('queued → nothing active yet, low percent, not terminal', () => {
+  it('queued → first step active (looks alive), «В очереди» label, low percent, not terminal', () => {
     const p = jobProgress('queued')
     expect(p.terminal).toBe(false)
     expect(p.failed).toBe(false)
     expect(p.label).toBe('В очереди')
     expect(p.percent).toBe(8)
-    expect(p.steps.map(s => s.state)).toEqual(['pending', 'pending', 'pending'])
+    expect(p.steps.map(s => s.state)).toEqual(['active', 'pending', 'pending'])
   })
   it('extracting → step 0 active, earlier done', () => {
     const p = jobProgress('extracting')

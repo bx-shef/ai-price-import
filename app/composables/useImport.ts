@@ -13,6 +13,9 @@ export interface ImportJobView { jobId: string, status: JobStatus, fileName: str
 
 /** How often to re-poll status while a job is in flight. */
 const POLL_MS = 2500
+/** Stop auto-polling after this many CONSECUTIVE failed polls (e.g. a dead/expired frame token) so we
+ *  don't hammer the endpoint forever; the user can still «Обновить» manually. */
+const MAX_POLL_FAILURES = 5
 
 export function useImport() {
   const { init, auth } = useB24()
@@ -25,20 +28,32 @@ export function useImport() {
   const hasActive = computed(() => jobs.value.some(j => !jobStatusMeta(j.status).terminal))
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
-  function stopAutoPoll(): void {
+  // Disposed once stopAutoPoll (unmount) runs. Guards the case where the component unmounts WHILE a
+  // timer callback is mid-`await refresh()`: without it the finished callback would re-arm a timer on
+  // the dead component.
+  let disposed = false
+  let pollFailures = 0 // consecutive failed polls → stop after MAX_POLL_FAILURES
+  function clearTimer(): void {
     if (pollTimer) {
       clearTimeout(pollTimer)
       pollTimer = null
     }
   }
+  function stopAutoPoll(): void {
+    disposed = true
+    clearTimer()
+  }
   // Schedule the next poll ONLY while there's an active job. Self-cancelling: when the last job goes
   // terminal, `hasActive` is false and no further timer is armed. Client-only (no window on SSG).
   function scheduleNext(): void {
-    stopAutoPoll()
-    if (typeof window === 'undefined' || !hasActive.value) return
+    clearTimer()
+    if (disposed || typeof window === 'undefined' || !hasActive.value) return
     pollTimer = setTimeout(async () => {
       await refresh()
-      scheduleNext()
+      // refresh() swallows errors into error.value; count consecutive failures so a persistently
+      // dead frame token stops the loop instead of polling forever.
+      pollFailures = error.value ? pollFailures + 1 : 0
+      if (!disposed && pollFailures < MAX_POLL_FAILURES) scheduleNext() // don't re-arm after unmount / too many fails
     }, POLL_MS)
   }
 
@@ -92,6 +107,8 @@ export function useImport() {
 
   /** Initial load + start following in-flight jobs (call on mount). */
   async function startAutoPoll(): Promise<void> {
+    disposed = false // in case this instance was previously stopped and is restarted
+    pollFailures = 0
     await refresh()
     scheduleNext()
   }

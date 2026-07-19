@@ -27,10 +27,11 @@ const STEP_DEFS: Array<{ key: JobStep['key'], label: string }> = [
   { key: 'done', label: 'Готово' }
 ]
 
-// Which step is «active» for each non-terminal status (index into STEP_DEFS); -1 = queued (nothing
-// active yet, waiting to start). done/error are handled specially below.
+// Which step is «active» for each non-terminal status (index into STEP_DEFS). queued marks the first
+// step active too (so a just-queued file looks alive, not stalled) — the label still reads «В очереди».
+// done/error are handled specially below.
 const ACTIVE_INDEX: Record<string, number> = {
-  queued: -1,
+  queued: 0,
   extracting: 0,
   processing: 1
 }
