@@ -1,6 +1,6 @@
 # Обратная связь от сотрудника (`POST /feedback`)
 
-> Last reviewed: 2026-07-18
+> Last reviewed: 2026-07-19
 
 > **Статус (редизайн, #122):** канал «сотрудник» **пересобран в Nitro `server/`** — чистое ядро
 > `app/utils/feedback.ts` (санитизация Trojan-Source/`escapeHtml`/метки) + `server/utils/feedbackConfig.ts`
@@ -8,7 +8,9 @@
 > `server/api/feedback.post.ts` (фрейм-токен, гейт на config → 503) / `feedback.get.ts` (`{enabled}`) +
 > UI-виджет `app/components/FeedbackWidget.vue` (+ `useFeedback`, 👍/👎 на строке результата `/app`) +
 > `GITHUB_FEEDBACK_*` в `.env.example`. Репо-приёмник — **приватный** `bx-shef/ai-price-import-feedback`.
-> Осталось для включения на проде: `GITHUB_FEEDBACK_TOKEN` + `GITHUB_FEEDBACK_REPO` в env + live-verify POST.
+> **✅ Канал включён и live-verified end-to-end (2026-07-19):** `GITHUB_FEEDBACK_TOKEN` + `GITHUB_FEEDBACK_REPO`
+> заданы, сотрудник создал реальные отзывы **через приложение** — issue завелись в приёмнике (метки
+> `user-feedback`+`feedback:down`, контекст jobId/файл инертен).
 >
 > **NB:** отдельные пути кода НИЖЕ по тексту (`backend/…`, `mcp/…`, `mcp-overlay/…`, `prompts/…`) остались из
 > **legacy**-описания (лежат в `legacy/…`, напр. `legacy/backend/feedback.js`) — концептуально соответствуют
@@ -177,8 +179,8 @@ UI заранее спрашивает `GET /api/feedback`.
 > ✅ **Разрешено (#122).** Приёмник подтверждён приватным — **`bx-shef/ai-price-import-feedback`**
 > (`visibility:private`), и `server/utils/feedbackConfig.ts` **fail-closed**: требует явный валидный
 > `GITHUB_FEEDBACK_REPO` и **никогда не дефолтится** на публичный код-репо (пустой/битый → канал выключен,
-> 503). Поэтому рассуждение ниже действует. Осталось для включения — прод-секрет `GITHUB_FEEDBACK_TOKEN` +
-> `GITHUB_FEEDBACK_REPO` в env прода и live-verify POST (внешние шаги, не код).
+> 503). Поэтому рассуждение ниже действует. **✅ Включено и live-verified (2026-07-19):** `GITHUB_FEEDBACK_TOKEN` +
+> `GITHUB_FEEDBACK_REPO` заданы, реальные отзывы созданы сотрудником через приложение (issue в приёмнике).
 
 Целевой репозиторий **приватный на запуске**. Поэтому в issue допустимо складывать контекст задания
 (jobId, имя файла, № сделки, кто сообщил) — это ровно тот сигнал, по которому мейнтейнер воспроизводит
