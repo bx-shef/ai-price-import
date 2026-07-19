@@ -1,11 +1,16 @@
 import { extractFrameAuth } from '../../utils/frameAuth'
 import { resolveFrameMember } from '../../utils/resolveFrameMember'
-import { listJobs } from '../../utils/jobStore'
+import { getJob } from '../../utils/jobStore'
 import { jobRedis } from '../../utils/jobStoreRedis'
 import { query } from '../../db/client'
 
-// GET /api/import/status — recent import jobs for the portal (in-portal status view).
-// Frame-token authenticated + member-scoped (a portal only sees its own jobs).
+// GET /api/import/status?ids=a,b,c — status of the SPECIFIC jobs the caller asks about (the client
+// keeps its own job list in localStorage and polls by id). Frame-token authenticated + member-scoped
+// (getJob only reads this portal's jobs). No server-side per-portal list — nothing accumulates.
+
+const JOB_ID_RE = /^[A-Za-z0-9-]{1,64}$/
+const MAX_IDS = 50
+
 export default defineEventHandler(async (event) => {
   const auth = extractFrameAuth(getHeaders(event) as Record<string, string | undefined>)
   if (!auth) {
@@ -18,8 +23,16 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, member.status ?? 401)
     return { error: 'authorization failed', reason: member.reason }
   }
-  const jobs = await listJobs(member.memberId, jobRedis)
-  return {
-    jobs: jobs.map(j => ({ jobId: j.jobId, status: j.status, fileName: j.fileName, result: j.result }))
-  }
+  const idsParamRaw = getQuery(event).ids
+  const ids = (typeof idsParamRaw === 'string' ? idsParamRaw.split(',') : [])
+    .map(s => s.trim())
+    .filter(s => JOB_ID_RE.test(s))
+    .slice(0, MAX_IDS)
+  // Read the requested jobs in PARALLEL (independent Redis reads); drop the ones already expired.
+  const memberId = member.memberId
+  const resolved = await Promise.all(ids.map(jobId => getJob(memberId, jobId, jobRedis)))
+  const jobs = resolved
+    .filter((j): j is NonNullable<typeof j> => j !== null)
+    .map(j => ({ jobId: j.jobId, status: j.status, fileName: j.fileName, result: j.result }))
+  return { jobs }
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFeedbackIssue, escapeHtml, feedbackDedupCode, MAX_COMMENT_LENGTH, normalizeKind, sanitizeComment, stripHostileChars } from '../app/utils/feedback'
+import { buildFeedbackIssue, escapeHtml, MAX_COMMENT_LENGTH, normalizeKind, sanitizeComment, stripHostileChars } from '../app/utils/feedback'
 
 // Build hostile chars from code points (never type the invisible characters literally — that would
 // itself be a Trojan-Source vector, and the point of the strip is to remove exactly these).
@@ -37,37 +37,7 @@ describe('feedback — normalizeKind', () => {
   })
 })
 
-describe('feedback — feedbackDedupCode', () => {
-  it('is deterministic and short (≤10 alnum chars)', () => {
-    const a = feedbackDedupCode('member-1', 'job-abc')
-    expect(a).toBe(feedbackDedupCode('member-1', 'job-abc')) // stable
-    expect(a).toMatch(/^[a-z0-9]{1,10}$/)
-  })
-  it('differs for different portal or jobId', () => {
-    expect(feedbackDedupCode('m1', 'job-abc')).not.toBe(feedbackDedupCode('m2', 'job-abc'))
-    expect(feedbackDedupCode('m1', 'job-a')).not.toBe(feedbackDedupCode('m1', 'job-b'))
-  })
-  it('empty when either input is missing (→ no dedup)', () => {
-    expect(feedbackDedupCode('', 'job')).toBe('')
-    expect(feedbackDedupCode('m', '')).toBe('')
-    expect(feedbackDedupCode(null, undefined)).toBe('')
-  })
-  it('leaks neither the portal id nor the jobId (one-way)', () => {
-    const code = feedbackDedupCode('bel.bitrix24.by', 'job-secret-123')
-    expect(code).not.toContain('bel')
-    expect(code).not.toContain('secret')
-    expect(code).not.toContain('123')
-  })
-})
-
 describe('feedback — buildFeedbackIssue', () => {
-  it('prefixes the title with [dedupCode] when given, within the 120-char cap', () => {
-    const p = buildFeedbackIssue('down', 'плохо', {}, 'abc123')
-    expect(p.title.startsWith('[abc123] ')).toBe(true)
-    expect(p.title.length).toBeLessThanOrEqual(120)
-    // no code → no prefix
-    expect(buildFeedbackIssue('down', 'плохо').title.startsWith('[')).toBe(false)
-  })
   it('builds title/body/labels; comment rendered inert inside <pre><code>', () => {
     const p = buildFeedbackIssue('down', 'сделка <script> не создалась')
     expect(p.labels).toEqual(['user-feedback', 'feedback:down'])

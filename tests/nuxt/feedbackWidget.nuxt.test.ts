@@ -19,6 +19,7 @@ const clickText = (w: Awaited<ReturnType<typeof mountSuspended>>, label: string)
 beforeEach(() => {
   h.enabledValue = true
   h.submit = vi.fn(async () => true)
+  if (typeof window !== 'undefined') window.localStorage.clear() // client-side dedup lives here
 })
 
 describe('FeedbackWidget', () => {
@@ -91,5 +92,17 @@ describe('FeedbackWidget', () => {
     await tick()
     expect(w.text()).not.toContain('Спасибо')
     expect(w.text()).toContain('Не удалось отправить')
+  })
+
+  it('already-rated job (localStorage) shows «Спасибо» on mount, does not re-offer (#D)', async () => {
+    const w1 = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-42' } })
+    await w1.find('button[aria-label="Хорошо"]').trigger('click')
+    await tick()
+    expect(w1.text()).toContain('Спасибо') // sent + remembered in localStorage
+    // A fresh mount for the SAME job (e.g. after a reload) must not show the buttons again.
+    const w2 = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-42' } })
+    await tick()
+    expect(w2.text()).toContain('Спасибо')
+    expect(w2.find('button[aria-label="Хорошо"]').exists()).toBe(false)
   })
 })

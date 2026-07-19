@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useFeedback } from '~/composables/useFeedback'
+import { importFeedbackKind, markImportFeedback } from '~/utils/importHistory'
 
 // Compact 👍/👎 feedback widget under an import result row. Renders nothing unless the channel is
 // enabled on the server (probed via useFeedback). 👍 sends immediately; 👎 first opens a comment
 // box («что пошло не так»), then sends. Inert outside a portal (submit no-ops). Ported UX from #218.
 // Optional jobId/fileName trace the issue back to the run (rendered inert server-side; the receiving
-// repo is private, so client context is permitted).
+// repo is private, so client context is permitted). DUPLICATE SUPPRESSION is client-side: the
+// employee's localStorage remembers which jobs they already rated (importHistory, keyed by jobId), so
+// the widget won't re-ask after a reload — no server-side search-before-create.
 const props = defineProps<{ jobId?: string, fileName?: string }>()
 const { enabled, ensureEnabled, submit } = useFeedback()
-onMounted(ensureEnabled)
 
 const open = ref(false) // comment box shown
 const comment = ref('')
@@ -17,6 +19,14 @@ const attachFile = ref(false) // consent to attach the source-file link (#192 п
 const sending = ref(false)
 const sent = ref(false)
 const error = ref('')
+
+onMounted(() => {
+  ensureEnabled()
+  // Already rated this job in this browser? Show the thanks state instead of re-offering (client-only).
+  if (typeof window !== 'undefined' && props.jobId && importFeedbackKind(window.localStorage, props.jobId)) {
+    sent.value = true
+  }
+})
 
 async function rate(kind: 'up' | 'down'): Promise<void> {
   // 👎 → ask what went wrong before sending (a comment makes negative feedback actionable). The
@@ -33,8 +43,13 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
       jobId: props.jobId,
       fileName: props.fileName
     }, attachFile.value)
-    if (ok) sent.value = true
-    else error.value = 'Отзыв доступен только внутри портала Bitrix24'
+    if (ok) {
+      sent.value = true
+      // Remember it locally so a reload doesn't re-ask for this job (the client is the dedup owner).
+      if (typeof window !== 'undefined' && props.jobId) markImportFeedback(window.localStorage, props.jobId, kind)
+    } else {
+      error.value = 'Отзыв доступен только внутри портала Bitrix24'
+    }
   } catch {
     error.value = 'Не удалось отправить отзыв'
   } finally {
