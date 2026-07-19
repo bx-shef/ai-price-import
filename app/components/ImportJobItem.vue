@@ -88,8 +88,17 @@ const stepDot: Record<string, string> = {
         >Создано в CRM · сущность #{{ result.entityId }}</span>
         <span v-else-if="result.message">{{ result.message }}</span>
         <span v-else>Документ обработан</span>
-        <span v-if="result.supplier">· поставщик: {{ result.supplier }}</span>
-        <span v-if="result.lines != null">· {{ result.lines }} {{ pluralRu(result.lines, ['позиция', 'позиции', 'позиций']) }}</span>
+        <!-- «распознан» (not «привязан»): the name is what the AI read from the document — the company
+             may or may not have matched in CRM (the unmatched warning below clarifies). -->
+        <span
+          v-if="result.supplier"
+          class="min-w-0 break-words"
+        >· распознан поставщик: {{ result.supplier }}</span>
+        <!-- 0 lines on a created entity is notable (ничего не импортировалось) → surface as a warning. -->
+        <span
+          v-if="result.lines != null"
+          :class="result.lines === 0 ? 'text-(--ui-color-accent-main-warning)' : ''"
+        >· {{ result.lines }} {{ pluralRu(result.lines, ['позиция', 'позиции', 'позиций']) }}</span>
       </div>
       <ul
         v-if="result.warnings.length"

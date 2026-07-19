@@ -37,7 +37,7 @@ describe('ImportJobItem', () => {
   it('done → «разбор» shows supplier + line count with Russian plural', async () => {
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"created":true,"supplier":"ООО Ромашка","lines":3,"warnings":[],"errors":[]}') } })
     const text = w.text()
-    expect(text).toContain('поставщик: ООО Ромашка')
+    expect(text).toContain('распознан поставщик: ООО Ромашка')
     expect(text).toContain('3 позиции')
   })
 

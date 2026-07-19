@@ -87,7 +87,8 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
       entityTypeId: result.entityTypeId,
       entityId: result.entityId,
       created: result.created,
-      ...(loaded.doc.supplier?.name ? { supplier: loaded.doc.supplier.name } : {}),
+      // Cap the supplier name so a pathological document can't bloat the result column / the UI.
+      ...(loaded.doc.supplier?.name ? { supplier: loaded.doc.supplier.name.slice(0, 120) } : {}),
       lines: result.rowCount,
       warnings: result.warnings,
       errors: result.errors
