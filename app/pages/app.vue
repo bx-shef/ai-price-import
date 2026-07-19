@@ -11,7 +11,9 @@ import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
 import { formatMinutes } from '~/utils/savings'
 
 // In-portal home/dashboard (P8 UI slice): savings + status summary + recent operations.
-// Reuses the /import + /metrics composables. Layout `clear`, prerendered.
+// Reuses the /import + /metrics composables. Layout `clear`, prerendered. Styled with b24ui
+// (B24Card + semantic --ui-color-* tokens) so it adapts to the portal's light/dark theme and the
+// B24 mobile app — no raw Tailwind grays (which stay light-only).
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов — обзор' })
 
@@ -55,10 +57,12 @@ const stats = computed(() => {
   return s
 })
 
+// Stat-number colors via semantic accent tokens (theme-aware). done→success, running→primary,
+// error→alert.
 const tiles = computed(() => [
-  { key: 'done', label: 'Обработано', value: stats.value.done, cls: 'text-green-600' },
-  { key: 'running', label: 'В работе', value: stats.value.running, cls: 'text-blue-600' },
-  { key: 'error', label: 'Ошибки', value: stats.value.error, cls: 'text-red-600' }
+  { key: 'done', label: 'Обработано', value: stats.value.done, cls: 'text-(--ui-color-accent-main-success)' },
+  { key: 'running', label: 'В работе', value: stats.value.running, cls: 'text-(--ui-color-accent-main-primary)' },
+  { key: 'error', label: 'Ошибки', value: stats.value.error, cls: 'text-(--ui-color-accent-main-alert)' }
 ])
 
 // Parse each job once (result JSON) instead of 3× per row in the template.
@@ -68,11 +72,12 @@ const rows = computed(() => jobs.value.map(job => ({
   result: parseJobResult(job.result)
 })))
 
-const toneClass: Record<string, string> = {
-  neutral: 'bg-gray-100 text-gray-600',
-  info: 'bg-blue-100 text-blue-700',
-  success: 'bg-green-100 text-green-700',
-  danger: 'bg-red-100 text-red-700'
+// Status tone → b24ui B24Badge air-color (theme-aware, replaces the raw bg/text map).
+const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-primary-alert' | 'air-secondary'> = {
+  neutral: 'air-secondary',
+  info: 'air-primary',
+  success: 'air-primary-success',
+  danger: 'air-primary-alert'
 }
 </script>
 
@@ -83,7 +88,7 @@ const toneClass: Record<string, string> = {
         <h1 class="text-xl font-semibold">
           Импорт документов
         </h1>
-        <p class="text-sm text-gray-500">
+        <p class="text-sm text-(--ui-color-base-3)">
           Товары из накладных, счетов и КП — сразу в CRM.
         </p>
       </div>
@@ -130,10 +135,11 @@ const toneClass: Record<string, string> = {
     </B24Alert>
 
     <div class="grid grid-cols-3 gap-3">
-      <div
+      <B24Card
         v-for="t in tiles"
         :key="t.key"
-        class="rounded-xl border border-gray-200 p-4 text-center"
+        variant="outline"
+        class="text-center"
       >
         <div
           class="text-2xl font-semibold"
@@ -141,16 +147,19 @@ const toneClass: Record<string, string> = {
         >
           {{ t.value }}
         </div>
-        <div class="mt-1 text-xs text-gray-500">
+        <div class="mt-1 text-xs text-(--ui-color-base-3)">
           {{ t.label }}
         </div>
-      </div>
+      </B24Card>
     </div>
 
     <!-- Экономия: сколько времени/денег сберёг импорт (оценка), + сброс метрик -->
-    <div class="mt-4 rounded-xl border border-gray-200 p-4">
+    <B24Card
+      variant="outline"
+      class="mt-4"
+    >
       <div class="mb-3 flex items-center justify-between gap-2">
-        <h2 class="text-sm font-semibold text-gray-700">
+        <h2 class="text-sm font-semibold">
           Экономия
         </h2>
         <div class="flex items-center gap-2 text-xs">
@@ -162,7 +171,7 @@ const toneClass: Record<string, string> = {
             @click="() => { confirmReset = true }"
           />
           <template v-else>
-            <span class="text-gray-600">Сбросить метрики?</span>
+            <span class="text-(--ui-color-base-3)">Сбросить метрики?</span>
             <B24Button
               color="air-primary-alert"
               size="xs"
@@ -181,30 +190,36 @@ const toneClass: Record<string, string> = {
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <div class="rounded-lg bg-green-50 p-3">
-          <div class="text-2xl font-semibold text-green-700">
+        <B24Card
+          variant="tinted-success"
+          class="text-center"
+        >
+          <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
             {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
           </div>
-          <div class="mt-1 text-xs text-gray-500">
+          <div class="mt-1 text-xs text-(--ui-color-base-3)">
             Сэкономлено времени
           </div>
-        </div>
-        <div class="rounded-lg bg-green-50 p-3">
-          <div class="text-2xl font-semibold text-green-700">
+        </B24Card>
+        <B24Card
+          variant="tinted-success"
+          class="text-center"
+        >
+          <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
             {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
           </div>
-          <div class="mt-1 text-xs text-gray-500">
+          <div class="mt-1 text-xs text-(--ui-color-base-3)">
             Сэкономлено денег (оценка)
           </div>
-        </div>
+        </B24Card>
       </div>
-      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3)">
         <span>Документов: {{ counters.docs || 0 }}</span>
         <span>Создано в CRM: {{ counters.created || 0 }}</span>
         <span>Позиций: {{ counters.lines || 0 }}</span>
         <NuxtLink
           to="/metrics"
-          class="ml-auto text-blue-600 hover:underline"
+          class="ml-auto text-(--ui-color-accent-main-link) hover:underline"
         >
           Подробные метрики →
         </NuxtLink>
@@ -216,7 +231,7 @@ const toneClass: Record<string, string> = {
         size="sm"
         :title="metricsError"
       />
-    </div>
+    </B24Card>
 
     <B24Alert
       v-if="error"
@@ -226,7 +241,7 @@ const toneClass: Record<string, string> = {
     />
 
     <div class="mt-6 mb-2 flex items-center justify-between">
-      <h2 class="text-sm font-semibold text-gray-700">
+      <h2 class="text-sm font-semibold">
         Последние операции
       </h2>
       <B24Button
@@ -240,48 +255,52 @@ const toneClass: Record<string, string> = {
       />
     </div>
 
-    <ul class="divide-y rounded-lg border border-gray-200">
-      <li
-        v-if="!jobs.length"
-        class="p-6 text-center text-sm text-gray-400"
-      >
-        Пока нет загрузок — нажмите «Загрузить документ».
-      </li>
-      <li
-        v-for="row in rows"
-        :key="row.job.jobId"
-        class="flex items-center justify-between gap-3 p-3"
-      >
-        <div class="min-w-0">
-          <p class="truncate text-sm font-medium">
-            {{ row.job.fileName || 'документ' }}
-          </p>
-          <p
-            v-if="row.result.errors.length"
-            class="truncate text-xs text-red-500"
-          >
-            {{ row.result.errors[0] }}
-          </p>
-          <p
-            v-else-if="row.result.message"
-            class="truncate text-xs text-gray-500"
-          >
-            {{ row.result.message }}
-          </p>
-          <!-- Отзыв 👍/👎 — только по завершённым (done/error), если канал включён на сервере -->
-          <FeedbackWidget
-            v-if="row.job.status === 'done' || row.job.status === 'error'"
-            :job-id="row.job.jobId"
-            :file-name="row.job.fileName"
-          />
-        </div>
-        <span
-          class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
-          :class="toneClass[row.meta.tone]"
+    <B24Card
+      variant="outline"
+      :b24ui="{ body: 'p-0 sm:p-0' }"
+    >
+      <ul class="divide-y divide-(--ui-color-base-5)">
+        <li
+          v-if="!jobs.length"
+          class="p-6 text-center text-sm text-(--ui-color-base-4)"
         >
-          {{ row.meta.label }}
-        </span>
-      </li>
-    </ul>
+          Пока нет загрузок — нажмите «Загрузить документ».
+        </li>
+        <li
+          v-for="row in rows"
+          :key="row.job.jobId"
+          class="flex items-center justify-between gap-3 p-3"
+        >
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium">
+              {{ row.job.fileName || 'документ' }}
+            </p>
+            <p
+              v-if="row.result.errors.length"
+              class="truncate text-xs text-(--ui-color-accent-main-alert)"
+            >
+              {{ row.result.errors[0] }}
+            </p>
+            <p
+              v-else-if="row.result.message"
+              class="truncate text-xs text-(--ui-color-base-3)"
+            >
+              {{ row.result.message }}
+            </p>
+            <!-- Отзыв 👍/👎 — только по завершённым (done/error), если канал включён на сервере -->
+            <FeedbackWidget
+              v-if="row.job.status === 'done' || row.job.status === 'error'"
+              :job-id="row.job.jobId"
+              :file-name="row.job.fileName"
+            />
+          </div>
+          <B24Badge
+            :label="row.meta.label"
+            :color="badgeColor[row.meta.tone]"
+            size="sm"
+          />
+        </li>
+      </ul>
+    </B24Card>
   </div>
 </template>
