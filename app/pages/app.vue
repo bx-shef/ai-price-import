@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import ChevronDownMIcon from '@bitrix24/b24icons-vue/outline/ChevronDownMIcon'
@@ -14,7 +14,6 @@ import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import type { CrmStageOption } from '~/utils/stagePicker'
 import type { TargetRef } from '~/types/mapping'
 import { isPortalConfigured } from '~/utils/portalSettings'
-import { jobStatusMeta, parseJobResult } from '~/utils/jobStatus'
 import { formatMinutes } from '~/utils/savings'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
@@ -24,7 +23,7 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов' })
 
-const { jobs, loading, uploading, error, refresh, upload } = useImport()
+const { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll } = useImport()
 const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
@@ -36,12 +35,13 @@ const settingsLoaded = ref(false)
 const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
 
 onMounted(async () => {
-  refresh()
+  startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
   await loadSettings()
   // Loaded successfully inside the portal (a frame error means standalone/no-auth → don't nudge).
   settingsLoaded.value = !settingsError.value
 })
+onBeforeUnmount(stopAutoPoll) // don't keep polling after leaving the page
 
 // ── Upload target («куда импортировать») — optional override of the portal's routing rules. Default
 // «Авто» (null entity) → follow the rules/default. Direction + stage cascade from the portal (same
@@ -132,21 +132,6 @@ const stats = computed(() => {
   }
   return s
 })
-
-// Parse each job once (result JSON) instead of 3× per row in the template.
-const rows = computed(() => jobs.value.map(job => ({
-  job,
-  meta: jobStatusMeta(job.status),
-  result: parseJobResult(job.result)
-})))
-
-// Status tone → b24ui B24Badge air-color (theme-aware).
-const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-primary-alert' | 'air-secondary'> = {
-  neutral: 'air-secondary',
-  info: 'air-primary',
-  success: 'air-primary-success',
-  danger: 'air-primary-alert'
-}
 </script>
 
 <template>
@@ -269,7 +254,7 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
 
     <!-- STATUS: recent operations with compact inline counts. -->
     <div class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2">
-      <div class="flex items-baseline gap-3">
+      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 class="text-sm font-semibold">
           Последние операции
         </h2>
@@ -280,6 +265,14 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
           <span class="text-(--ui-color-accent-main-success)">готово: {{ stats.done }}</span>
           <span class="text-(--ui-color-accent-main-primary)">в работе: {{ stats.running }}</span>
           <span class="text-(--ui-color-accent-main-alert)">ошибки: {{ stats.error }}</span>
+        </span>
+        <span
+          v-if="hasActive"
+          class="flex items-center gap-1 text-xs text-(--ui-color-accent-main-primary)"
+          role="status"
+        >
+          <span class="inline-block size-1.5 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+          обновляется
         </span>
       </div>
       <B24Button
@@ -298,46 +291,25 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
       :b24ui="{ body: 'p-0 sm:p-0' }"
     >
       <ul class="divide-y divide-(--ui-color-base-5)">
+        <!-- Immediate feedback while the POST is in flight, before the job row appears. -->
         <li
-          v-if="!jobs.length"
+          v-if="uploading"
+          class="flex items-center gap-2 p-3 text-sm text-(--ui-color-base-3)"
+        >
+          <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+          Загружаем файл…
+        </li>
+        <li
+          v-if="!jobs.length && !uploading"
           class="p-6 text-center text-sm text-(--ui-color-base-4)"
         >
           Пока нет загрузок — перетащите или сфотографируйте документ выше.
         </li>
-        <li
-          v-for="row in rows"
-          :key="row.job.jobId"
-          class="flex items-center justify-between gap-3 p-3"
-        >
-          <div class="min-w-0">
-            <p class="truncate text-sm font-medium">
-              {{ row.job.fileName || 'документ' }}
-            </p>
-            <p
-              v-if="row.result.errors.length"
-              class="truncate text-xs text-(--ui-color-accent-main-alert)"
-            >
-              {{ row.result.errors[0] }}
-            </p>
-            <p
-              v-else-if="row.result.message"
-              class="truncate text-xs text-(--ui-color-base-3)"
-            >
-              {{ row.result.message }}
-            </p>
-            <!-- Отзыв 👍/👎 — только по завершённым (done/error), если канал включён на сервере -->
-            <FeedbackWidget
-              v-if="row.job.status === 'done' || row.job.status === 'error'"
-              :job-id="row.job.jobId"
-              :file-name="row.job.fileName"
-            />
-          </div>
-          <B24Badge
-            :label="row.meta.label"
-            :color="badgeColor[row.meta.tone]"
-            size="sm"
-          />
-        </li>
+        <ImportJobItem
+          v-for="job in jobs"
+          :key="job.jobId"
+          :job="job"
+        />
       </ul>
     </B24Card>
 
@@ -420,5 +392,8 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
         :title="metricsError"
       />
     </B24Card>
+
+    <!-- Маркетинг: self-hosted оффер «развернём на вашем сервере» (внизу, ненавязчиво). -->
+    <SelfHostedPromo />
   </div>
 </template>
