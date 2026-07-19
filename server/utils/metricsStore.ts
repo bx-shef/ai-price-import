@@ -11,7 +11,9 @@ export const METRICS = {
   lines: 'lines', // product rows written
   unmatched: 'unmatched', // supplier not found — entity created without a company
   skipped: 'skipped', // idempotent whole-document redeliveries (a duplicate job, nothing re-created)
-  errors: 'errors' // documents that hit a hard error
+  errors: 'errors', // documents that hit a hard error
+  feedbackUp: 'feedback_up', // employee feedback: 👍 sent on a result (#192 п.4)
+  feedbackDown: 'feedback_down' // employee feedback: 👎 sent on a result (#192 п.4)
 } as const
 
 export type MetricName = typeof METRICS[keyof typeof METRICS]
