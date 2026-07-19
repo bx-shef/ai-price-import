@@ -382,18 +382,27 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     expect(r.errors.some(e => /USD/.test(e))).toBe(true)
   })
 
-  it('mixed items with one bad-VAT → whole doc aborts (no line loss)', async () => {
-    const deps = baseDeps()
+  it('mixed items with one bad-VAT → whole doc aborts (no line loss, NO orphan catalog writes)', async () => {
+    // The good line ('a') comes BEFORE the bad-VAT line ('b'). Pre-pass must catch the error and
+    // abort before the create loop, so 'a' never writes an orphan product/measure to the catalog.
+    const m = mapping()
+    m.product.onMissing = 'create'
+    m.units.autoCreate = true
+    const createProduct = vi.fn(async () => 999)
+    const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
+    const deps = baseDeps({ createProduct, createMeasure })
     const d: ExtractedDocument = {
       ...doc,
       items: [
-        { name: 'a', price: 1, quantity: 1, unit: 'шт', vatRate: 22 },
-        { name: 'b', price: 2, quantity: 1, unit: 'шт', vatRate: 25 }
+        { name: 'a', price: 1, quantity: 1, unit: 'рулон', vatRate: 22 }, // valid, would create product+measure
+        { name: 'b', price: 2, quantity: 1, unit: 'шт', vatRate: 25 } // unknown rate → hard error
       ]
     }
-    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    const r = await runCrmSync('j', d, m, {}, deps)
     expect(r.created).toBe(false)
     expect(deps.createTarget).not.toHaveBeenCalled()
+    expect(createProduct).not.toHaveBeenCalled() // no orphan product from line 'a'
+    expect(createMeasure).not.toHaveBeenCalled() // no orphan measure from line 'a'
   })
 })
 

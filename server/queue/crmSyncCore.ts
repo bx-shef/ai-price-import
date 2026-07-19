@@ -3,6 +3,7 @@ import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { ENTITY_TYPE_ID } from '~/config/b24'
 import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
 import { resolveMeasure } from '~/utils/units'
+import { normalizeUnitKey } from '~/utils/measureCreate'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
@@ -130,15 +131,29 @@ export async function runCrmSync(
     errors.push('Не определено, включён ли НДС в цену — уточните документ и повторите импорт')
   }
   const priceIncludesVat = doc.priceIncludesVat === true
+
+  // PRE-PASS: validate every line's VAT rate against the portal BEFORE any catalog write. The create
+  // loop below writes products/measures as it iterates, so a bad rate on a LATER line would otherwise
+  // leave orphan catalog entries from earlier lines even though the whole document aborts. Detect all
+  // hard errors up front and bail before writing anything. §8 «1-в-1» — never silently drop a line.
+  for (const item of doc.items) {
+    if (item.vatRate != null && matchVatRate(item.vatRate, vatRates) === null) {
+      errors.push(`Ставка НДС ${item.vatRate}% отсутствует в портале (строка «${item.name}»)`)
+    }
+  }
+  // Hard errors (VAT inclusion undefined and/or an unknown rate) → report and create NOTHING (no
+  // catalog writes have happened yet). `unmatched` stays false — nothing was created.
+  if (errors.length) {
+    await deps.reportErrors(errors, doc.supplier?.name)
+    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: false, warnings, errors }
+  }
+
   const rows: Array<Record<string, unknown>> = []
   const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
   let sort = 10
   for (const item of doc.items) {
+    // VAT already validated in the pre-pass → matchVatRate is non-null for any VAT-bearing line.
     const vat = matchVatRate(item.vatRate ?? null, vatRates)
-    if (item.vatRate != null && vat === null) {
-      errors.push(`Ставка НДС ${item.vatRate}% отсутствует в портале (строка «${item.name}»)`)
-      continue // hard error already recorded; abort happens below
-    }
 
     let productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
@@ -157,7 +172,7 @@ export async function runCrmSync(
     let measureCode = measure.code
     if (!measure.matched && item.unit) {
       const res = mapping.units.autoCreate && deps.createMeasure ? await deps.createMeasure(item.unit) : null
-      const uKey = item.unit.trim().toLowerCase()
+      const uKey = normalizeUnitKey(item.unit) // same normalization as the measure index/cache
       if (res) {
         measureCode = res.code
         if (!warnedUnits.has(uKey)) {
@@ -183,14 +198,6 @@ export async function runCrmSync(
       measureCode
     }, sort))
     sort += 10
-  }
-
-  // Hard errors → report and DO NOT create a partial/wrong entity. `unmatched` stays FALSE here:
-  // nothing was created, so this is NOT a «created without a company» case (that's what the counter
-  // means — see the field JSDoc). A hard error is its own failure mode, counted via `errors`.
-  if (errors.length) {
-    await deps.reportErrors(errors, doc.supplier?.name)
-    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: false, warnings, errors }
   }
 
   // Idempotency: the created entity carries a job-id MARKER (originId/originatorId for deal,

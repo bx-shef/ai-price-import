@@ -83,6 +83,12 @@ AI-импорт документов с табличной частью в Bitri
       `isAuthRejection` ловит → 401/403 vs 502/503). **SSRF-гард сохранён** (`isSafeB24Domain` внутри —
       клиентский `X-B24-Domain`/домен install-события не должен утащить токен на чужой хост). `verifyInstallToken`/
       `resolveFrameMember` берут инъектируемую фабрику `makeCall` (дефолт — SDK) → юнит-тестируются фейком.
+      **Admin-гейт настроек (#182):** запись `POST /api/settings` серверно гейтится на `profile.ADMIN` через
+      `verifyFrameToken` (token-only проверка: доказывает контроль домена + читает ADMIN, **без** `member_id`/
+      install-зависимости — `app.option` скоуплен фрейм-токеном, так install-гонка/purge не отвергают валидного
+      админа; `resolveFrameMember` надстроен над ним для роутов, которым нужен `member_id`). Не-админ → 403; GET
+      отдаёт `admin`-флаг → клиент скрывает форму. Пикер-роуты (`catalog-*`/`crm-categories`/`crm-stages`) и
+      `import/metrics-reset` гейтятся так же (admin). Раньше запись настроек была открыта любому пользователю портала.
     - **OAuth-refresh POST** (keep-alive крон `liveDeps`, кнопка reauth `portalReauth`) → `b24Sdk.sdkRefreshTransport()`
       через `B24OAuth.auth.refreshAuth()`: тот же refresh (POST `grant_type=refresh_token` на OAuth-сервер), но
       **секреты в теле POST** (старый код слал их в URL-query → утечка в access-логи), таймаут-гард (гонка —

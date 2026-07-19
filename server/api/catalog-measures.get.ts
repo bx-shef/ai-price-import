@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }
   }
-  // Server-side ADMIN gate (mirrors the client-side useIsAdmin on the settings form).
+  // Server-side ADMIN gate (mirrors the client-side gate in useSettings/settings.vue).
   if (!resolved.admin) {
     setResponseStatus(event, 403)
     return { error: 'admin only' }

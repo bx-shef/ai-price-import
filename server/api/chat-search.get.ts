@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, resolved.status ?? 401)
     return { error: 'frame verification failed' }
   }
-  // Server-side ADMIN gate (not just the client-side useIsAdmin): the read below runs on the
+  // Server-side ADMIN gate (not just the client-side gate in useSettings/settings.vue): the read below runs on the
   // portal's app OAuth token and would otherwise let ANY in-portal user enumerate chat titles +
   // DIALOG_IDs. Only a portal admin configures settings, so reject non-admins here.
   if (!resolved.admin) {
