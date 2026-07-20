@@ -37,7 +37,7 @@ describe('tokenStore', () => {
     const { q, calls } = fakeQuery()
     await deletePortal('m1', q)
     expect(calls.map(c => c.sql.match(/FROM (\w+)/)![1])).toEqual(
-      ['portal_tokens', 'job_result', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating']
+      ['portal_tokens', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating']
     )
     for (const c of calls) expect(c.params).toEqual(['m1'])
   })
@@ -70,7 +70,7 @@ describe('tokenStore', () => {
       expect(calls[0]!.sql).toContain('GREATEST')
       expect(calls[0]!.params).toEqual(['m1', 777])
       expect(calls.slice(1).map(c => c.sql.match(/FROM (\w+)/)![1])).toEqual(
-        ['portal_tokens', 'job_result', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating']
+        ['portal_tokens', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating']
       )
     })
     it('deletePortal with eventTs=0 writes NO tombstone (pre-guard behaviour)', async () => {

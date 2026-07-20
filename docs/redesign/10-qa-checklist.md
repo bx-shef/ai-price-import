@@ -216,7 +216,7 @@
 | `extractEvent`/`safeEqual` | `tests/b24Events.test.ts` | Нормализация формы; constant-time, fail-closed на длине/пустом | [авто] |
 | `decideB24Event` статусы | `tests/b24Events.test.ts` | 400 нет event/member; 503 нет ожид. токена; 403 mismatch; 200 register/unregister; чужое событие→ignore | [авто] |
 | `saveToken` write-once | `tests/server-glue.test.ts` | `ON CONFLICT (member_id)` + `COALESCE(NULLIF(...))`; `getToken`/`getApplicationToken` null при отсутствии | [авто] |
-| `deletePortal` порядок очистки | `tests/server-glue.test.ts` | `portal_tokens, job_result, metrics_counter, import_text, import_doc, portal_app_rating`, `params=['m1']`. **`import_job` НЕ чистится** (Redis+TTL, таблица удалена — DELETE по ней бросил бы) | [авто] |
+| `deletePortal` порядок очистки | `tests/server-glue.test.ts` | `portal_tokens, metrics_counter, import_text, import_doc, portal_app_rating`, `params=['m1']`. **`import_job` (#202) и `job_result` (#135) НЕ чистятся** — обе таблицы удалены (DELETE по ним бросил бы 42P01) | [авто] |
 | Register | `curl -X POST` ONAPPINSTALL с env-токеном | 200 `{ok:true}`; строка в `portal_tokens`, refresh зашифрован | [вручную] |
 | TOFU: чужой токен при установленном портале | Повторный POST с другим токеном | 403 `action:'ignore'` (сверка со stored, не env) | [вручную] |
 | Unregister | POST ONAPPUNINSTALL с верным токеном | 200; `deletePortal` + `purgePortalFiles` снёс каталог | [вручную] |
@@ -384,7 +384,7 @@
 
 | Проверка | Что проверить | Метка |
 |---|---|---|
-| Утечка токенов | `job_result` (JSON `done`), сообщения об ошибках в чат/логи НЕ содержат access/refresh-токенов и, где не нужно, домена | [авто-кандидат] |
+| Утечка токенов | результат задания (Redis `jobStore`, JSON `done`), сообщения об ошибках в чат/логи НЕ содержат access/refresh-токенов и, где не нужно, домена | [авто-кандидат] |
 | Маскирование в логах | OAuth-токены маскируются в логах старта/ошибок | [вручную] |
 | Протухший refresh | Отзыв/протухание refresh при живой джобе → job error, а не бесконечный ретрай | [нужен живой портал] |
 | Гонка refresh | Конкурентный refresh двумя воркерами (запись в token store) без потери токена | [вручную] |
