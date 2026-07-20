@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS portal_tokens (
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Event-ordering guard (#77): a late/retried install job must not resurrect an uninstalled portal.
+-- deleted_ts is a B24 event ts in unix SECONDS. Growth is bounded — retentionSweep drops rows older
+-- than ~30d (a months-old tombstone can no longer be raced); see server/utils/retentionSweep.ts.
 CREATE TABLE IF NOT EXISTS portal_tombstone (
   member_id  TEXT PRIMARY KEY,
   deleted_ts BIGINT NOT NULL

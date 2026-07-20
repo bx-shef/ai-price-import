@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-19
+> Last reviewed: 2026-07-20
 
 AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -22,7 +22,11 @@ AI-импорт документов с табличной частью в Bitri
     — **единственный писатель** `portal_tokens`; при недоступности Redis роут пишет **синхронным
     фолбэком** (B24 online-события не ретраит). Порядок событий защищает **тумбстоун** `portal_tombstone`
     (#77): stale/out-of-order install не воскрешает удалённый портал (гард в `tokenStore.saveToken/deletePortal`
-    по `eventTs` = top-level `ts` вебхука). **Привязка member_id к OAuth-гранту на первой установке**
+    по `eventTs` = top-level `ts` вебхука). **Рост тумбстоунов ограничен TTL** (#77): суточный `retentionSweep`
+    сносит `portal_tombstone` старше `tombstoneDays` (дефолт 30 д) — гард нужен лишь чтобы пережить
+    late/retried install той же деинсталляции (часы), а не месяцы; иначе копилась бы строка на каждый
+    навсегда-удалённый портал. `deleted_ts` — `ts` в **секундах**, сверка с `EXTRACT(EPOCH FROM now())`
+    unit-safe by construction (мс-значение просто никогда не подметётся, а не удалится рано). **Привязка member_id к OAuth-гранту на первой установке**
     (`verifyInstallMember`, #162): `verifyInstallToken` доказывает контроль **домена** (вызов `profile`), но не
     member_id — поэтому дополнительно рефрешим присланный `refresh_token` и сверяем **authoritative** member_id из
     ответа токен-эндпоинта с присланным `ev.memberId` (mismatch → 403; forged grant `invalid_grant` → 403;
