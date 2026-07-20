@@ -33,3 +33,14 @@ async function del(query: QueryFn, sql: string, params: unknown[]): Promise<numb
   const { rows } = await query(`${sql} RETURNING 1`, params)
   return rows.length
 }
+
+/**
+ * Resolve the tombstone TTL (days) from a raw env value, mirroring the codebase's retention-knob
+ * convention (`TOKEN_KEEPALIVE_HOURS`, `IMPORT_JOB_TTL_HOURS`). Non-numeric/absent → default 30.
+ * Clamped to [1, 365] so a typo can't disable the guard (0) or retain tombstones for years.
+ */
+export function resolveTombstoneDays(raw: string | undefined, fallback = 30): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(365, Math.max(1, Math.floor(n)))
+}

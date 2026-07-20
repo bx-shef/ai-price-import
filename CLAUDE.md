@@ -23,7 +23,7 @@ AI-импорт документов с табличной частью в Bitri
     фолбэком** (B24 online-события не ретраит). Порядок событий защищает **тумбстоун** `portal_tombstone`
     (#77): stale/out-of-order install не воскрешает удалённый портал (гард в `tokenStore.saveToken/deletePortal`
     по `eventTs` = top-level `ts` вебхука). **Рост тумбстоунов ограничен TTL** (#77): ежечасный `retentionSweep`
-    сносит `portal_tombstone` старше `tombstoneDays` (дефолт 30 д) — гард нужен лишь чтобы пережить
+    сносит `portal_tombstone` старше `tombstoneDays` (env `TOMBSTONE_TTL_DAYS`, дефолт 30 д, кламп [1,365]) — гард нужен лишь чтобы пережить
     late/retried install той же деинсталляции (часы), а не месяцы; иначе копилась бы строка на каждый
     навсегда-удалённый портал. `deleted_ts` — `ts` в **секундах**, сверка с `EXTRACT(EPOCH FROM now())`
     unit-safe by construction (мс-значение просто никогда не подметётся, а не удалится рано). **Привязка member_id к OAuth-гранту на первой установке**

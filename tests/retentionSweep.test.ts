@@ -1,5 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
-import { sweepExpired } from '../server/utils/retentionSweep'
+import { resolveTombstoneDays, sweepExpired } from '../server/utils/retentionSweep'
+
+describe('resolveTombstoneDays', () => {
+  it('defaults to 30 on absent/non-numeric/zero/negative', () => {
+    expect(resolveTombstoneDays(undefined)).toBe(30)
+    expect(resolveTombstoneDays('')).toBe(30)
+    expect(resolveTombstoneDays('abc')).toBe(30)
+    expect(resolveTombstoneDays('0')).toBe(30)
+    expect(resolveTombstoneDays('-5')).toBe(30)
+  })
+  it('accepts and floors valid values', () => {
+    expect(resolveTombstoneDays('7')).toBe(7)
+    expect(resolveTombstoneDays('45.9')).toBe(45)
+  })
+  it('clamps to [1, 365]', () => {
+    expect(resolveTombstoneDays('100000')).toBe(365)
+    expect(resolveTombstoneDays('0.5')).toBe(1)
+  })
+})
 
 describe('sweepExpired', () => {
   it('deletes text/doc/tombstone; returns counts (import_job moved to Redis, not swept here)', async () => {
