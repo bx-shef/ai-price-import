@@ -201,7 +201,7 @@ server/                   # Nitro
   utils/                  # pure DI-логика: tokenStore, secretCrypto, b24Oauth, ensureAccessToken,
                           #   b24Sdk, companyLookup, productLookup, crmWrite (договор — не ищем)
   queue/                  # topology, connection, producers, handlers, worker, cron, stats
-  db/                     # client.ts (pg pool + schema: portal_tokens, metrics; job_result упразднён #135), плагины
+  db/                     # client.ts (pg pool + schema: portal_tokens, portal_tombstone, import_text, import_doc, metrics_counter, portal_app_rating; job_result+import_job упразднены #135/#B), плагины
   agent/                  # оркестрация Claude Code (spawn, MCP-конфиг, таймауты/ретраи, DeepSeek env)
   plugins/                # migrate, queue, envCheck
 mcp/                      # изолированный MCP-сервер (первоклассный код + тесты)
@@ -222,7 +222,7 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
 ## 4. Потоки данных
 
 **Импорт файла (happy path):**
-1. `POST /api/import/upload` → сохранить файл, создать задачу (Postgres), **опц. ручной override цели**
+1. `POST /api/import/upload` → сохранить файл, создать задание (Redis, TTL — не Postgres, #B/#D), **опц. ручной override цели**
    рядом с файлом (тип сущности + направление), `enqueue file-extract`.
 2. `file-extract` (worker): pdftotext / OCR (tesseract `rus`+`bel`+`kaz`+`eng`) / office → `DOCUMENT_TEXT` → `enqueue agent-run`. Языки документов: рус/бел/каз — см. [`06-multilingual.md`](06-multilingual.md).
 3. `agent-run` (worker): spawn Claude Code (DeepSeek) с промптом + `DOCUMENT_TEXT`; агент через MCP
@@ -240,8 +240,8 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
 
 **Импорт доступен только внутри портала Б24 (in-portal, iframe) — веб И мобильное приложение.**
 Отдельной standalone-загрузки (вне портала) не делаем — это кастомная доработка (в маркетинг как
-платная фича). Публичным остаётся только **лендинг** (`/`); рабочие страницы импорта (`/app`,
-`/import`) требуют фрейм-контекст (`useB24().init()` no-op вне фрейма → приглашение открыть в портале).
+платная фича). Публичным остаётся только **лендинг** (`/`); рабочая страница импорта — **`/app`**
+(`/import` слит в неё и теперь редиректит), требует фрейм-контекст (`useB24().init()` no-op вне фрейма → приглашение открыть в портале).
 
 **Мобильное приложение Б24.** Всё должно работать в мобильном приложении Битрикс24: адаптивный UI
 (`b24ui` mobile-first), приложение открывается своей страницей из левого меню (`placement.bind` не
