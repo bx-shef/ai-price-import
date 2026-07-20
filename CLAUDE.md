@@ -22,7 +22,7 @@ AI-импорт документов с табличной частью в Bitri
     — **единственный писатель** `portal_tokens`; при недоступности Redis роут пишет **синхронным
     фолбэком** (B24 online-события не ретраит). Порядок событий защищает **тумбстоун** `portal_tombstone`
     (#77): stale/out-of-order install не воскрешает удалённый портал (гард в `tokenStore.saveToken/deletePortal`
-    по `eventTs` = top-level `ts` вебхука). **Рост тумбстоунов ограничен TTL** (#77): суточный `retentionSweep`
+    по `eventTs` = top-level `ts` вебхука). **Рост тумбстоунов ограничен TTL** (#77): ежечасный `retentionSweep`
     сносит `portal_tombstone` старше `tombstoneDays` (дефолт 30 д) — гард нужен лишь чтобы пережить
     late/retried install той же деинсталляции (часы), а не месяцы; иначе копилась бы строка на каждый
     навсегда-удалённый портал. `deleted_ts` — `ts` в **секундах**, сверка с `EXTRACT(EPOCH FROM now())`
