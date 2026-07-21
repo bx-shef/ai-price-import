@@ -82,10 +82,12 @@ throughput-воркеры (extract/agent/crm-sync) + событийный вор
    заголовки (CSP/HSTS) реально прилетают на статические/пререндеренные страницы.
 
 3. **Body-size backstop — ✅ под `APP_EDGE_SECURITY=1`.** Раз `client_max_body_size` без nginx нет, приложение
-   даёт эквивалент: middleware `edgeSecurity` рубит запрос с заявленным `Content-Length > EDGE_MAX_BODY_BYTES`
-   (25 МБ, как nginx) → 413 **до** буферизации на любом роуте; а роуты, буферящие всё тело (`/api/demo/extract`,
-   `/api/import/upload`), дополнительно требуют `Content-Length` → **411** (chunked без длины больше не буферит
-   без границы — `bodySizeStatus`). За nginx (флаг off) — прежнее поведение (кап у nginx).
+   даёт эквивалент **глобально** в middleware `edgeSecurity` (`edgeBodyGuard`, на **любой** роут, включая
+   публичный вебхук `/api/b24/events`): заявленный `Content-Length > EDGE_MAX_BODY_BYTES` (25 МБ, как nginx) →
+   413; **chunked-тело без `Content-Length`** (иначе `readRawBody`/`readMultipartFormData` буферят без границы —
+   OOM) → 411, **до** чтения тела хендлером. Безтелые/`Content-Length: 0` запросы не трогаются. Роуты,
+   буферящие всё тело (`/api/demo/extract`, `/api/import/upload`), дополнительно кап-чекают свой предел
+   (`bodySizeStatus`). За nginx (флаг off) — прежнее поведение (кап у nginx).
 
 **Что и так прикрыто в приложении (nginx не нужен):**
 

@@ -182,10 +182,11 @@ AI-импорт документов с табличной частью в Bitri
   app-level анти-брутфорс на `/api/auth/login` (10/15мин по реальному IP пира `socket.remoteAddress`, т.к.
   без доверенного прокси XFF подделываем). CSP-строки байт-в-байт с `nginx.conf`. **За nginx флаг НЕ ставим**
   (дефолт off) — иначе двойной CSP (заголовки пересекаются рестриктивно) + троттл логина сгруппировал бы всех
-  под IP прокси. Плюс **body-size backstop** (`bodySizeStatus`/`EDGE_MAX_BODY_BYTES` 25 МБ = nginx
-  `client_max_body_size`): middleware рубит заявленный `Content-Length` > кап → 413, а буферящие тело роуты
-  (`/api/demo/extract`, `/api/import/upload`) требуют `Content-Length` → 411 (chunked без длины не буферит без
-  границы). Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
+  под IP прокси. Плюс **body-size backstop** (`edgeBodyGuard`/`EDGE_MAX_BODY_BYTES` 25 МБ = nginx
+  `client_max_body_size`): middleware **глобально** (любой роут, включая публичный вебхук `/api/b24/events`)
+  рубит заявленный `Content-Length` > кап → 413 и chunked-тело без длины → 411 **до** чтения тела; безтелые
+  запросы не трогает. Буферящие всё тело роуты (`/api/demo/extract`, `/api/import/upload`) кап-чекают свой
+  предел (`bodySizeStatus`). Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
   `/api/demo/*` держит собственный пер-IP лимитер (`demoRateLimit`) плюс глобальный `AI_MAX_CONCURRENCY`. ⚠
   `NUXT_PUBLIC_SITE_URL` пекётся на **build** (пререндер `/install`) — скрипт запекает его в `pnpm build` из
   `ENV_JSON`. Env под PUBLIC: `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль), `ANTHROPIC_*`,

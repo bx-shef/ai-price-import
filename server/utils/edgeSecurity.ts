@@ -108,3 +108,22 @@ export function bodySizeStatus(edgeOn: boolean, contentLength: number, max: numb
   if (edgeOn && cl === 0) return 411
   return null
 }
+
+/**
+ * GLOBAL edge body guard, applied by the middleware to EVERY request when edge security is on — the
+ * safe-by-default equivalent of nginx `client_max_body_size` for a process with no nginx. Returns the
+ * status to reject with, or null:
+ *  - 413 when the declared Content-Length exceeds `max`;
+ *  - 411 when the body is chunked (`Transfer-Encoding: chunked`) with NO Content-Length — such a body
+ *    would buffer unbounded (h3 `readRawBody`/`readMultipartFormData` have no size limit), so it must be
+ *    rejected BEFORE any handler reads it (closes the public `/api/b24/events` webhook OOM vector too).
+ * A request with neither header (a bodyless / `Content-Length: 0` POST) is NOT rejected — only an actual
+ * unbounded chunked body is. This makes the missing-length defense safe-by-default for future routes.
+ */
+export function edgeBodyGuard(contentLength: string | undefined, transferEncoding: string | undefined, max: number): 411 | 413 | null {
+  const declared = Number(contentLength ?? '')
+  if (Number.isFinite(declared) && declared > max) return 413
+  const chunked = (transferEncoding ?? '').toLowerCase().includes('chunked')
+  if (chunked && !contentLength) return 411
+  return null
+}

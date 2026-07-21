@@ -1,6 +1,6 @@
 import { extractDemo } from '~/utils/demoExtract'
 import { createRateLimiter } from '../../utils/demoRateLimit'
-import { edgeSecurityEnabled, edgeTrustXff, rateLimitKey } from '../../utils/edgeSecurity'
+import { bodySizeStatus, edgeSecurityEnabled, edgeTrustXff, rateLimitKey } from '../../utils/edgeSecurity'
 import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, DEMO_AI_EXT, MAX_DEMO_BYTES } from '../../utils/demoUpload'
 import { xlsxToText, XlsxTooLargeError } from '../../utils/demoXlsx'
 import { runDemoAiExtract, type DemoAiDeps } from '../../utils/demoAi'
@@ -60,14 +60,16 @@ const demoAiDeps: DemoAiDeps = {
 }
 
 export default defineEventHandler(async (event) => {
-  // Require a Content-Length: browsers set it for FormData uploads. Refusing chunked
-  // bodies with no declared length stops an unbounded in-memory buffer (DoS).
+  // Require a Content-Length and cap size (shared `bodySizeStatus`). This is a PUBLIC route, so the
+  // Content-Length requirement is UNCONDITIONAL (edgeOn=true) regardless of nginx — a chunked body with
+  // no declared length would buffer unbounded (DoS). Browsers set Content-Length for FormData uploads.
   const declared = Number(getHeader(event, 'content-length') || 0)
-  if (!declared) {
+  const bodyStatus = bodySizeStatus(true, declared, MAX_DEMO_BYTES + 100_000)
+  if (bodyStatus === 411) {
     setResponseStatus(event, 411)
     return { error: 'Не указан размер запроса.' }
   }
-  if (declared > MAX_DEMO_BYTES + 100_000) {
+  if (bodyStatus === 413) {
     setResponseStatus(event, 413)
     return { error: 'Файл слишком большой для демо (до 5 МБ).' }
   }
