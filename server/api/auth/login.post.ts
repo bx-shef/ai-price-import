@@ -1,7 +1,7 @@
 import { checkCredentials, resolveAuthConfig, signSession } from '../../utils/session'
 import { OP_COOKIE, OP_MAX_AGE_S } from '../../utils/operatorSession'
 import { createRateLimiter } from '../../utils/demoRateLimit'
-import { LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS, edgeSecurityEnabled } from '../../utils/edgeSecurity'
+import { LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS, edgeSecurityEnabled, edgeTrustXff, rateLimitKey } from '../../utils/edgeSecurity'
 
 // POST /api/auth/login — operator sign-in. Empty password ⇒ disabled (503).
 // Brute-force defense: a per-failure delay here (app-layer backstop) PLUS edge
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
     return { error: 'вход оператора отключён' }
   }
   if (edgeSecurityEnabled(process.env)) {
-    const ip = event.node.req.socket.remoteAddress ?? 'unknown'
+    const ip = rateLimitKey(true, edgeTrustXff(process.env), getHeader(event, 'x-forwarded-for'), event.node.req.socket.remoteAddress)
     const decision = loginLimiter.check(ip, Date.now())
     if (!decision.allowed) {
       setResponseStatus(event, 429)

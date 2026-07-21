@@ -5,6 +5,7 @@ import {
   buildSecurityHeaders,
   contentSecurityPolicy,
   edgeSecurityEnabled,
+  edgeTrustXff,
   normalisePathname,
   rateLimitKey
 } from '../server/utils/edgeSecurity'
@@ -64,18 +65,30 @@ describe('normalisePathname', () => {
   })
 })
 
+describe('edgeTrustXff', () => {
+  it('off by default, on for 1/true', () => {
+    expect(edgeTrustXff({})).toBe(false)
+    expect(edgeTrustXff({ APP_EDGE_TRUST_XFF: '0' })).toBe(false)
+    expect(edgeTrustXff({ APP_EDGE_TRUST_XFF: '1' })).toBe(true)
+    expect(edgeTrustXff({ APP_EDGE_TRUST_XFF: ' TRUE ' })).toBe(true)
+  })
+})
+
 describe('rateLimitKey', () => {
   it('edge OFF (behind nginx): trusts the LAST XFF hop (proxy-appended real peer)', () => {
-    expect(rateLimitKey(false, '1.1.1.1, 2.2.2.2', '10.0.0.1')).toBe('2.2.2.2')
+    expect(rateLimitKey(false, false, '1.1.1.1, 2.2.2.2', '10.0.0.1')).toBe('2.2.2.2')
   })
-  it('edge ON (no nginx): ignores spoofable XFF, keys on the real TCP peer only', () => {
-    expect(rateLimitKey(true, '1.1.1.1, 9.9.9.9', '203.0.113.7')).toBe('203.0.113.7')
-    // a rotated/forged XFF cannot change the bucket when edge is on
-    expect(rateLimitKey(true, 'anything, spoofed', '203.0.113.7')).toBe('203.0.113.7')
+  it('edge ON, trustXff OFF (default, no nginx): ignores spoofable XFF, keys on the real TCP peer', () => {
+    expect(rateLimitKey(true, false, '1.1.1.1, 9.9.9.9', '203.0.113.7')).toBe('203.0.113.7')
+    // a rotated/forged XFF cannot change the bucket
+    expect(rateLimitKey(true, false, 'anything, spoofed', '203.0.113.7')).toBe('203.0.113.7')
+  })
+  it('edge ON, trustXff ON (verified trusted tunnel): uses the appended last XFF hop', () => {
+    expect(rateLimitKey(true, true, '1.1.1.1, 8.8.8.8', '127.0.0.1')).toBe('8.8.8.8')
   })
   it('falls back to "unknown" with no peer', () => {
-    expect(rateLimitKey(true, undefined, undefined)).toBe('unknown')
-    expect(rateLimitKey(false, undefined, undefined)).toBe('unknown')
+    expect(rateLimitKey(true, false, undefined, undefined)).toBe('unknown')
+    expect(rateLimitKey(false, false, undefined, undefined)).toBe('unknown')
   })
 })
 

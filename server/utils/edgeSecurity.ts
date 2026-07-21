@@ -14,14 +14,28 @@ export function edgeSecurityEnabled(env: Record<string, string | undefined>): bo
 }
 
 /**
+ * Escape hatch for the no-nginx target: set APP_EDGE_TRUST_XFF=1 ONLY after live-verifying that the
+ * platform ingress (e.g. the Bitrix24 Vibecode tunnel) is a trusted proxy that APPENDS the real client
+ * as the last X-Forwarded-For hop. Then per-IP limits key on that hop instead of `socket.remoteAddress`
+ * (which, behind such a tunnel, is a single shared gateway IP → all clients collapse into one bucket →
+ * demo/login lockout). Default OFF is bypass-safe: keying on the real TCP peer can't be spoofed, and the
+ * worst case (shared peer) is a GLOBAL cap — still no cost-drain/brute-force, only reduced availability.
+ */
+export function edgeTrustXff(env: Record<string, string | undefined>): boolean {
+  const v = (env.APP_EDGE_TRUST_XFF ?? '').trim().toLowerCase()
+  return v === '1' || v === 'true'
+}
+
+/**
  * Per-IP rate-limit key that adapts to the deploy topology. Behind nginx (edge OFF) the proxy appends
  * the real peer as the LAST X-Forwarded-For hop, so `clientKey` trusts that. With NO nginx (edge ON) the
  * whole X-Forwarded-For is client-controlled and must be ignored — key on the real TCP peer only, so a
- * client can't rotate a spoofed header to dodge the limit. Used by the public demo + login throttles.
+ * client can't rotate a spoofed header to dodge the limit — UNLESS `trustXff` says the tunnel is itself a
+ * verified trusted proxy (then use its appended last hop). Used by the public demo + login throttles.
  */
-export function rateLimitKey(edgeOn: boolean, xff: string | undefined, remote: string | undefined): string {
-  if (edgeOn) return (remote ?? '').trim() || 'unknown'
-  return clientKey(xff, remote)
+export function rateLimitKey(edgeOn: boolean, trustXff: boolean, xff: string | undefined, remote: string | undefined): string {
+  if (!edgeOn || trustXff) return clientKey(xff, remote)
+  return (remote ?? '').trim() || 'unknown'
 }
 
 // Kept byte-identical to nginx.conf so the two paths present the same policy (no drift): the strict
