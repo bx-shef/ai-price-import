@@ -1,6 +1,6 @@
 # План проверок procure-ai
 
-> Last reviewed: 2026-07-20
+> Last reviewed: 2026-07-21
 
 Этот документ — практический чек-лист ручных и автоматических проверок procure-ai по подсистемам. Пользоваться им так: начните с раздела «Быстрый старт (smoke)», убедитесь, что приложение вообще поднимается, затем идите по нужной подсистеме и прогоняйте строки таблицы (колонка «Метка» показывает, что уже покрыто vitest, а что требует ручного прогона, живого портала или LLM-ключа). Документ детализирует три уровня из [`07-testing.md`](07-testing.md): чистое ядро (unit, `pnpm test`), интеграция роутов/пайплайна (ручной прогон бэкенда) и сквозные проверки на живом портале Bitrix24. Каждая метка `[нужен живой портал]` / `[нужен LLM-ключ]` собрана отдельно в разделе «Что заблокировано и почему».
 
@@ -175,8 +175,8 @@
 | Маркер vs мутабельная цель/originator | Код-ревью `crmSyncCore.ts` (search-before-create) | Известное узкое ограничение: правка маппинга/`IMPORT_ORIGINATOR_ID` в окне между create и ретраем → поиск под другим ключом → возможен дубль (нацелено на восстановление после краха, не на реконфиг под нагрузкой) | [вручную] |
 | Кэш RestCall / портал без токена | Код-ревью `liveDeps.ts`, `need()` | null и rejected вычищаются из кэша; `need()` бросает «портал не авторизован» | [вручную] |
 | Диск + настраиваемое дело (ядро) | `tests/diskActivity.test.ts` | `buildConfigurableActivity` (капы, `safeRelativePath`); `pickCommonStorage`/`monthlySubfolderName`/`ensureSubfolder`/`uploadFile` | [авто] |
-| Диск/дело НЕ проведены в пайплайн | grep `server/queue/` пуст | Реальная загрузка на диск и `crm.activity.configurable.add` не подключены | [нужен живой портал] |
-| Сквозная проверка | Живой портал (mapping) → документ через extract→agent→crm-sync | Сущность с компанией/валютой/строками (НДС 1-в-1), success-чат; при отсутствии ставки/валюты — error-чат; дубль-загрузка идемпотентна | ✅ **пройдено вживую 2026-07-09** (засеянный портал + DeepSeek): компания по RQ_INN, opportunity, персист позиций, файл на Диск, дело (todo+file), чат. Осталось: `configurable.add` в OAuth-контексте, идемпотентность дубля |
+| Диск + настраиваемое дело проведены в пайплайн | `crmSyncCore.writeActivity`/`disk.saveSourceFileToDisk` | ✅ подключены (#127/#129): файл на Диск на стадии file-extract (opt-in `saveFile`), `crm.activity.configurable.add` в hot-path по OAuth (best-effort, гейт на `created`), кнопка «Исходный файл» в layout | ✅ live-verified |
+| Сквозная проверка | Живой портал (mapping) → документ через extract→agent→crm-sync | Сущность с компанией/валютой/строками (НДС 1-в-1), success-чат; при отсутствии ставки/валюты — error-чат; дубль-загрузка идемпотентна | ✅ **пройдено вживую 2026-07-09** (засеянный портал + DeepSeek): компания по RQ_INN, opportunity, персист позиций, файл на Диск, дело (todo+file), чат. ✅ Дозакрыто: `configurable.add` в OAuth-контексте (#124), идемпотентность дубля (`pnpm verify:idem`, #135) |
 
 ### Очереди (BullMQ/Redis)
 
@@ -207,7 +207,7 @@
 
 ### События установки/удаления Б24
 
-Приём вебхуков `ONAPPINSTALL`/`ONAPPUNINSTALL` на `POST /api/b24/events`, верификация `application_token` (fail-closed, constant-time). Файлы: `server/api/b24/events.post.ts`, `server/utils/{b24EventsHandler,tokenStore,nodeFileIO,secretCrypto}.ts`, `app/utils/b24Events.ts`. Примечание: `app/pages/install.vue` в редизайне отсутствует — install-flow не реализован, вебхук-приём самодостаточен.
+Приём вебхуков `ONAPPINSTALL`/`ONAPPUNINSTALL` на `POST /api/b24/events`, верификация `application_token` (fail-closed, constant-time). Файлы: `server/api/b24/events.post.ts`, `server/utils/{b24EventsHandler,tokenStore,nodeFileIO,secretCrypto}.ts`, `app/utils/b24Events.ts`. Примечание: `app/pages/install.vue` **реализован** (`event.bind` `ONAPPINSTALL`/`ONAPPUNINSTALL` до `installFinish`, пререндер) — фрейм-установка **и** серверный вебхук-приём оба на месте.
 
 | Проверка | Действие | Ожидаемо | Метка |
 |---|---|---|---|

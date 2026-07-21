@@ -10,7 +10,7 @@ AI-импорт документов с табличной частью в Bitri
 > в [`docs/redesign/`](docs/redesign/README.md) (00 старая арх. → 01 карта → 02 целевая арх. →
 > 03 стек → 04 маркетинг → 05 политика данных → 06 мультиязычность → 07 план тестирования →
 > 08 демо на лендинге → 09 деплой → 10 чек-лист проверок → 11 тарифы/self-hosted →
-> 12 попап оценки в Маркете). Держим их синхронно.
+> 12 попап оценки в Маркете → 13 релиз в Маркете/go-to-market). Держим их синхронно.
 
 ## Раскладка
 
@@ -202,6 +202,13 @@ pnpm test         # Vitest (unit + nuxt)
 pnpm test:unit    # только unit (чистое ядро)
 pnpm generate     # SSG-сборка
 pnpm check        # lint + typecheck + test
+
+# Живые проверки (нужен .env.b24test/B24_HOOK + LLM-ключ ANTHROPIC_*):
+pnpm sdk:smoke    # OAuth-транспорт SDK: profile+crm.item.list+burst 30 без QUERY_LIMIT_EXCEEDED
+pnpm verify:agent # реальный путь агента: spawn claude → DeepSeek → ExtractedDocument (ru/be/kk tax-id)
+pnpm live:crm --ai# полный E2E: текст → DeepSeek → runCrmSync → сделка+позиции+уведомление+очистка
+pnpm verify:idem  # идемпотентность: 2 прогона одним jobId → повтор нашёл по маркеру, created:false
+pnpm loadtest:123 # доказательство rate-limiter (RestrictionManager)
 ```
 
 ## Конвенции
