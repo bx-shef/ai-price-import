@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-20
+> Last reviewed: 2026-07-21
 
 AI-импорт документов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -175,13 +175,18 @@ AI-импорт документов с табличной частью в Bitri
   `node .output/server/index.mjs` отдаёт **и лендинг, и in-portal, и `/api/*`** из одного процесса
   (`/`,`/app`,`/import`,`/settings`,`/metrics`,`/login`,`/queues`,`/install` GET **и POST** = 200,
   `/api/health` = ok; `/api/ready` у нас нет). pg/redis + OCR-тулчейн + `@anthropic-ai/claude-code`
-  провижнятся на VM в `preStart`, миграции в процессе на старте. ⚠ Без nginx нет CSP/security-заголовков/
-  `limit_req` — паритет безопасности в Nitro (`routeRules`) — follow-up; служебная зона (`/api/ops/*`,
-  `/api/queues`) **fail-closed** (nginx для неё не нужен), но **демо `/api/demo/*`** теряет пер-IP троттл
-  (неаутентифицированный OCR/LLM-расход) — гейт перед боевым PUBLIC. ⚠ `NUXT_PUBLIC_SITE_URL` пекётся на
-  **build** (пререндер `/install`) — скрипт запекает его в `pnpm build` из `ENV_JSON`. Env под PUBLIC:
-  `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль), `ANTHROPIC_*`, `B24_TOKEN_ENC_KEY`
-  (32 байта), `NUXT_PUBLIC_SITE_URL=<appUrl>`.
+  провижнятся на VM в `preStart`, миграции в процессе на старте. **Паритет безопасности без nginx —
+  `APP_EDGE_SECURITY=1`** (`server/utils/edgeSecurity.ts` + `server/middleware/edgeSecurity.ts`): раз nginx
+  нет, приложение само вешает его защиту — security-заголовки (CSP + `frame-ancestors` доменов Б24, nosniff,
+  Referrer-Policy, HSTS; относительно `/b24-form.html` — расслабленный form-CSP) на **все** ответы и
+  app-level анти-брутфорс на `/api/auth/login` (10/15мин по реальному IP пира `socket.remoteAddress`, т.к.
+  без доверенного прокси XFF подделываем). CSP-строки байт-в-байт с `nginx.conf`. **За nginx флаг НЕ ставим**
+  (дефолт off) — иначе двойной CSP (заголовки пересекаются рестриктивно) + троттл логина сгруппировал бы всех
+  под IP прокси. Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
+  `/api/demo/*` держит собственный пер-IP лимитер (`demoRateLimit`) плюс глобальный `AI_MAX_CONCURRENCY`. ⚠
+  `NUXT_PUBLIC_SITE_URL` пекётся на **build** (пререндер `/install`) — скрипт запекает его в `pnpm build` из
+  `ENV_JSON`. Env под PUBLIC: `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль), `ANTHROPIC_*`,
+  `B24_TOKEN_ENC_KEY` (32 байта), `NUXT_PUBLIC_SITE_URL=<appUrl>`, **`APP_EDGE_SECURITY=1`**.
 
 ## Команды
 

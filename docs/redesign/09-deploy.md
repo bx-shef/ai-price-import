@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-20
+> Last reviewed: 2026-07-21
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -297,9 +297,10 @@ docker-gen (рестарт не нужен). Три варианта по воз
 :3000** (тот же `pnpm build` → `node .output/server/index.mjs` отдаёт и лендинг, и in-portal, и
 `/api/*`; pg/redis+OCR-тулчейн провижнятся на VM в `preStart`, миграции в процессе на старте).
 Артефакты — `deploy/vibecode-deploy.sh` + `.github/workflows/deploy-vibecode.yml` (**opt-in**:
-`VIBECODE_DEPLOY==true`, основной путь не трогает; в Docker-образ не попадают). ⚠ Без nginx нет
-CSP/security-заголовков/login-rate-limit — паритет в Nitro — follow-up; служебная зона fail-closed
-(nginx для неё не нужен). Полный runbook и env — [`docs/DEPLOY_VIBECODE.md`](../DEPLOY_VIBECODE.md).
+`VIBECODE_DEPLOY==true`, основной путь не трогает; в Docker-образ не попадают). Паритет защиты без
+nginx (CSP/security-заголовки/пер-IP лимиты/анти-брутфорс логина) даёт **`APP_EDGE_SECURITY=1`**
+(Nitro middleware + гейты роутов, `edgeSecurity.ts`; байт-в-байт с `nginx.conf`); служебная зона
+fail-closed. Полный runbook и env — [`docs/DEPLOY_VIBECODE.md`](../DEPLOY_VIBECODE.md).
 
 ## Дальше (масштаб)
 
