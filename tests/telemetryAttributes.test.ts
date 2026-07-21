@@ -55,6 +55,15 @@ describe('pickSafeAttributes (manual-span allowlist)', () => {
       expect(/purpose|amount|price|supplier|article|product|inn|unp|назнач|цена|поставщ|артикул|товар|инн|унп/i.test(k)).toBe(false)
     }
   })
+
+  it('keeps the settings HTTP-span keys (http.method/op/outcome), drops an unknown http.* key', () => {
+    expect(pickSafeAttributes({
+      'http.method': 'POST',
+      'http.op': 'settings.save',
+      'http.outcome': 'forbidden',
+      'http.body': '{secret}' // not allowlisted → dropped
+    })).toEqual({ 'http.method': 'POST', 'http.op': 'settings.save', 'http.outcome': 'forbidden' })
+  })
 })
 
 describe('isRedactedKey (auto-instrumentation scrub)', () => {

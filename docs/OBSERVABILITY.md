@@ -1,6 +1,6 @@
 # Наблюдаемость: OpenTelemetry
 
-> Last reviewed: 2026-07-18
+> Last reviewed: 2026-07-21
 
 Глубокая телеметрия backend'а на **OpenTelemetry** (официальный вектор Bitrix24 —
 `bitrix-tools/b24-ai-starter-otel`): трейсы + метрики (+ логи) по OTLP в коллектор →
@@ -28,6 +28,12 @@
     У `file-extract`/`agent-run` — флаг `job.ok` (handled-fail vs успех); у `crm-sync` — исходы записи
     `{created, lines, unmatched, idempotent, warnings, errors}`. Так вся цепочка (приём события →
     извлечение текста/OCR → прогон агента → запись в CRM) видна в трейсах по стадиям и порталам.
+  - `withSpan(…)` также оборачивает **HTTP-роут `/api/settings`** (`http.settings.get`/`http.settings.post`):
+    латентность + `{http.method, http.op, http.outcome}` (`ok`/`no_auth`/`auth_failed`/`forbidden`/
+    `bad_request`/`upstream_error`) + `portal.hash` (по домену фрейм-токена). Тело маппинга в спан **не**
+    попадает (allowlist). **Область серверная:** прочие фрейм-роуты и **клиентские** взаимодействия
+    (pull `reload.options`, открытие/закрытие слайдера настроек — идут из браузера во фрейме) спанами
+    **не** покрыты — браузерного RUM у нас нет.
 - **Приватность ([05-data-policy §4](redesign/05-data-policy.md)) — тройная защита коммерческих данных:**
   1. наши спаны эмитят **только allowlist** безопасных ключей (`server/utils/telemetryAttributes.ts`
      `pickSafeAttributes`) — поставщика/артикул/цену/содержимое документа прикрепить физически нельзя;

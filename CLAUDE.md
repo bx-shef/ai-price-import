@@ -144,7 +144,10 @@ AI-импорт документов с табличной частью в Bitri
     (`oauth.refresh`/`oauth.install-verify`); `withSpan(…)` — job-спан на **каждую** очередь
     (`b24-events`/`file-extract`/`agent-run`/`crm-sync`): латентность+исход+`portal.hash` по стадии;
     у extract/agent — `job.ok`, у crm-sync — исходы записи (`created`/`lines`/`unmatched`/`idempotent`/
-    `warnings`/`errors`). **PII-защита тройная:** allowlist
+    `warnings`/`errors`). **HTTP-роут `/api/settings`** (GET/POST) тоже в `withSpan` (`http.settings.get/post`):
+    латентность + `http.outcome` (`ok`/`no_auth`/`auth_failed`/`forbidden`/`bad_request`/`upstream_error`) +
+    `portal.hash` (по домену) — тело маппинга в спан **не** кладётся. (Прочие фрейм-роуты и **клиентские**
+    pull/слайдер спанами не покрыты — серверная OTel, браузерного RUM нет.) **PII-защита тройная:** allowlist
     наших атрибутов (`telemetryAttributes.ts` `pickSafeAttributes` — поставщика/артикул/цену прикрепить
     нельзя) + redaction-SpanProcessor авто-атрибутов (SQL/URL/токены) + `portal.hash` (SHA-256) вместо
     member_id, `error_kind` вместо текста ошибки. Чистые ядра + тесты (`telemetryAttributes`/`telemetrySpan`)
