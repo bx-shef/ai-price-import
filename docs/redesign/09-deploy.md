@@ -84,7 +84,11 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 - **HSTS:** `Strict-Transport-Security: max-age=63072000; includeSubDomains` — TLS терминирует общий
   фронт-прокси, vhost только по HTTPS; `includeSubDomains` скоуплен на поддомены `price-import.*` (их нет),
   соседние `*.bx-shef.by` не трогает; без `preload`. Продублирован в `location = /b24-form.html` (там свой
-  `add_header` перекрывает унаследованные).
+  `add_header` перекрывает унаследованные). ⚠ Общий фронт-прокси (`nginx-proxy`) может слать **свой** HSTS
+  (дефолт `max-age=31536000`=1г); по RFC 6797 браузер чтит **первый** заголовок — если прокси эмитит раньше,
+  эффективный `max-age` = его (1г), а не наш (2г). Разночтение косметическое (оба HTTPS-pin); при желании
+  выровнять — задать HSTS на одном слое. Откат: `max-age` кэшируется до 2 лет — при возврате на HTTP надо
+  сперва отдать `max-age=0` по HTTPS (без `preload` это обратимо).
 - **CSP для встройки в Б24:** `frame-ancestors`/`connect-src` разрешают облачные домены Bitrix24
   (iframe `/app`,`/settings`); backend — тот же origin (`'self'`).
 - **Память:** контейнер backend с `mem_limit` (в compose — 2g): извлечение гоняет недоверенные файлы
