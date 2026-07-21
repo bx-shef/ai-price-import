@@ -1,6 +1,6 @@
 # Стек технологий (редизайн procure-ai)
 
-> Last reviewed: 2026-07-18
+> Last reviewed: 2026-07-21
 
 Целевой стек взят из эталона `client-bank-alfa-by` (проверенная на проде раскладка Bitrix24-приложения)
 и дополнен слоем AI-агента из старого procure-ai. Версии — ориентир на момент фиксации; при инициализации
@@ -39,8 +39,9 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 
 | Что | Технология | Роль |
 |---|---|---|
-| Агент | **Claude Code CLI** (headless, `--print --bare --output-format json`) | извлечение структуры (**tool-less** — без вызова инструментов) |
-| Провайдер | **DeepSeek V4** (Anthropic-совместимый endpoint `https://api.deepseek.com/anthropic`) через `ANTHROPIC_*` env; ключ — в `ANTHROPIC_AUTH_TOKEN` | решение Q5; модели `deepseek-v4-flash` (дефолт) / `deepseek-v4-pro`; извлечение проверено вживую на рус/бел/каз (поставщик/налоговый ID/позиции/НДС) 2026-07-09; см. юрисдикцию ниже |
+| Движок (engine) | **OpenAI-совместимый транспорт** (`openai` SDK → `/v1/chat/completions`, `response_format:json_object`) — целевой; переключатель `AGENT_ENGINE=chat`. Легаси-путь — **Claude Code CLI** (`--print --bare --output-format json`, tool-less), `AGENT_ENGINE=claude` (дефолт, пока не пройдут живые тесты `verify:chat`) | извлечение структуры (**tool-less/без инструментов** в обоих путях; чат-путь — чистый completion, инъекция документа не может ничего, кроме JSON) |
+| Провайдер (chat) | `LLM_PROVIDER`: **deepseek** (`https://api.deepseek.com/v1`, `deepseek-chat`; юрисдикция КНР, #215) / **bitrixgpt** (Bitrix Vibecode AI Router `https://vibecode.bitrix24.tech/v1`, `bitrix/bitrixgpt-5.5`; юрисдикцию несёт Битрикс) / **custom** (любой OpenAI-совместимый). Оба провайдера — один транспорт | чистое ядро `server/agent/llmConfig.ts` (резолвер) + `chatExtract.ts` (оркестрация с ретраем) + `openaiChat.ts` (живой адаптер), тесты; живой прогон — `pnpm verify:chat --provider <p>` |
+| Провайдер (legacy claude) | **DeepSeek** (Anthropic-совместимый endpoint `https://api.deepseek.com/anthropic`) через `ANTHROPIC_*`; ключ — `ANTHROPIC_AUTH_TOKEN` | модели `deepseek-v4-flash`/`-pro`; извлечение проверено вживую на рус/бел/каз 2026-07-09; путь удаляется после cutover на chat |
 | Протокол инструментов | **не нужен** — агент tool-less (решение из ревью): `@modelcontextprotocol/sdk` / MCP-HTTP-сервер **не подключены** (нет в `package.json`), тела «инструментов» зовёт `crm-sync` в процессе | (был замысел: изолированный MCP-сервер) |
 | Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (**rus+bel+kaz+eng**), `libreoffice` (soffice — офис→текст/pdf), **`exceljs`** (xlsx→текст) | PDF/скан/офис → текст; языки — см. `06-multilingual.md`. Python-библиотек (`openpyxl`/`xlrd`) **не используем** |
 | Схемы | **ручная валидация** — `validateExtractedDocument` (нормализация untrusted JSON агента); `zod` **не подключён** | валидация вывода агента |
@@ -82,12 +83,13 @@ pnpm build        # Nitro node-server (backend-таргет)
 
 Перед пушем — `pnpm check` (= lint + typecheck + test) или `bash scripts/check-app.sh`.
 
-> **Юрисдикция LLM (DeepSeek = КНР).** Провайдер выбран DeepSeek. Данные документов (накладные,
-> реквизиты поставщиков) уходят на инференс в юрисдикцию КНР — для NDA/152-ФЗ/коммерческой тайны
-> нужно согласие заказчика и юриста (методология `ai-agent`, `docs/01-install/`). Технически слой
-> сделан провайдер-агностично (`ANTHROPIC_*` env), поэтому смена на Anthropic/Bedrock/Vertex —
-> замена переменных без правки кода. Извлечение текста и запись в CRM происходят локально; в LLM
-> уходит только текст документа (бинарники — нет).
+> **Юрисдикция LLM (#215).** Дефолтный провайдер — DeepSeek (юрисдикция КНР): текст документов
+> (накладные, реквизиты поставщиков) уходит на инференс в КНР → для NDA/152-ФЗ/коммерческой тайны
+> нужно согласие заказчика и юриста. Слой провайдер-агностичен: **chat-движок** (OpenAI-совместимый)
+> переключается на `bitrixgpt` (Bitrix Vibecode AI Router — юрисдикцию несёт Битрикс) или `custom`
+> (напр. YandexGPT/GigaChat через прокси-шим) сменой `LLM_PROVIDER`/ключа, без правки кода; легаси
+> claude-путь так же агностичен через `ANTHROPIC_*`. Извлечение текста и запись в CRM — локально; в
+> LLM уходит только текст документа (бинарники — нет).
 
 ## 7. Конвенции (из эталона)
 
