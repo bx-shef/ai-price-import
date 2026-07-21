@@ -78,6 +78,27 @@ describe('runChatExtract', () => {
     expect(out.error).toContain('слишком много позиций')
   })
 
+  it('advances the attempt counter across a retry that ends in a terminal validation fail', async () => {
+    // 429 (transient, retried) → then a clean reply with no items (terminal). Proves attempts
+    // counts the retry AND the second attempt's validation failure is terminal (no 3rd try).
+    const chat = vi.fn<ChatFn>()
+      .mockRejectedValueOnce(new Error('429 slow down'))
+      .mockResolvedValueOnce(JSON.stringify({ documentType: 'счёт', items: [] }))
+    const out = await runChatExtract({ documentText: DOC, instructions: INSTR, model: 'm' }, { chat, ...noWait })
+    expect(out.ok).toBe(false)
+    expect(out.attempts).toBe(2)
+    expect(out.error).toContain('табличную часть')
+    expect(chat).toHaveBeenCalledTimes(2)
+  })
+
+  it('a non-JSON reply is terminal (no tabular part)', async () => {
+    const chat: ChatFn = async () => 'извините, не удалось разобрать документ'
+    const out = await runChatExtract({ documentText: DOC, instructions: INSTR, model: 'm' }, { chat, ...noWait })
+    expect(out.ok).toBe(false)
+    expect(out.attempts).toBe(1)
+    expect(out.error).toContain('табличную часть')
+  })
+
   it('unwraps JSON even if the model wraps it in stray prose', async () => {
     const chat: ChatFn = async () => `Вот результат:\n${OK_JSON}\nготово`
     const out = await runChatExtract({ documentText: DOC, instructions: INSTR, model: 'm' }, { chat, ...noWait })

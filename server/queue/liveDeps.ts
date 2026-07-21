@@ -196,8 +196,10 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
     extractDocument: async (documentText) => {
       const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
       const random = () => Math.random()
-      // 'chat' (default target): OpenAI-compatible transport (DeepSeek/BitrixGPT). Falls back to
-      // the legacy claude-code subprocess when AGENT_ENGINE!='chat' (or the chat transport is unset).
+      // Engine selected by AGENT_ENGINE (buildLiveInfra): 'chat' → OpenAI-compatible transport
+      // (DeepSeek/BitrixGPT); anything else → legacy claude-code subprocess. Note: AGENT_ENGINE=chat
+      // with NO provider key does NOT fall back to claude — chatFn is a throwing transport, so the
+      // job fails LOUDLY ("provider not configured") rather than silently reverting engines.
       const r = infra.agentEngine === 'chat' && infra.chatFn
         ? await runChatExtract({ documentText, instructions, model: infra.llmModel }, { chat: infra.chatFn, sleep, random })
         : await runAgent({ documentText, instructions }, { spawn: infra.agentSpawn, sleep, random })

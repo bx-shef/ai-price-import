@@ -49,6 +49,22 @@ describe('resolveLlmConfig', () => {
     expect(c.model).toBe('deepseek-reasoner')
   })
 
+  it('env overrides base URL and model for bitrixgpt too', () => {
+    const c = resolveLlmConfig({ LLM_PROVIDER: 'bitrixgpt', VIBE_API_KEY: 'k', BITRIXGPT_BASE_URL: 'https://router/v1', BITRIXGPT_MODEL: 'bitrix/other' })
+    expect(c.baseURL).toBe('https://router/v1')
+    expect(c.model).toBe('bitrix/other')
+  })
+
+  it('an empty/whitespace base URL falls back to the preset (|| not ??)', () => {
+    const c = resolveLlmConfig({ LLM_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: 'k', DEEPSEEK_BASE_URL: '   ' })
+    expect(c.baseURL).toBe('https://api.deepseek.com/v1')
+  })
+
+  it('custom without LLM_LABEL defaults the label to "custom"', () => {
+    const c = resolveLlmConfig({ LLM_PROVIDER: 'custom', LLM_BASE_URL: 'https://x/v1', LLM_API_KEY: 'k', LLM_MODEL: 'm' })
+    expect(c.label).toBe('custom')
+  })
+
   it('custom provider is fully explicit (no built-in defaults)', () => {
     const c = resolveLlmConfig({ LLM_PROVIDER: 'custom', LLM_BASE_URL: 'https://x/v1', LLM_API_KEY: 'k', LLM_MODEL: 'm', LLM_LABEL: 'mine' })
     expect(c).toEqual({ provider: 'custom', baseURL: 'https://x/v1', apiKey: 'k', model: 'm', label: 'mine' })

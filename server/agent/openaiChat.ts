@@ -12,12 +12,24 @@ import type { LlmConfig } from './llmConfig'
 
 export const CHAT_TIMEOUT_MS = 120_000
 
-/** Normalise an SDK/transport error to a message that carries the HTTP status, so
- *  classifyAgentError can tell a transient 429/5xx from a terminal fault. No secrets echoed. */
-function normaliseError(e: unknown): Error {
-  const status = (e as { status?: unknown })?.status
+/**
+ * Normalise an SDK/transport error to a message classifyAgentError can read: a transient
+ * 429/5xx vs a terminal fault. No secrets echoed (status/code/message only — the OpenAI SDK
+ * never puts the API key in these).
+ *
+ * HTTP errors (RateLimitError/InternalServerError) carry a numeric `.status` → prepend it so
+ * `\b429\b`/`\b5\d\d\b` match. A NETWORK fault (APIConnectionError) has `status:undefined` and a
+ * generic "Connection error." message — the real ECONNRESET/ETIMEDOUT/ENOTFOUND/EAI_AGAIN code
+ * sits on `.code`/`.cause`, which retry.ts's transient list enumerates. Fold it in, else a
+ * connection blip the claude path would retry becomes a hard failure here.
+ */
+export function normaliseError(e: unknown): Error {
+  const err = e as { status?: unknown, code?: unknown, cause?: { code?: unknown, message?: unknown } }
   const msg = e instanceof Error ? e.message : String(e)
-  return new Error(typeof status === 'number' ? `${status} ${msg}` : msg)
+  if (typeof err?.status === 'number') return new Error(`${err.status} ${msg}`)
+  // No HTTP status ⇒ likely a network fault: surface the transient code from code/cause.
+  const netCode = [err?.code, err?.cause?.code, err?.cause?.message].find(v => typeof v === 'string') as string | undefined
+  return new Error(netCode ? `${netCode} ${msg}` : msg)
 }
 
 /** Build a ChatFn bound to a provider config. Fails closed (clear error) if the key is unset. */
