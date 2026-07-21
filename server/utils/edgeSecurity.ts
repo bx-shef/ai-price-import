@@ -89,3 +89,41 @@ export function normalisePathname(path: string): string {
 // N attempts per window per client IP → 429. Deliberately generous for a human operator, strict for a bot.
 export const LOGIN_MAX_ATTEMPTS = 10
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000
+
+// Global request-body cap when edge security is on — mirrors nginx `client_max_body_size 25m` (the
+// backstop that's absent without nginx). The largest legit body is the ~20 MB in-portal upload.
+export const EDGE_MAX_BODY_BYTES = 25 * 1024 * 1024
+
+/**
+ * Body-size backstop for the no-nginx target (no nginx `client_max_body_size`). Returns the HTTP status
+ * to reject with, or null (ok):
+ *  - 413 when the declared Content-Length exceeds `max` (checked in BOTH topologies — defense in depth);
+ *  - 411 when Content-Length is ABSENT and edge security is on — a chunked body with no declared length
+ *    would otherwise buffer unbounded (OOM). Behind nginx (edgeOff) a missing length is left to nginx.
+ * Apply on routes that buffer the whole body (multipart uploads). `contentLength` is the parsed header (0 if absent).
+ */
+export function bodySizeStatus(edgeOn: boolean, contentLength: number, max: number): 411 | 413 | null {
+  const cl = Number.isFinite(contentLength) && contentLength > 0 ? contentLength : 0
+  if (cl > max) return 413
+  if (edgeOn && cl === 0) return 411
+  return null
+}
+
+/**
+ * GLOBAL edge body guard, applied by the middleware to EVERY request when edge security is on — the
+ * safe-by-default equivalent of nginx `client_max_body_size` for a process with no nginx. Returns the
+ * status to reject with, or null:
+ *  - 413 when the declared Content-Length exceeds `max`;
+ *  - 411 when the body is chunked (`Transfer-Encoding: chunked`) with NO Content-Length — such a body
+ *    would buffer unbounded (h3 `readRawBody`/`readMultipartFormData` have no size limit), so it must be
+ *    rejected BEFORE any handler reads it (closes the public `/api/b24/events` webhook OOM vector too).
+ * A request with neither header (a bodyless / `Content-Length: 0` POST) is NOT rejected — only an actual
+ * unbounded chunked body is. This makes the missing-length defense safe-by-default for future routes.
+ */
+export function edgeBodyGuard(contentLength: string | undefined, transferEncoding: string | undefined, max: number): 411 | 413 | null {
+  const declared = Number(contentLength ?? '')
+  if (Number.isFinite(declared) && declared > max) return 413
+  const chunked = (transferEncoding ?? '').toLowerCase().includes('chunked')
+  if (chunked && !contentLength) return 411
+  return null
+}

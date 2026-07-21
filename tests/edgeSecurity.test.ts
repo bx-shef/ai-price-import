@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EDGE_MAX_BODY_BYTES,
   LOGIN_MAX_ATTEMPTS,
   LOGIN_WINDOW_MS,
+  bodySizeStatus,
   buildSecurityHeaders,
   contentSecurityPolicy,
+  edgeBodyGuard,
   edgeSecurityEnabled,
   edgeTrustXff,
   normalisePathname,
@@ -89,6 +92,50 @@ describe('rateLimitKey', () => {
   it('falls back to "unknown" with no peer', () => {
     expect(rateLimitKey(true, false, undefined, undefined)).toBe('unknown')
     expect(rateLimitKey(false, false, undefined, undefined)).toBe('unknown')
+  })
+})
+
+describe('bodySizeStatus', () => {
+  const MAX = 1000
+  it('413 when declared length exceeds max, regardless of topology (defense in depth)', () => {
+    expect(bodySizeStatus(false, MAX + 1, MAX)).toBe(413)
+    expect(bodySizeStatus(true, MAX + 1, MAX)).toBe(413)
+  })
+  it('edge ON: missing/zero Content-Length → 411 (chunked would buffer unbounded)', () => {
+    expect(bodySizeStatus(true, 0, MAX)).toBe(411)
+    expect(bodySizeStatus(true, Number.NaN, MAX)).toBe(411)
+  })
+  it('edge OFF: missing Content-Length is allowed (nginx caps it)', () => {
+    expect(bodySizeStatus(false, 0, MAX)).toBeNull()
+  })
+  it('within-limit declared length → null (ok) in both topologies', () => {
+    expect(bodySizeStatus(true, MAX, MAX)).toBeNull()
+    expect(bodySizeStatus(false, 500, MAX)).toBeNull()
+  })
+  it('EDGE_MAX_BODY_BYTES mirrors nginx client_max_body_size (25 MB)', () => {
+    expect(EDGE_MAX_BODY_BYTES).toBe(25 * 1024 * 1024)
+  })
+})
+
+describe('edgeBodyGuard (global middleware guard)', () => {
+  const MAX = 1000
+  it('413 when declared Content-Length exceeds max', () => {
+    expect(edgeBodyGuard('1001', undefined, MAX)).toBe(413)
+  })
+  it('411 for a chunked body with NO Content-Length (unbounded buffer)', () => {
+    expect(edgeBodyGuard(undefined, 'chunked', MAX)).toBe(411)
+    expect(edgeBodyGuard(undefined, 'gzip, chunked', MAX)).toBe(411)
+    expect(edgeBodyGuard(undefined, 'CHUNKED', MAX)).toBe(411)
+  })
+  it('does NOT reject a bodyless / Content-Length:0 request (no header, no chunked)', () => {
+    expect(edgeBodyGuard(undefined, undefined, MAX)).toBeNull()
+    expect(edgeBodyGuard('0', undefined, MAX)).toBeNull()
+  })
+  it('chunked WITH a Content-Length → not 411 (length present, framed)', () => {
+    expect(edgeBodyGuard('500', 'chunked', MAX)).toBeNull()
+  })
+  it('within-limit declared length → null', () => {
+    expect(edgeBodyGuard('999', undefined, MAX)).toBeNull()
   })
 })
 

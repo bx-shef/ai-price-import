@@ -81,12 +81,13 @@ throughput-воркеры (extract/agent/crm-sync) + событийный вор
    хоп XFF). Дефолт off — spoof-safe. Заодно `curl -I` на `/` и `/b24-form.html` — убедиться, что
    заголовки (CSP/HSTS) реально прилетают на статические/пререндеренные страницы.
 
-**Остаётся (минор):**
-
-3. **Body-size backstop** (`client_max_body_size` 25м / 6м на демо) — nginx-кап снят. В приложении есть свои
-   пре-чеки (демо требует `Content-Length` → 411; `/api/import/upload` → 413 по заявленному размеру), но
-   upload без `Content-Length` (chunked) пре-чек пропускает → потенциально буферит без границы (OOM на
-   `bc-micro`). Frame-auth-gated (только member установленного портала) ⇒ риск низкий; учесть при переносе.
+3. **Body-size backstop — ✅ под `APP_EDGE_SECURITY=1`.** Раз `client_max_body_size` без nginx нет, приложение
+   даёт эквивалент **глобально** в middleware `edgeSecurity` (`edgeBodyGuard`, на **любой** роут, включая
+   публичный вебхук `/api/b24/events`): заявленный `Content-Length > EDGE_MAX_BODY_BYTES` (25 МБ, как nginx) →
+   413; **chunked-тело без `Content-Length`** (иначе `readRawBody`/`readMultipartFormData` буферят без границы —
+   OOM) → 411, **до** чтения тела хендлером. Безтелые/`Content-Length: 0` запросы не трогаются. Роуты,
+   буферящие всё тело (`/api/demo/extract`, `/api/import/upload`), дополнительно кап-чекают свой предел
+   (`bodySizeStatus`). За nginx (флаг off) — прежнее поведение (кап у nginx).
 
 **Что и так прикрыто в приложении (nginx не нужен):**
 
@@ -101,9 +102,9 @@ throughput-воркеры (extract/agent/crm-sync) + событийный вор
   member-scoped), PUBLIC её данные не открывает.
 
 Функционально приложение поднимается (лендинг + `/api` + in-portal из одного процесса — проверено).
-CSP/заголовки/rate-limit покрыты `APP_EDGE_SECURITY=1` (п.1–2); остаётся только body-size backstop (п.3,
-минор, frame-auth-gated). ⚠ Перед боевым PUBLIC — **проверить заголовки вживую** (`curl -I` на `/` и
-`/b24-form.html`) и что демо-лимит режет по реальному IP.
+CSP/заголовки/rate-limit/body-size покрыты `APP_EDGE_SECURITY=1` (п.1–3). ⚠ Перед боевым PUBLIC —
+**проверить заголовки вживую** (`curl -I` на `/` и `/b24-form.html`) и что демо/логин-лимит режет по
+реальному IP (иначе `APP_EDGE_TRUST_XFF=1`).
 
 ## Артефакты в репозитории
 
