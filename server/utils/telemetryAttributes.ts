@@ -35,6 +35,10 @@ export const SAFE_MANUAL_ATTR_KEYS = new Set<string>([
   'job.outcome', // 'ok' | 'error'
   'job.error_kind', // sanitized error class on a job span (never the message)
   'job.ok', // boolean: the handler's own success flag (file-extract/agent-run handled-fail vs ok)
+  // HTTP route span (frame-token routes, e.g. settings load/save) — shape + outcome only
+  'http.method', // 'GET' | 'POST'
+  'http.op', // logical route op, e.g. 'settings.load' | 'settings.save'
+  'http.outcome', // 'ok' | 'no_auth' | 'auth_failed' | 'forbidden' | 'bad_request' | 'upstream_error'
   // import processing OUTCOMES (counts + verdicts, never supplier/article/price)
   'proc.created', // boolean: a CRM entity was created
   'proc.lines', // number of product rows written
