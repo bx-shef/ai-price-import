@@ -144,10 +144,15 @@ AI-импорт документов с табличной частью в Bitri
     (`oauth.refresh`/`oauth.install-verify`); `withSpan(…)` — job-спан на **каждую** очередь
     (`b24-events`/`file-extract`/`agent-run`/`crm-sync`): латентность+исход+`portal.hash` по стадии;
     у extract/agent — `job.ok`, у crm-sync — исходы записи (`created`/`lines`/`unmatched`/`idempotent`/
-    `warnings`/`errors`). **HTTP-роут `/api/settings`** (GET/POST) тоже в `withSpan` (`http.settings.get/post`):
-    латентность + `http.outcome` (`ok`/`no_auth`/`auth_failed`/`forbidden`/`bad_request`/`upstream_error`) +
-    `portal.hash` (по домену) — тело маппинга в спан **не** кладётся. (Прочие фрейм-роуты и **клиентские**
-    pull/слайдер спанами не покрыты — серверная OTel, браузерного RUM нет.) **PII-защита тройная:** allowlist
+    `warnings`/`errors`). **ВСЕ фрейм-токен HTTP-роуты** в `withSpan`: `/api/settings` (GET/POST) — напрямую,
+    остальные (`app-rating` get/post, `catalog-measures`, `catalog-properties`, `chat-search`, `crm-categories`,
+    `crm-stages`, `feedback`, `import/metrics`, `import/metrics-reset`, `import/status`, `import/upload`) — через
+    общий хелпер `withFrameRouteSpan` (`server/utils/frameRouteSpan.ts`: мутабельный `span.outcome` в хендлере,
+    `portal.hash` считается в finalize → zero-cost при выкле): латентность + `http.outcome` (`ok`/`no_auth`/
+    `auth_failed`/`forbidden`/`bad_request`/`conflict`/`unavailable`/`upstream_error`/`no_db`) + `portal.hash` (по
+    домену) — тело запроса/ответа (маппинг/комментарий/файл/id заданий/названия чатов) в спан **не** кладётся.
+    (Публичный вебхук `/api/b24/events` покрыт job-спаном очереди `b24-events`; **клиентские** pull/слайдер спанами
+    не покрыты — серверная OTel, браузерного RUM нет.) **PII-защита тройная:** allowlist
     наших атрибутов (`telemetryAttributes.ts` `pickSafeAttributes` — поставщика/артикул/цену прикрепить
     нельзя) + redaction-SpanProcessor авто-атрибутов (SQL/URL/токены) + `portal.hash` (SHA-256) вместо
     member_id, `error_kind` вместо текста ошибки. Чистые ядра + тесты (`telemetryAttributes`/`telemetrySpan`)

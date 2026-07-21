@@ -2,6 +2,7 @@ import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { makePortalSdkCall, sdkPortalDeps } from '../utils/b24Sdk'
 import { searchChats } from '../utils/chatSearch'
+import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import { query } from '../db/client'
 
 // GET /api/chat-search?q=<phrase> — search the portal's chats for the settings notify/error
@@ -16,44 +17,57 @@ import { query } from '../db/client'
 // portal's chats regardless of the caller's own rights — acceptable: this backs the
 // ADMIN-gated settings picker, and the payload is chat titles + DIALOG_IDs (a chat the app
 // itself may post to via im.message.add). Matches the app's server-side-OAuth read model.
+//
+// Wrapped in a manual OTel span (телеметрия, DEFAULT OFF): latency + a PII-safe outcome + hashed
+// portal id. The query phrase / chat payload is NEVER attached to the span.
 export default defineEventHandler(async (event) => {
   const auth = extractFrameAuth(getHeaders(event) as Record<string, string | undefined>)
-  if (!auth) {
-    setResponseStatus(event, 401)
-    return { error: 'frame auth required' }
-  }
-  // Verify the frame token controls this portal + resolve member_id (anti-spoof).
-  const resolved = await resolveFrameMember(auth, { query })
-  if (!resolved.ok || !resolved.memberId) {
-    setResponseStatus(event, resolved.status ?? 401)
-    return { error: 'frame verification failed' }
-  }
-  // Server-side ADMIN gate (not just the client-side gate in useSettings/settings.vue): the read below runs on the
-  // portal's app OAuth token and would otherwise let ANY in-portal user enumerate chat titles +
-  // DIALOG_IDs. Only a portal admin configures settings, so reject non-admins here.
-  if (!resolved.admin) {
-    setResponseStatus(event, 403)
-    return { error: 'admin only' }
-  }
-  // Read via the portal's stored OAuth token (SDK transport). Missing token ⇒ the app
-  // isn't fully installed for this portal — treat like a failed verification.
-  const transport = await makePortalSdkCall(resolved.memberId, sdkPortalDeps({
-    query,
-    clientId: process.env.B24_CLIENT_ID ?? '',
-    clientSecret: process.env.B24_CLIENT_SECRET ?? '',
-    encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
-    now: () => Date.now()
-  }))
-  if (!transport) {
-    setResponseStatus(event, 409)
-    return { error: 'portal not authorised (no token)' }
-  }
-  const q = typeof getQuery(event).q === 'string' ? getQuery(event).q as string : ''
-  try {
-    // transport is an SdkTransport { call, list }; searchChats needs the single-call RestCall.
-    return await searchChats(transport.call, q)
-  } catch {
-    setResponseStatus(event, 502)
-    return { error: 'chat search failed' }
-  }
+  return withFrameRouteSpan(
+    { name: 'http.chat-search.get', method: 'GET', op: 'chat-search.search', domain: auth?.domain },
+    async (span) => {
+      if (!auth) {
+        span.outcome = 'no_auth'
+        setResponseStatus(event, 401)
+        return { error: 'frame auth required' }
+      }
+      // Verify the frame token controls this portal + resolve member_id (anti-spoof).
+      const resolved = await resolveFrameMember(auth, { query })
+      if (!resolved.ok || !resolved.memberId) {
+        span.outcome = 'auth_failed'
+        setResponseStatus(event, resolved.status ?? 401)
+        return { error: 'frame verification failed' }
+      }
+      // Server-side ADMIN gate (not just the client-side gate in useSettings/settings.vue): the read below runs on the
+      // portal's app OAuth token and would otherwise let ANY in-portal user enumerate chat titles +
+      // DIALOG_IDs. Only a portal admin configures settings, so reject non-admins here.
+      if (!resolved.admin) {
+        span.outcome = 'forbidden'
+        setResponseStatus(event, 403)
+        return { error: 'admin only' }
+      }
+      // Read via the portal's stored OAuth token (SDK transport). Missing token ⇒ the app
+      // isn't fully installed for this portal — treat like a failed verification.
+      const transport = await makePortalSdkCall(resolved.memberId, sdkPortalDeps({
+        query,
+        clientId: process.env.B24_CLIENT_ID ?? '',
+        clientSecret: process.env.B24_CLIENT_SECRET ?? '',
+        encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
+        now: () => Date.now()
+      }))
+      if (!transport) {
+        span.outcome = 'conflict'
+        setResponseStatus(event, 409)
+        return { error: 'portal not authorised (no token)' }
+      }
+      const q = typeof getQuery(event).q === 'string' ? getQuery(event).q as string : ''
+      try {
+        // transport is an SdkTransport { call, list }; searchChats needs the single-call RestCall.
+        return await searchChats(transport.call, q)
+      } catch {
+        span.outcome = 'upstream_error'
+        setResponseStatus(event, 502)
+        return { error: 'chat search failed' }
+      }
+    }
+  )
 })
