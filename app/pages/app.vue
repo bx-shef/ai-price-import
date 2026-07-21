@@ -3,9 +3,12 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import ChevronDownMIcon from '@bitrix24/b24icons-vue/outline/ChevronDownMIcon'
+import { navigateTo } from '#app'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
+import { useSettingsSync } from '~/composables/useSettingsSync'
+import { useB24 } from '~/composables/useB24'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
 import * as catPicker from '~/utils/categoryPicker'
@@ -33,6 +36,31 @@ const { counters, savings, resetting, error: metricsError, load: loadMetrics, re
 const { mapping, isAdmin, error: settingsError, load: loadSettings } = useSettings()
 const settingsLoaded = ref(false)
 const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
+
+// Open settings the B24-native way: as a slider (starter pattern) inside the portal, so an admin edits
+// and closes without leaving /app; outside a frame just navigate. `?slider=1` tells /settings to close
+// the slider on Save/Cancel.
+const { init: initB24, get: getFrame } = useB24()
+async function openSettings(): Promise<void> {
+  await initB24()
+  const frame = getFrame()
+  if (frame) {
+    try {
+      // getUrl anchors the path into THIS app's slider context (same pattern as useAppRating).
+      await frame.slider.openPath(frame.slider.getUrl('/settings?slider=1'))
+      return
+    } catch { /* fall through to plain navigation */ }
+  }
+  await navigateTo('/settings')
+}
+
+// Live settings sync (starter pull `reload.options`): when settings are saved in the slider (or another
+// open instance), re-read them so the setup nudge reflects the new config immediately. Subscribe
+// SYNCHRONOUSLY in setup — after an `await` the active effect scope is lost and onScopeDispose (inside
+// the composable) would no-op, leaking the pull client. init() runs async inside; this is inert
+// outside a portal.
+const { subscribeReload } = useSettingsSync()
+subscribeReload(() => void loadSettings())
 
 onMounted(async () => {
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
@@ -152,11 +180,11 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
       </div>
       <B24Button
         :icon="SettingsIcon"
-        to="/settings"
         color="air-tertiary-no-accent"
         size="sm"
         aria-label="Настройки импорта"
         class="shrink-0"
+        @click="openSettings"
       />
     </div>
 
@@ -177,9 +205,9 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
       >
         <B24Button
           label="Настроить"
-          to="/settings"
           color="air-primary"
           size="sm"
+          @click="openSettings"
         />
       </template>
     </B24Alert>
