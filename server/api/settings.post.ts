@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
   let outcome = 'ok'
   return withSpan(
     'http.settings.post',
-    { 'http.method': 'POST', 'http.op': 'settings.save', 'portal.hash': portalHash(auth?.domain) },
+    { 'http.method': 'POST', 'http.op': 'settings.save' },
     async () => {
       if (!auth) {
         outcome = 'no_auth'
@@ -54,6 +54,7 @@ export default defineEventHandler(async (event) => {
         return { error: 'settings save failed' }
       }
     },
-    () => ({ 'http.outcome': outcome })
+    // portal.hash computed here (finalize runs ONLY when the span records) → zero cost when off.
+    () => ({ 'http.outcome': outcome, 'portal.hash': portalHash(auth?.domain) })
   )
 })
