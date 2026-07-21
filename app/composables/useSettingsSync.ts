@@ -2,7 +2,7 @@ import { onScopeDispose } from 'vue'
 import { B24PullClientManager } from '@bitrix24/b24jssdk'
 import { useB24 } from './useB24'
 import { LANDING_MARKET_CODE } from '~/utils/landing'
-import { SETTINGS_RELOAD_COMMAND, buildSettingsReloadEvent, isSettingsReloadCommand } from '~/utils/settingsSync'
+import { SETTINGS_RELOAD_COMMAND, buildSettingsReloadEvent } from '~/utils/settingsSync'
 
 // Cross-instance settings sync (pattern from bitrix24/b24-ai-starter). After an admin saves settings,
 // `notifyReload()` fires `pull.application.event.add` on the app's pull channel; other open instances
@@ -37,37 +37,45 @@ export function useSettingsSync() {
    * client can't start, this is a silent no-op.
    */
   function subscribeReload(onReload: () => void): () => void {
+    let disposed = false
     let dispose: (() => void) | null = null
     let pull: InstanceType<typeof B24PullClientManager> | null = null
 
-    void (async () => {
-      try {
-        await init()
-        const frame = get()
-        if (!frame) return
-        const moduleId = appModuleId()
-        pull = new B24PullClientManager({ b24: frame, restApplication: moduleId })
-        const off = pull.subscribe({
-          moduleId,
-          command: SETTINGS_RELOAD_COMMAND,
-          callback: (message: { command?: string }) => {
-            if (isSettingsReloadCommand(message?.command)) onReload()
-          }
-        })
-        dispose = off
-        await pull.start()
-      } catch {
-        // pull server off / not framed → no live sync; the explicit Save/reload still works
-      }
-    })()
-
-    const unsubscribe = () => {
+    const teardown = () => {
       try {
         dispose?.()
         pull?.destroy?.()
       } catch { /* ignore */ }
       dispose = null
       pull = null
+    }
+
+    void (async () => {
+      try {
+        await init()
+        if (disposed) return
+        const frame = get()
+        if (!frame) return
+        const moduleId = appModuleId()
+        pull = new B24PullClientManager({ b24: frame, restApplication: moduleId })
+        // The SDK dispatches this callback ONLY for the subscribed command bucket (reload.options) —
+        // it passes (params, extra, command, meta), so react unconditionally; there's no {command} arg.
+        dispose = pull.subscribe({ moduleId, command: SETTINGS_RELOAD_COMMAND, callback: () => onReload() })
+        // disposed mid-await → drop the just-built client
+        if (disposed) {
+          teardown()
+          return
+        }
+        await pull.start()
+        if (disposed) teardown()
+      } catch {
+        // pull server off / not framed → no live sync; the explicit Save/reload still works
+      }
+    })()
+
+    const unsubscribe = () => {
+      disposed = true
+      teardown()
     }
     onScopeDispose(unsubscribe)
     return unsubscribe

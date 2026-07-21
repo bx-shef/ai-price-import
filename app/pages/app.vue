@@ -46,7 +46,8 @@ async function openSettings(): Promise<void> {
   const frame = getFrame()
   if (frame) {
     try {
-      await frame.slider.openPath(new URL('/settings?slider=1', location.origin))
+      // getUrl anchors the path into THIS app's slider context (same pattern as useAppRating).
+      await frame.slider.openPath(frame.slider.getUrl('/settings?slider=1'))
       return
     } catch { /* fall through to plain navigation */ }
   }
@@ -54,8 +55,12 @@ async function openSettings(): Promise<void> {
 }
 
 // Live settings sync (starter pull `reload.options`): when settings are saved in the slider (or another
-// open instance), re-read them so the setup nudge reflects the new config immediately.
+// open instance), re-read them so the setup nudge reflects the new config immediately. Subscribe
+// SYNCHRONOUSLY in setup — after an `await` the active effect scope is lost and onScopeDispose (inside
+// the composable) would no-op, leaking the pull client. init() runs async inside; this is inert
+// outside a portal.
 const { subscribeReload } = useSettingsSync()
+subscribeReload(() => void loadSettings())
 
 onMounted(async () => {
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
@@ -63,7 +68,6 @@ onMounted(async () => {
   await loadSettings()
   // Loaded successfully inside the portal (a frame error means standalone/no-auth → don't nudge).
   settingsLoaded.value = !settingsError.value
-  subscribeReload(() => void loadSettings()) // auto-disposed with this scope
 })
 onBeforeUnmount(stopAutoPoll) // don't keep polling after leaving the page
 

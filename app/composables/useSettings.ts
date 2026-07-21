@@ -2,20 +2,13 @@ import { ref } from 'vue'
 import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { defaultMapping } from '~/utils/portalSettings'
-import { createDebouncer } from '~/utils/debounce'
-import { shouldAutosave } from '~/utils/autosave'
 import type { PortalMapping } from '~/types/mapping'
 
-// In-portal settings client: load/save the portal mapping via the frame-token
-// authenticated /api/settings (GET/POST). Inert outside a portal (no frame auth).
-// Autosave: the component deep-watches `mapping` and calls `scheduleSave()`; a debounce coalesces a
-// burst of edits into one POST. A content snapshot (`lastSavedJson`) suppresses the ECHO — the deep
-// watch also fires when load/save reseeds `mapping` from the server response, and without the guard
-// that would loop (reseed → watch → save → reseed → …). `flushSave()` (unmount / explicit button)
-// runs a pending save now.
-
-/** Debounce window for autosave — long enough to coalesce typing, short enough to feel live. */
-const AUTOSAVE_DELAY_MS = 800
+// In-portal settings client: load/save the portal mapping via the frame-token authenticated
+// /api/settings (GET/POST). Inert outside a portal (no frame auth). Saving is EXPLICIT (the settings
+// form has Save/Cancel — no autosave). The `sentJson` snapshot exists only to guard against a lost
+// update: if the user edits DURING a save round-trip, the server's normalized response is not reseeded
+// over the newer edit.
 
 export function useSettings() {
   const { init, auth } = useB24()
@@ -27,14 +20,7 @@ export function useSettings() {
   // Whether the CALLING portal user is an admin (from GET /api/settings, verified server-side).
   // Non-admins may view settings but not save — writes are also enforced admin-only on the server.
   const isAdmin = ref(false)
-  // Autosave gates: `ready` (don't autosave before the first load) + `lastSavedJson` (echo guard).
-  const ready = ref(false)
-  let lastSavedJson = ''
   const snapshot = (): string => JSON.stringify(mapping.value)
-
-  // Autosave debouncer. Declared before save() (which cancels it) — the arrow captures the hoisted
-  // save() lazily, so referencing it here is safe.
-  const debouncer = createDebouncer(() => void save(), AUTOSAVE_DELAY_MS)
 
   async function headers(): Promise<Record<string, string> | null> {
     await init()
@@ -52,8 +38,7 @@ export function useSettings() {
       const res = await $fetch<{ mapping: PortalMapping, admin?: boolean }>('/api/settings', { headers: h })
       mapping.value = res.mapping
       isAdmin.value = res.admin === true
-      lastSavedJson = snapshot() // baseline: nothing to autosave until the user actually edits
-      ready.value = true
+      saved.value = false
       error.value = ''
     } catch (e) {
       error.value = fetchErrorMessage(e, 'Не удалось загрузить настройки')
@@ -73,13 +58,7 @@ export function useSettings() {
       error.value = 'Сохранять настройки может только администратор портала'
       return
     }
-    // Serialize saves: if one is already in flight, re-arm the debounce and bail. Overlapping POSTs
-    // would race, and an older response reseeding `mapping` could clobber a newer edit (lost update).
-    if (saving.value) {
-      debouncer.schedule()
-      return
-    }
-    debouncer.cancel() // a manual/flushed save subsumes any pending autosave — don't double-POST
+    if (saving.value) return // guard a double Save (the button is also disabled while saving)
     // Snapshot what we're about to send BEFORE the await, so we can tell whether the user edited
     // during the round-trip.
     const sentJson = snapshot()
@@ -88,17 +67,13 @@ export function useSettings() {
     try {
       const res = await $fetch<{ mapping: PortalMapping }>('/api/settings', { method: 'POST', headers: h, body: { mapping: mapping.value } })
       if (snapshot() === sentJson) {
-        // Untouched since we sent it → safe to reflect the server's normalized form. Baseline on the
-        // RESEEDED value (server key order) so the echo guard matches exactly — no redundant re-POST.
+        // Untouched since we sent it → safe to reflect the server's normalized form.
         mapping.value = res.mapping
-        lastSavedJson = snapshot()
-        saved.value = true
       } else {
-        // The user edited during the round-trip. Do NOT reseed (that would clobber the newer edit).
-        // We persisted `sentJson`; the newer content stays "dirty" → arm autosave to persist it too.
-        lastSavedJson = sentJson
-        scheduleSave()
+        // The user edited during the round-trip. Do NOT reseed (that would clobber the newer edit);
+        // we persisted `sentJson`, the newer content stays for the next explicit Save.
       }
+      saved.value = true
       error.value = ''
     } catch (e) {
       error.value = fetchErrorMessage(e, 'Не удалось сохранить настройки')
@@ -107,26 +82,5 @@ export function useSettings() {
     }
   }
 
-  /** Arm autosave after an edit. No-op for a non-admin (can't save), before the first load, or when
-   *  nothing changed (echo guard). */
-  function scheduleSave(): void {
-    if (!isAdmin.value) return
-    if (!shouldAutosave(snapshot(), lastSavedJson, ready.value)) return
-    saved.value = false
-    debouncer.schedule()
-  }
-
-  /** Run a pending autosave immediately (explicit «Сохранить» button / component unmount). */
-  function flushSave(): void {
-    debouncer.flush()
-  }
-
-  /** Re-baseline the echo guard to the CURRENT mapping (nothing pending to save). The component
-   *  calls this once after the open-time category/stage reconciles settle, so their normalization
-   *  of the loaded mapping isn't mistaken for a user edit and doesn't autosave on open. */
-  function rebaseline(): void {
-    lastSavedJson = snapshot()
-  }
-
-  return { mapping, loading, saving, saved, error, isAdmin, load, save, scheduleSave, flushSave, rebaseline }
+  return { mapping, loading, saving, saved, error, isAdmin, load, save }
 }

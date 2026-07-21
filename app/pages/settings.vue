@@ -53,10 +53,17 @@ async function saveAndClose(): Promise<void> {
   void notifyReload()
   if (asSlider.value) await closeSlider()
 }
-/** Cancel: close the slider (discard) or, as a page, reload the server copy. */
+/** Cancel: close the slider (discard) or, as a page, reload the server copy. Re-seed the unit/routing
+ *  row editors from the reloaded mapping — they're seeded once on mount, so a bare load() would leave
+ *  them showing the pre-cancel edits (which then re-sync back into mapping on the next row edit). */
 async function cancel(): Promise<void> {
-  if (asSlider.value) await closeSlider()
-  else await load()
+  if (asSlider.value) {
+    await closeSlider()
+    return
+  }
+  await load()
+  seedUnitRows()
+  seedRoutingRows()
 }
 async function closeSlider(): Promise<void> {
   try {
