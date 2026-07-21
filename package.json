@@ -21,6 +21,7 @@
     "demo:pdfs": "node scripts/make-demo-pdfs.mjs",
     "live:crm": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/live-crm-sync.mjs",
     "verify:agent": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-agent.mjs",
+    "verify:chat": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-chat.mjs",
     "verify:idem": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-idempotency-live.mjs",
     "sdk:smoke": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/sdk-smoke.mjs",
     "loadtest:123": "node scripts/load-test-123.mjs",
@@ -47,6 +48,7 @@
     "exceljs": "^4.4.0",
     "ioredis": "^5.11.1",
     "nuxt": "^4.5.0",
+    "openai": "^6.48.0",
     "pg": "^8.22.0",
     "qrcode": "^1.5.4",
     "vue": "^3.5.40"

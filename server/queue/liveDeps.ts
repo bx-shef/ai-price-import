@@ -34,6 +34,7 @@ import { readFile } from 'node:fs/promises'
 import { uploadPath } from '../utils/fileStore'
 import { makeSaveSourceFile } from '../utils/disk'
 import { runAgent } from '../agent/runAgent'
+import { runChatExtract, type ChatFn } from '../agent/chatExtract'
 import { buildExtractionPrompt } from '../../prompts/extract'
 import { enqueueAgent, enqueueCrmSync } from './producers'
 import type { AgentRunDeps, EventHandlerDeps, FileExtractDeps, HandlerDeps } from './handlers'
@@ -55,6 +56,12 @@ export interface LiveInfra {
   now: () => number
   /** Live agent runner (sanitized env + timeout) — server/agent/spawn.makeAgentSpawn. */
   agentSpawn: AgentSpawn
+  /** Extraction engine: 'chat' (OpenAI-compatible — DeepSeek/BitrixGPT) or 'claude' (legacy CLI). */
+  agentEngine: 'chat' | 'claude'
+  /** Live chat transport for the 'chat' engine (null when the engine is 'claude'). */
+  chatFn: ChatFn | null
+  /** Model id for the 'chat' engine (e.g. deepseek-chat / bitrix/bitrixgpt-5.5). */
+  llmModel: string
   /** File → text runners (pdftotext / office / OCR). */
   runners: ExtractRunners
 }
@@ -187,10 +194,13 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
   return {
     getDocumentText: (m, j) => getText(m, j, infra.query),
     extractDocument: async (documentText) => {
-      const r = await runAgent(
-        { documentText, instructions },
-        { spawn: infra.agentSpawn, sleep: ms => new Promise(res => setTimeout(res, ms)), random: () => Math.random() }
-      )
+      const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
+      const random = () => Math.random()
+      // 'chat' (default target): OpenAI-compatible transport (DeepSeek/BitrixGPT). Falls back to
+      // the legacy claude-code subprocess when AGENT_ENGINE!='chat' (or the chat transport is unset).
+      const r = infra.agentEngine === 'chat' && infra.chatFn
+        ? await runChatExtract({ documentText, instructions, model: infra.llmModel }, { chat: infra.chatFn, sleep, random })
+        : await runAgent({ documentText, instructions }, { spawn: infra.agentSpawn, sleep, random })
       return { document: r.document, ...(r.error ? { error: r.error } : {}) }
     },
     saveDocument: (m, j, stored) => saveDocument(m, j, stored, infra.query),

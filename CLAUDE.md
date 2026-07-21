@@ -17,6 +17,22 @@ AI-импорт документов с табличной частью в Bitri
 - `app/` — Nuxt (авто-импорт): `utils` (чистое ядро + тесты) / `composables` / `config` / `types` /
   `components` / `pages` / `layouts`.
 - `server/` — Nitro backend: `api` / `utils` (чистые с DI) / `queue` (BullMQ) / `db` / `plugins` / `agent`.
+  - **LLM-экстрактор — два движка за флагом `AGENT_ENGINE`** (`server/agent/`, все — tool-less, чистый
+    text→JSON, инъекция документа не может ничего кроме JSON):
+    - **`chat` (целевой, OpenAI-совместимый)** — `llmConfig.ts` (чистый резолвер `LLM_PROVIDER` →
+      `{baseURL,apiKey,model}`: `deepseek`/`bitrixgpt`/`custom`, тесты) → `chatExtract.ts` (чистая
+      оркестрация `runChatExtract`: `buildChatRequest` с `response_format:json_object`, ретрай через
+      общий `retry.ts`, парс `extractJson` + `validateExtractedDocument` + гард `MAX_ITEMS`; DI —
+      `ChatFn`, тесты) → `openaiChat.ts` (живой адаптер `makeChatFn` на `openai` SDK, `maxRetries:0` —
+      ретрай наш; тонкий I/O-край, как `spawn.ts`, юнит-тестами не покрыт). **DeepSeek** (`/v1`,
+      `deepseek-chat`) и **BitrixGPT** (Bitrix Vibecode AI Router `/v1`, `bitrix/bitrixgpt-5.5`) — один
+      транспорт, оба поддерживаются, переключение конфигом. Живой прогон — `pnpm verify:chat --provider <p>`.
+    - **`claude` (легаси, дефолт до cutover)** — `runAgent.ts`/`spawn.ts`/`mcpConfig.ts`: headless
+      `claude` CLI (`AGENT_BIN`) через Anthropic-совместимый endpoint (`ANTHROPIC_*`), санит-env +
+      таймаут + исчерпывающий tool-denylist. Удаляется после живой проверки chat-пути (#215/#8).
+    Выбор движка резолвится в `worker.ts buildLiveInfra` (и в демо `api/demo/extract.post.ts`) → в
+    `liveAgentRunDeps.extractDocument` ветвление `runChatExtract` vs `runAgent`. У chat-пути API-ключ
+    живёт в самом процессе (нет подпроцесса) — санит-env не нужен, это не ослабление.
   - **Событие install/uninstall — через очередь** `b24-events` (порт из client-bank): роут
     `api/b24/events.post.ts` верифицирует и **кладёт в очередь**, консьюмер (`queue/handlers.handleEventJob`)
     — **единственный писатель** `portal_tokens`; при недоступности Redis роут пишет **синхронным
@@ -213,7 +229,8 @@ pnpm check        # lint + typecheck + test
 
 # Живые проверки (нужен .env.b24test/B24_HOOK + LLM-ключ ANTHROPIC_*):
 pnpm sdk:smoke    # OAuth-транспорт SDK: profile+crm.item.list+burst 30 без QUERY_LIMIT_EXCEEDED
-pnpm verify:agent # реальный путь агента: spawn claude → DeepSeek → ExtractedDocument (ru/be/kk tax-id)
+pnpm verify:agent # легаси-путь: spawn claude → DeepSeek (Anthropic-endpoint) → ExtractedDocument
+pnpm verify:chat  # chat-движок (openai SDK): --provider deepseek|bitrixgpt → ExtractedDocument (ru/be/kk)
 pnpm live:crm --ai# полный E2E: текст → DeepSeek → runCrmSync → сделка+позиции+уведомление+очистка
 pnpm verify:idem  # идемпотентность: 2 прогона одним jobId → повтор нашёл по маркеру, created:false
 pnpm loadtest:123 # доказательство rate-limiter (RestrictionManager)

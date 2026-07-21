@@ -8,7 +8,10 @@ import { demoJobStore } from '../../utils/demoJobs'
 import { extractText } from '../../utils/textExtract'
 import { liveExtractRunners } from '../../utils/extractRunners'
 import { runAgent } from '../../agent/runAgent'
+import { runChatExtract } from '../../agent/chatExtract'
 import { makeAgentSpawn } from '../../agent/spawn'
+import { resolveAgentEngine, resolveLlmConfig } from '../../agent/llmConfig'
+import { makeChatFn } from '../../agent/openaiChat'
 import { buildExtractionPrompt } from '../../../prompts/extract'
 import { mkdir, writeFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -41,6 +44,11 @@ const DEMO_NOTICE = 'Демо-режим: файл обрабатывается 
 // env). Constructed once; runs only when a PDF/scan/office file is uploaded.
 const DEMO_TMP = process.env.DEMO_TMP_DIR || '/tmp/procure-demo'
 const agentSpawn = makeAgentSpawn()
+// Same engine choice as the in-portal pipeline (AGENT_ENGINE): 'chat' = OpenAI-compatible
+// (DeepSeek/BitrixGPT), else the legacy claude-code CLI. Resolved once at module load.
+const demoEngine = resolveAgentEngine(process.env.AGENT_ENGINE)
+const demoLlm = demoEngine === 'chat' ? resolveLlmConfig(process.env) : null
+const demoChatFn = demoLlm ? makeChatFn(demoLlm) : null
 const demoAiDeps: DemoAiDeps = {
   writeTemp: async (bytes, e) => {
     await mkdir(DEMO_TMP, { recursive: true })
@@ -50,10 +58,11 @@ const demoAiDeps: DemoAiDeps = {
   },
   extractText: (path, fileName) => extractText(path, fileName, liveExtractRunners),
   runAgent: async (documentText) => {
-    const out = await runAgent(
-      { documentText, instructions: buildExtractionPrompt() },
-      { spawn: agentSpawn, sleep: ms => new Promise(r => setTimeout(r, ms)), random: () => Math.random() }
-    )
+    const instructions = buildExtractionPrompt()
+    const deps = { sleep: (ms: number) => new Promise<void>(r => setTimeout(r, ms)), random: () => Math.random() }
+    const out = demoEngine === 'chat' && demoChatFn
+      ? await runChatExtract({ documentText, instructions, model: demoLlm!.model }, { chat: demoChatFn, ...deps })
+      : await runAgent({ documentText, instructions }, { spawn: agentSpawn, ...deps })
     return { ok: out.ok, document: out.document, error: out.error }
   },
   cleanup: p => unlink(p).then(() => {}, () => {})
