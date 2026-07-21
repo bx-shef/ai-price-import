@@ -9,6 +9,7 @@ import { enqueueExtract } from '../../queue/producers'
 import { queueEnabled } from '../../queue/connection'
 import { MAX_UPLOAD_BYTES, validateUploadFile } from '~/utils/importUpload'
 import { parseManualTarget } from '~/utils/manualTarget'
+import { bodySizeStatus, edgeSecurityEnabled } from '../../utils/edgeSecurity'
 import { query } from '../../db/client'
 
 // POST /api/import/upload — in-portal document upload. Frame-token authenticated and
@@ -33,9 +34,16 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 503)
     return { error: 'сервис обработки временно недоступен' }
   }
-  // Pre-check the declared size before buffering the whole multipart body (DoS).
+  // Pre-check the declared size before buffering the whole multipart body (DoS). On the no-nginx
+  // target (edge security on) also require a Content-Length — a chunked body with none would buffer
+  // unbounded (nginx's client_max_body_size backstop is absent). Behind nginx nginx handles it.
   const declared = Number(getHeader(event, 'content-length') || 0)
-  if (declared && declared > MAX_UPLOAD_BYTES + 1_000_000) {
+  const bodyStatus = bodySizeStatus(edgeSecurityEnabled(process.env), declared, MAX_UPLOAD_BYTES + 1_000_000)
+  if (bodyStatus === 411) {
+    setResponseStatus(event, 411)
+    return { error: 'не указан размер запроса' }
+  }
+  if (bodyStatus === 413) {
     setResponseStatus(event, 413)
     return { error: 'файл слишком большой' }
   }
