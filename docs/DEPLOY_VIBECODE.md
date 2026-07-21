@@ -1,6 +1,6 @@
 # Деплой в Битрикс24 Вайбкод Black Hole (альтернативный таргет)
 
-> Last reviewed: 2026-07-18
+> Last reviewed: 2026-07-21
 
 Как выгрузить это приложение (`procure-ai`, импорт прайсов) в **Битрикс24 Vibecode Black Hole** —
 закрытый Bitrix-Cloud VM, управляемый по REST (без SSH), приложение слушает `:3000` и отдаётся по
@@ -53,36 +53,34 @@ throughput-воркеры (extract/agent/crm-sync) + событийный вор
 > ⚠ У нас **только `/api/health`** (liveness) — **`/api/ready` НЕТ** (в отличие от соседнего репо).
 > Health-проба на первом деплое — `appUrl/api/health`.
 
-### ⚠ Что теряется без nginx — гейты перед боевым PUBLIC (честно)
+### Паритет безопасности без nginx — `APP_EDGE_SECURITY=1` (сделано)
 
-В основном деплое nginx (`nginx.conf`) даёт защиту, которой в Black Hole нет (Nitro отдаёт всё сам).
-У приложения **нет** `nitro.routeRules`/server-middleware, поэтому нижеперечисленное **теряется** и
-не имеет Nitro-эквивалента сегодня — это гейты перед тем, как делать Black Hole основным таргетом:
+В основном деплое nginx (`nginx.conf`) даёт защиту, которую в Black Hole приложение включает **само** по
+флагу `APP_EDGE_SECURITY=1` (пусто/0 за nginx — иначе двойной CSP + троттл под IP прокси). Чистое ядро —
+`server/utils/edgeSecurity.ts`, проводка — `server/middleware/edgeSecurity.ts` + гейты в роутах:
 
-1. **CSP** — политика страницы (`frame-ancestors` облачных доменов Б24 для iframe-встройки + `connect-src`)
-   и отдельный CSP для `/b24-form.html` ставит nginx; в Nitro их нет. **Клик-джекинг-защита теряется**
-   (сама iframe-встройка при отсутствии CSP не ломается — ограничение «кто может фреймить» просто
-   пропадает). ⚠ CSP у нас **не** hash-based (в inline `window.__NUXT__` инъектятся рантайм-`NUXT_PUBLIC_*`,
-   build-time sha256 не совпал бы) — при переносе в Nitro `routeRules` это учесть.
-2. **Security-заголовки** — `X-Content-Type-Options: nosniff`, `Referrer-Policy` — тоже от nginx; в Nitro
-   не выставляются. (`X-Frame-Options` намеренно не ставим — иначе ломается iframe; HSTS — на TLS-терминаторе.)
-3. **Доверенный IP клиента теряется → пер-IP троттлы обходятся.** nginx подставлял реальный IP
-   (`real_ip` из `X-Forwarded-For`, `real_ip_recursive off`); под PUBLIC без nginx клиент сам управляет
-   `X-Forwarded-For`. Затронуты два пер-IP лимита:
-   - **`/api/auth/login`** — `limit_req` по IP (антибрутфорс пароля оператора) обходится; в приложении
-     остаётся только 400 мс задержки на неудачу.
-   - **🔴 `/api/demo/extract`** (демо на лендинге, **неаутентифицированный**, гоняет реальный OCR+LLM на
-     **токене владельца** `ANTHROPIC_*`) — его пер-IP лимит (3 файла/10 мин) обходится ротацией
-     `X-Forwarded-For` → **неаутентифицированный расход OCR/LLM** (счёт/CPU-дрейн на `bc-micro`), ограничен
-     лишь глобальным `AI_MAX_CONCURRENCY=2`. Это **дороже** login-троттла — перед боевым PUBLIC либо
-     отключить демо-роуты (`/api/demo/*`), либо перенести IP-троттл на платформенный edge / доверять
-     реальному peer.
-4. **Body-size backstop** (`client_max_body_size` 25м / 6м на демо) — nginx-кап снят. В приложении есть свои
+1. **CSP + security-заголовки — ✅ через middleware.** На **все** ответы вешаются `Content-Security-Policy`
+   (политика страницы: `frame-ancestors`/`connect-src` облачных доменов Б24 для iframe-встройки; для
+   `/b24-form.html` — отдельный расслабленный form-CSP), `X-Content-Type-Options: nosniff`,
+   `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security`. Строки CSP держим
+   **байт-в-байт с `nginx.conf`**. (`X-Frame-Options` намеренно не ставим — сломал бы iframe; iframe-встройку
+   ограничивает `frame-ancestors`.) CSP у нас **не** hash-based — в inline `window.__NUXT__` инъектятся
+   рантайм-`NUXT_PUBLIC_*`, поэтому `script-src` несёт `'unsafe-inline'` (как и в nginx).
+2. **Пер-IP троттлы — ✅ по реальному peer.** Без nginx `X-Forwarded-For` подделываем клиентом, поэтому под
+   `APP_EDGE_SECURITY=1` ключ лимита берётся из `socket.remoteAddress` (реальный TCP-пир), а не из XFF
+   (`rateLimitKey`). Затронуты:
+   - **`/api/auth/login`** — app-level анти-брутфорс (10 попыток/15 мин по IP → 429) поверх 400 мс задержки.
+   - **`/api/demo/extract`** (неаутентиф. OCR+LLM на токене владельца `ANTHROPIC_*`) — его пер-IP лимит
+     (3 файла/10 мин) теперь **не** обходится ротацией XFF; плюс глобальный `AI_MAX_CONCURRENCY=2`.
+
+**Остаётся (минор):**
+
+3. **Body-size backstop** (`client_max_body_size` 25м / 6м на демо) — nginx-кап снят. В приложении есть свои
    пре-чеки (демо требует `Content-Length` → 411; `/api/import/upload` → 413 по заявленному размеру), но
    upload без `Content-Length` (chunked) пре-чек пропускает → потенциально буферит без границы (OOM на
    `bc-micro`). Frame-auth-gated (только member установленного портала) ⇒ риск низкий; учесть при переносе.
 
-**Что НЕ теряется (уже прикрыто в приложении, nginx не нужен):**
+**Что и так прикрыто в приложении (nginx не нужен):**
 
 - **Служебная зона — fail-CLOSED, а не fail-open.** `/api/ops/*` (`/api/ops/queues`, `/api/ops/tokens`,
   `/api/ops/tokens/refresh`) и `POST /api/auth/login` закрыты сессией оператора (`operatorAllowed`).
@@ -95,8 +93,9 @@ throughput-воркеры (extract/agent/crm-sync) + событийный вор
   member-scoped), PUBLIC её данные не открывает.
 
 Функционально приложение поднимается (лендинг + `/api` + in-portal из одного процесса — проверено).
-Пункты 1–3 (CSP/заголовки/rate-limit) — **перед переводом Black Hole в основной таргет** перенести в
-Nitro (`routeRules`/плагин) или на платформенный edge.
+CSP/заголовки/rate-limit покрыты `APP_EDGE_SECURITY=1` (п.1–2); остаётся только body-size backstop (п.3,
+минор, frame-auth-gated). ⚠ Перед боевым PUBLIC — **проверить заголовки вживую** (`curl -I` на `/` и
+`/b24-form.html`) и что демо-лимит режет по реальному IP.
 
 ## Артефакты в репозитории
 
@@ -157,9 +156,17 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='app'" | grep
   "ANTHROPIC_AUTH_TOKEN": "<ключ модели>",
   "ANTHROPIC_MODEL": "<модель>",
   "NUXT_PUBLIC_SITE_URL": "https://app-XXXX.vibecode.bitrix24.tech",
-  "B24_APPLICATION_TOKEN": ""
+  "B24_APPLICATION_TOKEN": "",
+  "APP_EDGE_SECURITY": "1"
 }
 ```
+
+> **`APP_EDGE_SECURITY=1` обязателен для этого таргета** (нет nginx → его защиту приложение включает само):
+> Nitro-middleware вешает security-заголовки (CSP + `frame-ancestors` доменов Б24, `X-Content-Type-Options`,
+> `Referrer-Policy`, HSTS) на все ответы, а `/api/auth/login` получает app-level анти-брутфорс (10 попыток/15мин
+> по реальному IP пира). За nginx флаг **НЕ** ставим (дефолт off) — иначе был бы двойной CSP (заголовки
+> пересекаются) и троттл логина сгруппировал бы всех под IP прокси. `paritySecurityHeaders`-константы CSP
+> держим байт-в-байт с `nginx.conf`.
 
 > **Обязательные на старте** (`envCheck` пишет в `errors`, но процесс не роняет): `B24_TOKEN_ENC_KEY`
 > (**ровно 32 байта** после base64-декода) и `DATABASE_URL`. Без `B24_CLIENT_ID/SECRET` — рефреш токена и

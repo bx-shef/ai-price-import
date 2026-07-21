@@ -1,5 +1,6 @@
 import { extractDemo } from '~/utils/demoExtract'
-import { createRateLimiter, clientKey } from '../../utils/demoRateLimit'
+import { createRateLimiter } from '../../utils/demoRateLimit'
+import { edgeSecurityEnabled, rateLimitKey } from '../../utils/edgeSecurity'
 import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, DEMO_AI_EXT, MAX_DEMO_BYTES } from '../../utils/demoUpload'
 import { xlsxToText, XlsxTooLargeError } from '../../utils/demoXlsx'
 import { runDemoAiExtract, type DemoAiDeps } from '../../utils/demoAi'
@@ -94,7 +95,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const now = Date.now()
-  const key = clientKey(getHeader(event, 'x-forwarded-for'), event.node.req.socket?.remoteAddress)
+  const key = rateLimitKey(edgeSecurityEnabled(process.env), getHeader(event, 'x-forwarded-for'), event.node.req.socket?.remoteAddress)
   limiter.sweep(now)
   const decision = limiter.check(key, now)
   if (!decision.allowed) {
