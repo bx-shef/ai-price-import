@@ -28,10 +28,16 @@
     У `file-extract`/`agent-run` — флаг `job.ok` (handled-fail vs успех); у `crm-sync` — исходы записи
     `{created, lines, unmatched, idempotent, warnings, errors}`. Так вся цепочка (приём события →
     извлечение текста/OCR → прогон агента → запись в CRM) видна в трейсах по стадиям и порталам.
-  - `withSpan(…)` также оборачивает **HTTP-роут `/api/settings`** (`http.settings.get`/`http.settings.post`):
-    латентность + `{http.method, http.op, http.outcome}` (`ok`/`no_auth`/`auth_failed`/`forbidden`/
-    `bad_request`/`upstream_error`) + `portal.hash` (по домену фрейм-токена). Тело маппинга в спан **не**
-    попадает (allowlist). **Область серверная:** прочие фрейм-роуты и **клиентские** взаимодействия
+  - `withSpan(…)` также оборачивает **ВСЕ фрейм-токен HTTP-роуты**. `/api/settings`
+    (`http.settings.get`/`http.settings.post`) — напрямую; остальные — через общий хелпер
+    `withFrameRouteSpan` (`server/utils/frameRouteSpan.ts`): `app-rating` (get/post), `catalog-measures`,
+    `catalog-properties`, `chat-search`, `crm-categories`, `crm-stages`, `feedback`, `import/metrics`,
+    `import/metrics-reset`, `import/status`, `import/upload`. Каждый спан несёт латентность +
+    `{http.method, http.op, http.outcome}` (`ok`/`no_auth`/`auth_failed`/`forbidden`/`bad_request`/
+    `conflict`/`unavailable`/`upstream_error`/`no_db`) + `portal.hash` (по домену фрейм-токена). Тело
+    запроса/ответа (маппинг, комментарий отзыва, файл, id заданий, названия чатов/воронок) в спан **не**
+    попадает (allowlist). **Область серверная:** публичный вебхук `/api/b24/events` покрыт **job-спаном
+    очереди** `b24-events` (не HTTP-спаном — это не фрейм-роут), а **клиентские** взаимодействия
     (pull `reload.options`, открытие/закрытие слайдера настроек — идут из браузера во фрейме) спанами
     **не** покрыты — браузерного RUM у нас нет.
 - **Приватность ([05-data-policy §4](redesign/05-data-policy.md)) — тройная защита коммерческих данных:**
