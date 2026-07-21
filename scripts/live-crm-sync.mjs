@@ -15,6 +15,9 @@
 import { readFileSync } from 'node:fs'
 import { buildExtractionPrompt } from '../prompts/extract.ts'
 import { runCrmSync } from '../server/queue/crmSyncCore.ts'
+import { resolveAgentEngine, resolveLlmConfig } from '../server/agent/llmConfig.ts'
+import { makeChatFn } from '../server/agent/openaiChat.ts'
+import { runChatExtract } from '../server/agent/chatExtract.ts'
 import { findCompanyByTaxId } from '../server/utils/companyLookup.ts'
 import { findProduct } from '../server/utils/productLookup.ts'
 import { fetchVatRates } from '../server/utils/portalVat.ts'
@@ -87,6 +90,22 @@ const DOC_TEXT = [
 ].join('\n')
 
 async function extractWithAi(text) {
+  // Preferred: the NEW chat engine (AGENT_ENGINE=chat) — the production path after #223. Uses the
+  // real runChatExtract → makeChatFn against an OpenAI-compatible provider (DeepSeek/BitrixGPT),
+  // so this E2E exercises exactly what the worker runs. Provider + key come from env (LLM_PROVIDER
+  // + DEEPSEEK_API_KEY / VIBE_API_KEY). Returns a validated ExtractedDocument.
+  if (resolveAgentEngine(process.env.AGENT_ENGINE) === 'chat') {
+    const cfg = resolveLlmConfig(process.env)
+    if (!cfg.apiKey) throw new Error(`нет ключа для провайдера '${cfg.label}' (задай DEEPSEEK_API_KEY / VIBE_API_KEY)`)
+    console.log(`extract: chat engine · provider=${cfg.label} model=${cfg.model}`)
+    const out = await runChatExtract(
+      { documentText: text, instructions: buildExtractionPrompt(), model: cfg.model },
+      { chat: makeChatFn(cfg), sleep: ms => new Promise(r => setTimeout(r, ms)), random: () => Math.random() }
+    )
+    if (!out.ok || !out.document) throw new Error(out.error || 'chat extract failed')
+    return out.document
+  }
+  // Legacy claude/anthropic path (reads .env ANTHROPIC_*) — removed after the chat cutover.
   const BASE = readEnv('.env', 'ANTHROPIC_BASE_URL')
   const KEY = readEnv('.env', 'ANTHROPIC_AUTH_TOKEN')
   const r = await fetch(`${BASE}/v1/messages`, {
