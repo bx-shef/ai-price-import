@@ -3,9 +3,12 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import ChevronDownMIcon from '@bitrix24/b24icons-vue/outline/ChevronDownMIcon'
+import { navigateTo } from '#app'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
+import { useSettingsSync } from '~/composables/useSettingsSync'
+import { useB24 } from '~/composables/useB24'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
 import * as catPicker from '~/utils/categoryPicker'
@@ -34,12 +37,33 @@ const { mapping, isAdmin, error: settingsError, load: loadSettings } = useSettin
 const settingsLoaded = ref(false)
 const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
 
+// Open settings the B24-native way: as a slider (starter pattern) inside the portal, so an admin edits
+// and closes without leaving /app; outside a frame just navigate. `?slider=1` tells /settings to close
+// the slider on Save/Cancel.
+const { init: initB24, get: getFrame } = useB24()
+async function openSettings(): Promise<void> {
+  await initB24()
+  const frame = getFrame()
+  if (frame) {
+    try {
+      await frame.slider.openPath(new URL('/settings?slider=1', location.origin))
+      return
+    } catch { /* fall through to plain navigation */ }
+  }
+  await navigateTo('/settings')
+}
+
+// Live settings sync (starter pull `reload.options`): when settings are saved in the slider (or another
+// open instance), re-read them so the setup nudge reflects the new config immediately.
+const { subscribeReload } = useSettingsSync()
+
 onMounted(async () => {
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
   await loadSettings()
   // Loaded successfully inside the portal (a frame error means standalone/no-auth → don't nudge).
   settingsLoaded.value = !settingsError.value
+  subscribeReload(() => void loadSettings()) // auto-disposed with this scope
 })
 onBeforeUnmount(stopAutoPoll) // don't keep polling after leaving the page
 
@@ -152,11 +176,11 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
       </div>
       <B24Button
         :icon="SettingsIcon"
-        to="/settings"
         color="air-tertiary-no-accent"
         size="sm"
         aria-label="Настройки импорта"
         class="shrink-0"
+        @click="openSettings"
       />
     </div>
 
@@ -177,9 +201,9 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
       >
         <B24Button
           label="Настроить"
-          to="/settings"
           color="air-primary"
           size="sm"
+          @click="openSettings"
         />
       </template>
     </B24Alert>

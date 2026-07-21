@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
+import { useRoute } from 'vue-router'
+import type { AccordionItem } from '@bitrix24/b24ui-nuxt'
 import { useSettings } from '~/composables/useSettings'
+import { useSettingsSync } from '~/composables/useSettingsSync'
+import { useB24 } from '~/composables/useB24'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
@@ -19,7 +23,13 @@ import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEd
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
 
-const { mapping, loading, saving, saved, error, isAdmin, load, save, scheduleSave, flushSave, rebaseline } = useSettings()
+const { mapping, loading, saving, saved, error, isAdmin, load, save } = useSettings()
+const { notifyReload } = useSettingsSync()
+const { init: initB24, get: getFrame } = useB24()
+const route = useRoute()
+// Opened as a B24 slider (from /app via frame.slider.openPath('/settings?slider=1')) → Save/Cancel
+// close the slider (starter pattern). As a plain page (direct link) they don't close.
+const asSlider = computed(() => route.query.slider === '1')
 // Show the "read-only for non-admins" notice once settings have loaded (in a portal) and the
 // caller isn't an admin. Writes are also blocked server-side + in useSettings.
 const showReadOnly = computed(() => !loading.value && !error.value && !isAdmin.value)
@@ -30,18 +40,39 @@ onMounted(async () => {
   await loadMeasures() // populate the measure dropdowns
   // The category/stage `immediate` watchers reconcile the loaded mapping (dropping a categoryId/
   // stageId whose funnel/stage was deleted in the portal) AFTER their REST fetches resolve — later
-  // than this onMounted. Await those same (cached) fetches + flush watchers so that open-time
-  // normalization is already applied, THEN re-baseline the echo guard: opening the form (even with a
-  // stale target) never autosaves — only genuine user edits do.
+  // than this onMounted. Await those same (cached) fetches so open-time normalization is applied.
   await settleOpenReconciles()
   await nextTick()
-  rebaseline()
-  // Autosave: register the deep watch only now (post-seed, post-reconcile). Bound to this instance →
-  // auto-disposed on unmount. useSettings gates each fire on `ready` + a content snapshot.
-  watch(mapping, scheduleSave, { deep: true })
 })
-// Flush a pending autosave when leaving the page so the last edit isn't lost mid-debounce.
-onBeforeUnmount(flushSave)
+
+/** Explicit save (starter Save/Cancel pattern — no autosave). On success, notify other open
+ *  instances to reload (pull `reload.options`), then close if opened as a slider. */
+async function saveAndClose(): Promise<void> {
+  await save()
+  if (error.value) return // save() sets error; keep the form open so the admin can retry
+  void notifyReload()
+  if (asSlider.value) await closeSlider()
+}
+/** Cancel: close the slider (discard) or, as a page, reload the server copy. */
+async function cancel(): Promise<void> {
+  if (asSlider.value) await closeSlider()
+  else await load()
+}
+async function closeSlider(): Promise<void> {
+  try {
+    await initB24()
+    await getFrame()?.parent.closeApplication()
+  } catch { /* not framed → nothing to close */ }
+}
+
+// Accordion sections (starter B24Accordion pattern) — group the settings into three collapsibles.
+// v-model keys by item INDEX (b24ui default); '0' opens «Куда импортировать» first.
+const openSections = ref(['0'])
+const sections = computed(() => [
+  { label: 'Куда импортировать', slot: 'routing' },
+  { label: 'Товары и единицы', slot: 'products' },
+  { label: 'Файл и уведомления', slot: 'notify' }
+] satisfies AccordionItem[])
 
 /** Await the open-time direction/stage reconcile fetches for the default target and every routing
  *  row (the same idempotent/cached `ensure*` the immediate watchers use), so their normalization of
@@ -315,285 +346,301 @@ const ON_MISSING_ITEMS = [
       description="Изменять параметры импорта может только администратор портала Bitrix24."
     />
 
-    <div
+    <B24Accordion
       v-if="!showReadOnly"
-      class="space-y-6"
+      v-model="openSections"
+      type="multiple"
+      :items="sections"
       :class="{ 'pointer-events-none opacity-50': loading }"
     >
-      <!-- Целевая сущность -->
-      <B24FormField label="Целевая сущность CRM">
-        <div class="flex flex-wrap gap-2">
-          <B24Button
-            v-for="p in TARGET_PRESETS"
-            :key="p.id"
-            :label="p.label"
-            size="sm"
-            :color="mapping.defaultTarget.entityTypeId === p.id ? 'air-primary' : 'air-tertiary-no-accent'"
-            :aria-pressed="mapping.defaultTarget.entityTypeId === p.id"
-            @click="() => selectDefaultTarget(p.id)"
-          />
-        </div>
-        <div class="mt-2 flex items-center gap-2">
-          <span class="text-xs text-(--ui-color-base-3)">или ID типа (смарт-процесс ≥ 1000):</span>
-          <B24InputNumber
-            v-model="mapping.defaultTarget.entityTypeId"
-            :min="1"
-            class="w-28"
-            aria-label="ID типа целевой сущности"
-          />
-        </div>
-        <div
-          v-if="hasCategories(mapping.defaultTarget.entityTypeId)"
-          class="mt-2 flex items-center gap-2"
-        >
-          <span class="text-xs text-(--ui-color-base-3)">направление (воронка):</span>
-          <B24Select
-            :model-value="categoryValue(mapping.defaultTarget)"
-            :items="categoryItems(mapping.defaultTarget.entityTypeId)"
-            class="w-56"
-            aria-label="Направление целевой сущности по умолчанию"
-            @update:model-value="(v: unknown) => setCategory(mapping.defaultTarget, v)"
-          />
-        </div>
-        <div
-          v-if="hasStagesFor(mapping.defaultTarget)"
-          class="mt-2 flex items-center gap-2"
-        >
-          <span class="text-xs text-(--ui-color-base-3)">стадия:</span>
-          <B24Select
-            :model-value="stageValueOf(mapping.defaultTarget)"
-            :items="stageItemsFor(mapping.defaultTarget)"
-            class="w-56"
-            aria-label="Стадия целевой сущности по умолчанию"
-            @update:model-value="(v: unknown) => setStageOf(mapping.defaultTarget, v)"
-          />
-        </div>
-      </B24FormField>
+      <template #routing>
+        <div class="space-y-6 pt-2">
+          <!-- Целевая сущность -->
+          <B24FormField label="Целевая сущность CRM">
+            <div class="flex flex-wrap gap-2">
+              <B24Button
+                v-for="p in TARGET_PRESETS"
+                :key="p.id"
+                :label="p.label"
+                size="sm"
+                :color="mapping.defaultTarget.entityTypeId === p.id ? 'air-primary' : 'air-tertiary-no-accent'"
+                :aria-pressed="mapping.defaultTarget.entityTypeId === p.id"
+                @click="() => selectDefaultTarget(p.id)"
+              />
+            </div>
+            <div class="mt-2 flex items-center gap-2">
+              <span class="text-xs text-(--ui-color-base-3)">или ID типа (смарт-процесс ≥ 1000):</span>
+              <B24InputNumber
+                v-model="mapping.defaultTarget.entityTypeId"
+                :min="1"
+                class="w-28"
+                aria-label="ID типа целевой сущности"
+              />
+            </div>
+            <div
+              v-if="hasCategories(mapping.defaultTarget.entityTypeId)"
+              class="mt-2 flex items-center gap-2"
+            >
+              <span class="text-xs text-(--ui-color-base-3)">направление (воронка):</span>
+              <B24Select
+                :model-value="categoryValue(mapping.defaultTarget)"
+                :items="categoryItems(mapping.defaultTarget.entityTypeId)"
+                class="w-56"
+                aria-label="Направление целевой сущности по умолчанию"
+                @update:model-value="(v: unknown) => setCategory(mapping.defaultTarget, v)"
+              />
+            </div>
+            <div
+              v-if="hasStagesFor(mapping.defaultTarget)"
+              class="mt-2 flex items-center gap-2"
+            >
+              <span class="text-xs text-(--ui-color-base-3)">стадия:</span>
+              <B24Select
+                :model-value="stageValueOf(mapping.defaultTarget)"
+                :items="stageItemsFor(mapping.defaultTarget)"
+                class="w-56"
+                aria-label="Стадия целевой сущности по умолчанию"
+                @update:model-value="(v: unknown) => setStageOf(mapping.defaultTarget, v)"
+              />
+            </div>
+          </B24FormField>
 
-      <!-- Правила маршрутизации -->
-      <B24FormField label="Правила маршрутизации (по типу/словам → цель)">
-        <p class="mb-2 text-xs text-(--ui-color-base-3)">
-          Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: 1 = лид, 2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
-        </p>
-        <div class="space-y-2">
-          <div
-            v-for="(row, i) in routingRows"
-            :key="row.id"
-            class="flex flex-wrap items-center gap-2"
-          >
-            <B24Select
-              v-model="row.type"
-              :items="DOCUMENT_TYPE_ITEMS"
-              class="w-40"
-              :aria-label="`Правило ${i + 1}: тип документа`"
+          <!-- Правила маршрутизации -->
+          <B24FormField label="Правила маршрутизации (по типу/словам → цель)">
+            <p class="mb-2 text-xs text-(--ui-color-base-3)">
+              Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: 1 = лид, 2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
+            </p>
+            <div class="space-y-2">
+              <div
+                v-for="(row, i) in routingRows"
+                :key="row.id"
+                class="flex flex-wrap items-center gap-2"
+              >
+                <B24Select
+                  v-model="row.type"
+                  :items="DOCUMENT_TYPE_ITEMS"
+                  class="w-40"
+                  :aria-label="`Правило ${i + 1}: тип документа`"
+                />
+                <B24Input
+                  v-model="row.keywords"
+                  placeholder="слова через запятую (необязательно)"
+                  class="w-56"
+                  :aria-label="`Правило ${i + 1}: ключевые слова`"
+                />
+                <span
+                  class="text-(--ui-color-base-4)"
+                  aria-hidden="true"
+                >→</span>
+                <B24InputNumber
+                  :model-value="row.entityTypeId"
+                  :min="1"
+                  class="w-28"
+                  :aria-label="`Правило ${i + 1}: тип целевой сущности`"
+                  @update:model-value="(v: unknown) => setRowEntity(row, v)"
+                />
+                <B24Select
+                  v-if="hasCategories(row.entityTypeId)"
+                  :model-value="categoryValue(row)"
+                  :items="categoryItems(row.entityTypeId)"
+                  class="w-48"
+                  :aria-label="`Правило ${i + 1}: направление`"
+                  @update:model-value="(v: unknown) => setCategory(row, v)"
+                />
+                <B24Select
+                  v-if="hasStagesFor(row)"
+                  :model-value="stageValueOf(row)"
+                  :items="stageItemsFor(row)"
+                  class="w-44"
+                  :aria-label="`Правило ${i + 1}: стадия`"
+                  @update:model-value="(v: unknown) => setStageOf(row, v)"
+                />
+                <B24Button
+                  color="air-tertiary-no-accent"
+                  size="sm"
+                  label="✕"
+                  :aria-label="`Удалить правило ${i + 1}`"
+                  @click="() => removeRoutingRow(row.id)"
+                />
+              </div>
+            </div>
+            <B24Button
+              class="mt-2"
+              color="air-tertiary"
+              size="sm"
+              label="+ Добавить правило"
+              @click="addRoutingRow"
+            />
+          </B24FormField>
+        </div>
+      </template>
+
+      <template #products>
+        <div class="space-y-6 pt-2">
+          <!-- Поле артикула поставщика -->
+          <B24FormField label="Поле артикула поставщика">
+            <AsyncSearchSelect
+              v-model="articleField"
+              :fetcher="articleFetcher"
+              :selected-option="selectedArticle"
+              :min-chars="0"
+              placeholder="Выберите свойство каталога…"
+              @update:selected-option="onArticlePicked"
+            />
+            <B24RadioGroup
+              v-model="mapping.article.kind"
+              :items="ARTICLE_KIND_ITEMS"
+              orientation="horizontal"
+              class="mt-2"
             />
             <B24Input
-              v-model="row.keywords"
-              placeholder="слова через запятую (необязательно)"
-              class="w-56"
-              :aria-label="`Правило ${i + 1}: ключевые слова`"
+              v-if="mapping.article.kind === 'string'"
+              v-model="mapping.article.delimiter"
+              placeholder="разделитель, например ;"
+              class="mt-2 w-32"
             />
-            <span
-              class="text-(--ui-color-base-4)"
-              aria-hidden="true"
-            >→</span>
-            <B24InputNumber
-              :model-value="row.entityTypeId"
-              :min="1"
-              class="w-28"
-              :aria-label="`Правило ${i + 1}: тип целевой сущности`"
-              @update:model-value="(v: unknown) => setRowEntity(row, v)"
-            />
+          </B24FormField>
+
+          <!-- Стратегия товара -->
+          <B24FormField label="Если товар не найден">
             <B24Select
-              v-if="hasCategories(row.entityTypeId)"
-              :model-value="categoryValue(row)"
-              :items="categoryItems(row.entityTypeId)"
-              class="w-48"
-              :aria-label="`Правило ${i + 1}: направление`"
-              @update:model-value="(v: unknown) => setCategory(row, v)"
+              v-model="mapping.product.onMissing"
+              :items="ON_MISSING_ITEMS"
+              class="w-full"
             />
-            <B24Select
-              v-if="hasStagesFor(row)"
-              :model-value="stageValueOf(row)"
-              :items="stageItemsFor(row)"
-              class="w-44"
-              :aria-label="`Правило ${i + 1}: стадия`"
-              @update:model-value="(v: unknown) => setStageOf(row, v)"
-            />
+          </B24FormField>
+
+          <!-- Единицы измерения -->
+          <B24FormField label="Единицы измерения">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs text-(--ui-color-base-3)">По умолчанию (если единица не сопоставлена):</span>
+              <B24Select
+                v-model="defaultMeasure"
+                :items="measureItems"
+                placeholder="Ед. Б24"
+                class="w-56"
+                aria-label="Единица по умолчанию"
+              />
+            </div>
+
+            <p class="mt-3 mb-1 text-xs text-(--ui-color-base-3)">
+              Сопоставление единиц из документа с единицами Б24:
+            </p>
+            <div class="space-y-2">
+              <div
+                v-for="(row, i) in unitRows"
+                :key="row.id"
+                class="flex items-center gap-2"
+              >
+                <B24Input
+                  v-model="row.unit"
+                  placeholder="из документа, напр. м"
+                  class="w-40"
+                  :aria-label="`Единица ${i + 1}: из документа`"
+                />
+                <span
+                  class="text-(--ui-color-base-4)"
+                  aria-hidden="true"
+                >→</span>
+                <B24Select
+                  :model-value="row.code != null ? String(row.code) : undefined"
+                  :items="measureItems"
+                  placeholder="Ед. Б24"
+                  class="w-56"
+                  :aria-label="`Единица ${i + 1}: соответствие Б24`"
+                  @update:model-value="(v) => { row.code = v ? Number(v) : null }"
+                />
+                <B24Button
+                  color="air-tertiary-no-accent"
+                  size="sm"
+                  label="✕"
+                  :aria-label="`Удалить единицу ${i + 1}`"
+                  @click="() => removeUnitRow(row.id)"
+                />
+              </div>
+            </div>
             <B24Button
-              color="air-tertiary-no-accent"
+              class="mt-2"
+              color="air-tertiary"
               size="sm"
-              label="✕"
-              :aria-label="`Удалить правило ${i + 1}`"
-              @click="() => removeRoutingRow(row.id)"
+              label="+ Добавить единицу"
+              @click="addUnitRow"
             />
-          </div>
+            <B24Alert
+              v-if="duplicateUnits"
+              class="mt-2"
+              color="air-primary-warning"
+              title="Повторяющиеся единицы — сработает последняя."
+            />
+          </B24FormField>
         </div>
-        <B24Button
-          class="mt-2"
-          color="air-tertiary"
-          size="sm"
-          label="+ Добавить правило"
-          @click="addRoutingRow"
-        />
-      </B24FormField>
+      </template>
 
-      <!-- Поле артикула поставщика -->
-      <B24FormField label="Поле артикула поставщика">
-        <AsyncSearchSelect
-          v-model="articleField"
-          :fetcher="articleFetcher"
-          :selected-option="selectedArticle"
-          :min-chars="0"
-          placeholder="Выберите свойство каталога…"
-          @update:selected-option="onArticlePicked"
-        />
-        <B24RadioGroup
-          v-model="mapping.article.kind"
-          :items="ARTICLE_KIND_ITEMS"
-          orientation="horizontal"
-          class="mt-2"
-        />
-        <B24Input
-          v-if="mapping.article.kind === 'string'"
-          v-model="mapping.article.delimiter"
-          placeholder="разделитель, например ;"
-          class="mt-2 w-32"
-        />
-      </B24FormField>
-
-      <!-- Стратегия товара -->
-      <B24FormField label="Если товар не найден">
-        <B24Select
-          v-model="mapping.product.onMissing"
-          :items="ON_MISSING_ITEMS"
-          class="w-full"
-        />
-      </B24FormField>
-
-      <!-- Единицы измерения -->
-      <B24FormField label="Единицы измерения">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-xs text-(--ui-color-base-3)">По умолчанию (если единица не сопоставлена):</span>
-          <B24Select
-            v-model="defaultMeasure"
-            :items="measureItems"
-            placeholder="Ед. Б24"
-            class="w-56"
-            aria-label="Единица по умолчанию"
+      <template #notify>
+        <div class="space-y-6 pt-2">
+          <!-- Сохранение файла -->
+          <B24Switch
+            v-model="mapping.saveFile"
+            label="Сохранять исходный файл"
+            description="На общий Диск портала, в папку приложения по месяцам."
           />
+
+          <!-- Чат уведомлений об успешном импорте -->
+          <B24FormField label="Чат уведомлений">
+            <AsyncSearchSelect
+              v-model="notifyChatId"
+              :fetcher="chatFetcher"
+              :selected-option="selectedNotifyChat"
+              :min-chars="3"
+              placeholder="Выберите чат для уведомлений об импорте…"
+              @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
+            />
+            <p class="mt-1 text-xs text-(--ui-color-base-3)">
+              Куда слать сообщение после успешной записи документа. Пусто — не уведомляем.
+            </p>
+          </B24FormField>
+
+          <!-- Чат ошибок -->
+          <B24FormField label="Чат ошибок">
+            <AsyncSearchSelect
+              v-model="errorChatId"
+              :fetcher="chatFetcher"
+              :selected-option="selectedErrorChat"
+              :min-chars="3"
+              placeholder="Выберите чат для сообщений об ошибках…"
+              @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
+            />
+            <p class="mt-1 text-xs text-(--ui-color-base-3)">
+              Куда слать сообщение, если документ не удалось внести (нет ставки НДС, валюты и т.п.). Пусто — не уведомляем.
+            </p>
+          </B24FormField>
         </div>
-
-        <p class="mt-3 mb-1 text-xs text-(--ui-color-base-3)">
-          Сопоставление единиц из документа с единицами Б24:
-        </p>
-        <div class="space-y-2">
-          <div
-            v-for="(row, i) in unitRows"
-            :key="row.id"
-            class="flex items-center gap-2"
-          >
-            <B24Input
-              v-model="row.unit"
-              placeholder="из документа, напр. м"
-              class="w-40"
-              :aria-label="`Единица ${i + 1}: из документа`"
-            />
-            <span
-              class="text-(--ui-color-base-4)"
-              aria-hidden="true"
-            >→</span>
-            <B24Select
-              :model-value="row.code != null ? String(row.code) : undefined"
-              :items="measureItems"
-              placeholder="Ед. Б24"
-              class="w-56"
-              :aria-label="`Единица ${i + 1}: соответствие Б24`"
-              @update:model-value="(v) => { row.code = v ? Number(v) : null }"
-            />
-            <B24Button
-              color="air-tertiary-no-accent"
-              size="sm"
-              label="✕"
-              :aria-label="`Удалить единицу ${i + 1}`"
-              @click="() => removeUnitRow(row.id)"
-            />
-          </div>
-        </div>
-        <B24Button
-          class="mt-2"
-          color="air-tertiary"
-          size="sm"
-          label="+ Добавить единицу"
-          @click="addUnitRow"
-        />
-        <B24Alert
-          v-if="duplicateUnits"
-          class="mt-2"
-          color="air-primary-warning"
-          title="Повторяющиеся единицы — сработает последняя."
-        />
-      </B24FormField>
-
-      <!-- Сохранение файла -->
-      <B24Switch
-        v-model="mapping.saveFile"
-        label="Сохранять исходный файл"
-        description="На общий Диск портала, в папку приложения по месяцам."
-      />
-
-      <!-- Чат уведомлений об успешном импорте -->
-      <B24FormField label="Чат уведомлений">
-        <AsyncSearchSelect
-          v-model="notifyChatId"
-          :fetcher="chatFetcher"
-          :selected-option="selectedNotifyChat"
-          :min-chars="3"
-          placeholder="Выберите чат для уведомлений об импорте…"
-          @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
-        />
-        <p class="mt-1 text-xs text-(--ui-color-base-3)">
-          Куда слать сообщение после успешной записи документа. Пусто — не уведомляем.
-        </p>
-      </B24FormField>
-
-      <!-- Чат ошибок -->
-      <B24FormField label="Чат ошибок">
-        <AsyncSearchSelect
-          v-model="errorChatId"
-          :fetcher="chatFetcher"
-          :selected-option="selectedErrorChat"
-          :min-chars="3"
-          placeholder="Выберите чат для сообщений об ошибках…"
-          @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
-        />
-        <p class="mt-1 text-xs text-(--ui-color-base-3)">
-          Куда слать сообщение, если документ не удалось внести (нет ставки НДС, валюты и т.п.). Пусто — не уведомляем.
-        </p>
-      </B24FormField>
-    </div>
+      </template>
+    </B24Accordion>
 
     <div
       v-if="!showReadOnly"
       class="mt-8 flex items-center gap-3"
     >
       <B24Button
-        color="air-primary"
+        color="air-primary-success"
         :loading="saving"
         :disabled="saving || loading || !isAdmin"
-        :label="saving ? 'Сохранение…' : 'Сохранить сейчас'"
-        @click="save"
+        :label="saving ? 'Сохранение…' : 'Сохранить'"
+        @click="saveAndClose"
+      />
+      <B24Button
+        color="air-tertiary"
+        :disabled="saving"
+        label="Отмена"
+        @click="cancel"
       />
       <span
-        class="text-sm"
-        :class="saving ? 'text-(--ui-color-base-3)' : 'text-(--ui-color-accent-main-success)'"
+        v-if="saved && !saving"
+        class="text-sm text-(--ui-color-accent-main-success)"
         role="status"
         aria-live="polite"
-      >
-        <template v-if="saving">Сохранение…</template>
-        <template v-else-if="saved">Сохранено ✓</template>
-        <template v-else>Изменения сохраняются автоматически</template>
-      </span>
+      >Сохранено ✓</span>
     </div>
   </div>
 </template>
