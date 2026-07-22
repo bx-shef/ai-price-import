@@ -3,8 +3,10 @@
 > Last reviewed: 2026-07-22
 
 Как должно быть после редизайна. Синтез двух референсов: раскладка/дисциплина/лендинг/деплой —
-из эталона `client-bank-alfa-by` (облачное приложение Маркета Б24); слой «изолированный MCP + агент
-Claude Code» — из методологии репозитория `ai-agent` (`docs/09-tz/00_intake-ai/`, `docs/15-integrations/`).
+из эталона `client-bank-alfa-by` (облачное приложение Маркета Б24); AI-слой извлечения — из
+методологии репозитория `ai-agent` (`docs/09-tz/00_intake-ai/`, `docs/15-integrations/`). **NB:** исходный
+замысел «изолированный MCP + CLI-агент» **не реализован** — фактически извлечение это tool-less
+OpenAI-совместимый chat-вызов (DeepSeek/BitrixGPT), а поиск/запись в CRM — детерминированно в `crm-sync`.
 Снимок «как есть» — [`00-legacy-architecture.md`](00-legacy-architecture.md); процесс/статусы —
 [`01-project-map.md`](01-project-map.md).
 
@@ -447,7 +449,7 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
 > тронуть портал или что-то выгрузить. Детерминированный поиск поставщика/товара и запись цели
 > выполняет **`crm-sync`**, вызывая тела абстрактных инструментов (`find_supplier`/`find_product`/
 > `create_target`) **в процессе** (единственная дверь в Б24 сохранена на уровне `crm-sync`).
-> Реализация: `server/agent/runAgent.ts` (+ нормализатор `app/utils/extractedDocument.ts`).
+> Реализация: `server/agent/chatExtract.ts` (+ нормализатор `app/utils/extractedDocument.ts`).
 >
 > HTTP-путь «агент → MCP по Bearer» ниже — **для будущего режима**, где LLM сам обогащает данные
 > через инструменты; `buildMcpConfig`/`agentAllowedTools` заложены под него, но MVP их не задействует.

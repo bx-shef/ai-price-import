@@ -43,7 +43,7 @@
   «Приложение») больше не теряются; демо и боевой путь согласованы. Ограничение фолбэка (документировано):
   даты отдаются сырым excel-serial (нет `styles.xml`) — для демо-извлечения приемлемо.
 - **PDF / скан (.png/.jpg) / Word / `.xls` → реальный AI-конвейер** `server/utils/demoAi.ts`
-  (`runDemoAiExtract`): temp-файл → `extractText` (poppler/libreoffice/OCR) → `runAgent` (DeepSeek) →
+  (`runDemoAiExtract`): temp-файл → `extractText` (poppler/libreoffice/OCR) → `runChatExtract` (DeepSeek/BitrixGPT, in-process) →
   чистый маппер `extractedToDemoResult` (те же поля, включая валюту и НДС) → структура **или
   честная ошибка** (никогда 500 на плохой документ). Temp-файл удаляется в `finally`. `.xls` (старый
   бинарный Excel, выгрузки 1С) exceljs не читает → идёт через libreoffice (`officeToText`), как `.doc`.

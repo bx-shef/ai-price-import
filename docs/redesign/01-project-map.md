@@ -102,10 +102,10 @@ GitHub-issue в приватный приёмник с исходом разбо
 - **Пайплайн загрузки→извлечение→агент→CRM (этапы 5–7) — построен и связан:**
   - Извлечение: `textExtract` (диспетч по расширению + OCR-фолбэк сканов), `extractRunners`
     (pdftotext/libreoffice/tesseract rus+bel+kaz+eng), `fileStore` (traversal-safe).
-  - Агент-экстрактор: `runAgent` (spawn+ретрай; ретрай и на exit-0 API-error конверте),
-    `validateExtractedDocument` (untrusted JSON → безопасный документ; числа/валюта/placeholder-строки),
-    `mcpConfig` (**исчерпывающий deny-list + `agentSpawnEnv`**), `spawn` (санитиз. env+таймаут),
-    промпт `extract`. Резолюция «агент только извлекает; поиск/запись — детерминированно в `crm-sync`».
+  - Chat-экстрактор: `llmConfig` (резолвер провайдера), `runChatExtract` (chat + ретрай на transient),
+    `openaiChat` (живой адаптер на `openai` SDK), `validateExtractedDocument` (untrusted JSON → безопасный
+    документ; числа/валюта/placeholder-строки), `extractJson`, промпт `extract`. Tool-less, in-process,
+    без подпроцесса. Резолюция «модель только извлекает; поиск/запись — детерминированно в `crm-sync`».
   - Проводка: `liveDeps` (связка чистых обработчиков со стором/REST/агентом/очередями), `worker`
     (BullMQ-воркеры + `buildLiveInfra`), плагин `server/plugins/queue` (старт воркеров), читатели
     `portalVat`/`portalCurrency`/`productLookup`, `originMarker`/`originLookup` (идемпотентность — маркер в Б24), стор дедупа дел.
