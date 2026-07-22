@@ -7,10 +7,10 @@ describe('resolveLlmProvider', () => {
     expect(resolveLlmProvider('BitrixGPT')).toBe('bitrixgpt')
     expect(resolveLlmProvider(' custom ')).toBe('custom')
   })
-  it('defaults to deepseek for unknown/empty', () => {
-    expect(resolveLlmProvider(undefined)).toBe('deepseek')
-    expect(resolveLlmProvider('')).toBe('deepseek')
-    expect(resolveLlmProvider('gpt4')).toBe('deepseek')
+  it('defaults to bitrixgpt for unknown/empty', () => {
+    expect(resolveLlmProvider(undefined)).toBe('bitrixgpt')
+    expect(resolveLlmProvider('')).toBe('bitrixgpt')
+    expect(resolveLlmProvider('gpt4')).toBe('bitrixgpt')
   })
 })
 
@@ -74,7 +74,8 @@ describe('resolveLlmConfig', () => {
     expect(resolveLlmConfig({ LLM_PROVIDER: 'bitrixgpt' }).apiKey).toBe('')
   })
 
-  it('unknown LLM_PROVIDER defaults to the deepseek preset', () => {
-    expect(resolveLlmConfig({ DEEPSEEK_API_KEY: 'k' }).provider).toBe('deepseek')
+  it('unset/unknown LLM_PROVIDER defaults to the bitrixgpt preset', () => {
+    expect(resolveLlmConfig({ VIBE_API_KEY: 'vibe_api_x' }).provider).toBe('bitrixgpt')
+    expect(resolveLlmConfig({ LLM_PROVIDER: 'gpt4', VIBE_API_KEY: 'v' }).provider).toBe('bitrixgpt')
   })
 })

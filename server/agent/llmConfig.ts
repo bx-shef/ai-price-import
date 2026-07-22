@@ -1,9 +1,8 @@
-// Provider config for the OpenAI-compatible chat extractor (variant 2 — replaces the
-// claude-code CLI). BOTH supported providers expose an OpenAI-compatible
-// /v1/chat/completions, so ONE transport serves both and the provider is chosen by env:
-//   • deepseek  — https://api.deepseek.com/v1 (model deepseek-v4-flash); jurisdiction КНР (#215)
-//   • bitrixgpt — Bitrix Vibecode AI Router https://vibecode.bitrix24.tech/v1
-//                 (model bitrix/bitrixgpt-5.5); jurisdiction is Bitrix's responsibility
+// Provider config for the OpenAI-compatible chat extractor. All supported providers expose an
+// OpenAI-compatible /v1/chat/completions, so ONE transport serves them and LLM_PROVIDER picks one:
+//   • bitrixgpt — Bitrix Vibecode AI Router https://vibecode.bitrix24.tech/v1 (model
+//                 bitrix/bitrixgpt-5.5). DEFAULT — routes to Bitrix, away from direct КНР inference (#215); confirm exact routing/jurisdiction with Bitrix.
+//   • deepseek  — https://api.deepseek.com/v1 (model deepseek-v4-flash); faster, jurisdiction КНР (#215)
 //   • custom    — any OpenAI-compatible endpoint via explicit LLM_BASE_URL/KEY/MODEL
 // Pure resolver (env injected) → unit-tested. No I/O, no secrets logged.
 
@@ -26,10 +25,12 @@ const PRESETS = {
   bitrixgpt: { baseURL: 'https://vibecode.bitrix24.tech/v1', model: 'bitrix/bitrixgpt-5.5' }
 } as const
 
-/** Coerce a raw env value to a known provider (default deepseek — the current prod provider). */
+/** Coerce a raw env value to a known provider (default bitrixgpt — routes to Bitrix's AI Router,
+ *  away from direct КНР inference (#215); the public/Market version runs on it. Owner to confirm
+ *  exact routing/jurisdiction with Bitrix — the AI Router may proxy to third-party models). */
 export function resolveLlmProvider(raw: string | undefined): LlmProvider {
   const v = (raw ?? '').trim().toLowerCase()
-  return v === 'deepseek' || v === 'bitrixgpt' || v === 'custom' ? v : 'deepseek'
+  return v === 'deepseek' || v === 'bitrixgpt' || v === 'custom' ? v : 'bitrixgpt'
 }
 
 /** Resolve the active provider config from env. A missing key yields apiKey:'' (fail-closed). */
