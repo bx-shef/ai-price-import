@@ -25,7 +25,8 @@ AI-импорт документов с табличной частью в Bitri
     `validateExtractedDocument` + гард `MAX_ITEMS`; DI — `ChatFn`, тесты) → `openaiChat.ts` (живой
     адаптер `makeChatFn` на `openai` SDK, `maxRetries:0` — ретрай наш; тонкий I/O-край, юнит-тестами
     не покрыт). **BitrixGPT** (Bitrix Vibecode AI Router `/v1`, `bitrix/bitrixgpt-5.5`; **дефолт** —
-    юрисдикцию несёт Битрикс, снимает #215) и **DeepSeek** (`/v1`, `deepseek-v4-flash`; быстрее, юрисдикция
+    AI Router — уход от прямого КНР-инференса, #215; ⚠ владельцу сверить условия маршрутизации/юрисдикции с
+    Битрикс) и **DeepSeek** (`/v1`, `deepseek-v4-flash`; быстрее, юрисдикция
     КНР) — один транспорт, оба переключаются `LLM_PROVIDER` (дефолт `bitrixgpt`). Живой прогон — `pnpm verify:chat --provider <p>` + E2E `pnpm live:crm
     --ai`. Резолв в `worker.ts buildLiveInfra` (и в демо `api/demo/extract.post.ts`); ключ живёт в самом
     процессе (нет подпроцесса) → санит-env не нужен. **Cutover-совместимость:** ключ deepseek берётся из

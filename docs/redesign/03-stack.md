@@ -40,7 +40,7 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 | Что | Технология | Роль |
 |---|---|---|
 | Движок (engine) | **OpenAI-совместимый chat-вызов** (`openai` SDK → `/v1/chat/completions`, `response_format:json_object`, in-process). Claude Code CLI **удалён** | извлечение структуры (**tool-less** — чистый completion, инъекция документа не может ничего, кроме JSON; нет подпроцесса) |
-| Провайдер | `LLM_PROVIDER`: **deepseek** (`https://api.deepseek.com/v1`, `deepseek-v4-flash`; юрисдикция КНР, #215; ключ `DEEPSEEK_API_KEY` **или** легаси `ANTHROPIC_AUTH_TOKEN` — cutover без смены env) / **bitrixgpt** (**дефолт;** Bitrix Vibecode AI Router `https://vibecode.bitrix24.tech/v1`, `bitrix/bitrixgpt-5.5`; юрисдикцию несёт Битрикс) / **custom** (любой OpenAI-совместимый). Оба провайдера — один транспорт | чистое ядро `server/agent/llmConfig.ts` (резолвер) + `chatExtract.ts` (оркестрация с ретраем) + `openaiChat.ts` (живой адаптер), тесты; живой прогон — `pnpm verify:chat --provider <p>` + E2E `pnpm live:crm --ai`. **Live-verified** на реальных счетах РБ/РФ (PDF/скан/xls) + сделка на тест-портале |
+| Провайдер | `LLM_PROVIDER`: **deepseek** (`https://api.deepseek.com/v1`, `deepseek-v4-flash`; юрисдикция КНР, #215; ключ `DEEPSEEK_API_KEY` **или** легаси `ANTHROPIC_AUTH_TOKEN` — cutover без смены env) / **bitrixgpt** (**дефолт;** Bitrix Vibecode AI Router `https://vibecode.bitrix24.tech/v1`, `bitrix/bitrixgpt-5.5`; AI Router — уход от прямого КНР-инференса, ⚠ владельцу сверить условия маршрутизации/юрисдикции с Битрикс) / **custom** (любой OpenAI-совместимый). Оба провайдера — один транспорт | чистое ядро `server/agent/llmConfig.ts` (резолвер) + `chatExtract.ts` (оркестрация с ретраем) + `openaiChat.ts` (живой адаптер), тесты; живой прогон — `pnpm verify:chat --provider <p>` + E2E `pnpm live:crm --ai`. **Live-verified** на реальных счетах РБ/РФ (PDF/скан/xls) + сделка на тест-портале |
 | Протокол инструментов | **не нужен** — агент tool-less (решение из ревью): `@modelcontextprotocol/sdk` / MCP-HTTP-сервер **не подключены** (нет в `package.json`), тела «инструментов» зовёт `crm-sync` в процессе | (был замысел: изолированный MCP-сервер) |
 | Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (**rus+bel+kaz+eng**), `libreoffice` (soffice — офис→текст/pdf), **`exceljs`** (xlsx→текст) | PDF/скан/офис → текст; языки — см. `06-multilingual.md`. Python-библиотек (`openpyxl`/`xlrd`) **не используем** |
 | Схемы | **ручная валидация** — `validateExtractedDocument` (нормализация untrusted JSON агента); `zod` **не подключён** | валидация вывода агента |
@@ -82,8 +82,9 @@ pnpm build        # Nitro node-server (backend-таргет)
 
 Перед пушем — `pnpm check` (= lint + typecheck + test) или `bash scripts/check-app.sh`.
 
-> **Юрисдикция LLM (#215 — решено).** Дефолтный провайдер — **BitrixGPT** (Bitrix Vibecode AI Router;
-> юрисдикцию данных несёт Битрикс) → КНР-риск снят. DeepSeek (юрисдикция КНР) остаётся опцией и требует
+> **Юрисдикция LLM (#215 — решено на уровне дефолта).** Дефолтный провайдер — **BitrixGPT** (Bitrix Vibecode
+> AI Router) → уход от прямого КНР-инференса. ⚠ Владельцу сверить точные условия маршрутизации/юрисдикции с
+> Битрикс (AI Router может проксировать к сторонним моделям). DeepSeek (юрисдикция КНР) остаётся опцией и требует
 > согласия заказчика/юриста; `custom` (напр. YandexGPT/GigaChat через прокси-шим) — тоже. Провайдер —
 > `LLM_PROVIDER` (дефолт `bitrixgpt`), смена без правки кода. Извлечение текста и запись в CRM — локально;
 > в LLM уходит только текст документа (бинарники — нет).
