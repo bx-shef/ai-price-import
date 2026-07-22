@@ -1,6 +1,6 @@
 # Деплой в Битрикс24 Вайбкод Black Hole (альтернативный таргет)
 
-> Last reviewed: 2026-07-21
+> Last reviewed: 2026-07-22
 
 Как выгрузить это приложение (`procure-ai`, импорт прайсов) в **Битрикс24 Vibecode Black Hole** —
 закрытый Bitrix-Cloud VM, управляемый по REST (без SSH), приложение слушает `:3000` и отдаётся по
@@ -26,13 +26,13 @@ HTTPS `https://app-{id}.vibecode.bitrix24.tech`.
   с подпиской BitrixGPT + Маркетплейс. Есть demo RU/BY (14 дней, 1 сервер/портал, только `bc-micro`).
 - **Обслуживаемый портал** (куда ставится само приложение) — **любой**: приложение ходит в него
   своим B24-OAuth, не через Gateway Вайбкода.
-- 💡 **LLM по BYOK.** Агент ходит в свою модель по `ANTHROPIC_BASE_URL` (DeepSeek), поэтому вайбы за
+- 💡 **LLM по BYOK.** Агент ходит в свою модель по `LLM_PROVIDER` (DeepSeek/BitrixGPT), поэтому вайбы за
   модели платформы **не** списываются — только за сам сервер. Встроенный AI Router не нужен.
 
 ## Выполнимость для нас — ПОДТВЕРЖДЕНА (важное)
 
-Наш стек — stateful (Postgres + Redis + BullMQ) **плюс OCR-тулчейн и Claude Code CLI в рантайме**
-(извлечение текста из PDF/скан/office + прогон агента), и в проде многоролевой (SSG-лендинг за nginx +
+Наш стек — stateful (Postgres + Redis + BullMQ) **плюс OCR-тулчейн в рантайме** (извлечение текста
+из PDF/скан/office; сам LLM-вызов — in-process HTTP), и в проде многоролевой (SSG-лендинг за nginx +
 Nitro-backend отдельно). В Black Hole это схлопывается в **один Nitro-процесс на :3000**.
 
 **Проверено локально** (`pnpm build` → `node .output/server/index.mjs`, один процесс, без pg/redis):
@@ -70,7 +70,7 @@ throughput-воркеры (extract/agent/crm-sync) + событийный вор
    `APP_EDGE_SECURITY=1` ключ лимита берётся из `socket.remoteAddress` (реальный TCP-пир), а не из XFF
    (`rateLimitKey`). Затронуты:
    - **`/api/auth/login`** — app-level анти-брутфорс (10 попыток/15 мин по IP → 429) поверх 400 мс задержки.
-   - **`/api/demo/extract`** (неаутентиф. OCR+LLM на токене владельца `ANTHROPIC_*`) — его пер-IP лимит
+   - **`/api/demo/extract`** (неаутентиф. OCR+LLM на ключе LLM-провайдера владельца) — его пер-IP лимит
      (3 файла/10 мин) теперь **не** обходится ротацией XFF; плюс глобальный `AI_MAX_CONCURRENCY=2`.
 
    ⚠ **Проверить модель IP тоннеля перед PUBLIC.** Если тоннель платформы терминируется прокси **на VM**,
@@ -134,8 +134,7 @@ Settings → Secrets and variables → Actions:
 apt-get update && apt-get install -y --no-install-recommends \
   postgresql redis-server poppler-utils libreoffice-calc libreoffice-writer \
   tesseract-ocr tesseract-ocr-rus tesseract-ocr-bel tesseract-ocr-kaz fonts-dejavu-core && \
-service postgresql start && service redis-server start && \
-npm install -g @anthropic-ai/claude-code@2.1.207 && mkdir -p /root/.claude; \
+service postgresql start && service redis-server start; \
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='app'" | grep -q 1 || \
   sudo -u postgres psql -c "CREATE USER app PASSWORD 'app';"; \
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='app'" | grep -q 1 || \
@@ -143,9 +142,8 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='app'" | grep
 ```
 
 > ⚠ `bc-micro` может не потянуть сборку LibreOffice/OCR по памяти — если `install`/`preStart` падает
-> по OOM, бери план крупнее (это уже вне demo-доступа). Агент требует `@anthropic-ai/claude-code` в
-> `PATH` (`AGENT_BIN=claude`), иначе пайплайн падает «spawn claude ENOENT»; `mkdir -p /root/.claude` +
-> `HOME=/root` в start-команде — чтобы CLI-агент писал конфиг. **Идемпотентность:** роль и БД `app`
+> по OOM, бери план крупнее (это уже вне demo-доступа). Извлечение — in-process OpenAI-совместимый
+> вызов (нет CLI-бинаря); нужен только ключ провайдера в env (ниже). **Идемпотентность:** роль и БД `app`
 > проверяются **раздельно** (`pg_roles` / `pg_database`) — частичный первый прогон (роль есть, БД нет) не
 > оставит приложение без базы. Предполагается чистая Ubuntu VM с root/`sudo`/`service` (если их нет —
 > заменить на `su postgres -c …`/`pg_ctlcluster`).
@@ -161,9 +159,8 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='app'" | grep
   "B24_TOKEN_ENC_KEY": "<openssl rand -base64 32 → декодируется в 32 байта>",
   "OPERATOR_PASSWORD": "<пароль оператора — включает консоль /queues>",
   "OPERATOR_SESSION_SECRET": "<openssl rand -hex 32>",
-  "ANTHROPIC_BASE_URL": "https://<deepseek-endpoint>",
-  "ANTHROPIC_AUTH_TOKEN": "<ключ модели>",
-  "ANTHROPIC_MODEL": "<модель>",
+  "LLM_PROVIDER": "deepseek",
+  "DEEPSEEK_API_KEY": "<ключ DeepSeek>",
   "NUXT_PUBLIC_SITE_URL": "https://app-XXXX.vibecode.bitrix24.tech",
   "B24_APPLICATION_TOKEN": "",
   "APP_EDGE_SECURITY": "1"
@@ -179,8 +176,9 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='app'" | grep
 
 > **Обязательные на старте** (`envCheck` пишет в `errors`, но процесс не роняет): `B24_TOKEN_ENC_KEY`
 > (**ровно 32 байта** после base64-декода) и `DATABASE_URL`. Без `B24_CLIENT_ID/SECRET` — рефреш токена и
-> `app.option` не работают; без `REDIS_URL` — очередь выключена (загрузка отдаёт 503); без `ANTHROPIC_*` —
-> агент не запускается. ⚠ **`NUXT_PUBLIC_SITE_URL` пекётся на BUILD-времени** — пререндеренный `/install`
+> `app.option` не работают; без `REDIS_URL` — очередь выключена (загрузка отдаёт 503); без ключа
+> LLM-провайдера (`DEEPSEEK_API_KEY`/`VIBE_API_KEY`) — извлечение падает «provider not configured». ⚠
+> **`NUXT_PUBLIC_SITE_URL` пекётся на BUILD-времени** — пререндеренный `/install`
 > читает `config.public.siteUrl` из замороженного payload, рантайм-env его **не** переинжектит. Порядок:
 > первый деплой создаёт сервер → узнаёшь `appUrl` → кладёшь его в `APP_ENV_JSON` → **передеплой**. Скрипт
 > запекает `NUXT_PUBLIC_SITE_URL` из `ENV_JSON` прямо в `pnpm build` (`NUXT_PUBLIC_SITE_URL=<url> pnpm build`),

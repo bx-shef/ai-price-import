@@ -16,8 +16,8 @@ const noWait = { sleep: async () => {}, random: () => 0 }
 
 describe('buildChatRequest', () => {
   it('puts instructions as system, document as user, forces JSON, temp 0', () => {
-    const r = buildChatRequest('deepseek-chat', INSTR, DOC)
-    expect(r.model).toBe('deepseek-chat')
+    const r = buildChatRequest('deepseek-v4-flash', INSTR, DOC)
+    expect(r.model).toBe('deepseek-v4-flash')
     expect(r.messages).toEqual([
       { role: 'system', content: INSTR },
       { role: 'user', content: DOC }

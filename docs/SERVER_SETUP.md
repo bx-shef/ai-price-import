@@ -158,22 +158,20 @@ scp scripts/agent-e2e-test.sh scripts/samples/etalon-invoice.pdf ubuntu@СЕРВ
 
 # затем на сервере:
 cd ~/procure-ai
-grep -q '^ANTHROPIC_API_KEY=..' .env.prod || echo "⚠ ANTHROPIC_API_KEY не задан в .env.prod — агент упадёт!"
+grep -qE '^(DEEPSEEK_API_KEY|VIBE_API_KEY|ANTHROPIC_AUTH_TOKEN)=..' .env.prod || echo "⚠ ключ LLM-провайдера не задан в .env.prod — извлечение упадёт!"
 bash agent-e2e-test.sh
 ```
 
 Скрипт сам подхватит лежащий рядом `etalon-invoice.pdf`. Свой файл —
 `FILE=/path/to/price.xlsx bash agent-e2e-test.sh`.
 
-> **Локально на Windows** (где claude авторизован по подписке, вне Docker) —
-> та же проверка одной командой через PowerShell-версию:
+> **Локально** — та же проверка одной командой через PowerShell-версию:
 > `powershell -ExecutionPolicy Bypass -File .\scripts\agent-e2e-test.ps1`
 > (по умолчанию `http://localhost:3000` и эталон из `scripts/samples/`).
 
-> **⚠️ Авторизация claude в Docker.** Подписочная сессия Claude.ai внутри
-> контейнера не работает — агенту нужен `ANTHROPIC_API_KEY` в `.env.prod`
-> (он пробрасывается в контейнер app). Без него агент вернёт «Not logged in»
-> ещё до обращения к MCP.
+> **⚠️ Ключ LLM-провайдера.** Извлечение — in-process OpenAI-совместимый вызов; нужен
+> `DEEPSEEK_API_KEY` (или `VIBE_API_KEY` для BitrixGPT; легаси `ANTHROPIC_AUTH_TOKEN`
+> тоже принимается как ключ deepseek) в `.env.prod`. Без него джоба падает «provider not configured».
 
 > **♻️ Ретрай агента (#104).** Транзиентные сбои провайдера (HTTP 429/5xx,
 > сеть, таймаут) агент повторяет с бэкоффом: `AGENT_MAX_ATTEMPTS` (по умолч. 3),

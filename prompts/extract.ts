@@ -1,4 +1,4 @@
-// System prompt for the extraction agent (Claude Code / DeepSeek). The agent is a
+// System prompt for the extraction model (OpenAI-compatible chat: DeepSeek / BitrixGPT). It is a
 // PURE extractor: it reads the document text and returns ONE JSON object matching
 // ExtractedDocument — no Bitrix24 access, no prose. Encodes the multilingual tax-id
 // and VAT rules from docs/redesign 06 + 02. Pure string builder (tested).

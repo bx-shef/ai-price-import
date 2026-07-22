@@ -92,8 +92,8 @@ describe('validateExtractedDocument', () => {
     expect(validateExtractedDocument({ supplier: { name: 'Y' }, items: [{ name: 'A', price: 1, quantity: 1 }] })?.supplier).toEqual({ name: 'Y' })
   })
 
-  it('defensive DoS backstop caps at MAX_ITEMS (runAgent hard-errors before this)', () => {
-    // The real no-silent-truncation guard is runAgent (overflow → hard error); this
+  it('defensive DoS backstop caps at MAX_ITEMS (runChatExtract hard-errors before this)', () => {
+    // The real no-silent-truncation guard is runChatExtract (overflow → hard error); this
     // cap is defense-in-depth for any other caller of the pure validator.
     const many = Array.from({ length: MAX_ITEMS + 50 }, (_, i) => ({ name: `P${i}`, price: 1, quantity: 1 }))
     expect(validateExtractedDocument({ items: many })?.items).toHaveLength(MAX_ITEMS)

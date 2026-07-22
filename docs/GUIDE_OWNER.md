@@ -19,7 +19,7 @@
 | `PUBLIC_PAGE_BASIC_AUTH_PASS` | пароль входа вне портала (и `/metrics`) | задать вручную |
 | `SESSION_SECRET` _(опц.)_ | подпись сессионной cookie | `openssl rand -hex 32` |
 | `NUXT_BITRIX24_WEBHOOK_URL` | вебхук Bitrix24 (CRM + scope `shef:purchase.api.*`) | создать в Б24 |
-| `ANTHROPIC_API_KEY` _(или ключи DeepSeek)_ | доступ к модели ИИ | у провайдера модели |
+| `DEEPSEEK_API_KEY` _(или `VIBE_API_KEY` для BitrixGPT)_ | доступ к модели ИИ | у провайдера модели |
 | `B24_BOT_APPLICATION_TOKEN` _(опц.)_ | фолбэк токена чат-бота Б24 | обычно захватывается авто |
 
 ### B. Секреты CI/деплоя — в **GitHub → Settings → Secrets and variables → Actions**

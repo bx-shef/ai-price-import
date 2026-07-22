@@ -1,11 +1,19 @@
 import { extractJson } from './extractJson'
 import { classifyAgentError, nextBackoffMs, shouldRetry } from './retry'
 import { MAX_ITEMS, validateExtractedDocument } from '~/utils/extractedDocument'
-import type { RunAgentOutcome } from './runAgent'
+import type { ExtractedDocument } from '~/types/document'
 
-// OpenAI-compatible chat extractor (variant 2 — replaces the claude-code subprocess).
-// Same contract as runAgent: document text + instructions → ExtractedDocument, PURE extractor
-// (no tools, no Bitrix24 access — an injected document can only emit JSON, never exfiltrate).
+/** Outcome of one extraction run (shared shape; never throws — the runner returns this). */
+export interface ExtractOutcome {
+  ok: boolean
+  document: ExtractedDocument | null
+  attempts: number
+  error?: string
+}
+
+// OpenAI-compatible chat extractor (the extractor — replaced the claude-code subprocess).
+// Contract: document text + instructions → ExtractedDocument, PURE extractor (no tools, no
+// Bitrix24 access — an injected document can only emit JSON, never exfiltrate).
 // Pure control-flow with an injected `chat` transport → unit-tested with a fake. The live
 // transport (openaiChat.makeChatFn) speaks the OpenAI /v1/chat/completions contract, which
 // DeepSeek and the Bitrix Vibecode AI Router (BitrixGPT) both implement.
@@ -66,7 +74,7 @@ function boundErr(s: string): string {
 }
 
 /** Run the chat extractor with transient-retry. Never throws — returns an outcome. */
-export async function runChatExtract(input: ChatExtractInput, deps: ChatExtractDeps): Promise<RunAgentOutcome> {
+export async function runChatExtract(input: ChatExtractInput, deps: ChatExtractDeps): Promise<ExtractOutcome> {
   const req = buildChatRequest(input.model, input.instructions, input.documentText)
   const maxAttempts = input.maxAttempts ?? 3
   let attempt = 0

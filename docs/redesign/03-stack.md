@@ -1,6 +1,6 @@
 # Стек технологий (редизайн procure-ai)
 
-> Last reviewed: 2026-07-21
+> Last reviewed: 2026-07-22
 
 Целевой стек взят из эталона `client-bank-alfa-by` (проверенная на проде раскладка Bitrix24-приложения)
 и дополнен слоем AI-агента из старого procure-ai. Версии — ориентир на момент фиксации; при инициализации
@@ -39,9 +39,8 @@ Node **>=22**, менеджер пакетов **pnpm**, `"type": "module"`, `"p
 
 | Что | Технология | Роль |
 |---|---|---|
-| Движок (engine) | **OpenAI-совместимый транспорт** (`openai` SDK → `/v1/chat/completions`, `response_format:json_object`) — целевой; переключатель `AGENT_ENGINE=chat`. Легаси-путь — **Claude Code CLI** (`--print --bare --output-format json`, tool-less), `AGENT_ENGINE=claude` (дефолт, пока не пройдут живые тесты `verify:chat`) | извлечение структуры (**tool-less/без инструментов** в обоих путях; чат-путь — чистый completion, инъекция документа не может ничего, кроме JSON) |
-| Провайдер (chat) | `LLM_PROVIDER`: **deepseek** (`https://api.deepseek.com/v1`, `deepseek-chat`; юрисдикция КНР, #215) / **bitrixgpt** (Bitrix Vibecode AI Router `https://vibecode.bitrix24.tech/v1`, `bitrix/bitrixgpt-5.5`; юрисдикцию несёт Битрикс) / **custom** (любой OpenAI-совместимый). Оба провайдера — один транспорт | чистое ядро `server/agent/llmConfig.ts` (резолвер) + `chatExtract.ts` (оркестрация с ретраем) + `openaiChat.ts` (живой адаптер), тесты; живой прогон — `pnpm verify:chat --provider <p>` |
-| Провайдер (legacy claude) | **DeepSeek** (Anthropic-совместимый endpoint `https://api.deepseek.com/anthropic`) через `ANTHROPIC_*`; ключ — `ANTHROPIC_AUTH_TOKEN` | модели `deepseek-v4-flash`/`-pro`; извлечение проверено вживую на рус/бел/каз 2026-07-09; путь удаляется после cutover на chat |
+| Движок (engine) | **OpenAI-совместимый chat-вызов** (`openai` SDK → `/v1/chat/completions`, `response_format:json_object`, in-process). Claude Code CLI **удалён** | извлечение структуры (**tool-less** — чистый completion, инъекция документа не может ничего, кроме JSON; нет подпроцесса) |
+| Провайдер | `LLM_PROVIDER`: **deepseek** (`https://api.deepseek.com/v1`, `deepseek-v4-flash`; юрисдикция КНР, #215; ключ `DEEPSEEK_API_KEY` **или** легаси `ANTHROPIC_AUTH_TOKEN` — cutover без смены env) / **bitrixgpt** (Bitrix Vibecode AI Router `https://vibecode.bitrix24.tech/v1`, `bitrix/bitrixgpt-5.5`; юрисдикцию несёт Битрикс) / **custom** (любой OpenAI-совместимый). Оба провайдера — один транспорт | чистое ядро `server/agent/llmConfig.ts` (резолвер) + `chatExtract.ts` (оркестрация с ретраем) + `openaiChat.ts` (живой адаптер), тесты; живой прогон — `pnpm verify:chat --provider <p>` + E2E `pnpm live:crm --ai`. **Live-verified** на реальных счетах РБ/РФ (PDF/скан/xls) + сделка на тест-портале |
 | Протокол инструментов | **не нужен** — агент tool-less (решение из ревью): `@modelcontextprotocol/sdk` / MCP-HTTP-сервер **не подключены** (нет в `package.json`), тела «инструментов» зовёт `crm-sync` в процессе | (был замысел: изолированный MCP-сервер) |
 | Извлечение текста | `poppler-utils` (pdftotext), `tesseract-ocr` (**rus+bel+kaz+eng**), `libreoffice` (soffice — офис→текст/pdf), **`exceljs`** (xlsx→текст) | PDF/скан/офис → текст; языки — см. `06-multilingual.md`. Python-библиотек (`openpyxl`/`xlrd`) **не используем** |
 | Схемы | **ручная валидация** — `validateExtractedDocument` (нормализация untrusted JSON агента); `zod` **не подключён** | валидация вывода агента |
