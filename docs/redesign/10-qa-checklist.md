@@ -1,6 +1,6 @@
 # План проверок procure-ai
 
-> Last reviewed: 2026-07-21
+> Last reviewed: 2026-07-22
 
 Этот документ — практический чек-лист ручных и автоматических проверок procure-ai по подсистемам. Пользоваться им так: начните с раздела «Быстрый старт (smoke)», убедитесь, что приложение вообще поднимается, затем идите по нужной подсистеме и прогоняйте строки таблицы (колонка «Метка» показывает, что уже покрыто vitest, а что требует ручного прогона, живого портала или LLM-ключа). Документ детализирует три уровня из [`07-testing.md`](07-testing.md): чистое ядро (unit, `pnpm test`), интеграция роутов/пайплайна (ручной прогон бэкенда) и сквозные проверки на живом портале Bitrix24. Каждая метка `[нужен живой портал]` / `[нужен LLM-ключ]` собрана отдельно в разделе «Что заблокировано и почему».
 
@@ -49,7 +49,7 @@
 | UI кнопки-примеры (9 шт.) | Клик грузит `/demo/<id>.txt`, парсит КЛИЕНТСКИ | Карточка результата без обращения к API/лимиту | [вручную] |
 | UI дропзона / повторный файл / ошибка API | drag-drop → POST; повтор того же файла; 415/429 | «Разбираем…»; повтор срабатывает (`input.value=''`); красный блок ошибки | [вручную] |
 | UI баннер публичности + скриншоты | Amber-баннер «3 файла за 10 минут»; `pnpm screenshot` | Виден; light/dark × mobile/desktop без слома вёрстки (nuxt-теста на компонент нет) | [вручную] |
-| Реальное извлечение PDF/скан/Excel через `runAgent` | Прогнать PDF/скан/`.xls` на **проде** (async-путь) | `202 {jobId}` → поллинг → `{status:'done', result}` с товарами/поставщиком; бинарники+LLM только в прод-образе (в dev не воспроизвести) | [нужен LLM-ключ/прод] |
+| Реальное извлечение PDF/скан/Excel через chat-экстрактор | Прогнать PDF/скан/`.xls` на **проде** (async-путь) | `202 {jobId}` → поллинг → `{status:'done', result}` с товарами/поставщиком; бинарники+LLM только в прод-образе (в dev не воспроизвести) | [нужен LLM-ключ/прод] |
 | Запись в Bitrix24 | — | В демо-пути отсутствует полностью | [нужен живой портал] |
 
 ### Публичный лендинг
@@ -119,28 +119,24 @@
 
 ### Агент-экстрактор (LLM)
 
-Файлы: `server/agent/{runAgent,mcpConfig,spawn,retry,extractJson}.ts`, `prompts/extract.ts`, `app/utils/extractedDocument.ts`, проводка — `server/queue/{liveDeps,worker}.ts`. Агент — чистый экстрактор (документ на stdin → один JSON `ExtractedDocument`), без доступа к Bitrix24; в MVP инструменты запрещены.
+Файлы: `server/agent/{llmConfig,chatExtract,openaiChat,retry,extractJson}.ts`, `prompts/extract.ts`, `app/utils/extractedDocument.ts`, проводка — `server/queue/{liveDeps,worker}.ts`. Экстрактор — OpenAI-совместимый chat-вызов (in-process, tool-less: текст → один JSON `ExtractedDocument`), без доступа к Bitrix24 и без подпроцесса.
 
 | Проверка | Действие | Ожидаемо | Метка |
 |---|---|---|---|
-| Оркестрация `runAgent` | `pnpm test:unit` → `tests/runAgent.test.ts` | Успех с 1-й; transient→retry+backoff; исчерпание 3 попыток; terminal без ретрая; пустой выход→terminal; brosok→transient; exit-0 `{is_error:true}`→retry; `>MAX_ITEMS`→жёсткая ошибка; обрезка строки ошибки ≤301 | [авто] |
-| `parseAgentOutput`/`agentEnvelopeError` | `tests/runAgent.test.ts` | JSON; распаковка конверта `{result:"…json…"}`; null без JSON; флаг ошибок | [авто] |
+| Резолвер провайдера `resolveLlmConfig` | `pnpm test:unit` → `tests/llmConfig.test.ts` | Пресеты deepseek/bitrixgpt/custom; env-оверрайды base/model; ключ deepseek из `DEEPSEEK_API_KEY` ИЛИ легаси `ANTHROPIC_AUTH_TOKEN`; нет ключа → `apiKey:''` (fail-closed) | [авто] |
+| Оркестрация `runChatExtract` | `tests/chatExtract.test.ts` | Успех с 1-й; transient(429/5xx)→retry+backoff; исчерпание 3 попыток; terminal(401) без ретрая; пустая таблица→terminal; не-JSON→terminal; `>MAX_ITEMS`→жёсткая ошибка; распаковка JSON из обёртки прозой; обрезка строки ошибки | [авто] |
+| `buildChatRequest` | `tests/chatExtract.test.ts` | system=инструкции, user=документ, `temperature:0`, `response_format:json_object` | [авто] |
 | Нормализация `validateExtractedDocument` | `tests/extractedDocument.test.ts` | Коэрция чисел ru/be/kk и `20%`; сохранение `vatRate:0`; отклонение 4+-буквенной валюты; digits-only taxId; drop supplier без name; DoS-клампы; cap `MAX_ITEMS` | [авто] |
 | Промпт | `tests/extractPrompt.test.ts` | «РОВНО ОДИН JSON» без markdown; метки налогов 3 стран; единый НДС + 1-в-1 + казахские буквы; пример проходит валидатор | [авто] |
-| Санитайз env `agentSpawnEnv` | `tests/agent.test.ts` | Пропускает LLM-ключи/PATH, вырезает `DATABASE_URL`/`B24_TOKEN_ENC_KEY`/`B24_CLIENT_SECRET`; extractor-mode: пустой `--allowedTools`, полный `--disallowedTools`, нет `--mcp-config`; per-job bearer в `buildMcpConfig` | [авто] |
-| Санитайз env субпроцессов `subprocessEnv` (GH #99) | `tests/extractRunners.test.ts` + `tests/runnerEnvIntegration.test.ts` | libreoffice/pdftotext/tesseract/pdftoppm видят только allow-list (PATH/HOME/локаль/OMP/шрифты), НЕ `DATABASE_URL`/`B24_TOKEN_ENC_KEY`/`B24_CLIENT_SECRET`; `run()`→spawn реально режет env; libreoffice `--safe-mode` (макросы off) + per-job профиль | [авто] |
+| Санитайз env субпроцессов `subprocessEnv` (GH #99) | `tests/extractRunners.test.ts` + `tests/runnerEnvIntegration.test.ts` | libreoffice/pdftotext/tesseract/pdftoppm (единственные подпроцессы) видят только allow-list (PATH/HOME/локаль/OMP/шрифты), НЕ `DATABASE_URL`/`B24_TOKEN_ENC_KEY`/`B24_CLIENT_SECRET`; `run()`→spawn реально режет env; libreoffice `--safe-mode` + per-job профиль | [авто] |
 | `extractJson` | `tests/agent.test.ts` | Последний сбалансированный объект; скобки/кавычки в строках; null на битом/пустом/оверсайз >2МБ | [авто] |
-| `spawn` (`makeAgentSpawn`) | `tests/agentSpawn.test.ts` | Сбор stdout/stderr, санитайз-env; дедлайн→SIGKILL code 124; резолв один раз; error→terminal | [авто] |
-| Retry-политика | `tests/agentRetry.test.ts` | `classifyAgentError` transient на 429/5xx/ECONNRESET/overloaded, terminal на своём timeout/пустом; `nextBackoffMs` экспонента+джиттер кап 30с | [авто] |
-| Наш дедлайн-килл не зацикливает | `tests/agentRetry.test.ts` | code 124 «agent timed out» классифицируется terminal | [авто] |
-| Prompt-injection exfil | `tests/agent.test.ts` (денилист + env-allowlist) | Env лишён секретов даже при проскочившем туле | [авто] |
-| Синхронность денилиста с Claude Code | Глазами сверить список в `mcpConfig.ts` при обновлении CLI | Все exfil-опасные тулы в `--disallowedTools` | [вручную] |
-| Актуальность CLI-флагов | `claude --help` | `--print --bare --output-format json` актуальны | [вручную] |
-| Реальный прогон экстракции | Подать ru/be/kk документ через `runAgent`/очередь | `ok:true`, `items` 1-в-1, верные `taxIdKind`, единый `priceIncludesVat`, валюта ISO-4217 | [нужен LLM-ключ] |
-| Негатив без таблицы / мусор | Документ без таблицы | `ok:false`, «не извлёк табличную часть», spawn 1 раз | [нужен LLM-ключ] |
-| Отказ провайдера 429/529 | Заглушка на 529 / `{is_error:true}` | До 3 попыток с backoff → `ok:false`; invalid key → terminal 1 попытка | [нужен LLM-ключ] |
-| Таймаут / отсутствие бинаря | Долгий ответ >`AGENT_TIMEOUT_MS`=120000; `AGENT_BIN=nonexistent` | SIGKILL terminal без ретрая; ENOENT→terminal | [нужен LLM-ключ] |
-| Сквозной путь в crm-sync | extracted → `crm-sync` | Проверять в разделе crm-sync; агент даёт вход | [нужен живой портал] |
+| Retry-политика | `tests/agentRetry.test.ts` | `classifyAgentError` transient на 429/5xx/ECONNRESET/overloaded, terminal на пустом/своём; `nextBackoffMs` экспонента+джиттер кап 30с | [авто] |
+| Prompt-injection exfil | (архитектурно) | Нет подпроцесса, инструментов и MCP → инъекция документа может дать только JSON; секреты/ФС недостижимы | [авто] |
+| Реальный прогон экстракции | `pnpm verify:chat --provider deepseek\|bitrixgpt` (+ `--doc public/demo/*`) | `ok:true`, `items` 1-в-1, верные `taxIdKind` по стране, единый `priceIncludesVat`, валюта ISO-4217 | [нужен ключ провайдера] |
+| Негатив без таблицы / мусор | Документ без таблицы | `ok:false`, «не извлёк табличную часть» | [нужен ключ провайдера] |
+| Отказ провайдера 429/5xx | Заглушка/реальный лимит | До 3 попыток с backoff → `ok:false`; invalid key → terminal 1 попытка | [нужен ключ провайдера] |
+| Нет ключа провайдера | Снять `DEEPSEEK_API_KEY`/`VIBE_API_KEY` | Джоба падает громко «provider not configured», не молча | [нужен ключ провайдера] |
+| Сквозной путь в crm-sync | `pnpm live:crm --ai` | текст→chat→`runCrmSync`→сделка+позиции→удаление (`created:true`) | [нужен живой портал] |
 
 ### Запись в CRM (crm-sync)
 
@@ -333,11 +329,11 @@
 - Защита памяти extract (`mem_limit` контейнера) от zip/XML/image-бомб; живой прод-деплой (Watchtower по `:latest`, reverse-proxy).
 - Deploy-гейты GHCR (`workflow_run`/`verify-ci`, теги, build-args) — метка **[нужен GH]**.
 
-**[нужен LLM-ключ] Агент-экстрактор (бинарь `AGENT_BIN` + ключ провайдера):**
-- Реальный прогон извлечения из ru/be/kk документов (`items` 1-в-1, `taxIdKind`, единый `priceIncludesVat`, ISO-4217).
+**[нужен ключ провайдера] Chat-экстрактор (`LLM_PROVIDER` + `DEEPSEEK_API_KEY`/`VIBE_API_KEY`):**
+- Реальный прогон извлечения из ru/be/kk документов (`items` 1-в-1, `taxIdKind`, единый `priceIncludesVat`, ISO-4217) — `pnpm verify:chat`.
 - Негатив без таблицы / мусор → терминальная ошибка без ретраев.
-- Отказ провайдера 429/529 (до 3 попыток с backoff), invalid key (terminal), таймаут `AGENT_TIMEOUT_MS`=120000 (SIGKILL), отсутствие бинаря (ENOENT).
-- Реальное извлечение PDF/скан/Excel в полной версии (в демо отсутствует); живой прогон `agent-run` в конвейере очередей.
+- Отказ провайдера 429/5xx (до 3 попыток с backoff), invalid key (terminal), нет ключа → джоба падает громко «provider not configured».
+- Реальное извлечение PDF/скан/Excel в полной версии (в демо тоже chat-путь); живой прогон `agent-run` в конвейере очередей.
 
 **[нужен бинарями] Извлечение текста (poppler/libreoffice/tesseract в образе):**
 - Цифровой PDF (pdftotext), скан-PDF и изображения (OCR rus/bel/kaz/eng), office-конвертация, cp1251-декод, гард `MAX_DOCUMENT_TEXT` на распознанном тексте, наличие бинарников и языков в образе.
@@ -349,7 +345,7 @@
 - **Демо:** `tests/demoExtract.test.ts` (парсинг 9 примеров, `parseNum`, бухгалтерские минусы, edge пустого/безымянного/лимитов), `tests/demoRateLimit.test.ts` (3/10мин, `clientKey` из XFF, `sweep`), `tests/demoUpload.test.ts` (расширения/размер/декод).
 - **Лендинг:** `tests/landing.test.ts` (`LANDING_STEPS`/`FEATURES`, `copyrightYears` с клэмпом).
 - **Загрузка/extract:** `tests/importUpload.test.ts`, `tests/fileStore.test.ts`, `tests/textExtract.test.ts`, `tests/decodeBytes.test.ts`, `tests/pipelineHandlers.test.ts`, `tests/jobStore.test.ts`, `tests/resolveFrameMember.test.ts`, `tests/frameAuth.test.ts`.
-- **Агент:** `tests/runAgent.test.ts`, `tests/extractedDocument.test.ts`, `tests/extractPrompt.test.ts`, `tests/agent.test.ts`, `tests/agentSpawn.test.ts`, `tests/agentRetry.test.ts` (оркестрация, нормализация, санитайз env, `extractJson`, retry-политика, дедлайн-килл).
+- **Экстрактор:** `tests/llmConfig.test.ts`, `tests/chatExtract.test.ts`, `tests/extractedDocument.test.ts`, `tests/extractPrompt.test.ts`, `tests/agent.test.ts` (`extractJson`), `tests/agentRetry.test.ts` (резолвер провайдера, оркестрация chat+ретрай, нормализация, промпт, retry-политика).
 - **crm-sync:** `tests/crmSyncCore.test.ts`, `tests/server-crm.test.ts`, `tests/productLookup.test.ts`, `tests/vat.test.ts`, `tests/units.test.ts`, `tests/routing.test.ts`, `tests/chatNotify.test.ts`, `tests/queueHandlers.test.ts`, `tests/diskActivity.test.ts` (аборт без потери строк, идемпотентность, товары/единицы, нейтрализация BB, диск/дело-ядро).
 - **Очереди:** `tests/queueConnection.test.ts`, `tests/queueStats.test.ts`, `tests/pipelineHandlers.test.ts`, `tests/queueHandlers.test.ts` (парсинг Redis-URL, агрегация счётчиков, порядок enqueue↔delete).
 - **События Б24:** `tests/b24Events.test.ts` (скобочная форма, prototype-pollution, `safeEqual`, `decideB24Event`), `tests/server-glue.test.ts` (write-once `saveToken`, порядок `deletePortal`).

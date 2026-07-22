@@ -140,7 +140,7 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 6. **Секреты не видны бинарям извлечения (GH #99).** libreoffice/pdftotext/tesseract/pdftoppm
    гоняют недоверенные документы (макросы, битые PDF), поэтому запускаются с **урезанным env**
    (allow-list `subprocessEnv` в `server/utils/extractRunners.ts`: PATH/HOME/локаль/OMP/шрифты) —
-   без `DATABASE_URL`/`B24_TOKEN_ENC_KEY`/`B24_CLIENT_SECRET`. Аналог `agentSpawnEnv` для агента.
+   без `DATABASE_URL`/`B24_TOKEN_ENC_KEY`/`B24_CLIENT_SECRET` (единственные подпроцессы — OCR/office-раннеры; LLM-вызов in-process).
 
 **Комфортно (несколько документов параллельно):** 4–8 vCPU / 2–4 ГБ — по сути 1 ядро на один
 одновременный тяжёлый документ. Но это уже про «быстро» → таких клиентов уводим в self-hosted, а не
