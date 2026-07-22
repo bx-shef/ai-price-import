@@ -25,16 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-bel tesseract-ocr-kaz \
       fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
-# Headless extraction agent (AGENT_BIN=claude): the Claude Code CLI, spawned per job
-# as a PURE text→JSON extractor against DeepSeek's Anthropic-compatible endpoint
-# (ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL). Without it the pipeline fails «spawn claude ENOENT».
-RUN npm install -g @anthropic-ai/claude-code@2.1.207
+# Extraction is a pure OpenAI-compatible chat call (DeepSeek/BitrixGPT via the `openai` SDK,
+# in-process) — no subprocess agent, so no CLI binary to install. Provider + key come from env
+# (LLM_PROVIDER + DEEPSEEK_API_KEY / VIBE_API_KEY); see docs/redesign 03-stack.
 ENV NODE_ENV=production
 ENV UPLOAD_DIR=/data/uploads
-# HOME must be defined + writable: the agent subprocess (secret-free env via agentSpawnEnv)
-# passes HOME through, and Claude Code writes its config under $HOME/.claude on first run.
 ENV HOME=/root
-RUN mkdir -p /data/uploads /root/.claude
+RUN mkdir -p /data/uploads
 # Fail the build FAST if the extraction toolchain is broken. A package rename / partial install
 # would otherwise pass `docker build` and only surface at RUNTIME («fragile binary env» risk from the
 # review). Assert every binary the file-extract worker spawns is present AND runnable, plus all four
@@ -50,7 +47,6 @@ RUN set -eu; \
     pdftoppm -v 2>&1 | grep -qiE 'pdftoppm version [0-9]'; \
     timeout 60 libreoffice --version 2>&1 | grep -qiE 'libreoffice [0-9]'; \
     tesseract --version 2>&1 | grep -qiE 'tesseract [0-9]'; \
-    claude --version >/dev/null; \
     langs="$(tesseract --list-langs 2>&1)"; \
     for l in rus bel kaz eng; do echo "$langs" | grep -qx "$l" || { echo "missing tesseract lang: $l" >&2; exit 1; }; done
 COPY --from=build /app/.output ./.output

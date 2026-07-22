@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveAgentEngine, resolveLlmConfig, resolveLlmProvider } from '../server/agent/llmConfig'
+import { resolveLlmConfig, resolveLlmProvider } from '../server/agent/llmConfig'
 
 describe('resolveLlmProvider', () => {
   it('accepts the known providers case-insensitively', () => {
@@ -14,20 +14,19 @@ describe('resolveLlmProvider', () => {
   })
 })
 
-describe('resolveAgentEngine', () => {
-  it('returns chat only for the exact opt-in, else claude', () => {
-    expect(resolveAgentEngine('chat')).toBe('chat')
-    expect(resolveAgentEngine(' CHAT ')).toBe('chat')
-    expect(resolveAgentEngine('claude')).toBe('claude')
-    expect(resolveAgentEngine(undefined)).toBe('claude')
-    expect(resolveAgentEngine('openai')).toBe('claude')
+describe('resolveLlmConfig · deepseek key fallback (cutover)', () => {
+  it('uses DEEPSEEK_API_KEY when set', () => {
+    expect(resolveLlmConfig({ LLM_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: 'sk-new', ANTHROPIC_AUTH_TOKEN: 'sk-old' }).apiKey).toBe('sk-new')
+  })
+  it('falls back to the legacy ANTHROPIC_AUTH_TOKEN so prod keeps working with no env change', () => {
+    expect(resolveLlmConfig({ LLM_PROVIDER: 'deepseek', ANTHROPIC_AUTH_TOKEN: 'sk-old' }).apiKey).toBe('sk-old')
   })
 })
 
 describe('resolveLlmConfig', () => {
   it('deepseek preset with env key; base/model default', () => {
     const c = resolveLlmConfig({ LLM_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: 'sk-ds' })
-    expect(c).toEqual({ provider: 'deepseek', baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-ds', model: 'deepseek-chat', label: 'deepseek' })
+    expect(c).toEqual({ provider: 'deepseek', baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-ds', model: 'deepseek-v4-flash', label: 'deepseek' })
   })
 
   it('bitrixgpt preset; falls back to VIBE_API_KEY and the bitrix model', () => {

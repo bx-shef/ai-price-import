@@ -1,7 +1,7 @@
 // Provider config for the OpenAI-compatible chat extractor (variant 2 — replaces the
 // claude-code CLI). BOTH supported providers expose an OpenAI-compatible
 // /v1/chat/completions, so ONE transport serves both and the provider is chosen by env:
-//   • deepseek  — https://api.deepseek.com/v1 (model deepseek-chat); jurisdiction КНР (#215)
+//   • deepseek  — https://api.deepseek.com/v1 (model deepseek-v4-flash); jurisdiction КНР (#215)
 //   • bitrixgpt — Bitrix Vibecode AI Router https://vibecode.bitrix24.tech/v1
 //                 (model bitrix/bitrixgpt-5.5); jurisdiction is Bitrix's responsibility
 //   • custom    — any OpenAI-compatible endpoint via explicit LLM_BASE_URL/KEY/MODEL
@@ -22,7 +22,7 @@ export interface LlmConfig {
 
 /** Built-in defaults per provider (base URL + model); overridable by env. */
 const PRESETS = {
-  deepseek: { baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  deepseek: { baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
   bitrixgpt: { baseURL: 'https://vibecode.bitrix24.tech/v1', model: 'bitrix/bitrixgpt-5.5' }
 } as const
 
@@ -32,15 +32,6 @@ export function resolveLlmProvider(raw: string | undefined): LlmProvider {
   return v === 'deepseek' || v === 'bitrixgpt' || v === 'custom' ? v : 'deepseek'
 }
 
-/**
- * Engine selector: 'chat' = the OpenAI-compatible extractor (this module), 'claude' = the
- * legacy claude-code CLI. Default 'claude' keeps prod behaviour unchanged until an operator
- * sets a provider key and flips AGENT_ENGINE=chat (then the claude path is removed — see docs).
- */
-export function resolveAgentEngine(raw: string | undefined): 'chat' | 'claude' {
-  return (raw ?? '').trim().toLowerCase() === 'chat' ? 'chat' : 'claude'
-}
-
 /** Resolve the active provider config from env. A missing key yields apiKey:'' (fail-closed). */
 export function resolveLlmConfig(env: Record<string, string | undefined>): LlmConfig {
   const provider = resolveLlmProvider(env.LLM_PROVIDER)
@@ -48,7 +39,10 @@ export function resolveLlmConfig(env: Record<string, string | undefined>): LlmCo
     return {
       provider,
       baseURL: env.DEEPSEEK_BASE_URL?.trim() || PRESETS.deepseek.baseURL,
-      apiKey: env.DEEPSEEK_API_KEY?.trim() ?? '',
+      // Prod-safe cutover: the same DeepSeek key was previously stored in ANTHROPIC_AUTH_TOKEN
+      // (legacy claude path). Fall back to it so removing the claude engine needs NO prod env
+      // change — the key is provider-agnostic; only the endpoint (/v1) and protocol differ.
+      apiKey: env.DEEPSEEK_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim() || '',
       model: env.DEEPSEEK_MODEL?.trim() || PRESETS.deepseek.model,
       label: 'deepseek'
     }

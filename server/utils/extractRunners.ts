@@ -19,8 +19,9 @@ const RUN_TIMEOUT_MS = 90_000
 // Least-privilege env for the extraction subprocesses (libreoffice/pdftotext/tesseract/
 // pdftoppm). They run UNTRUSTED documents (office macros, crafted PDFs), so they must NOT
 // see backend secrets — DATABASE_URL, B24_TOKEN_ENC_KEY, B24_CLIENT_SECRET, app token, etc.
-// (mirrors the agent's agentSpawnEnv guard). Only what these tools legitimately need to
-// run + render text correctly is passed through. GH #99.
+// (these extraction subprocesses are the only spawned children now that the LLM call is an
+// in-process HTTP request). Only what these tools legitimately need to run + render text
+// correctly is passed through. GH #99.
 // Assumes apt-installed binaries (compiled rpath) → no LD_LIBRARY_PATH needed; and headless
 // libreoffice with no Xvfb → DISPLAY intentionally omitted (add it here only if the image
 // ever runs xvfb-run). Adjust if the image changes how these tools are built.

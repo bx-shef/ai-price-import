@@ -1,6 +1,6 @@
 # Деплой (редизайн procure-ai)
 
-> Last reviewed: 2026-07-21
+> Last reviewed: 2026-07-22
 
 Как развернуть облачное приложение (лендинг + in-portal UI + backend-пайплайн) в проде.
 Схема — как у эталона `client-bank-alfa-by`: **GHCR-образ + Watchtower за общим nginx-proxy**,
@@ -14,14 +14,15 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 - **Redis** — очереди BullMQ (`b24-events`/`file-extract`/`agent-run`/`crm-sync`). Без него пайплайн выключен, загрузка отдаёт 503.
 - Бинарники извлечения — **в образе** (`poppler-utils`, `libreoffice`, `tesseract-ocr` + явные
   языковые пакеты `eng/rus/bel/kaz`). **Fail-fast проверка наличия и запускаемости на сборке:** отдельный
-  `RUN` в backend-стадии Dockerfile прогоняет `pdftotext`/`pdftoppm`/`libreoffice`/`tesseract`/`claude` и
+  `RUN` в backend-стадии Dockerfile прогоняет `pdftotext`/`pdftoppm`/`libreoffice`/`tesseract` и
   сверяет все 4 OCR-языка (`--list-langs`) — сломанный/переименованный пакет роняет `docker build`, а не
   рантайм. Нюансы: грепаем строку **версии** (имя+цифра, не голое имя — иначе «error loading shared
   libraries» прошло бы), poppler `-v` даёт 99 даже здоровый → пайп на `grep` (его exit-код и решает),
   `libreoffice --version` под `timeout` (страховка от зависшего first-run профиля).
-- **Агент-экстрактор** (`AGENT_BIN=claude`) — CLI `@anthropic-ai/claude-code` **в образе** (глобально);
-  гоняется против DeepSeek по `ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL`. Без него пайплайн падает
-  «spawn claude ENOENT». `HOME` задан (`/root`) — Claude Code пишет конфиг в `$HOME/.claude`.
+- **Экстрактор** — OpenAI-совместимый chat-вызов **в процессе** (`openai` SDK), никакого CLI-бинаря
+  в образе. Провайдер по `LLM_PROVIDER` (deepseek/bitrixgpt/custom), ключ — `DEEPSEEK_API_KEY` **или**
+  легаси `ANTHROPIC_AUTH_TOKEN` (cutover без смены env) / `VIBE_API_KEY`. Нет ключа ⇒ джоба падает
+  громко («provider not configured»).
 
 ## Сборка и запуск
 
@@ -62,7 +63,7 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 
 Обязательные: `DATABASE_URL`, `REDIS_URL`, `B24_CLIENT_ID/SECRET`,
 `B24_TOKEN_ENC_KEY` (base64 32 байта), `NUXT_PUBLIC_SITE_URL` (абсолютный — из него строится URL
-хендлера событий Б24). LLM-провайдер (агент): `ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL` (DeepSeek).
+хендлера событий Б24). LLM-провайдер: `LLM_PROVIDER` + `DEEPSEEK_API_KEY`/`VIBE_API_KEY` (или легаси `ANTHROPIC_AUTH_TOKEN`).
 Оператор (опц.): `OPERATOR_PASSWORD` + **`OPERATOR_SESSION_SECRET`** (свой, не фолбэк на enc-key).
 `B24_APPLICATION_TOKEN` — **не заполняем**: `application_token` приходит в `ONAPPINSTALL` и
 запоминается по порталу (B24 «Безопасность в обработчиках»); первая установка проверяется по
@@ -79,7 +80,7 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 - **Антифлуд публичного демо (обязательно):** `/api/demo/extract` неаутентифицирован и дорог
   (OCR/LLM) → пер-IP `limit_req zone=demo` (~6 r/m, burst 3) + `limit_conn demo_conn 2` (не больше 2
   одновременных 300s-джоб с IP), абьюз → 429. Дополняет app-лимитер (3 файла/10мин) и глобальный
-  `AI_MAX_CONCURRENCY` — чтобы флуд не жёг OCR CPU + расход `ANTHROPIC_*`.
+  `AI_MAX_CONCURRENCY` — чтобы флуд не жёг OCR CPU + расход LLM-провайдера.
 - **Внутренние эндпоинты — `deny all` снаружи:** `/api/queues` (токен приложения, для консоли).
 - **HSTS:** `Strict-Transport-Security: max-age=63072000; includeSubDomains` — TLS терминирует общий
   фронт-прокси, vhost только по HTTPS; `includeSubDomains` скоуплен на поддомены `price-import.*` (их нет),

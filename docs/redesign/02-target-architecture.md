@@ -1,6 +1,6 @@
 # Целевая архитектура (редизайн procure-ai)
 
-> Last reviewed: 2026-07-20
+> Last reviewed: 2026-07-22
 
 Как должно быть после редизайна. Синтез двух референсов: раскладка/дисциплина/лендинг/деплой —
 из эталона `client-bank-alfa-by` (облачное приложение Маркета Б24); слой «изолированный MCP + агент
@@ -202,7 +202,7 @@ server/                   # Nitro
                           #   b24Sdk, companyLookup, productLookup, crmWrite (договор — не ищем)
   queue/                  # topology, connection, producers, handlers, worker, cron, stats
   db/                     # client.ts (pg pool + schema: portal_tokens, portal_tombstone, import_text, import_doc, metrics_counter, portal_app_rating; job_result+import_job упразднены #135/#B), плагины
-  agent/                  # оркестрация Claude Code (spawn, MCP-конфиг, таймауты/ретраи, DeepSeek env)
+  agent/                  # экстрактор: OpenAI-совместимый chat (llmConfig/chatExtract/openaiChat, ретраи, extractJson)
   plugins/                # migrate, queue, envCheck
 mcp/                      # изолированный MCP-сервер (первоклассный код + тесты)
   tools/                  # find-supplier, find-product(s), create-target
@@ -225,9 +225,9 @@ public/  scripts/  docs/  nginx.conf  Dockerfile  docker-compose*.yml  .github/
 1. `POST /api/import/upload` → сохранить файл, создать задание (Redis, TTL — не Postgres, #B/#D), **опц. ручной override цели**
    рядом с файлом (тип сущности + направление), `enqueue file-extract`.
 2. `file-extract` (worker): pdftotext / OCR (tesseract `rus`+`bel`+`kaz`+`eng`) / office → `DOCUMENT_TEXT` → `enqueue agent-run`. Языки документов: рус/бел/каз — см. [`06-multilingual.md`](06-multilingual.md).
-3. `agent-run` (worker): spawn Claude Code (DeepSeek) с промптом + `DOCUMENT_TEXT`; агент через MCP
-   ищет поставщика и товары (стандартный REST по токену портала + маппинг), извлекает структуру
-   позиций; результат → `enqueue crm-sync`. Договор не ищем (Q8).
+3. `agent-run` (worker): OpenAI-совместимый chat-вызов (DeepSeek/BitrixGPT, in-process) с промптом +
+   `DOCUMENT_TEXT` → извлечённая структура позиций (чистый экстрактор, **без** доступа к Bitrix24);
+   поиск поставщика/товаров и запись — детерминированно в `crm-sync`. Результат → `enqueue crm-sync`.
 4. `crm-sync` (worker): **резолв цели** (ручной override → авто-роутинг
    агента → дефолт из настроек) → `create_target` через MCP → **стандартный REST** создаёт цель
    (`crm.item.add` по `entityTypeId`+`categoryId`; для сделки/КП/смарт-счёта — с явными
@@ -461,7 +461,7 @@ event.bind(ONAPPINSTALL/ONAPPUNINSTALL → /api/b24/events) → installFinish`. 
 1. Backend пишет **временный конфиг-файл** (`0600`, вне argv/`ps`) с: URL MCP-сервера + **короткоживущий
    per-job bearer к самому MCP** + идентификатор джобы/портала (`member_id`). Этот bearer — авторизация
    агента к MCP, НЕ токен Bitrix24.
-2. Агент (Claude Code/DeepSeek) запускается с этим MCP-конфигом; в его контекст токен Bitrix24 **не
+2. Агент (LLM) запускается с этим MCP-конфигом; в его контекст токен Bitrix24 **не
    попадает никогда**.
 3. MCP при вызове инструмента по `member_id` берёт **OAuth-токен портала** из общего защищённого
    источника (backend/Postgres, refresh расшифровывается), делает `ensureAccessToken` и зовёт REST.

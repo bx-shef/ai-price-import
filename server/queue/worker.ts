@@ -8,8 +8,7 @@ import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveEventDeps, liveFileExtrac
 import { setJobStatus } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
 import { query } from '../db/client'
-import { makeAgentSpawn } from '../agent/spawn'
-import { resolveAgentEngine, resolveLlmConfig } from '../agent/llmConfig'
+import { resolveLlmConfig } from '../agent/llmConfig'
 import { makeChatFn } from '../agent/openaiChat'
 import { liveExtractRunners } from '../utils/extractRunners'
 import { withSpan } from '../utils/telemetrySpan'
@@ -88,23 +87,18 @@ export function crmLockTuning(): { lockDuration: number, stalledInterval: number
 
 /** Assemble LiveInfra from the environment (the single place pipeline secrets are read). */
 export function buildLiveInfra(): LiveInfra {
-  // Extraction engine (AGENT_ENGINE): 'chat' = OpenAI-compatible transport (DeepSeek/BitrixGPT),
-  // else the legacy claude-code CLI. On 'chat' we resolve the provider config + build the live
-  // chat transport once; the API key stays in THIS process (no subprocess), so no env-sanitising
-  // is needed for it (a pure completion can't touch the filesystem/portal).
-  const agentEngine = resolveAgentEngine(process.env.AGENT_ENGINE)
-  const llm = agentEngine === 'chat' ? resolveLlmConfig(process.env) : null
+  // Extractor: OpenAI-compatible transport (DeepSeek/BitrixGPT), resolved once. The API key stays
+  // in THIS process (no subprocess), so no env-sanitising is needed — a pure completion can't touch
+  // the filesystem/portal. A missing key ⇒ makeChatFn returns a throwing transport (fail-closed).
+  const llm = resolveLlmConfig(process.env)
   return {
     query,
     encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
     clientId: process.env.B24_CLIENT_ID ?? '',
     clientSecret: process.env.B24_CLIENT_SECRET ?? '',
     now: () => Date.now(),
-    // Agent (claude path) runs with a SANITIZED env (no backend secrets) — see agentSpawnEnv.
-    agentSpawn: makeAgentSpawn(),
-    agentEngine,
-    chatFn: llm ? makeChatFn(llm) : null,
-    llmModel: llm?.model ?? '',
+    chatFn: makeChatFn(llm),
+    llmModel: llm.model,
     runners: liveExtractRunners
   }
 }

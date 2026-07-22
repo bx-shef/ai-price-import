@@ -5,17 +5,17 @@
 //
 //   pnpm live:crm             # crafted накладная → deal (entityTypeId 2) → verify → delete
 //   pnpm live:crm --type счёт  # crafted счёт → smart-invoice (entityTypeId 31, xmlId marker)
-//   pnpm live:crm --ai        # document TEXT → DeepSeek → runCrmSync → verify → delete
+//   pnpm live:crm --ai        # document TEXT → chat extractor → runCrmSync → verify → delete
 //   pnpm live:crm --keep      # do not delete the created entity
 //
 // `--type` exercises the routing table below: накладная→deal (originId marker) and
 // счёт→smart-invoice (xmlId marker) are DISTINCT idempotency code paths, so both are worth a
-// live run. Reads git-ignored env: .env.b24test (B24_TEST_WEBHOOK) and, with --ai, .env
-// (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN). Creates then deletes a [TEST] entity.
+// live run. Reads git-ignored env: .env.b24test (B24_TEST_WEBHOOK) and, with --ai, the LLM
+// provider from env (LLM_PROVIDER + DEEPSEEK_API_KEY / VIBE_API_KEY). Creates then deletes a [TEST] entity.
 import { readFileSync } from 'node:fs'
 import { buildExtractionPrompt } from '../prompts/extract.ts'
 import { runCrmSync } from '../server/queue/crmSyncCore.ts'
-import { resolveAgentEngine, resolveLlmConfig } from '../server/agent/llmConfig.ts'
+import { resolveLlmConfig } from '../server/agent/llmConfig.ts'
 import { makeChatFn } from '../server/agent/openaiChat.ts'
 import { runChatExtract } from '../server/agent/chatExtract.ts'
 import { findCompanyByTaxId } from '../server/utils/companyLookup.ts'
@@ -90,32 +90,18 @@ const DOC_TEXT = [
 ].join('\n')
 
 async function extractWithAi(text) {
-  // Preferred: the NEW chat engine (AGENT_ENGINE=chat) — the production path after #223. Uses the
-  // real runChatExtract → makeChatFn against an OpenAI-compatible provider (DeepSeek/BitrixGPT),
-  // so this E2E exercises exactly what the worker runs. Provider + key come from env (LLM_PROVIDER
-  // + DEEPSEEK_API_KEY / VIBE_API_KEY). Returns a validated ExtractedDocument.
-  if (resolveAgentEngine(process.env.AGENT_ENGINE) === 'chat') {
-    const cfg = resolveLlmConfig(process.env)
-    if (!cfg.apiKey) throw new Error(`нет ключа для провайдера '${cfg.label}' (задай DEEPSEEK_API_KEY / VIBE_API_KEY)`)
-    console.log(`extract: chat engine · provider=${cfg.label} model=${cfg.model}`)
-    const out = await runChatExtract(
-      { documentText: text, instructions: buildExtractionPrompt(), model: cfg.model },
-      { chat: makeChatFn(cfg), sleep: ms => new Promise(r => setTimeout(r, ms)), random: () => Math.random() }
-    )
-    if (!out.ok || !out.document) throw new Error(out.error || 'chat extract failed')
-    return out.document
-  }
-  // Legacy claude/anthropic path (reads .env ANTHROPIC_*) — removed after the chat cutover.
-  const BASE = readEnv('.env', 'ANTHROPIC_BASE_URL')
-  const KEY = readEnv('.env', 'ANTHROPIC_AUTH_TOKEN')
-  const r = await fetch(`${BASE}/v1/messages`, {
-    method: 'POST',
-    headers: { 'x-api-key': KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'deepseek-chat', max_tokens: 1500, system: buildExtractionPrompt(), messages: [{ role: 'user', content: text }] })
-  })
-  const j = await r.json()
-  const raw = j.content.map(c => c.text).join('')
-  return JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ''))
+  // The production extractor path: runChatExtract → makeChatFn against an OpenAI-compatible provider
+  // (DeepSeek/BitrixGPT), exactly what the worker runs. Provider + key from env (LLM_PROVIDER +
+  // DEEPSEEK_API_KEY / VIBE_API_KEY). Returns a validated ExtractedDocument.
+  const cfg = resolveLlmConfig(process.env)
+  if (!cfg.apiKey) throw new Error(`нет ключа для провайдера '${cfg.label}' (задай DEEPSEEK_API_KEY / VIBE_API_KEY)`)
+  console.log(`extract: provider=${cfg.label} model=${cfg.model}`)
+  const out = await runChatExtract(
+    { documentText: text, instructions: buildExtractionPrompt(), model: cfg.model },
+    { chat: makeChatFn(cfg), sleep: ms => new Promise(r => setTimeout(r, ms)), random: () => Math.random() }
+  )
+  if (!out.ok || !out.document) throw new Error(out.error || 'chat extract failed')
+  return out.document
 }
 
 const mapping = {
