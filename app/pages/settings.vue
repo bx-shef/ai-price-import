@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { navigateTo } from '#app'
 import type { AccordionItem } from '@bitrix24/b24ui-nuxt'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
@@ -26,14 +26,18 @@ useHead({ title: 'Настройки импорта' })
 const { mapping, loading, saving, saved, error, isAdmin, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()
 const { init: initB24, get: getFrame } = useB24()
-const route = useRoute()
-// Opened as a B24 slider (from /app via frame.slider.openPath('/settings?slider=1')) → Save/Cancel
-// close the slider (starter pattern). As a plain page (direct link) they don't close.
-const asSlider = computed(() => route.query.slider === '1')
+// Reached IN the portal (from /app via in-frame navigation) → Save/Cancel return to /app (same-origin
+// SPA route, the frame handshake survives). As a plain page (direct link, no frame) they stay put.
+const inPortal = ref(false)
 // Show the "read-only for non-admins" notice once settings have loaded (in a portal) and the
 // caller isn't an admin. Writes are also blocked server-side + in useSettings.
 const showReadOnly = computed(() => !loading.value && !error.value && !isAdmin.value)
 onMounted(async () => {
+  // Detect the portal frame (inert/no-op standalone) so Save/Cancel know whether to return to /app.
+  try {
+    await initB24()
+    inPortal.value = !!getFrame()
+  } catch { /* standalone → stay put on Save/Cancel */ }
   await load()
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
   seedRoutingRows() // build editable routing rules from the loaded mapping (once)
@@ -46,30 +50,29 @@ onMounted(async () => {
 })
 
 /** Explicit save (starter Save/Cancel pattern — no autosave). On success, notify other open
- *  instances to reload (pull `reload.options`), then close if opened as a slider. */
+ *  instances to reload (pull `reload.options`), then — in the portal — return to /app. */
 async function saveAndClose(): Promise<void> {
   await save()
   if (error.value) return // save() sets error; keep the form open so the admin can retry
   void notifyReload()
-  if (asSlider.value) await closeSlider()
+  if (inPortal.value) await goBack()
 }
-/** Cancel: close the slider (discard) or, as a page, reload the server copy. Re-seed the unit/routing
- *  row editors from the reloaded mapping — they're seeded once on mount, so a bare load() would leave
- *  them showing the pre-cancel edits (which then re-sync back into mapping on the next row edit). */
+/** Cancel: in the portal return to /app (discard); as a plain page reload the server copy. Re-seed the
+ *  unit/routing row editors from the reloaded mapping — they're seeded once on mount, so a bare load()
+ *  would leave them showing the pre-cancel edits (which then re-sync back into mapping on the next edit). */
 async function cancel(): Promise<void> {
-  if (asSlider.value) {
-    await closeSlider()
+  if (inPortal.value) {
+    await goBack()
     return
   }
   await load()
   seedUnitRows()
   seedRoutingRows()
 }
-async function closeSlider(): Promise<void> {
-  try {
-    await initB24()
-    await getFrame()?.parent.closeApplication()
-  } catch { /* not framed → nothing to close */ }
+/** Return to the import page. In-frame this is a same-origin SPA route change (the B24 handshake
+ *  survives — no reload), so the frame token stays valid on /app. */
+async function goBack(): Promise<void> {
+  await navigateTo('/app')
 }
 
 // Accordion sections (starter B24Accordion pattern) — group the settings into three collapsibles.
@@ -217,8 +220,19 @@ function removeRoutingRow(id: number) {
 watch(routingRows, (rows) => {
   mapping.value.routingRules = rowsToRules(rows.map(r => ({ type: r.type, keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId })))
 }, { deep: true })
-// Type dropdown: the known document types + «любой тип» (empty → match by keywords only).
-const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: '' }, ...DOCUMENT_TYPES.map(t => ({ label: t, value: t }))]
+// Type dropdown: «любой тип» + the known document types. The «any» value is a NON-EMPTY sentinel
+// (`__any__`) — b24ui/Reka SelectItem throws on an empty-string value — mapped to the stored ''
+// (match by keywords only) via `typeValue`/`setRowType`.
+const ANY_TYPE_VALUE = '__any__'
+const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: ANY_TYPE_VALUE }, ...DOCUMENT_TYPES.map(t => ({ label: t, value: t }))]
+/** Row type as the select value: stored '' (any) ↔ the non-empty sentinel the Select requires. */
+function typeValue(row: EditableRoutingRow): string {
+  return row.type || ANY_TYPE_VALUE
+}
+function setRowType(row: EditableRoutingRow, v: unknown): void {
+  const s = typeof v === 'string' ? v : String(v ?? '')
+  row.type = s === ANY_TYPE_VALUE ? '' : s
+}
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
@@ -330,6 +344,14 @@ const ON_MISSING_ITEMS = [
 
 <template>
   <div class="mx-auto max-w-2xl p-4 sm:p-6">
+    <B24Button
+      v-if="inPortal"
+      label="← К импорту"
+      color="air-tertiary-no-accent"
+      size="sm"
+      class="mb-3"
+      @click="goBack"
+    />
     <h1 class="mb-1 text-xl font-semibold">
       Настройки импорта
     </h1>
@@ -424,10 +446,11 @@ const ON_MISSING_ITEMS = [
                 class="flex flex-wrap items-center gap-2"
               >
                 <B24Select
-                  v-model="row.type"
+                  :model-value="typeValue(row)"
                   :items="DOCUMENT_TYPE_ITEMS"
                   class="w-40"
                   :aria-label="`Правило ${i + 1}: тип документа`"
+                  @update:model-value="(v: unknown) => setRowType(row, v)"
                 />
                 <B24Input
                   v-model="row.keywords"

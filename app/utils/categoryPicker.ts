@@ -19,11 +19,16 @@ export interface CategoryTarget {
  *  Worded so it does NOT collide with a funnel flagged isDefault (which is suffixed «(осн.)»). */
 export const CATEGORY_SENTINEL_LABEL = '— не задавать (воронка портала) —'
 
-/** b24ui Select items for an entity's directions: the sentinel ('' value) + each funnel.
+/** Sentinel Select VALUE for «don't set». MUST be non-empty: the b24ui/Reka `SelectItem` throws
+ *  on an empty-string value ("must have a value prop that is not an empty string"). We map it back
+ *  to `undefined` (no categoryId) in `setCategory` / `categoryValue`. */
+export const CATEGORY_SENTINEL_VALUE = '__none__'
+
+/** b24ui Select items for an entity's directions: the sentinel + each funnel.
  *  The isDefault funnel is suffixed «(осн.)» — distinct from the sentinel's wording. */
 export function categoryItems(cats: CrmCategoryOption[] | undefined): Array<{ label: string, value: string }> {
   return [
-    { label: CATEGORY_SENTINEL_LABEL, value: '' },
+    { label: CATEGORY_SENTINEL_LABEL, value: CATEGORY_SENTINEL_VALUE },
     ...(cats ?? []).map(c => ({ label: c.isDefault ? `${c.name} (осн.)` : c.name, value: String(c.id) }))
   ]
 }
@@ -33,16 +38,16 @@ export function hasCategories(cats: CrmCategoryOption[] | undefined): boolean {
   return (cats ?? []).length > 0
 }
 
-/** Current categoryId as the select's string value ('' = sentinel / none). */
+/** Current categoryId as the select's string value (sentinel value = none). */
 export function categoryValue(target: CategoryTarget): string {
-  return target.categoryId == null ? '' : String(target.categoryId)
+  return target.categoryId == null ? CATEGORY_SENTINEL_VALUE : String(target.categoryId)
 }
 
-/** Write the select's string value back to a numeric categoryId (or clear on '').
- *  '' → undefined FIRST, so Number('')===0 is never reached; a non-integer coerces to undefined. */
+/** Write the select's string value back to a numeric categoryId (or clear on the sentinel/empty).
+ *  Sentinel/'' → undefined FIRST, so Number()===0 is never reached; a non-integer coerces to undefined. */
 export function setCategory(target: CategoryTarget, v: unknown): void {
   const s = typeof v === 'string' ? v : String(v ?? '')
-  if (s === '') {
+  if (s === '' || s === CATEGORY_SENTINEL_VALUE) {
     target.categoryId = undefined
     return
   }

@@ -16,10 +16,14 @@ export interface StageTarget {
 /** Sentinel = «don't pin a stage» (the entity is created in its default/first stage). */
 export const STAGE_SENTINEL_LABEL = '— стадия по умолчанию —'
 
-/** b24ui Select items for a stage list: the sentinel ('' value) + each stage (label = name, else id). */
+/** Sentinel Select VALUE for «default stage». MUST be non-empty: b24ui/Reka `SelectItem` throws on
+ *  an empty-string value. Mapped back to `undefined` in `setStage` / `stageValue`. */
+export const STAGE_SENTINEL_VALUE = '__none__'
+
+/** b24ui Select items for a stage list: the sentinel + each stage (label = name, else id). */
 export function stageItems(stages: CrmStageOption[] | undefined): Array<{ label: string, value: string }> {
   return [
-    { label: STAGE_SENTINEL_LABEL, value: '' },
+    { label: STAGE_SENTINEL_LABEL, value: STAGE_SENTINEL_VALUE },
     ...(stages ?? []).map(s => ({ label: s.name || s.id, value: s.id }))
   ]
 }
@@ -29,15 +33,15 @@ export function hasStages(stages: CrmStageOption[] | undefined): boolean {
   return (stages ?? []).length > 0
 }
 
-/** Current stageId as the select's string value ('' = sentinel / none). */
+/** Current stageId as the select's string value (sentinel value = default/none). */
 export function stageValue(target: StageTarget): string {
-  return target.stageId ?? ''
+  return target.stageId ?? STAGE_SENTINEL_VALUE
 }
 
-/** Write the select's string value back to stageId (or clear on ''), bounded. */
+/** Write the select's string value back to stageId (or clear on the sentinel/empty), bounded. */
 export function setStage(target: StageTarget, v: unknown): void {
   const s = typeof v === 'string' ? v : String(v ?? '')
-  target.stageId = s === '' ? undefined : s.slice(0, 100)
+  target.stageId = s === '' || s === STAGE_SENTINEL_VALUE ? undefined : s.slice(0, 100)
 }
 
 /** Drop a target's stageId if it isn't among the LOADED stages (entity/category switched, or the
