@@ -8,7 +8,6 @@ import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
-import { useB24 } from '~/composables/useB24'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
 import * as catPicker from '~/utils/categoryPicker'
@@ -37,20 +36,13 @@ const { mapping, isAdmin, error: settingsError, load: loadSettings } = useSettin
 const settingsLoaded = ref(false)
 const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
 
-// Open settings the B24-native way: as a slider (starter pattern) inside the portal, so an admin edits
-// and closes without leaving /app; outside a frame just navigate. `?slider=1` tells /settings to close
-// the slider on Save/Cancel.
-const { init: initB24, get: getFrame } = useB24()
+// Open settings by navigating the app's OWN SPA route (/settings) in place. This works both inside
+// the portal iframe and standalone: it's a client-side route change within the same origin, so the
+// B24 frame handshake (window.name / postMessage channel, held in the useB24 singleton) survives and
+// /settings keeps its frame token. We do NOT use `slider.openPath` — that opens a PORTAL-relative
+// path (it resolved to `<portal>/settings` → 404). The B24-native `openSliderAppPage({place})` needs
+// an install-time placement bind + live-portal verification (follow-up), so it's deferred.
 async function openSettings(): Promise<void> {
-  await initB24()
-  const frame = getFrame()
-  if (frame) {
-    try {
-      // getUrl anchors the path into THIS app's slider context (same pattern as useAppRating).
-      await frame.slider.openPath(frame.slider.getUrl('/settings?slider=1'))
-      return
-    } catch { /* fall through to plain navigation */ }
-  }
   await navigateTo('/settings')
 }
 
@@ -103,7 +95,9 @@ async function chooseTarget(id: number | null) {
 }
 const catItems = computed(() => catPicker.categoryItems(cats.value))
 const showDirection = computed(() => catPicker.hasCategories(cats.value))
-const catValue = computed(() => (targetCategoryId.value == null ? '' : String(targetCategoryId.value)))
+// Use the picker helper so the model-value matches an item value (sentinel when unset) — a bare ''
+// isn't in the items list (b24ui/Reka SelectItem forbids empty-string values).
+const catValue = computed(() => catPicker.categoryValue({ categoryId: targetCategoryId.value ?? undefined }))
 async function onCategory(v: unknown) {
   const t: { categoryId?: number } = { categoryId: targetCategoryId.value }
   catPicker.setCategory(t, v)
@@ -112,7 +106,7 @@ async function onCategory(v: unknown) {
 }
 const stageItems = computed(() => stagePicker.stageItems(stages.value))
 const showStage = computed(() => stagePicker.hasStages(stages.value))
-const stageValue = computed(() => targetStageId.value ?? '')
+const stageValue = computed(() => stagePicker.stageValue({ stageId: targetStageId.value ?? undefined }))
 function onStage(v: unknown) {
   const t: { stageId?: string } = { stageId: targetStageId.value }
   stagePicker.setStage(t, v)

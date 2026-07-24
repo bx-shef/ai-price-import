@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   STAGE_SENTINEL_LABEL,
+  STAGE_SENTINEL_VALUE,
   hasStages,
   reconcileStage,
   setStage,
@@ -17,13 +18,17 @@ const STAGES: CrmStageOption[] = [
 describe('stageItems', () => {
   it('prepends the sentinel; label = name, else id', () => {
     expect(stageItems(STAGES)).toEqual([
-      { label: STAGE_SENTINEL_LABEL, value: '' },
+      { label: STAGE_SENTINEL_LABEL, value: STAGE_SENTINEL_VALUE },
       { label: 'Новая', value: 'NEW' },
       { label: 'C1:WON', value: 'C1:WON' }
     ])
   })
+  it('sentinel value is non-empty (b24ui/Reka SelectItem forbids empty-string values)', () => {
+    expect(STAGE_SENTINEL_VALUE).not.toBe('')
+    for (const it of stageItems(STAGES)) expect(it.value).not.toBe('')
+  })
   it('undefined/empty → just the sentinel', () => {
-    expect(stageItems(undefined)).toEqual([{ label: STAGE_SENTINEL_LABEL, value: '' }])
+    expect(stageItems(undefined)).toEqual([{ label: STAGE_SENTINEL_LABEL, value: STAGE_SENTINEL_VALUE }])
   })
 })
 
@@ -36,12 +41,15 @@ describe('hasStages', () => {
 })
 
 describe('stageValue / setStage', () => {
-  it('stageValue: undefined → "", id → id', () => {
-    expect(stageValue({})).toBe('')
+  it('stageValue: undefined → sentinel, id → id', () => {
+    expect(stageValue({})).toBe(STAGE_SENTINEL_VALUE)
     expect(stageValue({ stageId: 'C1:NEW' })).toBe('C1:NEW')
   })
-  it('setStage: "" → undefined; a stage id is kept (bounded)', () => {
+  it('setStage: sentinel/"" → undefined; a stage id is kept (bounded)', () => {
     const t: { stageId?: string } = { stageId: 'X' }
+    setStage(t, STAGE_SENTINEL_VALUE)
+    expect(t.stageId).toBeUndefined()
+    t.stageId = 'X'
     setStage(t, '')
     expect(t.stageId).toBeUndefined()
     setStage(t, 'DT31_11:P')

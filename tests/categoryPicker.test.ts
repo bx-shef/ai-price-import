@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CATEGORY_SENTINEL_LABEL,
+  CATEGORY_SENTINEL_VALUE,
   categoryItems,
   categoryValue,
   hasCategories,
@@ -17,16 +18,20 @@ const CATS: CrmCategoryOption[] = [
 describe('categoryItems', () => {
   it('prepends the sentinel and suffixes the default funnel with «(осн.)» (distinct wording)', () => {
     expect(categoryItems(CATS)).toEqual([
-      { label: CATEGORY_SENTINEL_LABEL, value: '' },
+      { label: CATEGORY_SENTINEL_LABEL, value: CATEGORY_SENTINEL_VALUE },
       { label: 'Default pipeline (осн.)', value: '0' },
       { label: 'Опт', value: '1' }
     ])
     // the sentinel and the default funnel must NOT read the same
     expect(CATEGORY_SENTINEL_LABEL).not.toContain('(осн.)')
   })
+  it('sentinel value is non-empty (b24ui/Reka SelectItem forbids empty-string values)', () => {
+    expect(CATEGORY_SENTINEL_VALUE).not.toBe('')
+    for (const it of categoryItems(CATS)) expect(it.value).not.toBe('')
+  })
   it('undefined/empty → just the sentinel', () => {
-    expect(categoryItems(undefined)).toEqual([{ label: CATEGORY_SENTINEL_LABEL, value: '' }])
-    expect(categoryItems([])).toEqual([{ label: CATEGORY_SENTINEL_LABEL, value: '' }])
+    expect(categoryItems(undefined)).toEqual([{ label: CATEGORY_SENTINEL_LABEL, value: CATEGORY_SENTINEL_VALUE }])
+    expect(categoryItems([])).toEqual([{ label: CATEGORY_SENTINEL_LABEL, value: CATEGORY_SENTINEL_VALUE }])
   })
 })
 
@@ -39,13 +44,16 @@ describe('hasCategories', () => {
 })
 
 describe('categoryValue / setCategory round-trip', () => {
-  it('categoryValue: undefined → "", id → String(id) (incl. 0)', () => {
-    expect(categoryValue({ categoryId: undefined })).toBe('')
+  it('categoryValue: undefined → sentinel, id → String(id) (incl. 0)', () => {
+    expect(categoryValue({ categoryId: undefined })).toBe(CATEGORY_SENTINEL_VALUE)
     expect(categoryValue({ categoryId: 0 })).toBe('0')
     expect(categoryValue({ categoryId: 3 })).toBe('3')
   })
-  it('setCategory: "" → undefined (never Number("")===0); "1" → 1', () => {
+  it('setCategory: sentinel/"" → undefined (never Number("")===0); "1" → 1', () => {
     const t: { categoryId?: number } = { categoryId: 5 }
+    setCategory(t, CATEGORY_SENTINEL_VALUE)
+    expect(t.categoryId).toBeUndefined()
+    t.categoryId = 5
     setCategory(t, '')
     expect(t.categoryId).toBeUndefined()
     setCategory(t, '1')
