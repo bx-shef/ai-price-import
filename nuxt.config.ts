@@ -50,7 +50,8 @@ export default defineNuxtConfig({
     // the settings slider no longer flashes a fully-rendered /app before the middleware redirect — the
     // prerendered shell is minimal. Landing (/) and /install stay SSR/prerendered (SEO / Market HEAD).
     '/app': { ssr: false },
-    '/settings': { ssr: false }
+    '/settings': { ssr: false },
+    '/metrics': { ssr: false }
   },
   future: { compatibilityVersion: 4 },
   compatibilityDate: '2025-01-15',

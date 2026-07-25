@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
+import { navigateTo } from '#app'
 import { useMetrics } from '~/composables/useMetrics'
+import { useB24 } from '~/composables/useB24'
+import { APP_SLIDER_PLACE_METRICS } from '~/config/b24'
 import { formatMinutes } from '~/utils/savings'
 import { formatRate, summarizeMetrics } from '~/utils/metricsView'
 
@@ -13,7 +16,31 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Метрики импорта' })
 
 const { counters, savings, resetting, error, load, reset } = useMetrics()
-onMounted(load)
+
+// Opened as a B24 slider (openSliderAppPage({place:'metrics'})) or by in-frame navigation, so the
+// «back» control closes the slider overlay vs navigates to /app. Standalone → plain navigation.
+const { init: initB24, get: getFrame, placementPlace } = useB24()
+const inPortal = ref(false)
+const isSlider = ref(false)
+onMounted(async () => {
+  try {
+    await initB24()
+    inPortal.value = !!getFrame()
+    isSlider.value = placementPlace() === APP_SLIDER_PLACE_METRICS
+  } catch { /* standalone */ }
+  await load()
+})
+/** Slider → close the B24 overlay; in-frame/standalone → go back to /app. */
+async function closeOrBack(): Promise<void> {
+  if (isSlider.value) {
+    try {
+      await initB24()
+      await getFrame()?.parent.closeApplication()
+    } catch { /* not framed → nothing to close */ }
+    return
+  }
+  await navigateTo('/app')
+}
 
 const summary = computed(() => summarizeMetrics(counters.value))
 
@@ -39,12 +66,13 @@ async function doReset(): Promise<void> {
           Что приложение сделало для вашего портала.
         </p>
       </div>
-      <NuxtLink
-        to="/app"
+      <button
+        type="button"
         class="text-sm text-(--ui-color-accent-main-primary) hover:underline"
+        @click="closeOrBack"
       >
-        ← К обзору
-      </NuxtLink>
+        {{ isSlider ? 'Закрыть' : '← К обзору' }}
+      </button>
     </div>
 
     <B24Alert

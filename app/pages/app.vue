@@ -9,7 +9,7 @@ import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
-import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
+import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS } from '~/config/b24'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
 import * as catPicker from '~/utils/categoryPicker'
@@ -51,6 +51,15 @@ async function openSettings(): Promise<void> {
     label: { text: '⚙️' }
   })
   if (!opened) await navigateTo('/settings')
+}
+// Detailed metrics — same slider pattern as settings (openSliderAppPage → middleware routes to /metrics).
+async function openMetrics(): Promise<void> {
+  const opened = await openAppSlider(APP_SLIDER_PLACE_METRICS, {
+    width: 900,
+    title: 'Метрики импорта',
+    label: { text: '📊' }
+  })
+  if (!opened) await navigateTo('/metrics')
 }
 
 // Live settings sync (starter pull `reload.options`): when settings are saved in the slider (or another
@@ -411,12 +420,13 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
         <span>Документов: {{ counters.docs || 0 }}</span>
         <span>Создано в CRM: {{ counters.created || 0 }}</span>
         <span>Позиций: {{ counters.lines || 0 }}</span>
-        <NuxtLink
-          to="/metrics"
+        <button
+          type="button"
           class="ml-auto text-(--ui-color-accent-main-link) hover:underline"
+          @click="openMetrics"
         >
           Подробные метрики →
-        </NuxtLink>
+        </button>
       </div>
       <B24Alert
         v-if="metricsError"

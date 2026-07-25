@@ -12,12 +12,19 @@ export const B24_REQUIRED_SCOPES = ['crm', 'catalog', 'disk', 'im', 'pull'] as c
 /** Backend endpoint that receives outgoing B24 events. */
 export const B24_EVENT_HANDLER_PATH = '/api/b24/events'
 
-/** `place` value passed to `slider.openSliderAppPage({ place })` to open settings in a B24 slider,
- *  and read back from `placement.options.place` by the global middleware to route the freshly-opened
- *  slider frame to `/settings`. A call-time param (arrives in PLACEMENT_OPTIONS) — NOT a registered
- *  placement, so no install-time `placement.bind` is needed. Pattern from the official
- *  `bitrix-tools/b24-ai-starter` reference (middleware `01.app.page.or.slider.global`). */
+/** `place` values passed to `slider.openSliderAppPage({ place })` to open a secondary page in a B24
+ *  slider, and read back from `placement.options.place` by the global middleware to route the freshly-
+ *  opened slider frame to the matching in-app route. A call-time param (arrives in PLACEMENT_OPTIONS) —
+ *  NOT a registered placement, so no install-time `placement.bind` is needed. Pattern from the official
+ *  `bitrix-tools/b24-ai-starter` + `bitrix24/app-template-automation-rules` references. */
 export const APP_SLIDER_PLACE_SETTINGS = 'app-options'
+export const APP_SLIDER_PLACE_METRICS = 'metrics'
+
+/** place → in-app route the global middleware redirects a freshly-opened slider frame to. */
+export const APP_SLIDER_ROUTES: Record<string, string> = {
+  [APP_SLIDER_PLACE_SETTINGS]: '/settings',
+  [APP_SLIDER_PLACE_METRICS]: '/metrics'
+}
 
 /** Events bound on install. */
 export const B24_BOUND_EVENTS = ['ONAPPINSTALL', 'ONAPPUNINSTALL'] as const
