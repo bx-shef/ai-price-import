@@ -31,6 +31,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV NODE_ENV=production
 ENV UPLOAD_DIR=/data/uploads
 ENV HOME=/root
+# Bake the build commit into the RUNTIME too. `GET /api/health` (and any route rendered at runtime
+# by Nitro rather than prerendered) reads `useRuntimeConfig().public.commitSha` at REQUEST time — the
+# build-stage ENV only covered the prerendered HTML, so without this the server falls back to the
+# nuxt.config default ('dev'). ARG must be re-declared after FROM to be in scope in this stage; the
+# deploy passes COMMIT_SHA as a build-arg to every matrix target (see .github/workflows/deploy.yml).
+ARG COMMIT_SHA=dev
+ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
 RUN mkdir -p /data/uploads
 # Fail the build FAST if the extraction toolchain is broken. A package rename / partial install
 # would otherwise pass `docker build` and only surface at RUNTIME («fragile binary env» risk from the
