@@ -81,3 +81,8 @@ export function importFeedbackKind(storage: StorageLike, jobId: string, now: num
 export function importJobIds(storage: StorageLike, now: number = Date.now()): string[] {
   return readHistory(storage, now).map(e => e.jobId)
 }
+
+/** Wipe the employee's whole import history (the /app list). Best-effort — never throws. */
+export function clearImportHistory(storage: StorageLike): void {
+  write(storage, [])
+}

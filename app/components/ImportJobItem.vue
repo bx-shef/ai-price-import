@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import type { ImportJobView } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
+import { entityDetailPath } from '~/utils/entityLink'
+import { useB24 } from '~/composables/useB24'
 
 // One row in «Последние операции»: shows the file, a per-STAGE progress stepper while the job runs
 // (Извлечение текста → Распознавание и запись → Готово, driven by the real backend status), and the
@@ -12,6 +14,29 @@ const props = defineProps<{ job: ImportJobView }>()
 const meta = computed(() => jobStatusMeta(props.job.status))
 const progress = computed(() => jobProgress(props.job.status))
 const result = computed(() => parseJobResult(props.job.result))
+
+// Link to the created CRM entity, opened in a portal slider via the frame SDK (slider.openPath — the
+// CORRECT use of openPath: a real PORTAL path). Only offered IN a portal frame (`inFrame`): a CRM link
+// is meaningless standalone, and the frame is needed to resolve/open it — so outside a frame we render
+// the plain «Создано в CRM» text instead of a dead button. Null path (no/invalid entity) → no link.
+const { init: initB24, get: getFrame, auth: frameAuth, inFrame } = useB24()
+const entityPath = computed(() => entityDetailPath(result.value.entityTypeId, result.value.entityId))
+const canOpen = computed(() => !!entityPath.value && inFrame())
+async function openEntity(): Promise<void> {
+  const path = entityPath.value
+  if (!path) return
+  await initB24()
+  const frame = getFrame()
+  if (frame) {
+    try {
+      await frame.slider.openPath(frame.slider.getUrl(path))
+      return
+    } catch { /* framed but the slider call threw → fall back to a plain new-tab open */ }
+  }
+  // Fallback only reaches here framed (canOpen gated on inFrame), so the domain is available.
+  const domain = frameAuth()?.domain
+  if (domain && typeof window !== 'undefined') window.open(`https://${domain}${path}`, '_blank', 'noopener')
+}
 
 const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-primary-alert' | 'air-secondary'> = {
   neutral: 'air-secondary',
@@ -82,8 +107,16 @@ const stepDot: Record<string, string> = {
       class="text-xs text-(--ui-color-base-3)"
     >
       <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <button
+          v-if="result.entityId && canOpen"
+          type="button"
+          class="font-medium text-(--ui-color-accent-main-success) hover:underline"
+          @click="openEntity"
+        >
+          Открыть в CRM · сущность #{{ result.entityId }} →
+        </button>
         <span
-          v-if="result.entityId"
+          v-else-if="result.entityId"
           class="text-(--ui-color-accent-main-success)"
         >Создано в CRM · сущность #{{ result.entityId }}</span>
         <span v-else-if="result.message">{{ result.message }}</span>

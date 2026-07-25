@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { onBeforeUnmount, watch } from 'vue'
 import LikeIcon from '@bitrix24/b24icons-vue/main/LikeIcon'
 import { useAppRating } from '~/composables/useAppRating'
 
@@ -18,14 +18,31 @@ const props = defineProps<{
 
 const { show, check, markPrompted, openMarket, dismiss } = useAppRating()
 
-// When the trigger becomes true, ask the server whether to prompt (once — check() self-guards).
+// Don't interrupt: wait ~10s AFTER the successful import before asking, so the employee actually SEES
+// the result (entity link / recognized items) first — otherwise the modal covers the fresh result and
+// opening the Market rating navigates away before it's read. The delay also naturally covers the
+// «after a short idle» case. check() self-guards (fires once; server decides whether to show).
+const PROMPT_DELAY_MS = 10_000
+let timer: ReturnType<typeof setTimeout> | null = null
+function clearTimer(): void {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+}
 watch(
   () => props.trigger,
   (on) => {
-    if (on) void check()
+    if (on && !timer && !show.value) {
+      timer = setTimeout(() => {
+        timer = null
+        void check()
+      }, PROMPT_DELAY_MS)
+    }
   },
   { immediate: true }
 )
+onBeforeUnmount(clearTimer)
 
 // The moment the modal actually shows, stamp prompted_at so it won't reappear for the interval —
 // even if the user just closes it. (markPrompted is fire-and-forget.)

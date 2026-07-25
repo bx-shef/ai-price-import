@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addImportJob, importFeedbackKind, importJobIds, markImportFeedback, readHistory, type StorageLike } from '../app/utils/importHistory'
+import { addImportJob, clearImportHistory, importFeedbackKind, importJobIds, markImportFeedback, readHistory, type StorageLike } from '../app/utils/importHistory'
 
 function memStorage(): StorageLike & { dump: () => string | null } {
   let v: string | null = null
@@ -17,6 +17,15 @@ describe('importHistory (localStorage, keyed by jobId)', () => {
     addImportJob(s, 'j2', 'b.pdf', 2000)
     expect(readHistory(s, 2000).map(e => e.jobId)).toEqual(['j2', 'j1'])
     expect(importJobIds(s, 2000)).toEqual(['j2', 'j1'])
+  })
+
+  it('clearImportHistory wipes the whole list', () => {
+    const s = memStorage()
+    addImportJob(s, 'j1', 'a.pdf', 1000)
+    addImportJob(s, 'j2', 'b.pdf', 2000)
+    clearImportHistory(s)
+    expect(readHistory(s, 2000)).toEqual([])
+    expect(importJobIds(s, 2000)).toEqual([])
   })
 
   it('re-adding a jobId de-dupes (updates, keeps one entry) and preserves its feedback flag', () => {

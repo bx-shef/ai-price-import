@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import ChevronDownMIcon from '@bitrix24/b24icons-vue/outline/ChevronDownMIcon'
@@ -27,7 +27,13 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов' })
 
-const { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll } = useImport()
+const { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll, clearHistory } = useImport()
+// Two-step clear (no window.confirm), same pattern as the metrics reset.
+const confirmClear = ref(false)
+function doClearHistory(): void {
+  clearHistory()
+  confirmClear.value = false
+}
 const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
@@ -171,10 +177,21 @@ const stats = computed(() => {
   return s
 })
 
-// Trigger the «оцените приложение» modal only once the user has clearly benefited — at least one
-// successful import (this session or in history). The actual show/throttle/verification decision is
-// server-side (portal_app_rating); AppRatingModal just reacts to this trigger. See docs/redesign/12.
-const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.value.created || 0) > 0)
+// Trigger the «оцените приложение» modal only after a FRESH successful import THIS session — a job we
+// watched go from active → done. NOT a lifetime metric (counters.created) nor the initial history count
+// (both would arm on mere page-open for a returning user, and the modal would pop with no new result to
+// read). `seenActive` remembers jobIds observed non-terminal; a done job that was in it = a fresh
+// completion. The show/throttle/verification decision is server-side (portal_app_rating); the modal
+// delays ~10s after this flips so the result is seen first. See docs/redesign/12.
+const TERMINAL_STATUSES = new Set(['done', 'error'])
+const seenActive = new Set<string>()
+const freshImportSuccess = ref(false)
+watch(jobs, (list) => {
+  for (const j of list) {
+    if (!TERMINAL_STATUSES.has(j.status)) seenActive.add(j.jobId)
+    else if (j.status === 'done' && seenActive.has(j.jobId)) freshImportSuccess.value = true
+  }
+}, { deep: true })
 </script>
 
 <template>
@@ -318,15 +335,40 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
           обновляется
         </span>
       </div>
-      <B24Button
-        :icon="RefreshIcon"
-        color="air-tertiary-no-accent"
-        size="xs"
-        :loading="loading"
-        :disabled="loading"
-        :label="loading ? 'Обновление…' : 'Обновить'"
-        @click="refresh"
-      />
+      <div class="flex items-center gap-2">
+        <template v-if="jobs.length && !confirmClear">
+          <B24Button
+            label="Очистить историю"
+            color="air-tertiary-no-accent"
+            size="xs"
+            @click="() => { confirmClear = true }"
+          />
+        </template>
+        <template v-else-if="confirmClear">
+          <span class="text-xs text-(--ui-color-base-3)">Очистить историю импортов?</span>
+          <B24Button
+            label="Да"
+            color="air-primary-alert"
+            size="xs"
+            @click="doClearHistory"
+          />
+          <B24Button
+            label="Отмена"
+            color="air-tertiary-no-accent"
+            size="xs"
+            @click="() => { confirmClear = false }"
+          />
+        </template>
+        <B24Button
+          :icon="RefreshIcon"
+          color="air-tertiary-no-accent"
+          size="xs"
+          :loading="loading"
+          :disabled="loading"
+          :label="loading ? 'Обновление…' : 'Обновить'"
+          @click="refresh"
+        />
+      </div>
     </div>
 
     <B24Card
@@ -442,6 +484,6 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
 
     <!-- «Оцените приложение»: всплывает после успешного импорта (когда польза очевидна). Показ/
          троттлинг/верификация — на сервере (portal_app_rating). Инертен вне портала. -->
-    <AppRatingModal :trigger="hasSuccessfulImport" />
+    <AppRatingModal :trigger="freshImportSuccess" />
   </div>
 </template>

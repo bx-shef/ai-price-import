@@ -97,7 +97,7 @@ describe('feedback — buildFeedbackIssue', () => {
     expect(p.body).toContain('- **Статус разбора:** `Готово`')
     expect(p.body).toContain('- **Исход:** `Сущность создана`')
     expect(p.body).toContain('- **Замечания:** `Поставщик не найден; Валюта XXX отсутствует`')
-    expect(p.body).toContain('- **Исходный файл:** `https://bel.bitrix24.by/docs/file/123/`')
+    expect(p.body).toContain('- **Файл на Диске портала (нужен доступ к порталу):** `https://bel.bitrix24.by/docs/file/123/`')
   })
   it('omits the Контекст section entirely when no context is given', () => {
     expect(buildFeedbackIssue('up', 'ok').body).not.toContain('**Контекст:**')

@@ -11,6 +11,18 @@ mockNuxtImport('useFeedback', () => () => ({
   submit: async () => true
 }))
 
+// Controllable frame state: the «Открыть в CRM» entity button only renders IN a portal frame.
+const framed = ref(false)
+mockNuxtImport('useB24', () => () => ({
+  init: async () => null,
+  get: () => null,
+  auth: () => null,
+  inFrame: () => framed.value,
+  placementPlace: () => undefined,
+  openAppSlider: async () => false,
+  closeSlider: async () => {}
+}))
+
 const job = (status: string, result = '') => ({ jobId: 'j1', status, fileName: 'накладная.pdf', result }) as never
 
 describe('ImportJobItem', () => {
@@ -27,11 +39,22 @@ describe('ImportJobItem', () => {
     expect(text).not.toContain('Создано в CRM')
   })
 
-  it('done with a created entity → shows the «разбор» line', async () => {
-    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"created":true,"warnings":[],"errors":[]}') } })
+  it('done with a created entity, STANDALONE (no frame) → plain «Создано в CRM» text, no button', async () => {
+    framed.value = false
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"created":true,"warnings":[],"errors":[]}') } })
     expect(w.text()).toContain('Создано в CRM · сущность #5')
+    expect(w.find('button').exists()).toBe(false)
     // no progress bar once terminal
     expect(w.find('[aria-label^="Стадия:"]').exists()).toBe(false)
+  })
+
+  it('done with a created entity, IN a frame → «Открыть в CRM» button (opens the entity)', async () => {
+    framed.value = true
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"created":true,"warnings":[],"errors":[]}') } })
+    const btn = w.find('button')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('Открыть в CRM · сущность #5')
+    framed.value = false
   })
 
   it('done → «разбор» shows supplier + line count with Russian plural', async () => {
