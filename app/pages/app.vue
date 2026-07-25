@@ -45,7 +45,11 @@ const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(ma
 // when not framed (standalone) or if the SDK call fails, so settings always opens.
 const { openAppSlider } = useB24()
 async function openSettings(): Promise<void> {
-  const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 900, title: 'Настройки импорта' })
+  const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, {
+    width: 900,
+    title: 'Настройки импорта',
+    label: { text: '⚙️' }
+  })
   if (!opened) await navigateTo('/settings')
 }
 
