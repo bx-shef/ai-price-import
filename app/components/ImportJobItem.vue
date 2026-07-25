@@ -15,11 +15,13 @@ const meta = computed(() => jobStatusMeta(props.job.status))
 const progress = computed(() => jobProgress(props.job.status))
 const result = computed(() => parseJobResult(props.job.result))
 
-// Link to the created CRM entity. In the portal, open it in a slider via the frame SDK
-// (slider.openPath — the CORRECT use of openPath: a real PORTAL path); outside, open the absolute
-// portal URL in a new tab. Null path (no/invalid entity) → no link rendered.
-const { init: initB24, get: getFrame, auth: frameAuth } = useB24()
+// Link to the created CRM entity, opened in a portal slider via the frame SDK (slider.openPath — the
+// CORRECT use of openPath: a real PORTAL path). Only offered IN a portal frame (`inFrame`): a CRM link
+// is meaningless standalone, and the frame is needed to resolve/open it — so outside a frame we render
+// the plain «Создано в CRM» text instead of a dead button. Null path (no/invalid entity) → no link.
+const { init: initB24, get: getFrame, auth: frameAuth, inFrame } = useB24()
 const entityPath = computed(() => entityDetailPath(result.value.entityTypeId, result.value.entityId))
+const canOpen = computed(() => !!entityPath.value && inFrame())
 async function openEntity(): Promise<void> {
   const path = entityPath.value
   if (!path) return
@@ -29,8 +31,9 @@ async function openEntity(): Promise<void> {
     try {
       await frame.slider.openPath(frame.slider.getUrl(path))
       return
-    } catch { /* fall through to a plain new-tab open */ }
+    } catch { /* framed but the slider call threw → fall back to a plain new-tab open */ }
   }
+  // Fallback only reaches here framed (canOpen gated on inFrame), so the domain is available.
   const domain = frameAuth()?.domain
   if (domain && typeof window !== 'undefined') window.open(`https://${domain}${path}`, '_blank', 'noopener')
 }
@@ -105,7 +108,7 @@ const stepDot: Record<string, string> = {
     >
       <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <button
-          v-if="result.entityId && entityPath"
+          v-if="result.entityId && canOpen"
           type="button"
           class="font-medium text-(--ui-color-accent-main-success) hover:underline"
           @click="openEntity"

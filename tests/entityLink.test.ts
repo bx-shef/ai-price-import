@@ -8,6 +8,9 @@ describe('entityDetailPath', () => {
   it('lead (1) → named lead route', () => {
     expect(entityDetailPath(1, 7)).toBe('/crm/lead/details/7/')
   })
+  it('quote (7) → legacy quote route (NOT the universal type route)', () => {
+    expect(entityDetailPath(7, 12)).toBe('/crm/quote/show/12/')
+  })
   it('smart-invoice (31) + smart process (>=1000) → universal type route', () => {
     expect(entityDetailPath(31, 5)).toBe('/crm/type/31/details/5/')
     expect(entityDetailPath(1032, 9)).toBe('/crm/type/1032/details/9/')

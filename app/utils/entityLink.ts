@@ -1,8 +1,10 @@
 // Pure builder for a CRM entity's detail path on the portal — used to link the import result row to
 // the created deal/invoice/smart-process (opened via frame.slider.openPath, or as an absolute link).
-// deal (2) and lead (1) have named routes; smart-invoice (31) and smart processes (>=1000) use the
-// universal /crm/type/<entityTypeId>/details/<id>/ route. Portal-relative (no domain) — the caller
-// anchors it to the portal origin. Returns null for invalid ids (no broken link).
+// MIRRORS the server's canonical builders (server/utils/chatNotify.entityLink +
+// configurableActivity.entityOpenPath): lead(1)/deal(2) named routes, quote(7)→/crm/quote/show/ (legacy
+// static entity — the universal type route does NOT resolve quotes), everything else (smart-invoice 31,
+// smart processes) → universal /crm/type/<etid>/details/. Keep in sync with those (a shared util is the
+// eventual fix). Portal-relative — the caller anchors it to the portal origin. Null for invalid ids.
 
 export function entityDetailPath(entityTypeId: number | undefined | null, entityId: number | undefined | null): string | null {
   if (!Number.isInteger(entityTypeId) || (entityTypeId as number) <= 0) return null
@@ -11,5 +13,6 @@ export function entityDetailPath(entityTypeId: number | undefined | null, entity
   const id = entityId as number
   if (etid === 1) return `/crm/lead/details/${id}/`
   if (etid === 2) return `/crm/deal/details/${id}/`
+  if (etid === 7) return `/crm/quote/show/${id}/`
   return `/crm/type/${etid}/details/${id}/`
 }
