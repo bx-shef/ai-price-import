@@ -17,12 +17,17 @@ import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
+import { shortSha, commitUrl } from '~/utils/build'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
 // UI on native b24ui controls (B24Button/B24Input/B24Select/B24Switch/B24RadioGroup).
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
+
+// Build commit for the footer link (source of truth = NUXT_PUBLIC_COMMIT_SHA, same as /api/health).
+const buildSha = computed(() => shortSha(useRuntimeConfig().public.commitSha as string))
+const buildHref = computed(() => commitUrl(useRuntimeConfig().public.commitSha as string))
 
 const { mapping, loading, saving, saved, error, isAdmin, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()
@@ -687,6 +692,17 @@ const ON_MISSING_ITEMS = [
         role="status"
         aria-live="polite"
       >Сохранено ✓</span>
+    </div>
+
+    <!-- Build commit (footer «сборка <sha>» → GitHub, same as the landing/install) — lets support
+         confirm which version a portal runs. -->
+    <div class="mt-8 border-t border-(--ui-color-base-5) pt-3 text-right">
+      <a
+        :href="buildHref"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="font-mono text-xs text-(--ui-color-base-4) hover:text-(--ui-color-accent-main-link) hover:underline"
+      >сборка {{ buildSha || 'dev' }}</a>
     </div>
   </div>
 </template>

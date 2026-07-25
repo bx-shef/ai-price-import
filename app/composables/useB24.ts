@@ -51,15 +51,21 @@ export function useB24() {
   }
 
   /** Open THIS app in a B24 slider at the given `place` (self-routed by the global middleware).
-   *  Returns false when not framed / on SDK error so the caller can fall back to plain navigation. */
-  async function openAppSlider(place: string, opts: { width?: number, title?: string } = {}): Promise<boolean> {
+   *  Pattern from the official bitrix24/app-template-automation-rules (index.client → openSliderAppPage
+   *  with place/width/label/title). Returns false when not framed / on SDK error so the caller can
+   *  fall back to plain navigation. `label` renders the coloured badge on the slider header. */
+  async function openAppSlider(
+    place: string,
+    opts: { width?: number, title?: string, label?: { text: string, bgColor?: string, color?: string } } = {}
+  ): Promise<boolean> {
     const f = await init()
     if (!f) return false
     try {
       await f.slider.openSliderAppPage({
         place,
         bx24_width: opts.width ?? 900,
-        ...(opts.title ? { bx24_title: opts.title } : {})
+        ...(opts.title ? { bx24_title: opts.title } : {}),
+        ...(opts.label ? { bx24_label: { bgColor: '#2fc6f6', color: '#ffffff', ...opts.label } } : {})
       })
       return true
     } catch {
