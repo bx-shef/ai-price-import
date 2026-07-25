@@ -42,5 +42,30 @@ export function useB24() {
     return { accessToken: a.access_token, domain: a.domain }
   }
 
-  return { init, get, auth, inFrame }
+  /** The `place` this frame was opened with (from `openSliderAppPage({ place })` → PLACEMENT_OPTIONS).
+   *  Undefined for a normally-opened app page. The global middleware uses it to route a slider frame. */
+  function placementPlace(): string | undefined {
+    const opts = frame?.placement?.options as Record<string, unknown> | undefined
+    const p = opts?.place
+    return typeof p === 'string' && p ? p : undefined
+  }
+
+  /** Open THIS app in a B24 slider at the given `place` (self-routed by the global middleware).
+   *  Returns false when not framed / on SDK error so the caller can fall back to plain navigation. */
+  async function openAppSlider(place: string, opts: { width?: number, title?: string } = {}): Promise<boolean> {
+    const f = await init()
+    if (!f) return false
+    try {
+      await f.slider.openSliderAppPage({
+        place,
+        bx24_width: opts.width ?? 900,
+        ...(opts.title ? { bx24_title: opts.title } : {})
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  return { init, get, auth, inFrame, placementPlace, openAppSlider }
 }
