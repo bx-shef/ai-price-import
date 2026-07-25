@@ -16,6 +16,7 @@ import type { CrmStageOption } from '~/utils/stagePicker'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
+import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -25,18 +26,23 @@ useHead({ title: 'Настройки импорта' })
 
 const { mapping, loading, saving, saved, error, isAdmin, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()
-const { init: initB24, get: getFrame } = useB24()
-// Reached IN the portal (from /app via in-frame navigation) → Save/Cancel return to /app (same-origin
-// SPA route, the frame handshake survives). As a plain page (direct link, no frame) they stay put.
+const { init: initB24, get: getFrame, placementPlace } = useB24()
+// How settings was reached, so Save/Cancel do the right «close»:
+//  • isSlider — opened as a B24 slider (openSliderAppPage({place:'app-options'})) → close the slider
+//    overlay (parent.closeApplication); the /app frame behind it live-reloads via the pull.
+//  • inPortal (not slider) — reached by in-frame navigation (SDK slider unavailable) → return to /app.
+//  • standalone (neither) — a plain page/direct link → stay put (Save shows ✓, Cancel reloads).
 const inPortal = ref(false)
+const isSlider = ref(false)
 // Show the "read-only for non-admins" notice once settings have loaded (in a portal) and the
 // caller isn't an admin. Writes are also blocked server-side + in useSettings.
 const showReadOnly = computed(() => !loading.value && !error.value && !isAdmin.value)
 onMounted(async () => {
-  // Detect the portal frame (inert/no-op standalone) so Save/Cancel know whether to return to /app.
+  // Detect the portal frame + slider mode (inert/no-op standalone) so Save/Cancel close correctly.
   try {
     await initB24()
     inPortal.value = !!getFrame()
+    isSlider.value = placementPlace() === APP_SLIDER_PLACE_SETTINGS
   } catch { /* standalone → stay put on Save/Cancel */ }
   await load()
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
@@ -50,29 +56,37 @@ onMounted(async () => {
 })
 
 /** Explicit save (starter Save/Cancel pattern — no autosave). On success, notify other open
- *  instances to reload (pull `reload.options`), then — in the portal — return to /app. */
+ *  instances to reload (pull `reload.options`), then close per how settings was opened. */
 async function saveAndClose(): Promise<void> {
   await save()
   if (error.value) return // save() sets error; keep the form open so the admin can retry
   void notifyReload()
-  if (inPortal.value) await goBack()
+  await closeAfter()
 }
-/** Cancel: in the portal return to /app (discard); as a plain page reload the server copy. Re-seed the
- *  unit/routing row editors from the reloaded mapping — they're seeded once on mount, so a bare load()
- *  would leave them showing the pre-cancel edits (which then re-sync back into mapping on the next edit). */
+/** Cancel: close per how settings was opened (slider → close overlay, in-frame → back to /app); as a
+ *  plain page reload the server copy. Re-seed the unit/routing row editors from the reloaded mapping —
+ *  they're seeded once on mount, so a bare load() would leave them showing the pre-cancel edits. */
 async function cancel(): Promise<void> {
-  if (inPortal.value) {
-    await goBack()
+  if (isSlider.value || inPortal.value) {
+    await closeAfter()
     return
   }
   await load()
   seedUnitRows()
   seedRoutingRows()
 }
-/** Return to the import page. In-frame this is a same-origin SPA route change (the B24 handshake
- *  survives — no reload), so the frame token stays valid on /app. */
-async function goBack(): Promise<void> {
-  await navigateTo('/app')
+/** Close the settings view: as a slider → close the B24 overlay (parent.closeApplication); as an
+ *  in-frame page → navigate back to /app (same-origin SPA route, the frame handshake survives so the
+ *  token stays valid); standalone → no-op (caller handles Save-stays / Cancel-reload). */
+async function closeAfter(): Promise<void> {
+  if (isSlider.value) {
+    try {
+      await initB24()
+      await getFrame()?.parent.closeApplication()
+    } catch { /* not framed → nothing to close */ }
+    return
+  }
+  if (inPortal.value) await navigateTo('/app')
 }
 
 // Accordion sections (starter B24Accordion pattern) — group the settings into three collapsibles.
@@ -344,13 +358,15 @@ const ON_MISSING_ITEMS = [
 
 <template>
   <div class="mx-auto max-w-2xl p-4 sm:p-6">
+    <!-- Back link only in the in-frame-navigation fallback (no slider chrome); a real slider has its
+         own close control, and Save/Cancel close the overlay. -->
     <B24Button
-      v-if="inPortal"
+      v-if="inPortal && !isSlider"
       label="← К импорту"
       color="air-tertiary-no-accent"
       size="sm"
       class="mb-3"
-      @click="goBack"
+      @click="() => { void navigateTo('/app') }"
     />
     <h1 class="mb-1 text-xl font-semibold">
       Настройки импорта

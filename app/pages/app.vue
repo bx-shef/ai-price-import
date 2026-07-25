@@ -8,6 +8,8 @@ import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
+import { useB24 } from '~/composables/useB24'
+import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
 import * as catPicker from '~/utils/categoryPicker'
@@ -36,14 +38,15 @@ const { mapping, isAdmin, error: settingsError, load: loadSettings } = useSettin
 const settingsLoaded = ref(false)
 const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
 
-// Open settings by navigating the app's OWN SPA route (/settings) in place. This works both inside
-// the portal iframe and standalone: it's a client-side route change within the same origin, so the
-// B24 frame handshake (window.name / postMessage channel, held in the useB24 singleton) survives and
-// /settings keeps its frame token. We do NOT use `slider.openPath` — that opens a PORTAL-relative
-// path (it resolved to `<portal>/settings` → 404). The B24-native `openSliderAppPage({place})` needs
-// an install-time placement bind + live-portal verification (follow-up), so it's deferred.
+// Open settings in a B24 SLIDER (native overlay), like the official b24-ai-starter reference:
+// `openSliderAppPage({ place })` re-opens THIS app in a slider carrying `place='app-options'`, and the
+// global middleware routes that slider frame to /settings. We do NOT use `slider.openPath` — that opens
+// a PORTAL-relative path (it resolved to `<portal>/settings` → 404). Fallback to in-frame navigation
+// when not framed (standalone) or if the SDK call fails, so settings always opens.
+const { openAppSlider } = useB24()
 async function openSettings(): Promise<void> {
-  await navigateTo('/settings')
+  const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 900, title: 'Настройки импорта' })
+  if (!opened) await navigateTo('/settings')
 }
 
 // Live settings sync (starter pull `reload.options`): when settings are saved in the slider (or another
