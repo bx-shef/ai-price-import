@@ -21,7 +21,7 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
   `libreoffice --version` под `timeout` (страховка от зависшего first-run профиля).
 - **Экстрактор** — OpenAI-совместимый chat-вызов **в процессе** (`openai` SDK), никакого CLI-бинаря
   в образе. Провайдер по `LLM_PROVIDER` (deepseek/bitrixgpt/custom), ключ — `DEEPSEEK_API_KEY` **или**
-  легаси `ANTHROPIC_AUTH_TOKEN` (cutover без смены env) / `VIBE_API_KEY`. Нет ключа ⇒ джоба падает
+  `VIBE_API_KEY`/`BITRIXGPT_API_KEY`. Нет ключа ⇒ джоба падает
   громко («provider not configured»).
 
 ## Сборка и запуск
@@ -63,7 +63,7 @@ Postgres и Redis рядом. Один домен: nginx проксирует `/
 
 Обязательные: `DATABASE_URL`, `REDIS_URL`, `B24_CLIENT_ID/SECRET`,
 `B24_TOKEN_ENC_KEY` (base64 32 байта), `NUXT_PUBLIC_SITE_URL` (абсолютный — из него строится URL
-хендлера событий Б24). LLM-провайдер: `LLM_PROVIDER` + `DEEPSEEK_API_KEY`/`VIBE_API_KEY` (или легаси `ANTHROPIC_AUTH_TOKEN`).
+хендлера событий Б24). LLM-провайдер: `LLM_PROVIDER` + `DEEPSEEK_API_KEY`/`VIBE_API_KEY`.
 Оператор (опц.): `OPERATOR_PASSWORD` + **`OPERATOR_SESSION_SECRET`** (свой, не фолбэк на enc-key).
 `B24_APPLICATION_TOKEN` — **не заполняем**: `application_token` приходит в `ONAPPINSTALL` и
 запоминается по порталу (B24 «Безопасность в обработчиках»); первая установка проверяется по

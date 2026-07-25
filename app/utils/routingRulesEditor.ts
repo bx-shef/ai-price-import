@@ -9,6 +9,22 @@ import { MAX_ROUTING_RULES, MAX_RULE_KEYWORDS } from './portalSettings'
 /** Document types the agent classifies (prompts/extract.ts) — offered as the rule's `type`. */
 export const DOCUMENT_TYPES = ['накладная', 'счёт', 'КП', 'спецификация', 'прайс'] as const
 
+/** Non-empty Select value for «любой тип» (match by keywords only). The stored `type` is '' for «any»,
+ *  but b24ui/Reka SelectItem forbids an empty-string value — so the dropdown uses this sentinel and
+ *  maps it back to '' via `typeFromSelect`. Mirrors the CATEGORY/STAGE sentinels in the pickers. */
+export const ANY_TYPE_VALUE = '__any__'
+
+/** Stored rule type ('' = any) → the Select value (sentinel for any). */
+export function typeSelectValue(type: string | undefined | null): string {
+  return (type ?? '') || ANY_TYPE_VALUE
+}
+
+/** Select value → stored rule type (sentinel/'' → '' = any). */
+export function typeFromSelect(v: unknown): string {
+  const s = typeof v === 'string' ? v : String(v ?? '')
+  return s === ANY_TYPE_VALUE ? '' : s
+}
+
 /** One editable rule row: document type to match (empty = any), keywords (comma/newline text),
  *  the target entityTypeId (null while unset) and its `categoryId` (направление/воронка — now
  *  picked in the UI from the portal's crm.category.list). `stageId` is still not edited by the UI

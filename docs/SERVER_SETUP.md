@@ -158,7 +158,7 @@ scp scripts/agent-e2e-test.sh scripts/samples/etalon-invoice.pdf ubuntu@СЕРВ
 
 # затем на сервере:
 cd ~/procure-ai
-grep -qE '^(DEEPSEEK_API_KEY|VIBE_API_KEY|ANTHROPIC_AUTH_TOKEN)=..' .env.prod || echo "⚠ ключ LLM-провайдера не задан в .env.prod — извлечение упадёт!"
+grep -qE '^(DEEPSEEK_API_KEY|VIBE_API_KEY|BITRIXGPT_API_KEY)=..' .env.prod || echo "⚠ ключ LLM-провайдера не задан в .env.prod — извлечение упадёт!"
 bash agent-e2e-test.sh
 ```
 
@@ -170,7 +170,7 @@ bash agent-e2e-test.sh
 > (по умолчанию `http://localhost:3000` и эталон из `scripts/samples/`).
 
 > **⚠️ Ключ LLM-провайдера.** Извлечение — in-process OpenAI-совместимый вызов; нужен
-> `DEEPSEEK_API_KEY` (или `VIBE_API_KEY` для BitrixGPT; легаси `ANTHROPIC_AUTH_TOKEN`
+> `DEEPSEEK_API_KEY` (или `VIBE_API_KEY`/`BITRIXGPT_API_KEY` для BitrixGPT
 > тоже принимается как ключ deepseek) в `.env.prod`. Без него джоба падает «provider not configured».
 
 > **♻️ Ретрай агента (#104).** Транзиентные сбои провайдера (HTTP 429/5xx,

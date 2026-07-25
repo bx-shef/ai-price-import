@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { parseKeywords, rulesToRows, rowsToRules } from '../app/utils/routingRulesEditor'
+import { parseKeywords, rulesToRows, rowsToRules, ANY_TYPE_VALUE, typeSelectValue, typeFromSelect } from '../app/utils/routingRulesEditor'
 import type { RoutingRule } from '../app/types/mapping'
+
+describe('document-type Select sentinel round-trip', () => {
+  it('sentinel is non-empty (b24ui/Reka SelectItem forbids empty-string values)', () => {
+    expect(ANY_TYPE_VALUE).not.toBe('')
+  })
+  it('typeSelectValue: "" / null / undefined → sentinel; a real type → itself', () => {
+    expect(typeSelectValue('')).toBe(ANY_TYPE_VALUE)
+    expect(typeSelectValue(null)).toBe(ANY_TYPE_VALUE)
+    expect(typeSelectValue(undefined)).toBe(ANY_TYPE_VALUE)
+    expect(typeSelectValue('счёт')).toBe('счёт')
+  })
+  it('typeFromSelect: sentinel → "" (any); a real type → itself; non-string coerced', () => {
+    expect(typeFromSelect(ANY_TYPE_VALUE)).toBe('')
+    expect(typeFromSelect('накладная')).toBe('накладная')
+    expect(typeFromSelect(undefined)).toBe('')
+  })
+})
 
 describe('parseKeywords', () => {
   it('splits on comma AND newline, trims, drops empty, dedups case-insensitively', () => {
