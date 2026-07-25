@@ -2,7 +2,7 @@
 
 > ⚠️ **Legacy-документ (старая реализация).** Описывает регистрацию **локального** приложения старой
 > версии (scopes `user_brief`/`tasks`/`entity`, PHP-модуль `shef:purchase.*`, поля `UF_CRM_*`). Редизайн —
-> это **облачное приложение Маркета** (мультитенант, OAuth; scopes `crm, catalog, disk, im`, без кода в
+> это **облачное приложение Маркета** (мультитенант, OAuth; scopes `crm, catalog, disk, im, pull`, без кода в
 > коробке). Актуальная публикация/установка — [`docs/redesign/13-marketplace-release.md`](redesign/13-marketplace-release.md);
 > процесс/деплой — [`docs/redesign/09-deploy.md`](redesign/09-deploy.md). Этот файл держим справочно по legacy.
 

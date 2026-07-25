@@ -25,7 +25,8 @@ export function useSettingsSync() {
       await init()
       const frame = get()
       if (!frame) return
-      await frame.callMethod('pull.application.event.add', buildSettingsReloadEvent(appModuleId()))
+      // actions.v2.call.make — the non-deprecated replacement for frame.callMethod() (removed in SDK 2.0).
+      await frame.actions.v2.call.make({ method: 'pull.application.event.add', params: buildSettingsReloadEvent(appModuleId()) })
     } catch {
       // pull unavailable / not framed → skip; cross-instance sync is a nicety, not correctness
     }

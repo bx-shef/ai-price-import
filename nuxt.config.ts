@@ -41,6 +41,17 @@ export default defineNuxtConfig({
       b24FormScriptUrl: process.env.NUXT_PUBLIC_B24_FORM_SCRIPT_URL || 'https://cdn-ru.bitrix24.by/b37817748/crm/form/loader_1.js'
     }
   },
+
+  routeRules: {
+    // In-portal app pages render INSIDE the B24 iframe and depend on the client-only frame handshake
+    // (window.name / auth / placement), so their content diverges between the static prerender and the
+    // framed client → «Hydration completed but contains mismatches». Render them CLIENT-ONLY (the same
+    // choice b24-ai-starter makes with its .client.vue pages): no server HTML to mismatch, and opening
+    // the settings slider no longer flashes a fully-rendered /app before the middleware redirect — the
+    // prerendered shell is minimal. Landing (/) and /install stay SSR/prerendered (SEO / Market HEAD).
+    '/app': { ssr: false },
+    '/settings': { ssr: false }
+  },
   future: { compatibilityVersion: 4 },
   compatibilityDate: '2025-01-15',
 
