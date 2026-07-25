@@ -27,7 +27,13 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Импорт документов' })
 
-const { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll } = useImport()
+const { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll, clearHistory } = useImport()
+// Two-step clear (no window.confirm), same pattern as the metrics reset.
+const confirmClear = ref(false)
+function doClearHistory(): void {
+  clearHistory()
+  confirmClear.value = false
+}
 const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
@@ -318,15 +324,40 @@ const hasSuccessfulImport = computed(() => stats.value.done > 0 || (counters.val
           обновляется
         </span>
       </div>
-      <B24Button
-        :icon="RefreshIcon"
-        color="air-tertiary-no-accent"
-        size="xs"
-        :loading="loading"
-        :disabled="loading"
-        :label="loading ? 'Обновление…' : 'Обновить'"
-        @click="refresh"
-      />
+      <div class="flex items-center gap-2">
+        <template v-if="jobs.length && !confirmClear">
+          <B24Button
+            label="Очистить историю"
+            color="air-tertiary-no-accent"
+            size="xs"
+            @click="() => { confirmClear = true }"
+          />
+        </template>
+        <template v-else-if="confirmClear">
+          <span class="text-xs text-(--ui-color-base-3)">Очистить историю импортов?</span>
+          <B24Button
+            label="Да"
+            color="air-primary-alert"
+            size="xs"
+            @click="doClearHistory"
+          />
+          <B24Button
+            label="Отмена"
+            color="air-tertiary-no-accent"
+            size="xs"
+            @click="() => { confirmClear = false }"
+          />
+        </template>
+        <B24Button
+          :icon="RefreshIcon"
+          color="air-tertiary-no-accent"
+          size="xs"
+          :loading="loading"
+          :disabled="loading"
+          :label="loading ? 'Обновление…' : 'Обновить'"
+          @click="refresh"
+        />
+      </div>
     </div>
 
     <B24Card

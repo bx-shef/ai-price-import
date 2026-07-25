@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { jobStatusMeta, type JobStatus } from '~/utils/jobStatus'
-import { addImportJob, importJobIds, readHistory } from '~/utils/importHistory'
+import { addImportJob, clearImportHistory, importJobIds, readHistory } from '~/utils/importHistory'
 import type { TargetRef } from '~/types/mapping'
 
 // In-portal import client: upload a document and poll job status via the frame-token
@@ -133,5 +133,12 @@ export function useImport() {
     scheduleNext()
   }
 
-  return { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll }
+  /** Clear the employee's import history (localStorage) + the visible list. The server keeps only
+   *  ephemeral per-job status (Redis TTL); this just forgets which jobIds the browser polls. */
+  function clearHistory(): void {
+    if (typeof window !== 'undefined') clearImportHistory(window.localStorage)
+    jobs.value = []
+  }
+
+  return { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll, clearHistory }
 }

@@ -104,7 +104,9 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
     contextLine('Замечания', context.notes),
     contextLine('Задача (jobId)', context.jobId),
     contextLine('Файл', context.fileName),
-    contextLine('Исходный файл', context.fileUrl),
+    // Portal-INTERNAL Disk path — opens only for someone logged into that client's portal; the
+    // publisher can't fetch it externally. Proper file delivery (bytes → private feedback repo) is #332.
+    contextLine('Файл на Диске портала (нужен доступ к порталу)', context.fileUrl),
     contextLine('Сущность', context.entityType),
     contextLine('ID сущности', context.entityId),
     contextLine('Ссылка', context.entityUrl),

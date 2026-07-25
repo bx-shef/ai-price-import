@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import type { ImportJobView } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
+import { entityDetailPath } from '~/utils/entityLink'
+import { useB24 } from '~/composables/useB24'
 
 // One row in «Последние операции»: shows the file, a per-STAGE progress stepper while the job runs
 // (Извлечение текста → Распознавание и запись → Готово, driven by the real backend status), and the
@@ -12,6 +14,26 @@ const props = defineProps<{ job: ImportJobView }>()
 const meta = computed(() => jobStatusMeta(props.job.status))
 const progress = computed(() => jobProgress(props.job.status))
 const result = computed(() => parseJobResult(props.job.result))
+
+// Link to the created CRM entity. In the portal, open it in a slider via the frame SDK
+// (slider.openPath — the CORRECT use of openPath: a real PORTAL path); outside, open the absolute
+// portal URL in a new tab. Null path (no/invalid entity) → no link rendered.
+const { init: initB24, get: getFrame, auth: frameAuth } = useB24()
+const entityPath = computed(() => entityDetailPath(result.value.entityTypeId, result.value.entityId))
+async function openEntity(): Promise<void> {
+  const path = entityPath.value
+  if (!path) return
+  await initB24()
+  const frame = getFrame()
+  if (frame) {
+    try {
+      await frame.slider.openPath(frame.slider.getUrl(path))
+      return
+    } catch { /* fall through to a plain new-tab open */ }
+  }
+  const domain = frameAuth()?.domain
+  if (domain && typeof window !== 'undefined') window.open(`https://${domain}${path}`, '_blank', 'noopener')
+}
 
 const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-primary-alert' | 'air-secondary'> = {
   neutral: 'air-secondary',
@@ -82,8 +104,16 @@ const stepDot: Record<string, string> = {
       class="text-xs text-(--ui-color-base-3)"
     >
       <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <button
+          v-if="result.entityId && entityPath"
+          type="button"
+          class="font-medium text-(--ui-color-accent-main-success) hover:underline"
+          @click="openEntity"
+        >
+          Открыть в CRM · сущность #{{ result.entityId }} →
+        </button>
         <span
-          v-if="result.entityId"
+          v-else-if="result.entityId"
           class="text-(--ui-color-accent-main-success)"
         >Создано в CRM · сущность #{{ result.entityId }}</span>
         <span v-else-if="result.message">{{ result.message }}</span>
