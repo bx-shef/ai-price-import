@@ -44,6 +44,7 @@ QA перед релизом — [`10-qa-checklist.md`](10-qa-checklist.md); т�
 - [ ] Скоупы приложения = **`crm, catalog, disk, im, pull`** (Q9; `placement`/`user_brief` убраны).
       `pull` — real-time канал («Мгновенные сообщения системы»): слайдер настроек шлёт
       `pull.application.event.add` (`reload.options`) для живой синхронизации между вкладками; без него — 401.
+      ⚠ Добавление scope требует **ре-consent** на уже установленных порталах (иначе `pull` там не выдан).
 - [ ] Демо на лендинге не жжёт неаутентифицированный LLM-расход (nginx `limit_req` на `/api/demo/*`).
 
 ---

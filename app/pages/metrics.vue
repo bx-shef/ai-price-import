@@ -19,13 +19,11 @@ const { counters, savings, resetting, error, load, reset } = useMetrics()
 
 // Opened as a B24 slider (openSliderAppPage({place:'metrics'})) or by in-frame navigation, so the
 // «back» control closes the slider overlay vs navigates to /app. Standalone → plain navigation.
-const { init: initB24, get: getFrame, placementPlace } = useB24()
-const inPortal = ref(false)
+const { init: initB24, placementPlace, closeSlider } = useB24()
 const isSlider = ref(false)
 onMounted(async () => {
   try {
     await initB24()
-    inPortal.value = !!getFrame()
     isSlider.value = placementPlace() === APP_SLIDER_PLACE_METRICS
   } catch { /* standalone */ }
   await load()
@@ -33,10 +31,7 @@ onMounted(async () => {
 /** Slider → close the B24 overlay; in-frame/standalone → go back to /app. */
 async function closeOrBack(): Promise<void> {
   if (isSlider.value) {
-    try {
-      await initB24()
-      await getFrame()?.parent.closeApplication()
-    } catch { /* not framed → nothing to close */ }
+    await closeSlider()
     return
   }
   await navigateTo('/app')
@@ -176,5 +171,7 @@ async function doReset(): Promise<void> {
         </template>
       </div>
     </div>
+
+    <BuildFooter />
   </div>
 </template>

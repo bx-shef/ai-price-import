@@ -123,7 +123,7 @@
 
 | Проверка | Действие | Ожидаемо | Метка |
 |---|---|---|---|
-| Резолвер провайдера `resolveLlmConfig` | `pnpm test:unit` → `tests/llmConfig.test.ts` | Пресеты deepseek/bitrixgpt/custom; env-оверрайды base/model; ключ deepseek из `DEEPSEEK_API_KEY` ИЛИ легаси `ANTHROPIC_AUTH_TOKEN`; нет ключа → `apiKey:''` (fail-closed) | [авто] |
+| Резолвер провайдера `resolveLlmConfig` | `pnpm test:unit` → `tests/llmConfig.test.ts` | Пресеты deepseek/bitrixgpt/custom; env-оверрайды base/model; ключ deepseek из `DEEPSEEK_API_KEY`; нет ключа → `apiKey:''` (fail-closed) | [авто] |
 | Оркестрация `runChatExtract` | `tests/chatExtract.test.ts` | Успех с 1-й; transient(429/5xx)→retry+backoff; исчерпание 3 попыток; terminal(401) без ретрая; пустая таблица→terminal; не-JSON→terminal; `>MAX_ITEMS`→жёсткая ошибка; распаковка JSON из обёртки прозой; обрезка строки ошибки | [авто] |
 | `buildChatRequest` | `tests/chatExtract.test.ts` | system=инструкции, user=документ, `temperature:0`, `response_format:json_object` | [авто] |
 | Нормализация `validateExtractedDocument` | `tests/extractedDocument.test.ts` | Коэрция чисел ru/be/kk и `20%`; сохранение `vatRate:0`; отклонение 4+-буквенной валюты; digits-only taxId; drop supplier без name; DoS-клампы; cap `MAX_ITEMS` | [авто] |

@@ -15,9 +15,8 @@ import * as stagePicker from '~/utils/stagePicker'
 import type { CrmStageOption } from '~/utils/stagePicker'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
-import { rulesToRows, rowsToRules, DOCUMENT_TYPES } from '~/utils/routingRulesEditor'
+import { rulesToRows, rowsToRules, DOCUMENT_TYPES, ANY_TYPE_VALUE, typeSelectValue, typeFromSelect } from '~/utils/routingRulesEditor'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
-import { shortSha, commitUrl } from '~/utils/build'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -25,13 +24,9 @@ import { shortSha, commitUrl } from '~/utils/build'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
 
-// Build commit for the footer link (source of truth = NUXT_PUBLIC_COMMIT_SHA, same as /api/health).
-const buildSha = computed(() => shortSha(useRuntimeConfig().public.commitSha as string))
-const buildHref = computed(() => commitUrl(useRuntimeConfig().public.commitSha as string))
-
 const { mapping, loading, saving, saved, error, isAdmin, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()
-const { init: initB24, get: getFrame, placementPlace } = useB24()
+const { init: initB24, get: getFrame, placementPlace, closeSlider } = useB24()
 // How settings was reached, so Save/Cancel do the right «close»:
 //  • isSlider — opened as a B24 slider (openSliderAppPage({place:'app-options'})) → close the slider
 //    overlay (parent.closeApplication); the /app frame behind it live-reloads via the pull.
@@ -85,10 +80,7 @@ async function cancel(): Promise<void> {
  *  token stays valid); standalone → no-op (caller handles Save-stays / Cancel-reload). */
 async function closeAfter(): Promise<void> {
   if (isSlider.value) {
-    try {
-      await initB24()
-      await getFrame()?.parent.closeApplication()
-    } catch { /* not framed → nothing to close */ }
+    await closeSlider()
     return
   }
   if (inPortal.value) await navigateTo('/app')
@@ -239,19 +231,9 @@ function removeRoutingRow(id: number) {
 watch(routingRows, (rows) => {
   mapping.value.routingRules = rowsToRules(rows.map(r => ({ type: r.type, keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId })))
 }, { deep: true })
-// Type dropdown: «любой тип» + the known document types. The «any» value is a NON-EMPTY sentinel
-// (`__any__`) — b24ui/Reka SelectItem throws on an empty-string value — mapped to the stored ''
-// (match by keywords only) via `typeValue`/`setRowType`.
-const ANY_TYPE_VALUE = '__any__'
+// Type dropdown: «любой тип» (non-empty sentinel — b24ui/Reka SelectItem forbids empty-string) + the
+// known document types. Value↔stored-type mapping lives in routingRulesEditor (pure, tested).
 const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: ANY_TYPE_VALUE }, ...DOCUMENT_TYPES.map(t => ({ label: t, value: t }))]
-/** Row type as the select value: stored '' (any) ↔ the non-empty sentinel the Select requires. */
-function typeValue(row: EditableRoutingRow): string {
-  return row.type || ANY_TYPE_VALUE
-}
-function setRowType(row: EditableRoutingRow, v: unknown): void {
-  const s = typeof v === 'string' ? v : String(v ?? '')
-  row.type = s === ANY_TYPE_VALUE ? '' : s
-}
 
 // Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
 // retry-idempotency by B24-search is impossible; support deferred (issue #135).
@@ -467,11 +449,11 @@ const ON_MISSING_ITEMS = [
                 class="flex flex-wrap items-center gap-2"
               >
                 <B24Select
-                  :model-value="typeValue(row)"
+                  :model-value="typeSelectValue(row.type)"
                   :items="DOCUMENT_TYPE_ITEMS"
                   class="w-40"
                   :aria-label="`Правило ${i + 1}: тип документа`"
-                  @update:model-value="(v: unknown) => setRowType(row, v)"
+                  @update:model-value="(v: unknown) => { row.type = typeFromSelect(v) }"
                 />
                 <B24Input
                   v-model="row.keywords"
@@ -694,15 +676,6 @@ const ON_MISSING_ITEMS = [
       >Сохранено ✓</span>
     </div>
 
-    <!-- Build commit (footer «сборка <sha>» → GitHub, same as the landing/install) — lets support
-         confirm which version a portal runs. -->
-    <div class="mt-8 border-t border-(--ui-color-base-5) pt-3 text-right">
-      <a
-        :href="buildHref"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="font-mono text-xs text-(--ui-color-base-4) hover:text-(--ui-color-accent-main-link) hover:underline"
-      >сборка {{ buildSha || 'dev' }}</a>
-    </div>
+    <BuildFooter />
   </div>
 </template>

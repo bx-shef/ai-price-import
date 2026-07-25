@@ -20,10 +20,18 @@ export const B24_EVENT_HANDLER_PATH = '/api/b24/events'
 export const APP_SLIDER_PLACE_SETTINGS = 'app-options'
 export const APP_SLIDER_PLACE_METRICS = 'metrics'
 
-/** place → in-app route the global middleware redirects a freshly-opened slider frame to. */
+/** place → in-app route the global middleware redirects a freshly-opened slider frame to.
+ *  NB: the app's normal left-menu entry (standard universal «app URL») must NOT carry these `place`
+ *  values, or the main frame would redirect away from /app on every open — the values are app-chosen
+ *  and only ever set by our own `openSliderAppPage` calls, so this coupling holds by construction. */
 export const APP_SLIDER_ROUTES: Record<string, string> = {
   [APP_SLIDER_PLACE_SETTINGS]: '/settings',
   [APP_SLIDER_PLACE_METRICS]: '/metrics'
+}
+
+/** Pure: the in-app route a slider frame opened with `place` should redirect to (undefined = none). */
+export function sliderRouteForPlace(place: string | undefined | null): string | undefined {
+  return place ? APP_SLIDER_ROUTES[place] : undefined
 }
 
 /** Events bound on install. */

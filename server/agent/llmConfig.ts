@@ -40,10 +40,9 @@ export function resolveLlmConfig(env: Record<string, string | undefined>): LlmCo
     return {
       provider,
       baseURL: env.DEEPSEEK_BASE_URL?.trim() || PRESETS.deepseek.baseURL,
-      // Prod-safe cutover: the same DeepSeek key was previously stored in ANTHROPIC_AUTH_TOKEN
-      // (legacy claude path). Fall back to it so removing the claude engine needs NO prod env
-      // change — the key is provider-agnostic; only the endpoint (/v1) and protocol differ.
-      apiKey: env.DEEPSEEK_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim() || '',
+      // Dedicated key, mirroring bitrixgpt's BITRIXGPT_API_KEY. (The legacy ANTHROPIC_AUTH_TOKEN
+      // cutover fallback was dropped — prod now runs on bitrixgpt/VIBE_API_KEY.)
+      apiKey: env.DEEPSEEK_API_KEY?.trim() || '',
       model: env.DEEPSEEK_MODEL?.trim() || PRESETS.deepseek.model,
       label: 'deepseek'
     }

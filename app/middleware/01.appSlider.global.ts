@@ -1,4 +1,4 @@
-import { APP_SLIDER_ROUTES } from '~/config/b24'
+import { sliderRouteForPlace } from '~/config/b24'
 import { useB24 } from '~/composables/useB24'
 
 // When the app is opened in a B24 slider via `openSliderAppPage({ place })`, the portal re-opens the
@@ -13,8 +13,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const { init, placementPlace } = useB24()
   // Idempotent; no-op (returns null) outside a portal frame → the guard below never fires standalone.
   await init()
-  const place = placementPlace()
-  const target = place ? APP_SLIDER_ROUTES[place] : undefined
+  const target = sliderRouteForPlace(placementPlace())
   if (target && to.path !== target) {
     return navigateTo(target)
   }

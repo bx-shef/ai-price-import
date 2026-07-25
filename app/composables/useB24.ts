@@ -1,8 +1,11 @@
-import { initializeB24Frame, type B24Frame } from '@bitrix24/b24jssdk'
+import type { B24Frame } from '@bitrix24/b24jssdk'
 
 // Minimal Bitrix24 frame wrapper. init() is idempotent and a no-op outside a portal
 // iframe (no window.name) — so in-portal pages render both standalone and framed.
 // The frame auth (access token + domain) is what the server API routes verify.
+// The SDK is imported DYNAMICALLY inside init() (only value import is `initializeB24Frame`) so this
+// composable — pulled into the common chunk via the global slider middleware — does NOT bundle the B24
+// SDK into the public landing's entry; it loads only when a real frame handshake happens.
 
 let frame: B24Frame | null = null
 let initPromise: Promise<B24Frame | null> | null = null
@@ -16,7 +19,8 @@ export function useB24() {
     if (frame) return frame
     if (!inFrame()) return null
     if (!initPromise) {
-      initPromise = initializeB24Frame()
+      initPromise = import('@bitrix24/b24jssdk')
+        .then(({ initializeB24Frame }) => initializeB24Frame())
         .then((f) => {
           frame = f
           return f
@@ -73,5 +77,14 @@ export function useB24() {
     }
   }
 
-  return { init, get, auth, inFrame, placementPlace, openAppSlider }
+  /** Close the current app slider overlay (parent.closeApplication). No-op / swallows when not framed.
+   *  Shared by settings.vue and metrics.vue so the close path isn't duplicated. */
+  async function closeSlider(): Promise<void> {
+    const f = await init()
+    try {
+      await f?.parent.closeApplication()
+    } catch { /* not framed → nothing to close */ }
+  }
+
+  return { init, get, auth, inFrame, placementPlace, openAppSlider, closeSlider }
 }

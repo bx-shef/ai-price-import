@@ -14,12 +14,12 @@ describe('resolveLlmProvider', () => {
   })
 })
 
-describe('resolveLlmConfig · deepseek key fallback (cutover)', () => {
-  it('uses DEEPSEEK_API_KEY when set', () => {
-    expect(resolveLlmConfig({ LLM_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: 'sk-new', ANTHROPIC_AUTH_TOKEN: 'sk-old' }).apiKey).toBe('sk-new')
+describe('resolveLlmConfig · deepseek key', () => {
+  it('uses DEEPSEEK_API_KEY', () => {
+    expect(resolveLlmConfig({ LLM_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: 'sk-new' }).apiKey).toBe('sk-new')
   })
-  it('falls back to the legacy ANTHROPIC_AUTH_TOKEN so prod keeps working with no env change', () => {
-    expect(resolveLlmConfig({ LLM_PROVIDER: 'deepseek', ANTHROPIC_AUTH_TOKEN: 'sk-old' }).apiKey).toBe('sk-old')
+  it('no key → apiKey empty (fail-closed); legacy ANTHROPIC_AUTH_TOKEN is NOT accepted anymore', () => {
+    expect(resolveLlmConfig({ LLM_PROVIDER: 'deepseek', ANTHROPIC_AUTH_TOKEN: 'sk-old' }).apiKey).toBe('')
   })
 })
 
