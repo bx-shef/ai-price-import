@@ -1,7 +1,10 @@
 // Pure record↔rows logic for the units-dictionary editor (settings form). The stored shape is
 // a `Record<unit, measureCode>` (units.dictionary); the editor works on an ordered array of rows.
 // Keeping the conversion pure + tested keeps the Vue component thin (it only manages reactive
-// state + stable keys). Mirrors parsePortalSettings' normalization (lowercase key, numeric code).
+// state + stable keys). Mirrors parsePortalSettings' + resolveMeasure's normalization
+// (normalizeUnitKey — case-insensitive, trailing dot folded, numeric code).
+
+import { normalizeUnitKey } from './measureCreate'
 
 /** One editable row: a document unit synonym → chosen measure code (null while unset). */
 export interface UnitRow {
@@ -28,7 +31,7 @@ export function dictionaryToRows(dict: Record<string, number> | null | undefined
 export function rowsToDictionary(rows: UnitRow[]): Record<string, number> {
   const out: Record<string, number> = {}
   for (const row of rows) {
-    const key = (row.unit ?? '').trim().toLowerCase()
+    const key = normalizeUnitKey(row.unit)
     const code = row.code
     if (!key) continue
     if (code == null || !Number.isInteger(code) || code <= 0) continue
@@ -42,7 +45,7 @@ export function rowsToDictionary(rows: UnitRow[]): Record<string, number> {
 export function hasDuplicateUnits(rows: UnitRow[]): boolean {
   const seen = new Set<string>()
   for (const row of rows) {
-    const key = (row.unit ?? '').trim().toLowerCase()
+    const key = normalizeUnitKey(row.unit)
     if (!key) continue
     if (seen.has(key)) return true
     seen.add(key)

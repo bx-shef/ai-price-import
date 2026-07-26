@@ -509,7 +509,8 @@ describe('runCrmSync — products / units / routing', () => {
     m.units.autoCreate = true
     const createMeasure = vi.fn(async () => ({ code: 796, created: false }))
     const deps = baseDeps({ createMeasure })
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт.', vatRate: null }] }
+    // 'бухта' is NOT in the dictionary ({шт:796}) → reaches auto-create, which finds an existing measure.
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
     const r = await runCrmSync('j', d, m, {}, deps)
     expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 796 })
     expect(r.warnings.some(w => /сопоставлена с мерой портала/.test(w))).toBe(true)

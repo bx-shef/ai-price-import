@@ -1,4 +1,5 @@
 import type { UnitsConfig } from '~/types/mapping'
+import { normalizeUnitKey } from './measureCreate'
 
 /** Result of resolving a document unit to a catalog.measure code. */
 export interface MeasureResolution {
@@ -14,7 +15,10 @@ export interface MeasureResolution {
  * See docs/redesign/02-target-architecture.md (Q11) and 06-multilingual.md §4.
  */
 export function resolveMeasure(unit: string | undefined, cfg: UnitsConfig): MeasureResolution {
-  const key = (unit ?? '').trim().toLowerCase()
+  // Canonical key (case-insensitive, trailing dot folded) so "ШТ"/"шт"/"Шт"/"шт." all hit the same
+  // dictionary entry — the dictionary is stored under the SAME normalization (rowsToDictionary /
+  // parsePortalSettings).
+  const key = normalizeUnitKey(unit)
   if (key && Object.prototype.hasOwnProperty.call(cfg.dictionary, key)) {
     return { code: cfg.dictionary[key]!, matched: true }
   }

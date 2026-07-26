@@ -20,10 +20,25 @@ export interface MeasureOption {
   [key: string]: unknown
 }
 
-/** Build a readable label from the measure's name + symbol (falls back to the code). */
+/** First non-empty string among the candidates (trimmed), or ''. */
+function firstNonEmpty(vals: unknown[]): string {
+  for (const v of vals) {
+    const s = typeof v === 'string' ? v.trim() : ''
+    if (s) return s
+  }
+  return ''
+}
+
+/** Build a readable label from the measure's name + symbol (falls back to the code). Prefer the
+ *  RUSSIAN symbol (Условное обозначение, SYMBOL_RUS) over the international one (SYMBOL_INTL, e.g.
+ *  «pc.») — owner ask: show «шт», not «pc.». Tolerates both camelCase and B24's uppercase field forms. */
 function measureLabel(row: Record<string, unknown>, code: number): string {
   const title = String(row.measureTitle ?? row.MEASURE_TITLE ?? '').trim()
-  const symbol = String(row.symbol ?? row.symbolIntl ?? row.SYMBOL ?? row.SYMBOL_INTL ?? '').trim()
+  const symbol = firstNonEmpty([
+    row.symbolRus, row.SYMBOL_RUS, // Russian symbol (Условное обозначение) — preferred
+    row.symbol, row.SYMBOL, // generic (some portals hold the Russian one here)
+    row.symbolIntl, row.SYMBOL_INTL // international (pc.) — last resort only
+  ])
   if (title && symbol) return `${title} (${symbol})`
   return title || symbol || `код ${code}`
 }
@@ -56,21 +71,19 @@ function codeOf(code: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null
 }
 
-/** List the portal's measures (active only). Pure otherwise; a REST error propagates. */
+/** List the portal's measures (active only). Pure otherwise; a REST error propagates. No `select` —
+ *  the method returns all fields including the Russian symbol (SYMBOL_RUS); a narrow camelCase select
+ *  risked omitting it (B24 returns the uppercase field regardless). */
 export async function listMeasures(call: RestCall): Promise<MeasureOption[]> {
-  const result = await call('catalog.measure.list', {
-    select: ['code', 'measureTitle', 'symbol', 'symbolIntl', 'isDefault'],
-    filter: { active: 'Y' }
-  })
+  const result = await call('catalog.measure.list', { filter: { active: 'Y' } })
   return normalizeMeasures(result)
 }
 
-/** Raw measure rows (title/symbol/code) for the auto-create index — NO active filter, so the code
- *  allocator sees every existing code and find-before-create matches any measure (Q11). */
+/** Raw measure rows (title/symbol/code) for the auto-create index — NO active filter (so the code
+ *  allocator sees every existing code and find-before-create matches any measure, Q11) and NO select
+ *  (all symbol variants, incl. SYMBOL_RUS, are indexed). */
 export async function fetchMeasureRows(call: RestCall): Promise<Array<Record<string, unknown>>> {
-  const result = await call('catalog.measure.list', {
-    select: ['code', 'measureTitle', 'symbol', 'symbolIntl']
-  })
+  const result = await call('catalog.measure.list', {})
   if (Array.isArray(result)) return result as Array<Record<string, unknown>>
   const wrapped = (result as Record<string, unknown>)?.measures
   return Array.isArray(wrapped) ? wrapped as Array<Record<string, unknown>> : []
