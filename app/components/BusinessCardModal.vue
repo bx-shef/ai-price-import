@@ -35,7 +35,7 @@ let lastFocused: HTMLElement | null = null
 // Публичные реквизиты ИП — намеренно хардкодены, это публичная визитка.
 const card = {
   name: 'Игорь Шевчик',
-  role: 'AI-импорт документов и товаров в Bitrix24',
+  role: 'AI-импорт прайсов и товаров в Bitrix24',
   org: 'ИП Шевчик И. С.',
   unp: 'УНП 192049017',
   phone: '+375 29 736-01-26',
@@ -177,7 +177,7 @@ function downloadVCard() {
     phoneTel: card.phoneTel,
     email: card.email,
     url: 'https://' + card.site,
-    note: `AI-импорт документов и товаров в Bitrix24. ${card.unp}.`
+    note: `AI-импорт прайсов и товаров в Bitrix24. ${card.unp}.`
   })
 
   triggerDownload(new Blob([vcf], { type: 'text/vcard;charset=utf-8' }), 'igor-shevchik.vcf')

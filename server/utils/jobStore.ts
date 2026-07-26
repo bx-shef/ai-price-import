@@ -112,6 +112,19 @@ export async function getDiskFileUrl(memberId: string, jobId: string, redis: Job
   }
 }
 
+/** Read the archived source file's Disk file id for a job (for the #332 byte-upload download), or null. */
+export async function getDiskFileId(memberId: string, jobId: string, redis: JobRedis): Promise<number | null> {
+  const h = await redis.getAll(jobKey(memberId, jobId))
+  const raw = h?.diskFile
+  if (!raw) return null
+  try {
+    const id = Number((JSON.parse(raw) as { id?: unknown })?.id)
+    return Number.isInteger(id) && id > 0 ? id : null
+  } catch {
+    return null
+  }
+}
+
 export async function setJobStatus(memberId: string, jobId: string, status: JobStatus, result: string, redis: JobRedis): Promise<void> {
   await redis.put(jobKey(memberId, jobId), { status, result }, JOB_TTL_MS)
 }

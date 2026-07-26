@@ -104,9 +104,9 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
     contextLine('Замечания', context.notes),
     contextLine('Задача (jobId)', context.jobId),
     contextLine('Файл', context.fileName),
-    // Portal-INTERNAL Disk path — opens only for someone logged into that client's portal; the
-    // publisher can't fetch it externally. Proper file delivery (bytes → private feedback repo) is #332.
-    contextLine('Файл на Диске портала (нужен доступ к порталу)', context.fileUrl),
+    // #332: the actual source file, committed to the PRIVATE feedback repo (accessible to the
+    // publisher) — set only on a successful byte-upload; omitted otherwise.
+    contextLine('Исходный файл', context.fileUrl),
     contextLine('Сущность', context.entityType),
     contextLine('ID сущности', context.entityId),
     contextLine('Ссылка', context.entityUrl),
@@ -122,4 +122,15 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
     ...(contextLines.length ? ['', '**Контекст:**', ...contextLines] : [])
   ].join('\n')
   return { title, body, labels: ['user-feedback', `feedback:${kind}`] }
+}
+
+/** Repo-relative path for a source file committed to the PRIVATE feedback repo (#332, byte-upload).
+ *  jobId groups files per run; the filename is sanitised to a safe basename (strip directory parts →
+ *  no path traversal, allowlist chars, drop leading dots, cap length). Both parts fall back to a
+ *  constant so the path is always well-formed. */
+export function feedbackFilePath(jobId: string, fileName: string): string {
+  const id = String(jobId ?? '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'job'
+  const base = String(fileName ?? '').split(/[\\/]/).pop() ?? ''
+  const safe = base.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 80) || 'file'
+  return `files/${id}/${safe}`
 }
