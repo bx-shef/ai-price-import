@@ -19,6 +19,7 @@ import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
 import { findProduct } from '../utils/productLookup'
+import { resolveOffersIblockId } from '../utils/offerLookup'
 import { fetchMeasureRows } from '../utils/measureList'
 import { createMeasureViaRest } from '../utils/measureCreateWrite'
 import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_MEASURES_PER_JOB, type MeasureIndex } from '~/utils/measureCreate'
@@ -234,6 +235,21 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     }
     return measureIndex
   }
+  // Offers (SKU / ТП) iblock — resolved ONCE per job, then passed to every findProduct so offers get
+  // priority over the base product. Fail-soft: no offers catalog / no catalog subscription → null →
+  // findProduct just does the base-product lookup (the pre-offer behaviour). Memoized (undefined = not
+  // yet resolved) so a portal without offers doesn't re-query catalog.catalog.list on every line.
+  let offersIblockId: number | null | undefined
+  const ensureOffersIblock = async (): Promise<number | null> => {
+    if (offersIblockId === undefined) {
+      try {
+        offersIblockId = await resolveOffersIblockId((await need()).call)
+      } catch {
+        offersIblockId = null
+      }
+    }
+    return offersIblockId
+  }
   return {
     // One-time finalize claim (#164): the run that wins flips import_job.notified false→true, so
     // the success chat + timeline дело fire exactly once even when a retry resumes after a
@@ -245,7 +261,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     findExisting: async (entityTypeId, filter) => findExistingItemId(entityTypeId, filter, (await need()).call),
     originatorPrefix: process.env.IMPORT_ORIGINATOR_ID,
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
-    findProduct: async item => findProduct(item, mapping, (await need()).call),
+    findProduct: async item => findProduct(item, mapping, (await need()).call, await ensureOffersIblock()),
     // Auto-create measure (opt-in): wired only when enabled so crm-sync's presence check gates it.
     // Find-before-create against the portal index (reuse → {created:false}); otherwise allocate +
     // create (→ {created:true}), pushing the new code into the index so repeats/later units reuse it.
