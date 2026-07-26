@@ -384,24 +384,22 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
 
   it('mixed items with one bad-VAT → whole doc aborts (no line loss, NO orphan catalog writes)', async () => {
     // The good line ('a') comes BEFORE the bad-VAT line ('b'). Pre-pass must catch the error and
-    // abort before the create loop, so 'a' never writes an orphan product/measure to the catalog.
+    // abort before the write loop, so 'a' never writes an orphan measure to the catalog.
     const m = mapping()
-    m.product.onMissing = 'create'
+    m.product.onMissing = 'freeform' // 'a' would be a free-form row → would resolve/create a measure
     m.units.autoCreate = true
-    const createProduct = vi.fn(async () => 999)
     const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
-    const deps = baseDeps({ createProduct, createMeasure })
+    const deps = baseDeps({ createMeasure })
     const d: ExtractedDocument = {
       ...doc,
       items: [
-        { name: 'a', price: 1, quantity: 1, unit: 'рулон', vatRate: 22 }, // valid, would create product+measure
+        { name: 'a', price: 1, quantity: 1, unit: 'рулон', vatRate: 22 }, // valid, would create a measure
         { name: 'b', price: 2, quantity: 1, unit: 'шт', vatRate: 25 } // unknown rate → hard error
       ]
     }
     const r = await runCrmSync('j', d, m, {}, deps)
     expect(r.created).toBe(false)
     expect(deps.createTarget).not.toHaveBeenCalled()
-    expect(createProduct).not.toHaveBeenCalled() // no orphan product from line 'a'
     expect(createMeasure).not.toHaveBeenCalled() // no orphan measure from line 'a'
   })
 })
@@ -425,14 +423,13 @@ describe('runCrmSync — products / units / routing', () => {
     expect(deps.setRows).not.toHaveBeenCalled()
   })
 
-  it('create: uses createProduct dep when present', async () => {
+  it('freeform: product not found → row written WITHOUT productId (free-form position)', async () => {
     const m = mapping()
-    m.product.onMissing = 'create'
-    const createProduct = vi.fn(async () => 888)
-    const deps = baseDeps({ createProduct })
+    m.product.onMissing = 'freeform'
+    const deps = baseDeps() // default findProduct → null
     await runCrmSync('j', doc, m, {}, deps)
-    expect(createProduct).toHaveBeenCalled()
-    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ productId: 888 })
+    expect(deps.setRows).toHaveBeenCalled()
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).not.toHaveProperty('productId')
   })
 
   it('unit not mapped → WARNING (not error), still creates with default measure', async () => {

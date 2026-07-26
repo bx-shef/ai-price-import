@@ -79,7 +79,10 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     },
     product: {
       by: prod.by === 'name' ? 'name' : 'article',
-      onMissing: prod.onMissing === 'create' || prod.onMissing === 'freeform' ? prod.onMissing : 'skip-warn'
+      // Product creation was removed. A portal that had the legacy `'create'` stored degrades to
+      // `'freeform'` (keep the line as a free-form position — the closest non-dropping behaviour),
+      // anything else → `'skip-warn'` (the default).
+      onMissing: prod.onMissing === 'freeform' || prod.onMissing === 'create' ? 'freeform' : 'skip-warn'
     },
     units: {
       dictionary: units.dictionary && typeof units.dictionary === 'object'

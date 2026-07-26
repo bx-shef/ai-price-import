@@ -20,8 +20,6 @@ export interface CrmSyncDeps {
   originatorPrefix?: string
   findCompanyByTaxId: (taxId: string) => Promise<number | null>
   findProduct: (item: ExtractedDocument['items'][number]) => Promise<number | null>
-  /** Optional: create a catalog product for onMissing:'create'; returns its id. */
-  createProduct?: (item: ExtractedDocument['items'][number]) => Promise<number | null>
   /** Optional: resolve an unmatched unit to a catalog measure (mapping.units.autoCreate, Q11) —
    *  find-before-create. Returns `{code, created}` (created=false ⇒ reused an existing measure), or
    *  null when not creatable / create failed / per-job cap reached (caller uses the default code). */
@@ -155,15 +153,13 @@ export async function runCrmSync(
     // VAT already validated in the pre-pass → matchVatRate is non-null for any VAT-bearing line.
     const vat = matchVatRate(item.vatRate ?? null, vatRates)
 
-    let productId = await deps.findProduct(item)
+    const productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
       warnings.push(`Товар «${item.name}» не найден — строка пропущена`)
       continue
     }
-    if (!productId && mapping.product.onMissing === 'create') {
-      productId = deps.createProduct ? await deps.createProduct(item) : null
-      if (!productId) warnings.push(`Товар «${item.name}» не создан — внесён как произвольная позиция`)
-    }
+    // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
+    // free-form position (productId undefined) carrying the document name/price.
 
     // Measure resolved only for a row we're actually writing (a SKIPPED row must not auto-create a
     // measure — #Q11 security). Auto-create (opt-in) when the unit isn't in the dictionary; best-

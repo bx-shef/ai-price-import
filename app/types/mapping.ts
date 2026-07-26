@@ -44,8 +44,10 @@ export interface ArticleFieldConfig {
 export interface ProductLookupConfig {
   /** 'article' → by supplier article; 'name' → by full product name. */
   by: 'article' | 'name'
-  /** What to do when no product matched. */
-  onMissing: 'create' | 'skip-warn' | 'freeform'
+  /** What to do when no product matched. Creating a catalog product was removed (too complex an
+   *  operation for a multitenant import) — an unmatched line is either dropped with a warning
+   *  (`skip-warn`) or written as a free-form position without a product id (`freeform`). */
+  onMissing: 'skip-warn' | 'freeform'
 }
 
 /** Unit-of-measure mapping (see Q11). */
