@@ -54,6 +54,17 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     ]))
   })
 
+  it('NEGATIVE vatRate → hard error (not silently «Без НДС»)', async () => {
+    // A negative rate is garbage (bad extraction) — it must abort with an error, never be written as
+    // a tax-exempt line (regression guard for the 0-rate change).
+    const deps = baseDeps()
+    const d: ExtractedDocument = { ...doc, priceIncludesVat: false, items: [{ name: 'x', price: 1, quantity: 1, unit: 'шт', vatRate: -5 }] }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.created).toBe(false)
+    expect(deps.createTarget).not.toHaveBeenCalled()
+    expect(r.errors.some(e => /Отрицательная ставка/.test(e))).toBe(true)
+  })
+
   it('vatRate 0 → «Без НДС» (taxRate null), NOT a lookup for a 0% portal rate', async () => {
     // The portal has ONLY «Без НДС» (null) + 22% — no explicit «НДС 0%». A 0-rate line must still
     // import (taxRate null), not hard-error «ставка 0% отсутствует».

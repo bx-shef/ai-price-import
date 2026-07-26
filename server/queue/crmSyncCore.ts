@@ -150,10 +150,13 @@ export async function runCrmSync(
   // leave orphan catalog entries from earlier lines even though the whole document aborts. Detect all
   // hard errors up front and bail before writing anything. §8 «1-в-1» — never silently drop a line.
   for (const item of doc.items) {
-    // Only a POSITIVE printed rate must exist in the portal. A line with rate 0 (or «Без НДС») is
-    // tax-exempt → the B24 «Без НДС» flag (taxRate null), NOT a lookup for a 0% rate — a portal that
-    // has only «Без НДС» (no explicit «НДС 0%») would otherwise fail the whole document (#owner).
-    if ((item.vatRate ?? 0) > 0 && matchVatRate(item.vatRate!, vatRates) === null) {
+    // 0 / absent = «Без НДС» → the B24 «Без НДС» flag (taxRate null), NOT a lookup for a 0% rate (a
+    // portal with only «Без НДС» would otherwise fail the whole document, #owner). A NEGATIVE rate is
+    // garbage (bad extraction) — a hard error, never silently tax-exempt. A positive rate must exist in
+    // the portal.
+    if (item.vatRate != null && item.vatRate < 0) {
+      errors.push(`Отрицательная ставка НДС (${item.vatRate}%) в строке «${item.name}» — проверьте документ`)
+    } else if ((item.vatRate ?? 0) > 0 && matchVatRate(item.vatRate!, vatRates) === null) {
       errors.push(`Ставка НДС ${item.vatRate}% отсутствует в портале (строка «${item.name}»)`)
     }
   }

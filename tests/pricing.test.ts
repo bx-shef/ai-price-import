@@ -29,20 +29,32 @@ describe('computeGrossTotal', () => {
 describe('reconcilePricing', () => {
   const items = [item({ price: 0.86, quantity: 10000, vatRate: 20 })] // net 8600 / gross 10320
 
-  it('printed total matches the NET interpretation → priceIncludesVat=false, uses the printed total', () => {
+  it('printed GROSS total («Всего к оплате») matches the net-priced gross → false + anchor (deal #37)', () => {
     const r = reconcilePricing(items, /* modelFlag */ true, /* statedTotal */ 10320)
     expect(r.priceIncludesVat).toBe(false)
     expect(r.grossTotal).toBe(10320)
     expect(r.usedStatedTotal).toBe(true)
-    expect(r.corrected).toBe(true) // model said true, arithmetic says false
+    expect(r.corrected).toBe(true) // model said true, the printed gross proves net
     expect(r.totalMismatch).toBe(false)
   })
 
-  it('printed total matches the GROSS interpretation → priceIncludesVat=true', () => {
-    const r = reconcilePricing(items, false, 8600)
+  it('SAFETY: model says net + total looks like «Итого» (net subtotal) → STAY net, do NOT drop VAT', () => {
+    // The dangerous mis-read: the LLM grabs «Итого» 8600 (net) into total instead of «Всего к оплате».
+    // grossInclusive (Σ price×qty) == 8600, so it is indistinguishable from a net subtotal. We must NOT
+    // flip to «inclusive» (that would set opportunity 8600, dropping the 1720 VAT).
+    const r = reconcilePricing(items, /* modelFlag */ false, /* statedTotal */ 8600)
+    expect(r.priceIncludesVat).toBe(false)
+    expect(r.grossTotal).toBe(10320) // real gross = net + VAT, NOT the printed net subtotal
+    expect(r.usedStatedTotal).toBe(false)
+    expect(r.corrected).toBe(false)
+  })
+
+  it('genuine inclusive doc: model says inclusive + total matches the inclusive figure → trust true', () => {
+    const r = reconcilePricing(items, /* modelFlag */ true, /* statedTotal */ 8600)
     expect(r.priceIncludesVat).toBe(true)
     expect(r.grossTotal).toBe(8600)
-    expect(r.corrected).toBe(true)
+    expect(r.usedStatedTotal).toBe(true)
+    expect(r.corrected).toBe(false)
   })
 
   it('no printed total → keep the model flag, compute the total', () => {
@@ -57,10 +69,21 @@ describe('reconcilePricing', () => {
     expect(r.grossTotal).toBe(10320) // falls back to the model-flag computation
   })
 
-  it('absorbs small rounding noise in the printed total (within ~1%)', () => {
-    const r = reconcilePricing(items, false, 10320.02)
+  it('absorbs per-line rounding noise but NOT a materially wrong total (capped tolerance, #5)', () => {
+    // within the rounding budget (~0.5/line) → trusted
+    expect(reconcilePricing(items, false, 10320.02)).toMatchObject({ usedStatedTotal: true, priceIncludesVat: false, grossTotal: 10320.02 })
+    // a big invoice off by 50 (would pass an uncapped 1% = large) → NOT trusted, mismatch flagged
+    const big = [item({ price: 1000, quantity: 100, vatRate: 20 })] // net 100000 / gross 120000
+    const r = reconcilePricing(big, false, 120050) // 50 over the true gross, > capped tol (0.5)
+    expect(r.usedStatedTotal).toBe(false)
+    expect(r.totalMismatch).toBe(true)
+  })
+
+  it('no-VAT document with a total → anchor, but NO spurious «corrected» warning (#3)', () => {
+    const exempt = [item({ price: 100, quantity: 2, vatRate: 0 })] // net == gross == 200
+    const r = reconcilePricing(exempt, /* modelFlag */ true, /* statedTotal */ 200)
+    expect(r.grossTotal).toBe(200)
     expect(r.usedStatedTotal).toBe(true)
-    expect(r.priceIncludesVat).toBe(false)
-    expect(r.grossTotal).toBe(10320.02)
+    expect(r.corrected).toBe(false) // VAT-neutral → the flag is irrelevant, no correction noise
   })
 })
