@@ -21,6 +21,10 @@ export interface ImportJob {
   status: JobStatus
   fileName: string
   result: string
+  /** Same-portal RELATIVE path to the archived source file on the Disk, if it was saved (opt-in
+   *  `saveFile`). Lets the UI turn the file name into a link to the original document. Absent when
+   *  the file wasn't archived. Always relative (never off-portal) — see detailUrlToRelative. */
+  diskUrl?: string
 }
 
 /**
@@ -148,12 +152,21 @@ export async function claimJobNotify(memberId: string, jobId: string, redis: Job
 }
 
 function mapJob(memberId: string, jobId: string, h: Record<string, string>): ImportJob {
+  // Surface the archived Disk file as a same-portal RELATIVE path (never off-portal) so the UI can
+  // link the file name to the original document. Bad/absent → omitted.
+  let diskUrl: string | null = null
+  if (h.diskFile) {
+    try {
+      diskUrl = detailUrlToRelative((JSON.parse(h.diskFile) as { detailUrl?: unknown })?.detailUrl)
+    } catch { /* malformed → no link */ }
+  }
   return {
     memberId,
     jobId,
     status: (h.status || 'queued') as JobStatus,
     fileName: h.fileName ?? '',
-    result: h.result ?? ''
+    result: h.result ?? '',
+    ...(diskUrl ? { diskUrl } : {})
   }
 }
 

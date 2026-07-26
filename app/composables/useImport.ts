@@ -10,7 +10,7 @@ import type { TargetRef } from '~/types/mapping'
 // while any job is still running (queued/extracting/processing) so the /app progress moves on its
 // own, and stops once everything is terminal (done/error) — no idle polling.
 
-export interface ImportJobView { jobId: string, status: JobStatus, fileName: string, result: string }
+export interface ImportJobView { jobId: string, status: JobStatus, fileName: string, result: string, diskUrl?: string }
 
 /** How often to re-poll status while a job is in flight. */
 const POLL_MS = 2500
@@ -88,7 +88,7 @@ export function useImport() {
         .filter(e => byId.has(e.jobId))
         .map((e) => {
           const j = byId.get(e.jobId)!
-          return { jobId: j.jobId, status: j.status, fileName: e.fileName || j.fileName, result: j.result }
+          return { jobId: j.jobId, status: j.status, fileName: e.fileName || j.fileName, result: j.result, ...(j.diskUrl ? { diskUrl: j.diskUrl } : {}) }
         })
       error.value = ''
     } catch (e) {

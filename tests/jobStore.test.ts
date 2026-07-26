@@ -42,9 +42,12 @@ describe('jobStore (Redis-backed)', () => {
     await createJob('m', 'j1', 'f.pdf', r)
     await setDiskFile('m', 'j1', { id: 5, detailUrl: 'https://bel.bitrix24.by/docs/file/5/' }, r)
     expect(await getDiskFileUrl('m', 'j1', r)).toBe('/docs/file/5/')
-    // absent → null
+    // getJob surfaces the same relative path as `diskUrl` (for the UI file-name link).
+    expect((await getJob('m', 'j1', r))?.diskUrl).toBe('/docs/file/5/')
+    // absent → null / no diskUrl key
     await createJob('m', 'j2', 'f.pdf', r)
     expect(await getDiskFileUrl('m', 'j2', r)).toBeNull()
+    expect((await getJob('m', 'j2', r))?.diskUrl).toBeUndefined()
   })
 
   it('getDiskFileId: returns the stored id, null when absent/invalid', async () => {

@@ -23,7 +23,7 @@ mockNuxtImport('useB24', () => () => ({
   closeSlider: async () => {}
 }))
 
-const job = (status: string, result = '') => ({ jobId: 'j1', status, fileName: 'накладная.pdf', result }) as never
+const job = (status: string, result = '', extra: Record<string, unknown> = {}) => ({ jobId: 'j1', status, fileName: 'накладная.pdf', result, ...extra }) as never
 
 describe('ImportJobItem', () => {
   it('in-flight (extracting) → shows the stage stepper + current-stage progress, no result', async () => {
@@ -72,5 +72,25 @@ describe('ImportJobItem', () => {
   it('error → shows the failure reason', async () => {
     const w = await mountSuspended(ImportJobItem, { props: { job: job('error', '{"warnings":[],"errors":["не распознан формат"]}') } })
     expect(w.text()).toContain('не распознан формат')
+  })
+
+  it('archived-to-Disk file (diskUrl) IN a frame → the file name becomes a link (opens the Disk)', async () => {
+    framed.value = true
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":[],"errors":[]}', { diskUrl: '/docs/file/9/' }) } })
+    // The file name renders as a clickable <a> (its title names the source-file action). The absolute
+    // href needs the portal domain (absent in this mock, like the entity-link test); the click opens
+    // the Disk via the slider regardless.
+    const fileLink = w.findAll('a').find(a => a.text().includes('накладная.pdf'))
+    expect(fileLink).toBeTruthy()
+    expect(fileLink!.attributes('title')).toContain('исходный файл')
+    framed.value = false
+  })
+
+  it('no diskUrl → the file name is plain text, not a link', async () => {
+    framed.value = true
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":[],"errors":[]}') } })
+    const fileLink = w.findAll('a').find(a => a.text().includes('накладная.pdf'))
+    expect(fileLink).toBeUndefined()
+    framed.value = false
   })
 })
