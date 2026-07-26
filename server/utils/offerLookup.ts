@@ -21,7 +21,12 @@ function minOfferId(offers: unknown): number | null {
 }
 
 /** Resolve the portal's offers iblock id, or null when it has no SKU catalog. `catalog.catalog.list`
- *  returns `{ catalogs: [...] }` (or a bare array on some portals). */
+ *  returns `{ catalogs: [...] }` (or a bare array on some portals).
+ *  ⚠ SINGLE-CATALOG assumption: returns the FIRST catalog whose `productIblockId` is set. A portal with
+ *  MULTIPLE product catalogs (each with its own offers iblock) would bind offer lookup to whichever
+ *  appears first — offers for items in a different catalog wouldn't be found (they'd fail-soft to the
+ *  base-product lookup, not error). Acceptable for the common single-catalog CRM setup; revisit
+ *  (resolve per-product iblock) if multi-catalog portals become a target. */
 export async function resolveOffersIblockId(call: RestCall): Promise<number | null> {
   const res = await call('catalog.catalog.list', {}) as Record<string, unknown> | undefined
   const catalogs = (Array.isArray(res) ? res : (res?.catalogs as unknown[])) ?? []

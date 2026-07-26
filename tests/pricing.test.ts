@@ -91,4 +91,37 @@ describe('reconcilePricing', () => {
     expect(r.usedStatedTotal).toBe(true)
     expect(r.corrected).toBe(false) // VAT-neutral → the flag is irrelevant, no correction noise
   })
+
+  it('TRI-STATE: model flag UNDEFINED + total matches net gross → «net», corrected=true (resolved unknown)', () => {
+    // Model didn't say whether prices include VAT; the printed gross resolves it → net, and we mark it
+    // corrected so the operator sees «уточнён по итогу», and usedStatedTotal lets crm-sync skip the hard error.
+    const r = reconcilePricing(items, undefined, 10320)
+    expect(r.priceIncludesVat).toBe(false)
+    expect(r.grossTotal).toBe(10320)
+    expect(r.usedStatedTotal).toBe(true)
+    expect(r.corrected).toBe(true)
+  })
+
+  it('MIXED VAT rates across lines: computes each line at its own rate; anchors to the matching total', () => {
+    const mixed = [
+      item({ price: 100, quantity: 1, vatRate: 20 }), // net 100 / gross 120
+      item({ price: 50, quantity: 2, vatRate: 10 }), // net 100 / gross 110
+      item({ price: 30, quantity: 1, vatRate: 0 }) // net 30 / gross 30
+    ]
+    expect(computeGrossTotal(mixed, false)).toBe(120 + 110 + 30) // 260 exclusive
+    expect(computeGrossTotal(mixed, true)).toBe(100 + 100 + 30) // 230 inclusive
+    const r = reconcilePricing(mixed, false, 260) // printed gross matches the exclusive reading only
+    expect(r.priceIncludesVat).toBe(false)
+    expect(r.grossTotal).toBe(260)
+    expect(r.usedStatedTotal).toBe(true)
+  })
+
+  it('tolerance SCALES with line count: 20-line rounding drift within N×0.5 is accepted (not the flat 0.5)', () => {
+    // 20 lines, each net-priced; a printed total 8 over the true gross — inside 20×0.5=10 tol, but would
+    // fail a flat 0.5 floor. Proves the per-line-drift term controls, not just the floor/1%-cap.
+    const many = Array.from({ length: 20 }, () => item({ price: 100, quantity: 1, vatRate: 20 })) // gross 2400
+    const r = reconcilePricing(many, false, 2408)
+    expect(r.usedStatedTotal).toBe(true) // trusted within scaled tolerance
+    expect(r.grossTotal).toBe(2408)
+  })
 })

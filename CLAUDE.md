@@ -33,6 +33,25 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     bitrixgpt — `BITRIXGPT_API_KEY`/`VIBE_API_KEY` (легаси-фолбэк `ANTHROPIC_AUTH_TOKEN` удалён — прод на
     bitrixgpt/VIBE_API_KEY). Извлечение **live-verified** на реальных счетах РБ/РФ (PDF/скан/xls: тип, УНП/ИНН,
     позиции, НДС) + E2E на тест-портале (сделка+позиции).
+  - **crm-sync — запись документа в сделку** (`queue/crmSyncCore.runCrmSync`, чистое ядро с DI, тесты;
+    транспорты `crmWrite`/`companyLookup`/`productLookup`/`offerLookup`/`measureList`; проводка `liveDeps`).
+    Ключевые правила (все **live-verified на `bel.bitrix24.by`** 2026-07-26, каждый прогон с очисткой):
+    - **Цена/НДС/итог** (`app/utils/pricing.ts`): НДС считаем **построчно** (округление раз на строку:
+      0,86×10000×20% = 10 320, не 10 300). `reconcilePricing` сверяет `priceIncludesVat` с печатным «Всего к
+      оплате» **асимметрично** — правит флаг только в сторону «без НДС», НЕ флипает обратно (иначе «Итого»≡Σцена×кол
+      роняет НДС). **Скидка** (отрицательная цена) вычитается из итога сделки (`lineGross` не клампит негативы;
+      цена записанной строки остаётся ≥0 для B24, а `opportunity` — из сверенного итога). НДС=0 → «Без НДС»
+      (`taxRate null`), негативная ставка → жёсткая ошибка. Толеранс сверки капнут.
+    - **Подбор товара** (`productLookup.findProduct`): **приоритет торговых предложений (SKU/ТП)** —
+      `offerLookup` (инфоблок ТП = каталог с `productIblockId`; `catalog.product.offer.list`, `iblockId`
+      обязателен в filter И select; строка сделки принимает `offer.id` как `productId`), инфоблок ТП резолвится
+      раз на джобу (fail-soft: нет каталога/подписки → фолбэк на товары). Затем базовый товар: свойство
+      артикула (`%PROPERTY_<id>`+точная сверка) → **внешний код `XML_ID`** → имя. Всё **только `ACTIVE:'Y'`**.
+      **Создание товара удалено** (`onMissing`: `skip-warn`/`freeform`).
+    - **Единицы** (`measureList`): список через **`crm.measure.list`** (не `catalog.measure.list` — тот отдаёт
+      `null` русских подписей для системных мер; deprecated, но единственный с локализацией — см. `06-multilingual`).
+    - **Идемпотентность**: маркер `originId`+`originatorId` (сделка) / `xmlId` (инвойс/СП), `findExisting`-поиск
+      в Б24 перед созданием; повтор одним `jobId` → `created:false`, дубля нет.
   - **Событие install/uninstall — через очередь** `b24-events` (порт из client-bank): роут
     `api/b24/events.post.ts` верифицирует и **кладёт в очередь**, консьюмер (`queue/handlers.handleEventJob`)
     — **единственный писатель** `portal_tokens`; при недоступности Redis роут пишет **синхронным

@@ -118,6 +118,42 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.errors).toHaveLength(0)
   })
 
+  it('printed total matches NEITHER interpretation → warns «итог не сошёлся», still creates (opportunity from lines)', async () => {
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false, total: 99999, // wildly off both net (120) and incl (100)
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Товар', price: 100, quantity: 1, unit: 'шт', vatRate: 20 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.created).toBe(true)
+    expect(r.errors).toHaveLength(0)
+    expect(r.warnings.some(w => /итог документа не сошёлся/i.test(w))).toBe(true)
+    // NOT anchored to the bogus 99999 — opportunity computed from the lines (net-priced gross = 120).
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 120 }))
+  })
+
+  it('skip-warn drops the discount line → opportunity inflates to 120 BUT warns «не совпадает с итогом»', async () => {
+    // Known interaction (the pricing comment warns of it): with skip-warn, an unmatched discount line is
+    // SKIPPED, so allLinesWritten=false → opportunity = sum of written rows (120), losing the −20 discount.
+    // The deal amount is then wrong vs the paper (96) — so we MUST surface the explicit partial-write warning.
+    const m = mapping()
+    m.product.onMissing = 'skip-warn'
+    const findProduct = vi.fn(async (it: { name: string }) => (it.name === 'Скидка' ? null : 777))
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]), findProduct })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false, total: 96,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [
+        { name: 'Товар', price: 100, quantity: 1, unit: 'шт', vatRate: 20 },
+        { name: 'Скидка', price: -20, quantity: 1, unit: 'шт', vatRate: 20 }
+      ]
+    }
+    const r = await runCrmSync('j', d, m, {}, deps)
+    expect(r.rowCount).toBe(1) // discount line skipped
+    expect(r.warnings.some(w => /не включает пропущенные позиции/i.test(w))).toBe(true)
+  })
+
   it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {
     const deps = baseDeps()
     await runCrmSync('job1', doc, mapping(), {}, deps)

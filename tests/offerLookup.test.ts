@@ -63,4 +63,9 @@ describe('findOfferForItem', () => {
     expect(await findOfferForItem('x', 'y', null, call)).toBeNull()
     expect(call).not.toHaveBeenCalled()
   })
+  it('both article-xmlId and name miss → null after exactly 2 calls', async () => {
+    const call = vi.fn(async () => ({ offers: [] }))
+    expect(await findOfferForItem('NOPE', 'Тоже нет', 27, call)).toBeNull()
+    expect(call).toHaveBeenCalledTimes(2)
+  })
 })
