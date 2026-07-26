@@ -148,7 +148,17 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
   it('writeActivity records a configurable дело on the created entity', async () => {
     const writeActivity = vi.fn(async () => {})
     await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
-    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, supplierName: 'ООО Ромашка', rowCount: 1 })
+    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, supplierName: 'ООО Ромашка', rowCount: 1, warnings: [] })
+  })
+
+  it('passes import PROBLEMS (warnings) to writeActivity so they land on the timeline дело', async () => {
+    const writeActivity = vi.fn(async () => {})
+    // Supplier not found → a warning is accumulated; it must be forwarded to the дело.
+    const deps = baseDeps({ writeActivity, findCompanyByTaxId: vi.fn(async () => null) })
+    await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(writeActivity).toHaveBeenCalledWith(expect.objectContaining({
+      warnings: expect.arrayContaining([expect.stringMatching(/Поставщик не найден/)])
+    }))
   })
 
   it('does NOT write a дело on an idempotent resume (already-processed job)', async () => {

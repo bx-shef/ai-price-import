@@ -51,6 +51,9 @@ export interface CrmSyncDeps {
     entityId: number
     supplierName?: string
     rowCount: number
+    /** Import problems (товар не найден / единица / НДС уточнён / итог не сошёлся …) to record on the
+     *  timeline дело so the operator sees what needed attention — not just the success counts. */
+    warnings: string[]
   }) => Promise<void>
   /** Optional: atomically CLAIM the one-time finalize (success chat + timeline дело) for this
    *  job (#164). Returns true for the FIRST run to claim, false for any later resume/redelivery.
@@ -297,7 +300,7 @@ export async function runCrmSync(
   // no-op only on the dev webhook path, never in prod.
   if (deps.writeActivity && finalize) {
     try {
-      await deps.writeActivity({ entityTypeId, entityId, supplierName: doc.supplier?.name, rowCount: rows.length })
+      await deps.writeActivity({ entityTypeId, entityId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings })
     } catch {
       warnings.push('Дело в таймлайне не создано')
     }

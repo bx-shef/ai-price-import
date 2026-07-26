@@ -294,15 +294,21 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     },
     // Configurable timeline activity on the created entity (crm.activity.configurable.add,
     // OAuth app context — verified live). Best-effort; runCrmSync swallows failures.
-    writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount }) => {
+    writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount, warnings }) => {
       // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
       // Best-effort — a lookup failure just omits the button, never fails the import.
       const sourceFileUrl = await getDiskFileUrl(memberId, jobId, jobRedis).catch(() => null)
+      // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
+      // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
+      // stays within B24's block limit (buildConfigurableActivity slices to 10 total).
+      const problems = warnings.length
+        ? [`Проблемы (${warnings.length}):`, ...warnings.slice(0, 6).map(w => `• ${w}`)]
+        : []
       const params = buildConfigurableActivity({
         entityTypeId,
         ownerId: entityId,
         title: `Импорт: ${supplierName ?? 'документ'}`,
-        lines: [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : [])],
+        lines: [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : []), ...problems],
         openPath: entityOpenPath(entityTypeId, entityId),
         ...(sourceFileUrl ? { sourceFileUrl } : {})
       })
