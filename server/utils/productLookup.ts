@@ -2,6 +2,7 @@ import type { RestCall } from './b24Rest'
 import type { PortalMapping, ArticleFieldConfig } from '~/types/mapping'
 import type { DocumentItem } from '~/types/document'
 import { articleMatches, parseSupplierArticles } from '~/utils/supplierArticles'
+import { findOfferForItem } from './offerLookup'
 
 // Deterministic product lookup for crm-sync (find_product tool body). DI over RestCall.
 // Strategies (mapping.product.by):
@@ -74,17 +75,27 @@ export async function findProductByArticle(article: string, cfg: ArticleFieldCon
   return matched.length ? Math.min(...matched) : null
 }
 
-/** Resolve a document line to a catalog product id per the portal mapping. Article strategy tries, in
- *  order: the supplier-article property, then the external code (XML_ID) — both ACTIVE-only — then falls
- *  back to an exact name match (never drops the line here). */
-export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall): Promise<number | null> {
+/** Resolve a document line to a catalog product/offer id per the portal mapping.
+ *  - **Trade offers (SKU) have PRIORITY** when the portal has them (`offersIblockId` resolved once per
+ *    job): a printed article is often the OFFER's XML_ID, and a deal row can carry the offer id directly
+ *    (owner ask «приоритет SKU»). Fail-soft: no offers iblock / no match → fall through to products.
+ *  - Article strategy then tries: the supplier-article property → the external code (XML_ID) — both
+ *    ACTIVE-only — then an exact NAME match (never drops the line here). */
+export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall, offersIblockId: number | null = null): Promise<number | null> {
+  // 1) Offers (SKU / ТП) first — by article-as-xmlId, then by name. Only when the portal has an offers
+  //    iblock; otherwise this is a no-op (returns null) and we go straight to the base-product lookup.
+  if (offersIblockId) {
+    const offerId = await findOfferForItem(item.article, item.name, offersIblockId, call)
+    if (offerId) return offerId
+  }
+  // 2) Base product by the configured article property, then by external code (XML_ID).
   if (mapping.product.by === 'article' && mapping.article.field && item.article) {
     const byArticle = await findProductByArticle(item.article, mapping.article, call)
     if (byArticle) return byArticle
-    // The printed article often IS the product's external code (XML_ID) — try that before name.
     const byXmlId = await findProductByXmlId(item.article, call)
     if (byXmlId) return byXmlId
   }
+  // 3) Fall back to an exact product name.
   return findProductByName(item.name, call)
 }
 

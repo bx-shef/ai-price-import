@@ -156,4 +156,37 @@ describe('findProduct (strategy routing)', () => {
     expect(call).toHaveBeenCalledTimes(1)
     expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
   })
+
+  it('OFFER (SKU) has PRIORITY: article matches an offer xmlId → returns offer id, no product lookup', async () => {
+    const m = defaultMapping()
+    m.product.by = 'article'
+    m.article.field = '130'
+    const call = vi.fn(async (method: string) =>
+      method === 'catalog.product.offer.list' ? { offers: [{ id: 3, iblockId: 27 }] } : [])
+    // offersIblockId=27 → offers tried first, article '1030162' matches → offer id 3, no crm.product.list.
+    expect(await findProduct(item({ article: '1030162' }), m, call, 27)).toBe(3)
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { select: ['id', 'iblockId'], filter: { iblockId: 27, xmlId: '1030162', active: 'Y' } })
+  })
+
+  it('offer miss → falls through to the base-product lookup', async () => {
+    const m = defaultMapping()
+    m.product.by = 'article'
+    m.article.field = '130'
+    const call = vi.fn(async (method: string) =>
+      method === 'catalog.product.offer.list' ? { offers: [] } : [{ ID: '77', PROPERTY_130: 'A-1' }])
+    expect(await findProduct(item({ article: 'A-1' }), m, call, 27)).toBe(77)
+    // offer-by-xmlId + offer-by-name (both miss) → then the article property hit.
+    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { '%PROPERTY_130': 'A-1', 'ACTIVE': 'Y' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
+  })
+
+  it('offersIblockId null (no SKU catalog) → offers skipped entirely (pre-offer behaviour)', async () => {
+    const m = defaultMapping()
+    m.product.by = 'article'
+    m.article.field = '130'
+    const call = vi.fn(async () => [{ ID: '9', PROPERTY_130: 'A-1' }])
+    expect(await findProduct(item({ article: 'A-1' }), m, call, null)).toBe(9)
+    // No catalog.product.offer.list call at all.
+    expect(call).not.toHaveBeenCalledWith('catalog.product.offer.list', expect.anything())
+  })
 })
