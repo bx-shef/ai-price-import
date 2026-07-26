@@ -26,7 +26,11 @@ export function entityTypeLabel(entityTypeId: number): string {
  * INERT by the issue builder (inline code), so it is a copyable reference, not a live link.
  */
 export function absPortalUrl(path: string, domain: unknown): string {
-  const host = typeof domain === 'string' ? domain.trim() : ''
+  // The frame auth `domain` may arrive WITH a scheme ("https://portal…") and/or a trailing slash —
+  // strip both to a bare host, else we'd emit "https://https://portal…" (double scheme).
+  const host = (typeof domain === 'string' ? domain.trim() : '')
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '')
   return host ? `https://${host}${path}` : path
 }
 

@@ -47,6 +47,11 @@ describe('absPortalUrl', () => {
     expect(absPortalUrl('/docs/file/1/', '')).toBe('/docs/file/1/')
     expect(absPortalUrl('/docs/file/1/', null)).toBe('/docs/file/1/')
   })
+  it('strips an existing scheme + trailing slash on the domain (no double https://)', () => {
+    expect(absPortalUrl('/crm/deal/details/5/', 'https://bel.bitrix24.by')).toBe('https://bel.bitrix24.by/crm/deal/details/5/')
+    expect(absPortalUrl('/crm/deal/details/5/', 'https://bel.bitrix24.by/')).toBe('https://bel.bitrix24.by/crm/deal/details/5/')
+    expect(absPortalUrl('/x/', 'HTTP://bel.bitrix24.by')).toBe('https://bel.bitrix24.by/x/')
+  })
 })
 
 describe('resolveFeedbackOutcome (#192 п.1)', () => {
