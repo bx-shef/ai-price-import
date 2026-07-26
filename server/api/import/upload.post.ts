@@ -13,6 +13,9 @@ import { bodySizeStatus, edgeSecurityEnabled } from '../../utils/edgeSecurity'
 import { withFrameRouteSpan } from '../../utils/frameRouteSpan'
 import { query } from '../../db/client'
 
+/** A plain UUID (v1–v5) — the only shape accepted for a client-supplied jobId (Redis key safety). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 // POST /api/import/upload — in-portal document upload. Frame-token authenticated and
 // bound to a verified portal member_id (no client-trusted id → no cross-portal
 // injection). Stores the file, creates a job, enqueues file-extract. docs/redesign 02 §4.
@@ -80,7 +83,14 @@ export default defineEventHandler(async (event) => {
       const targetPart = form?.find(p => p.name === 'target')
       const manualOverride = targetPart?.data?.length ? parseManualTarget(targetPart.data.toString('utf8')) : null
 
-      const jobId = randomUUID()
+      // Idempotency key: the client MAY supply a stable jobId (a UUID it keeps for a given staged file
+      // across retries). Reusing it makes a retry idempotent — crm-sync's marker (originId/xmlId = jobId)
+      // finds the prior create → no duplicate CRM entity, and the client can record the job before the
+      // response (never an invisible import). Must be a plain UUID (it becomes part of the Redis key
+      // `import:job:{member}:{jobId}` — reject anything else so a client can't inject key structure). The
+      // key is member-scoped, so it can only touch the caller's own portal namespace.
+      const clientJobId = form?.find(p => p.name === 'jobId')?.data?.toString('utf8').trim()
+      const jobId = clientJobId && UUID_RE.test(clientJobId) ? clientJobId : randomUUID()
       await createJob(member.memberId, jobId, file.filename, jobRedis, manualOverride)
       await saveUpload(member.memberId, jobId, file.data, nodeFileIO)
       await enqueueExtract({ memberId: member.memberId, jobId, fileId: file.filename })

@@ -98,22 +98,28 @@ export function useImport() {
     }
   }
 
-  async function upload(file: File, target?: TargetRef | null): Promise<boolean> {
+  async function upload(file: File, target?: TargetRef | null, jobId?: string): Promise<boolean> {
     const h = await headers()
     if (!h) {
       error.value = 'Импорт доступен только внутри портала Bitrix24'
       return false
     }
     uploading.value = true
+    // A client-supplied jobId (stable per staged file) makes a retry idempotent AND lets us record the
+    // job UP FRONT — so even if the response is lost after the server committed the job, it still shows
+    // in «Последние операции» and is polled (no invisible import). addImportJob is keyed by jobId (idempotent).
+    const clientJob = !!jobId && typeof window !== 'undefined'
+    if (clientJob) addImportJob(window.localStorage, jobId!, file.name)
     try {
       const form = new FormData()
       form.append('file', file)
       // Optional manual target («куда импортировать») — overrides the routing rules for this job.
       // The server re-validates it (parseManualTarget); an absent/invalid one just follows the rules.
       if (target && target.entityTypeId > 0) form.append('target', JSON.stringify(target))
+      if (jobId) form.append('jobId', jobId) // idempotency key (server validates it's a UUID)
       const res = await $fetch<{ jobId?: string }>('/api/import/upload', { method: 'POST', headers: h, body: form })
-      // Remember this job in the browser (it's the client's own history now — no server list).
-      if (typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name)
+      // Remember this job in the browser (no-op if already recorded up-front). Client owns history now.
+      if (!clientJob && typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name)
       await refresh()
       scheduleNext() // the new job is queued → start following its progress
       return true

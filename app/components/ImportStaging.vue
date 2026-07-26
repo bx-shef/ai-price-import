@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
-import { MAX_UPLOAD_FILES } from '~/utils/importUpload'
+import { MAX_UPLOAD_FILES, validateUploadFile } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
 
 // Manual, one-by-one import staging (owner rework): picking files STAGES them into a list (no auto
@@ -14,14 +14,34 @@ import type { TargetRef } from '~/types/mapping'
 // so the page's job list + auto-poll follow the new jobs on the SAME reactive state; a second
 // useImport() here would poll a separate, unwatched list and leak a timer on unmount.
 type Status = 'queued' | 'uploading' | 'done' | 'error'
-interface StagedFile { id: number, file: File, target: TargetRef | null, status: Status, error?: string }
+interface StagedFile {
+  id: number
+  /** Stable idempotency key (desired jobId) reused across retries. */
+  key: string
+  file: File
+  target: TargetRef | null
+  status: Status
+  error?: string
+  /** Pre-validation failure (bad extension/size) → shown as error but NOT retryable/uploadable. */
+  invalid?: boolean
+}
 
-const props = defineProps<{ upload: (file: File, target?: TargetRef | null) => Promise<boolean> }>()
+const props = defineProps<{ upload: (file: File, target?: TargetRef | null, jobId?: string) => Promise<boolean> }>()
 
 const staged = ref<StagedFile[]>([])
 let nextId = 1
 const importing = ref(false)
 const notice = ref('')
+
+/** Stable idempotency key per staged file → reused across retries so a re-upload can't create a second
+ *  CRM entity (the server keys the job on it). Falls back to a random string if crypto is unavailable. */
+function newKey(): string {
+  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${nextId}-${Math.round(Math.random() * 1e9)}`
+}
+/** Loose identity of a picked File (same file picked twice = same signature) for dedup. */
+function sig(f: File): string {
+  return `${f.name}|${f.size}|${f.lastModified}`
+}
 
 const picked = ref<File[] | null>(null)
 /** Files still awaiting import (queued/uploading/error) — the cap counts these, «отправленные» don't. */
@@ -38,11 +58,30 @@ function onPicked(files: File[] | null | undefined): void {
     picked.value = null
     return
   }
-  const toAdd = files.slice(0, room)
-  for (const f of toAdd) staged.value.push({ id: nextId++, file: f, target: null, status: 'queued' })
-  if (toAdd.length < files.length) {
-    notice.value = `Добавлено ${toAdd.length} из ${files.length}: очередь ограничена ${MAX_UPLOAD_FILES} файлами.`
+  const known = new Set(staged.value.map(s => sig(s.file)))
+  let added = 0
+  let dupes = 0
+  for (const f of files) {
+    if (added >= room) break
+    // Dedup: the same file staged twice would import twice (each upload = a distinct job the server
+    // can't dedup) → skip it. The staged row for the first copy is already visible.
+    if (known.has(sig(f))) {
+      dupes++
+      continue
+    }
+    known.add(sig(f))
+    // Pre-validate on stage (extension/size): a bad file becomes an 'error' row with the reason and is
+    // NOT queued for upload (invalid=true excludes it from toImport) — the operator sees why immediately.
+    const v = validateUploadFile({ name: f.name, size: f.size })
+    staged.value.push(v.ok
+      ? { id: nextId++, key: newKey(), file: f, target: null, status: 'queued' }
+      : { id: nextId++, key: newKey(), file: f, target: null, status: 'error', error: v.error, invalid: true })
+    added++
   }
+  const notes: string[] = []
+  if (dupes) notes.push(`${dupes} уже в списке — пропущены`)
+  if (added < files.length - dupes) notes.push(`очередь ограничена ${MAX_UPLOAD_FILES} файлами`)
+  notice.value = notes.length ? `Добавлено ${added} из ${files.length}: ${notes.join('; ')}.` : ''
   picked.value = null
 }
 function remove(id: number): void {
@@ -52,14 +91,16 @@ function clearDone(): void {
   staged.value = staged.value.filter(s => s.status !== 'done')
 }
 
-const toImport = computed(() => staged.value.filter(s => s.status === 'queued' || s.status === 'error'))
+// Uploadable rows: queued, or a retryable error (a network failure) — but NOT a pre-validation
+// failure (invalid), which can never succeed and must not be re-sent.
+const toImport = computed(() => staged.value.filter(s => s.status === 'queued' || (s.status === 'error' && !s.invalid)))
 const doneCount = computed(() => staged.value.filter(s => s.status === 'done').length)
 
 const STATUS_LABEL: Record<Status, string> = {
-  queued: 'в очереди',
-  uploading: 'отправка…',
-  done: 'отправлен',
-  error: 'ошибка'
+  queued: 'В очереди',
+  uploading: 'Отправка…',
+  done: 'Отправлен',
+  error: 'Ошибка'
 }
 const STATUS_COLOR: Record<Status, 'air-secondary' | 'air-primary' | 'air-primary-success' | 'air-primary-alert'> = {
   queued: 'air-secondary',
@@ -85,7 +126,9 @@ async function startImport(): Promise<void> {
     s.status = 'uploading'
     s.error = undefined
     notice.value = `Импортируем «${s.file.name}»…`
-    const success = await props.upload(s.file, s.target)
+    // Pass the row's stable key as the desired jobId → a retry of THIS row reuses it and can't create
+    // a duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
+    const success = await props.upload(s.file, s.target, s.key)
     if (success) {
       s.status = 'done'
       ok++
@@ -146,9 +189,9 @@ async function startImport(): Promise<void> {
               />
             </div>
           </div>
-          <!-- Per-file target; hidden once uploaded. -->
+          <!-- Per-file target; shown only for uploadable rows (hidden once uploaded / for invalid files). -->
           <div
-            v-if="s.status === 'queued' || s.status === 'error'"
+            v-if="!s.invalid && (s.status === 'queued' || s.status === 'error')"
             class="flex flex-wrap items-center gap-2"
           >
             <span class="text-xs text-(--ui-color-base-4)">Куда:</span>
