@@ -10,7 +10,7 @@ import type { TargetRef } from '~/types/mapping'
 // while any job is still running (queued/extracting/processing) so the /app progress moves on its
 // own, and stops once everything is terminal (done/error) — no idle polling.
 
-export interface ImportJobView { jobId: string, status: JobStatus, fileName: string, result: string }
+export interface ImportJobView { jobId: string, status: JobStatus, fileName: string, result: string, diskUrl?: string }
 
 /** How often to re-poll status while a job is in flight. */
 const POLL_MS = 2500
@@ -88,7 +88,7 @@ export function useImport() {
         .filter(e => byId.has(e.jobId))
         .map((e) => {
           const j = byId.get(e.jobId)!
-          return { jobId: j.jobId, status: j.status, fileName: e.fileName || j.fileName, result: j.result }
+          return { jobId: j.jobId, status: j.status, fileName: e.fileName || j.fileName, result: j.result, ...(j.diskUrl ? { diskUrl: j.diskUrl } : {}) }
         })
       error.value = ''
     } catch (e) {
@@ -98,22 +98,28 @@ export function useImport() {
     }
   }
 
-  async function upload(file: File, target?: TargetRef | null): Promise<boolean> {
+  async function upload(file: File, target?: TargetRef | null, jobId?: string): Promise<boolean> {
     const h = await headers()
     if (!h) {
       error.value = 'Импорт доступен только внутри портала Bitrix24'
       return false
     }
     uploading.value = true
+    // A client-supplied jobId (stable per staged file) makes a retry idempotent AND lets us record the
+    // job UP FRONT — so even if the response is lost after the server committed the job, it still shows
+    // in «Последние операции» and is polled (no invisible import). addImportJob is keyed by jobId (idempotent).
+    const clientJob = !!jobId && typeof window !== 'undefined'
+    if (clientJob) addImportJob(window.localStorage, jobId!, file.name)
     try {
       const form = new FormData()
       form.append('file', file)
       // Optional manual target («куда импортировать») — overrides the routing rules for this job.
       // The server re-validates it (parseManualTarget); an absent/invalid one just follows the rules.
       if (target && target.entityTypeId > 0) form.append('target', JSON.stringify(target))
+      if (jobId) form.append('jobId', jobId) // idempotency key (server validates it's a UUID)
       const res = await $fetch<{ jobId?: string }>('/api/import/upload', { method: 'POST', headers: h, body: form })
-      // Remember this job in the browser (it's the client's own history now — no server list).
-      if (typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name)
+      // Remember this job in the browser (no-op if already recorded up-front). Client owns history now.
+      if (!clientJob && typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name)
       await refresh()
       scheduleNext() // the new job is queued → start following its progress
       return true
@@ -133,6 +139,17 @@ export function useImport() {
     scheduleNext()
   }
 
+  /** Manual «Обновить» (button): refresh once and, on success, RESUME auto-following — a run of transient
+   *  poll failures may have stopped the loop (MAX_POLL_FAILURES) while jobs are still in flight; a
+   *  successful manual refresh clears the failure streak and re-arms polling so «обновляется» is honest. */
+  async function refreshNow(): Promise<void> {
+    await refresh()
+    if (!error.value) {
+      pollFailures = 0
+      scheduleNext() // no-op when nothing is active; resumes following when a job is still running
+    }
+  }
+
   /** Clear the employee's import history (localStorage) + the visible list. The server keeps only
    *  ephemeral per-job status (Redis TTL); this just forgets which jobIds the browser polls. */
   function clearHistory(): void {
@@ -140,5 +157,5 @@ export function useImport() {
     jobs.value = []
   }
 
-  return { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll, clearHistory }
+  return { jobs, loading, uploading, error, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory }
 }

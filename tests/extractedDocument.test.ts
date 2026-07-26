@@ -19,6 +19,15 @@ describe('validateExtractedDocument', () => {
     })
   })
 
+  it('parses the printed grand total (positive finite number, ru/be number forms)', () => {
+    expect(validateExtractedDocument({ total: '10 320,00', items: [{ name: 'A', price: 1, quantity: 1 }] })?.total).toBe(10320)
+    expect(validateExtractedDocument({ total: 60, items: [{ name: 'A', price: 1, quantity: 1 }] })?.total).toBe(60)
+    // Absent / non-positive / junk → omitted (no total key).
+    expect(validateExtractedDocument({ items: [{ name: 'A', price: 1, quantity: 1 }] })?.total).toBeUndefined()
+    expect(validateExtractedDocument({ total: 0, items: [{ name: 'A', price: 1, quantity: 1 }] })?.total).toBeUndefined()
+    expect(validateExtractedDocument({ total: 'x', items: [{ name: 'A', price: 1, quantity: 1 }] })?.total).toBeUndefined()
+  })
+
   it('null when no usable items (empty rows only)', () => {
     expect(validateExtractedDocument({ items: [] })).toBeNull()
     expect(validateExtractedDocument({ items: [{}, { name: '  ' }] })).toBeNull() // no name, no numbers

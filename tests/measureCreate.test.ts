@@ -48,6 +48,11 @@ describe('normalizeUnitKey', () => {
     expect(normalizeUnitKey('пог.  м')).toBe('пог. м')
     expect(normalizeUnitKey(undefined)).toBe('')
   })
+  it('folds ШТ/шт/Шт/шт. to the same key (trailing abbreviation dot dropped)', () => {
+    for (const u of ['ШТ', 'шт', 'Шт', 'шт.', 'шт. ', 'шт .']) expect(normalizeUnitKey(u)).toBe('шт')
+    // internal dots are preserved (only trailing ones are folded)
+    expect(normalizeUnitKey('кв.м')).toBe('кв.м')
+  })
 })
 
 describe('buildMeasureIndex + lookupExistingMeasure (find-before-create)', () => {

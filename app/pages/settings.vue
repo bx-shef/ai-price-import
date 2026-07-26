@@ -338,7 +338,6 @@ const ARTICLE_KIND_ITEMS = [
 
 const ON_MISSING_ITEMS = [
   { label: 'Пропустить строку (предупреждение)', value: 'skip-warn' },
-  { label: 'Создать товар в каталоге', value: 'create' },
   { label: 'Внести как произвольную позицию', value: 'freeform' }
 ]
 </script>

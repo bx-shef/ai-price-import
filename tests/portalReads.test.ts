@@ -51,6 +51,6 @@ describe('findProduct (entry point)', () => {
     const call = vi.fn().mockResolvedValue([{ ID: '7' }])
     const id = await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, defaultMapping(), call)
     expect(id).toBe(7)
-    expect(call).toHaveBeenCalledWith('crm.product.list', expect.objectContaining({ filter: { NAME: 'Гвоздь' } }))
+    expect(call).toHaveBeenCalledWith('crm.product.list', expect.objectContaining({ filter: { NAME: 'Гвоздь', ACTIVE: 'Y' } }))
   })
 })

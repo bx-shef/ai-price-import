@@ -54,6 +54,70 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     ]))
   })
 
+  it('NEGATIVE vatRate → hard error (not silently «Без НДС»)', async () => {
+    // A negative rate is garbage (bad extraction) — it must abort with an error, never be written as
+    // a tax-exempt line (regression guard for the 0-rate change).
+    const deps = baseDeps()
+    const d: ExtractedDocument = { ...doc, priceIncludesVat: false, items: [{ name: 'x', price: 1, quantity: 1, unit: 'шт', vatRate: -5 }] }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.created).toBe(false)
+    expect(deps.createTarget).not.toHaveBeenCalled()
+    expect(r.errors.some(e => /Отрицательная ставка/.test(e))).toBe(true)
+  })
+
+  it('vatRate 0 → «Без НДС» (taxRate null), NOT a lookup for a 0% portal rate', async () => {
+    // The portal has ONLY «Без НДС» (null) + 22% — no explicit «НДС 0%». A 0-rate line must still
+    // import (taxRate null), not hard-error «ставка 0% отсутствует».
+    const deps = baseDeps()
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Услуга', price: 100, quantity: 1, unit: 'шт', vatRate: 0 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.errors).toHaveLength(0)
+    expect(r.created).toBe(true)
+    expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
+      expect.objectContaining({ taxRate: null, taxIncluded: 'N', price: 100, quantity: 1 })
+    ]))
+  })
+
+  it('reconciles a WRONG priceIncludesVat against the printed total + anchors opportunity to it (deal #37 bug)', async () => {
+    // The reported real invoice: net 0.86 × 10000 @20% → «Итого» 8600 → «Всего к оплате» 10320. Even if
+    // the model wrongly says prices INCLUDE VAT, the printed total (10320) matches the NET reading →
+    // correct to excluded (taxIncluded 'N'), and set opportunity to the paper's 10320 (not 10300 that
+    // per-unit rounding, nor 8600 that the wrong flag, would give).
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '1', name: 'Без НДС', rate: null }, { id: '6', name: 'НДС 20%', rate: 20 }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: true, total: 10320,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Мешок', price: 0.86, quantity: 10000, unit: 'шт', vatRate: 20 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 10320, isManualOpportunity: 'Y' }))
+    expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
+      expect.objectContaining({ taxIncluded: 'N', price: 0.86, quantity: 10000, taxRate: 20 })
+    ]))
+    expect(r.warnings.some(w => /уточнён по итогу/.test(w))).toBe(true)
+  })
+
+  it('DISCOUNT line (negative price) → deal opportunity reflects the discount, not the inflated row-sum', async () => {
+    // Товар 100 + скидка −20, оба @20%. Реальный итог = (100−20)×1.2 = 96. Строка скидки в CRM пишется
+    // с ценой 0 (B24 не держит отрицательную цену), но opportunity сделки должен быть 96, не 120.
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false, total: 96,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [
+        { name: 'Товар', price: 100, quantity: 1, unit: 'шт', vatRate: 20 },
+        { name: 'Скидка', price: -20, quantity: 1, unit: 'шт', vatRate: 20 }
+      ]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 96, isManualOpportunity: 'Y' }))
+    expect(r.errors).toHaveLength(0)
+  })
+
   it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {
     const deps = baseDeps()
     await runCrmSync('job1', doc, mapping(), {}, deps)
@@ -112,7 +176,17 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
   it('writeActivity records a configurable дело on the created entity', async () => {
     const writeActivity = vi.fn(async () => {})
     await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
-    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, supplierName: 'ООО Ромашка', rowCount: 1 })
+    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, supplierName: 'ООО Ромашка', rowCount: 1, warnings: [] })
+  })
+
+  it('passes import PROBLEMS (warnings) to writeActivity so they land on the timeline дело', async () => {
+    const writeActivity = vi.fn(async () => {})
+    // Supplier not found → a warning is accumulated; it must be forwarded to the дело.
+    const deps = baseDeps({ writeActivity, findCompanyByTaxId: vi.fn(async () => null) })
+    await runCrmSync('job1', doc, mapping(), {}, deps)
+    expect(writeActivity).toHaveBeenCalledWith(expect.objectContaining({
+      warnings: expect.arrayContaining([expect.stringMatching(/Поставщик не найден/)])
+    }))
   })
 
   it('does NOT write a дело on an idempotent resume (already-processed job)', async () => {
@@ -349,12 +423,17 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     expect(notifySuccess).not.toHaveBeenCalled()
   })
 
-  it('vatRate 0 not in portal → hard error (not «Без НДС»)', async () => {
+  it('vatRate 0 → «Без НДС» (taxRate null), NOT a hard error even when the portal has no 0% rate', async () => {
+    // Reversed from the old behaviour (#owner): a 0-rate line is tax-exempt (B24 «Без НДС» flag), so it
+    // imports with taxRate null instead of failing «ставка 0% отсутствует в портале».
     const deps = baseDeps()
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 1, quantity: 1, unit: 'шт', vatRate: 0 }] }
+    const d: ExtractedDocument = { ...doc, priceIncludesVat: false, items: [{ name: 'x', price: 1, quantity: 1, unit: 'шт', vatRate: 0 }] }
     const r = await runCrmSync('j', d, mapping(), {}, deps)
-    expect(r.created).toBe(false)
-    expect(r.errors.some(e => /0%/.test(e))).toBe(true)
+    expect(r.created).toBe(true)
+    expect(r.errors).toHaveLength(0)
+    expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
+      expect.objectContaining({ taxRate: null })
+    ]))
   })
 
   it('VAT present but priceIncludesVat undefined → hard error (total would flip)', async () => {
@@ -384,24 +463,22 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
 
   it('mixed items with one bad-VAT → whole doc aborts (no line loss, NO orphan catalog writes)', async () => {
     // The good line ('a') comes BEFORE the bad-VAT line ('b'). Pre-pass must catch the error and
-    // abort before the create loop, so 'a' never writes an orphan product/measure to the catalog.
+    // abort before the write loop, so 'a' never writes an orphan measure to the catalog.
     const m = mapping()
-    m.product.onMissing = 'create'
+    m.product.onMissing = 'freeform' // 'a' would be a free-form row → would resolve/create a measure
     m.units.autoCreate = true
-    const createProduct = vi.fn(async () => 999)
     const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
-    const deps = baseDeps({ createProduct, createMeasure })
+    const deps = baseDeps({ createMeasure })
     const d: ExtractedDocument = {
       ...doc,
       items: [
-        { name: 'a', price: 1, quantity: 1, unit: 'рулон', vatRate: 22 }, // valid, would create product+measure
+        { name: 'a', price: 1, quantity: 1, unit: 'рулон', vatRate: 22 }, // valid, would create a measure
         { name: 'b', price: 2, quantity: 1, unit: 'шт', vatRate: 25 } // unknown rate → hard error
       ]
     }
     const r = await runCrmSync('j', d, m, {}, deps)
     expect(r.created).toBe(false)
     expect(deps.createTarget).not.toHaveBeenCalled()
-    expect(createProduct).not.toHaveBeenCalled() // no orphan product from line 'a'
     expect(createMeasure).not.toHaveBeenCalled() // no orphan measure from line 'a'
   })
 })
@@ -425,14 +502,13 @@ describe('runCrmSync — products / units / routing', () => {
     expect(deps.setRows).not.toHaveBeenCalled()
   })
 
-  it('create: uses createProduct dep when present', async () => {
+  it('freeform: product not found → row written WITHOUT productId (free-form position)', async () => {
     const m = mapping()
-    m.product.onMissing = 'create'
-    const createProduct = vi.fn(async () => 888)
-    const deps = baseDeps({ createProduct })
+    m.product.onMissing = 'freeform'
+    const deps = baseDeps() // default findProduct → null
     await runCrmSync('j', doc, m, {}, deps)
-    expect(createProduct).toHaveBeenCalled()
-    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ productId: 888 })
+    expect(deps.setRows).toHaveBeenCalled()
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).not.toHaveProperty('productId')
   })
 
   it('unit not mapped → WARNING (not error), still creates with default measure', async () => {
@@ -461,7 +537,8 @@ describe('runCrmSync — products / units / routing', () => {
     m.units.autoCreate = true
     const createMeasure = vi.fn(async () => ({ code: 796, created: false }))
     const deps = baseDeps({ createMeasure })
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт.', vatRate: null }] }
+    // 'бухта' is NOT in the dictionary ({шт:796}) → reaches auto-create, which finds an existing measure.
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
     const r = await runCrmSync('j', d, m, {}, deps)
     expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 796 })
     expect(r.warnings.some(w => /сопоставлена с мерой портала/.test(w))).toBe(true)

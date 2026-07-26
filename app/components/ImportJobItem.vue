@@ -54,6 +54,37 @@ async function openEntity(): Promise<void> {
   if (domain && typeof window !== 'undefined') window.open(`https://${domain}${path}`, '_blank', 'noopener')
 }
 
+// The archived SOURCE file on the Disk (opt-in `saveFile`): make the file name open it, mirroring the
+// entity link. `diskUrl` is a same-portal RELATIVE path from the server (never off-portal); shown as a
+// link only in a portal frame (where the slider/domain are available).
+// Show the file-name link whenever the file was archived and we're in a frame (mirrors `canOpen` for
+// the entity link — the click opens a slider even if the absolute href can't be built yet).
+const canOpenDisk = computed(() => {
+  void frameReady.value
+  return !!props.job.diskUrl && inFrame()
+})
+const diskHref = computed<string | undefined>(() => {
+  void frameReady.value
+  const rel = props.job.diskUrl
+  if (!rel) return undefined
+  const domain = (frameAuth()?.domain ?? '').replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+  return domain ? `https://${domain}${rel}` : undefined
+})
+async function openDiskFile(): Promise<void> {
+  const rel = props.job.diskUrl
+  if (!rel) return
+  await initB24()
+  const frame = getFrame()
+  if (frame) {
+    try {
+      await frame.slider.openPath(frame.slider.getUrl(rel))
+      return
+    } catch { /* framed but the slider call threw → fall back to a plain new-tab open */ }
+  }
+  const domain = (frameAuth()?.domain ?? '').replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+  if (domain && typeof window !== 'undefined') window.open(`https://${domain}${rel}`, '_blank', 'noopener')
+}
+
 const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-primary-alert' | 'air-secondary'> = {
   neutral: 'air-secondary',
   info: 'air-primary',
@@ -75,7 +106,21 @@ const stepDot: Record<string, string> = {
 <template>
   <li class="flex flex-col gap-2 p-3">
     <div class="flex items-center justify-between gap-3">
-      <p class="min-w-0 flex-1 truncate text-sm font-medium">
+      <!-- When the source file was archived to the Disk, the file name links to it (opens in a slider);
+           otherwise it's plain text. -->
+      <a
+        v-if="canOpenDisk"
+        :href="diskHref"
+        class="min-w-0 flex-1 truncate text-sm font-medium text-(--ui-color-accent-main-link) hover:underline"
+        :title="`Открыть исходный файл: ${job.fileName}`"
+        @click.prevent="openDiskFile"
+      >
+        {{ job.fileName || 'документ' }}
+      </a>
+      <p
+        v-else
+        class="min-w-0 flex-1 truncate text-sm font-medium"
+      >
         {{ job.fileName || 'документ' }}
       </p>
       <B24Badge

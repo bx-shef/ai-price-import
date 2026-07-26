@@ -2,6 +2,7 @@ import type { ExtractedDocument } from '~/types/document'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { ENTITY_TYPE_ID } from '~/config/b24'
 import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
+import { reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { normalizeUnitKey } from '~/utils/measureCreate'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
@@ -20,8 +21,6 @@ export interface CrmSyncDeps {
   originatorPrefix?: string
   findCompanyByTaxId: (taxId: string) => Promise<number | null>
   findProduct: (item: ExtractedDocument['items'][number]) => Promise<number | null>
-  /** Optional: create a catalog product for onMissing:'create'; returns its id. */
-  createProduct?: (item: ExtractedDocument['items'][number]) => Promise<number | null>
   /** Optional: resolve an unmatched unit to a catalog measure (mapping.units.autoCreate, Q11) —
    *  find-before-create. Returns `{code, created}` (created=false ⇒ reused an existing measure), or
    *  null when not creatable / create failed / per-job cap reached (caller uses the default code). */
@@ -52,6 +51,9 @@ export interface CrmSyncDeps {
     entityId: number
     supplierName?: string
     rowCount: number
+    /** Import problems (товар не найден / единица / НДС уточнён / итог не сошёлся …) to record on the
+     *  timeline дело so the operator sees what needed attention — not just the success counts. */
+    warnings: string[]
   }) => Promise<void>
   /** Optional: atomically CLAIM the one-time finalize (success chat + timeline дело) for this
    *  job (#164). Returns true for the FIRST run to claim, false for any later resume/redelivery.
@@ -125,19 +127,36 @@ export async function runCrmSync(
   // we must NOT drop lines (§8 «1-в-1, без потерь строк»); operator fixes the portal, re-imports.
   const vatRates = await deps.portalVatRates()
   // VAT-inclusion must be known when any line carries VAT — otherwise the whole-document
-  // total flips (100 net → 120 gross). Undefined + VAT present ⇒ hard error, never guess.
+  // total flips (100 net → 120 gross). Reconcile against the document's PRINTED grand total
+  // («Всего к оплате»): if it matches the net- or gross-priced interpretation, trust that (and the
+  // printed total for the entity amount) — this corrects a model that guessed the flag wrong and
+  // removes per-unit rounding drift. Undefined flag + VAT present + no usable printed total ⇒ hard
+  // error, never guess.
   const hasVat = doc.items.some(it => (it.vatRate ?? 0) > 0)
-  if (hasVat && doc.priceIncludesVat === undefined) {
+  const pricing = reconcilePricing(doc.items, doc.priceIncludesVat === true, doc.total)
+  const priceIncludesVat = pricing.priceIncludesVat
+  if (hasVat && doc.priceIncludesVat === undefined && !pricing.usedStatedTotal) {
     errors.push('Не определено, включён ли НДС в цену — уточните документ и повторите импорт')
   }
-  const priceIncludesVat = doc.priceIncludesVat === true
+  if (pricing.corrected) {
+    warnings.push(`Признак «НДС включён в цену» уточнён по итогу документа: ${priceIncludesVat ? 'цена с НДС' : 'цена без НДС'}`)
+  }
+  if (pricing.totalMismatch) {
+    warnings.push('Печатный итог документа не сошёлся с суммой строк — проверьте сумму сделки')
+  }
 
   // PRE-PASS: validate every line's VAT rate against the portal BEFORE any catalog write. The create
   // loop below writes products/measures as it iterates, so a bad rate on a LATER line would otherwise
   // leave orphan catalog entries from earlier lines even though the whole document aborts. Detect all
   // hard errors up front and bail before writing anything. §8 «1-в-1» — never silently drop a line.
   for (const item of doc.items) {
-    if (item.vatRate != null && matchVatRate(item.vatRate, vatRates) === null) {
+    // 0 / absent = «Без НДС» → the B24 «Без НДС» flag (taxRate null), NOT a lookup for a 0% rate (a
+    // portal with only «Без НДС» would otherwise fail the whole document, #owner). A NEGATIVE rate is
+    // garbage (bad extraction) — a hard error, never silently tax-exempt. A positive rate must exist in
+    // the portal.
+    if (item.vatRate != null && item.vatRate < 0) {
+      errors.push(`Отрицательная ставка НДС (${item.vatRate}%) в строке «${item.name}» — проверьте документ`)
+    } else if ((item.vatRate ?? 0) > 0 && matchVatRate(item.vatRate!, vatRates) === null) {
       errors.push(`Ставка НДС ${item.vatRate}% отсутствует в портале (строка «${item.name}»)`)
     }
   }
@@ -152,18 +171,17 @@ export async function runCrmSync(
   const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
   let sort = 10
   for (const item of doc.items) {
-    // VAT already validated in the pre-pass → matchVatRate is non-null for any VAT-bearing line.
-    const vat = matchVatRate(item.vatRate ?? null, vatRates)
+    // Only a positive rate is matched (validated in the pre-pass); 0 / absent = «Без НДС» → taxRate
+    // null (the B24 «Без НДС» flag), never a 0%-rate lookup.
+    const vat = (item.vatRate ?? 0) > 0 ? matchVatRate(item.vatRate!, vatRates) : null
 
-    let productId = await deps.findProduct(item)
+    const productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
       warnings.push(`Товар «${item.name}» не найден — строка пропущена`)
       continue
     }
-    if (!productId && mapping.product.onMissing === 'create') {
-      productId = deps.createProduct ? await deps.createProduct(item) : null
-      if (!productId) warnings.push(`Товар «${item.name}» не создан — внесён как произвольная позиция`)
-    }
+    // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
+    // free-form position (productId undefined) carrying the document name/price.
 
     // Measure resolved only for a row we're actually writing (a SKIPPED row must not auto-create a
     // measure — #Q11 security). Auto-create (opt-in) when the unit isn't in the dictionary; best-
@@ -219,6 +237,13 @@ export async function runCrmSync(
     entityId = existingId
     created = false
   } else {
+    // Entity total: when the WHOLE document was written (no line skipped) use the reconciled document
+    // total — that is the printed «Всего к оплате» when trusted, else the per-line sum over the ORIGINAL
+    // items. Both reflect a discount line (negative price), which the persisted rows can't (row price is
+    // clamped ≥0 for B24) — so we must NOT re-sum the clamped rows here or a discount would be lost. Only
+    // a PARTIAL write (skip-warn dropped a line) falls back to the sum of rows actually written.
+    const allLinesWritten = rows.length === doc.items.length
+    const opportunityValue = allLinesWritten ? pricing.grossTotal : computeOpportunity(rows)
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
@@ -238,7 +263,7 @@ export async function runCrmSync(
       // Only for entities that always expose the field (deal/smart-invoice); dynamic
       // smart-processes are skipped (the field may be absent → create could be rejected).
       ...(rows.length && supportsOpportunity(target.entityTypeId)
-        ? { opportunity: computeOpportunity(rows), isManualOpportunity: 'Y' }
+        ? { opportunity: opportunityValue, isManualOpportunity: 'Y' }
         : {})
     }
     entityId = await deps.createTarget(target, fields)
@@ -280,7 +305,7 @@ export async function runCrmSync(
   // no-op only on the dev webhook path, never in prod.
   if (deps.writeActivity && finalize) {
     try {
-      await deps.writeActivity({ entityTypeId, entityId, supplierName: doc.supplier?.name, rowCount: rows.length })
+      await deps.writeActivity({ entityTypeId, entityId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings })
     } catch {
       warnings.push('Дело в таймлайне не создано')
     }

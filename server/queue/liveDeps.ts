@@ -19,7 +19,6 @@ import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
 import { findProduct } from '../utils/productLookup'
-import { createProductViaRest } from '../utils/productCreate'
 import { fetchMeasureRows } from '../utils/measureList'
 import { createMeasureViaRest } from '../utils/measureCreateWrite'
 import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_MEASURES_PER_JOB, type MeasureIndex } from '~/utils/measureCreate'
@@ -209,10 +208,9 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
 
 /**
  * crm-sync deps bound to one portal+job+mapping (deterministic lookups via portal REST).
- * `createProduct` (mapping.product.onMissing === 'create') creates a catalog product via
- * crm.product.add and, when matching by article, writes the supplier-article property so
- * the product is re-found next import (no duplicate). Returns null on failure ⇒ runCrmSync
- * degrades to a freeform line + a warning (never silent).
+ * An unmatched product line is handled per mapping.product.onMissing — `skip-warn` (drop +
+ * warning) or `freeform` (write a free-form position). Creating catalog products was removed
+ * (too complex an operation for a multitenant import).
  */
 function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping, rest: (m: string) => Promise<SdkTransport | null>, infra: LiveInfra): CrmSyncDeps {
   const need = async (): Promise<SdkTransport> => {
@@ -248,7 +246,6 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     originatorPrefix: process.env.IMPORT_ORIGINATOR_ID,
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
     findProduct: async item => findProduct(item, mapping, (await need()).call),
-    createProduct: async item => createProductViaRest(item, mapping, (await need()).call),
     // Auto-create measure (opt-in): wired only when enabled so crm-sync's presence check gates it.
     // Find-before-create against the portal index (reuse → {created:false}); otherwise allocate +
     // create (→ {created:true}), pushing the new code into the index so repeats/later units reuse it.
@@ -290,19 +287,28 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     notifySuccess: async (summary) => {
       if (!mapping.notifyChatId) return
       const t = await need()
-      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary), t.call)
+      // Portal host → an absolute clickable BB-link «Открыть в CRM» in the chat message
+      // (a bare path is not a link). Best-effort: no token row ⇒ relative fallback.
+      const domain = (await getToken(memberId, infra.query))?.domain
+      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call)
     },
     // Configurable timeline activity on the created entity (crm.activity.configurable.add,
     // OAuth app context — verified live). Best-effort; runCrmSync swallows failures.
-    writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount }) => {
+    writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount, warnings }) => {
       // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
       // Best-effort — a lookup failure just omits the button, never fails the import.
       const sourceFileUrl = await getDiskFileUrl(memberId, jobId, jobRedis).catch(() => null)
+      // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
+      // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
+      // stays within B24's block limit (buildConfigurableActivity slices to 10 total).
+      const problems = warnings.length
+        ? [`Проблемы (${warnings.length}):`, ...warnings.slice(0, 6).map(w => `• ${w}`)]
+        : []
       const params = buildConfigurableActivity({
         entityTypeId,
         ownerId: entityId,
         title: `Импорт: ${supplierName ?? 'документ'}`,
-        lines: [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : [])],
+        lines: [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : []), ...problems],
         openPath: entityOpenPath(entityTypeId, entityId),
         ...(sourceFileUrl ? { sourceFileUrl } : {})
       })

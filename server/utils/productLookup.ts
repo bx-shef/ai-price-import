@@ -4,22 +4,40 @@ import type { DocumentItem } from '~/types/document'
 import { articleMatches, parseSupplierArticles } from '~/utils/supplierArticles'
 
 // Deterministic product lookup for crm-sync (find_product tool body). DI over RestCall.
-// Two strategies (mapping.product.by):
+// Strategies (mapping.product.by):
 //   • 'name'    → exact product NAME via crm.product.list (verified live: {ID, NAME}).
 //   • 'article' → the admin-configured catalog property (mapping.article.field) holding
-//     the supplier article(s). Supports BOTH field variants (kind 'text' = one article
-//     per line / 'string' = delimiter-separated).
+//     the supplier article(s) AND the product's external code (XML_ID / «внешний код»).
+//     Supports BOTH field variants (kind 'text' = one article per line / 'string' = delimiter-separated).
 // Live-verified: an EXACT `PROPERTY_<code>` filter does NOT match a field that holds
 // several articles (value "A\nB" is not found by exact "A") — only a substring `%LIKE`
 // filter finds it. So we narrow with `%PROPERTY_<code>`, then confirm an EXACT article
 // membership client-side (parseSupplierArticles) to reject LIKE false positives
 // (e.g. "STP-5" ⊂ "STP-50"). Unmatched → mapping.product.onMissing.
+//
+// ACTIVE-only (owner ask): every lookup filters `ACTIVE: 'Y'` so an inactive/archived product is never
+// matched. ⚠ the `ACTIVE`/`XML_ID` filters on crm.product.list are per the classic product contract —
+// live-verify on a catalog-enabled portal before relying on them (this dev webhook has no catalog REST).
+// SKU / trade-offer («торговое предложение») matching with priority over the base product is a
+// documented follow-up (needs catalog.product.offer.* + a subscription portal) — see docs.
 
-/** Find a catalog product id by exact name, or null (min id on duplicates). */
+/** Find an ACTIVE catalog product id by exact name, or null (min id on duplicates). */
 export async function findProductByName(name: string, call: RestCall): Promise<number | null> {
   const q = (name ?? '').trim()
   if (!q) return null
-  const rows = await call('crm.product.list', { filter: { NAME: q }, select: ['ID'] }) as Array<{ ID: string }> | undefined
+  const rows = await call('crm.product.list', { filter: { NAME: q, ACTIVE: 'Y' }, select: ['ID'] }) as Array<{ ID: string }> | undefined
+  return minId(rows)
+}
+
+/**
+ * Find an ACTIVE catalog product by its external code (XML_ID / «внешний код»), or null. Distributors
+ * commonly key their catalog by XML_ID, so it is tried as a second article-matching strategy after the
+ * supplier-article property. Exact match (XML_ID is a single value, not a multi-article field).
+ */
+export async function findProductByXmlId(code: string, call: RestCall): Promise<number | null> {
+  const q = (code ?? '').trim()
+  if (!q) return null
+  const rows = await call('crm.product.list', { filter: { XML_ID: q, ACTIVE: 'Y' }, select: ['ID'] }) as Array<{ ID: string }> | undefined
   return minId(rows)
 }
 
@@ -41,7 +59,7 @@ export async function findProductByArticle(article: string, cfg: ArticleFieldCon
   // substring of >50 products could be missed if its exact holder sits past row 50.
   // Both are acceptable for specific supplier codes; the field must be the numeric id.
   const rows = await call('crm.product.list', {
-    filter: { [`%${key}`]: q },
+    filter: { [`%${key}`]: q, ACTIVE: 'Y' },
     select: ['ID', key],
     order: { ID: 'ASC' }
   }) as Array<Record<string, unknown>> | undefined
@@ -56,12 +74,16 @@ export async function findProductByArticle(article: string, cfg: ArticleFieldCon
   return matched.length ? Math.min(...matched) : null
 }
 
-/** Resolve a document line to a catalog product id per the portal mapping. */
+/** Resolve a document line to a catalog product id per the portal mapping. Article strategy tries, in
+ *  order: the supplier-article property, then the external code (XML_ID) — both ACTIVE-only — then falls
+ *  back to an exact name match (never drops the line here). */
 export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall): Promise<number | null> {
-  if (mapping.product.by === 'article' && mapping.article.field) {
-    const byArticle = item.article ? await findProductByArticle(item.article, mapping.article, call) : null
+  if (mapping.product.by === 'article' && mapping.article.field && item.article) {
+    const byArticle = await findProductByArticle(item.article, mapping.article, call)
     if (byArticle) return byArticle
-    // No article printed or no match → fall back to name (never drop the line here).
+    // The printed article often IS the product's external code (XML_ID) — try that before name.
+    const byXmlId = await findProductByXmlId(item.article, call)
+    if (byXmlId) return byXmlId
   }
   return findProductByName(item.name, call)
 }

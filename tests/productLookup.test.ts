@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { findProduct, findProductByArticle, findProductByName } from '../server/utils/productLookup'
+import { findProduct, findProductByArticle, findProductByName, findProductByXmlId } from '../server/utils/productLookup'
 import { defaultMapping } from '../app/utils/portalSettings'
 import type { DocumentItem } from '../app/types/document'
 
@@ -9,7 +9,7 @@ describe('findProductByName', () => {
   it('filters by NAME and returns the smallest positive id', async () => {
     const call = vi.fn(async () => [{ ID: '31' }, { ID: '29' }])
     expect(await findProductByName('Гвоздь', call)).toBe(29)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь' }, select: ['ID'] })
+    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
   })
   it('null on empty name or no rows', async () => {
     const call = vi.fn(async () => [])
@@ -31,7 +31,7 @@ describe('findProductByArticle (%LIKE narrows → exact membership; live-verifie
   it('text variant: %LIKE query (ordered), membership by newline split', async () => {
     const call = vi.fn(async () => [{ ID: '7', PROPERTY_130: { value: 'A-100\nA-200' } }])
     expect(await findProductByArticle('A-100', artCfg(), call)).toBe(7)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { '%PROPERTY_130': 'A-100' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
+    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { '%PROPERTY_130': 'A-100', 'ACTIVE': 'Y' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
   })
   it('rejects a LIKE false positive (A-10 is NOT an exact member of {A-100, A-200})', async () => {
     const call = vi.fn(async () => [{ ID: '7', PROPERTY_130: { value: 'A-100\nA-200' } }])
@@ -82,42 +82,69 @@ describe('findProductByArticle (%LIKE narrows → exact membership; live-verifie
   })
 })
 
+describe('findProductByXmlId (external code «внешний код», ACTIVE-only)', () => {
+  it('filters by XML_ID + ACTIVE and returns the smallest positive id', async () => {
+    const call = vi.fn(async () => [{ ID: '18' }, { ID: '15' }])
+    expect(await findProductByXmlId('EXT-42', call)).toBe(15)
+    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { XML_ID: 'EXT-42', ACTIVE: 'Y' }, select: ['ID'] })
+  })
+  it('null on empty code or no rows (no REST call for empty)', async () => {
+    const call = vi.fn(async () => [])
+    expect(await findProductByXmlId('   ', call)).toBeNull()
+    expect(call).not.toHaveBeenCalled()
+    expect(await findProductByXmlId('x', vi.fn(async () => undefined))).toBeNull()
+  })
+})
+
 describe('findProduct (strategy routing)', () => {
-  it('by:\'name\' always uses NAME (ignores article)', async () => {
+  it('by:\'name\' always uses NAME (ignores article), ACTIVE-only', async () => {
     const m = defaultMapping()
     m.product.by = 'name'
     const call = vi.fn(async () => [{ ID: '5' }])
     await findProduct(item({ article: 'A-1' }), m, call)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь' }, select: ['ID'] })
+    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
   })
-  it('by:\'article\' tries the article property first, then falls back to NAME', async () => {
+  it('by:\'article\' tries the article property, then XML_ID, then falls back to NAME', async () => {
     const m = defaultMapping()
     m.product.by = 'article'
     m.article.field = '130'
     const call = vi.fn()
-      .mockResolvedValueOnce([]) // article miss
+      .mockResolvedValueOnce([]) // article-property miss
+      .mockResolvedValueOnce([]) // XML_ID miss
       .mockResolvedValueOnce([{ ID: '9' }]) // name hit
     expect(await findProduct(item({ article: 'A-1' }), m, call)).toBe(9)
-    expect(call).toHaveBeenNthCalledWith(1, 'crm.product.list', { filter: { '%PROPERTY_130': 'A-1' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
-    expect(call).toHaveBeenNthCalledWith(2, 'crm.product.list', { filter: { NAME: 'Гвоздь' }, select: ['ID'] })
+    expect(call).toHaveBeenNthCalledWith(1, 'crm.product.list', { filter: { '%PROPERTY_130': 'A-1', 'ACTIVE': 'Y' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
+    expect(call).toHaveBeenNthCalledWith(2, 'crm.product.list', { filter: { XML_ID: 'A-1', ACTIVE: 'Y' }, select: ['ID'] })
+    expect(call).toHaveBeenNthCalledWith(3, 'crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
   })
-  it('by:\'article\' with a matching property returns it WITHOUT a NAME fallback call', async () => {
+  it('by:\'article\' — article-property miss but XML_ID (внешний код) hit → returns it, no NAME call', async () => {
+    const m = defaultMapping()
+    m.product.by = 'article'
+    m.article.field = '130'
+    const call = vi.fn()
+      .mockResolvedValueOnce([]) // article-property miss
+      .mockResolvedValueOnce([{ ID: '21' }]) // XML_ID hit
+    expect(await findProduct(item({ article: 'EXT-1' }), m, call)).toBe(21)
+    expect(call).toHaveBeenCalledTimes(2)
+    expect(call).toHaveBeenNthCalledWith(2, 'crm.product.list', { filter: { XML_ID: 'EXT-1', ACTIVE: 'Y' }, select: ['ID'] })
+  })
+  it('by:\'article\' with a matching property returns it WITHOUT XML_ID / NAME fallback', async () => {
     const m = defaultMapping()
     m.product.by = 'article'
     m.article.field = '130'
     const call = vi.fn(async () => [{ ID: '12', PROPERTY_130: 'A-1' }])
     expect(await findProduct(item({ article: 'A-1' }), m, call)).toBe(12)
     expect(call).toHaveBeenCalledTimes(1)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { '%PROPERTY_130': 'A-1' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
+    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { '%PROPERTY_130': 'A-1', 'ACTIVE': 'Y' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
   })
 
-  it('by:\'article\' with property-miss AND name-miss → null', async () => {
+  it('by:\'article\' with property-miss AND XML_ID-miss AND name-miss → null (3 calls)', async () => {
     const m = defaultMapping()
     m.product.by = 'article'
     m.article.field = '130'
     const call = vi.fn(async () => [])
     expect(await findProduct(item({ article: 'A-1' }), m, call)).toBeNull()
-    expect(call).toHaveBeenCalledTimes(2)
+    expect(call).toHaveBeenCalledTimes(3)
   })
 
   it('by:\'article\' with no article printed goes straight to NAME', async () => {
@@ -127,6 +154,6 @@ describe('findProduct (strategy routing)', () => {
     const call = vi.fn(async () => [{ ID: '4' }])
     expect(await findProduct(item(), m, call)).toBe(4)
     expect(call).toHaveBeenCalledTimes(1)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь' }, select: ['ID'] })
+    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
   })
 })

@@ -2,7 +2,6 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
-import ChevronDownMIcon from '@bitrix24/b24icons-vue/outline/ChevronDownMIcon'
 import { navigateTo } from '#app'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
@@ -10,13 +9,6 @@ import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
 import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS } from '~/config/b24'
-import { useCrmCategories } from '~/composables/useCrmCategories'
-import { useCrmStages } from '~/composables/useCrmStages'
-import * as catPicker from '~/utils/categoryPicker'
-import * as stagePicker from '~/utils/stagePicker'
-import type { CrmCategoryOption } from '~/utils/categoryPicker'
-import type { CrmStageOption } from '~/utils/stagePicker'
-import type { TargetRef } from '~/types/mapping'
 import { isPortalConfigured } from '~/utils/portalSettings'
 import { formatMinutes } from '~/utils/savings'
 
@@ -27,7 +19,7 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'AI-импорт прайсов' })
 
-const { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll, clearHistory } = useImport()
+const { jobs, loading, uploading, error, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
 function doClearHistory(): void {
@@ -76,75 +68,6 @@ onMounted(async () => {
   settingsLoaded.value = !settingsError.value
 })
 onBeforeUnmount(stopAutoPoll) // don't keep polling after leaving the page
-
-// ── Upload target («куда импортировать») — optional override of the portal's routing rules. Default
-// «Авто» (null entity) → follow the rules/default. Direction + stage cascade from the portal (same
-// helpers as settings). The server re-validates the target. Kept below the dropzone as an override. ──
-const { load: loadCrmCategories } = useCrmCategories()
-const { load: loadCrmStages } = useCrmStages()
-const targetEtid = ref<number | null>(null)
-const targetCategoryId = ref<number | undefined>(undefined)
-const targetStageId = ref<string | undefined>(undefined)
-const cats = ref<CrmCategoryOption[] | undefined>(undefined)
-const stages = ref<CrmStageOption[] | undefined>(undefined)
-const TARGET_CHOICES: Array<{ id: number | null, label: string }> = [
-  { id: null, label: 'Авто (по правилам)' },
-  { id: 1, label: 'Лид' },
-  { id: 2, label: 'Сделка' },
-  { id: 31, label: 'Смарт-счёт' }
-]
-async function reloadStages() {
-  targetStageId.value = undefined // entity/direction change → drop the stage
-  stages.value = targetEtid.value ? await loadCrmStages(targetEtid.value, targetCategoryId.value ?? null) : undefined
-}
-async function chooseTarget(id: number | null) {
-  targetEtid.value = id
-  targetCategoryId.value = undefined // entity switch → drop the direction
-  // Clear the stage SYNCHRONOUSLY before the categories await, so a submit during that gap can't
-  // send the previous entity's stageId with the new entity (reloadStages re-clears after the load).
-  targetStageId.value = undefined
-  stages.value = undefined
-  cats.value = id ? await loadCrmCategories(id) : undefined
-  await reloadStages()
-}
-const catItems = computed(() => catPicker.categoryItems(cats.value))
-const showDirection = computed(() => catPicker.hasCategories(cats.value))
-// Use the picker helper so the model-value matches an item value (sentinel when unset) — a bare ''
-// isn't in the items list (b24ui/Reka SelectItem forbids empty-string values).
-const catValue = computed(() => catPicker.categoryValue({ categoryId: targetCategoryId.value ?? undefined }))
-async function onCategory(v: unknown) {
-  const t: { categoryId?: number } = { categoryId: targetCategoryId.value }
-  catPicker.setCategory(t, v)
-  targetCategoryId.value = t.categoryId
-  await reloadStages() // direction change → reload its stages
-}
-const stageItems = computed(() => stagePicker.stageItems(stages.value))
-const showStage = computed(() => stagePicker.hasStages(stages.value))
-const stageValue = computed(() => stagePicker.stageValue({ stageId: targetStageId.value ?? undefined }))
-function onStage(v: unknown) {
-  const t: { stageId?: string } = { stageId: targetStageId.value }
-  stagePicker.setStage(t, v)
-  targetStageId.value = t.stageId
-}
-function currentTarget(): TargetRef | null {
-  if (!targetEtid.value) return null
-  return {
-    entityTypeId: targetEtid.value,
-    ...(targetCategoryId.value != null ? { categoryId: targetCategoryId.value } : {}),
-    ...(targetStageId.value ? { stageId: targetStageId.value } : {})
-  }
-}
-
-const pending = ref<File[] | null>(null)
-async function onPicked(files: File[] | null | undefined) {
-  if (!files?.length) return
-  const target = currentTarget()
-  for (const f of files) await upload(f, target)
-  pending.value = null
-}
-
-// «Куда импортировать» is an advanced override — collapsed by default so the dropzone stays the hero.
-const showTarget = ref(false)
 
 // Two-step reset (no window.confirm): click «Сбросить» → confirm inline. Keep the
 // confirm visible (so «Да» shows «Сброс…»/disabled) until the request resolves.
@@ -237,71 +160,9 @@ watch(jobs, (list) => {
         </template>
       </B24Alert>
 
-      <!-- PRIMARY ACTION: upload dropzone (hero). Camera/files on mobile via the native input. -->
-      <B24FileUpload
-        v-model="pending"
-        multiple
-        accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.docx"
-        :disabled="uploading"
-        size="lg"
-        label="Перетащите файл(ы) сюда или нажмите"
-        description="PDF, фото, Excel, Word · до 20 МБ"
-        @update:model-value="onPicked"
-      />
-
-      <!-- Optional target override, collapsed by default (default = portal routing rules). -->
-      <div class="mt-2">
-        <B24Button
-          :icon="ChevronDownMIcon"
-          :label="showTarget ? 'Скрыть выбор цели' : 'Куда импортировать? · по правилам'"
-          color="air-tertiary-no-accent"
-          size="xs"
-          :aria-expanded="showTarget"
-          @click="() => { showTarget = !showTarget }"
-        />
-        <div
-          v-if="showTarget"
-          class="mt-2"
-          role="group"
-          aria-label="Куда импортировать"
-        >
-          <div class="flex flex-wrap items-center gap-2">
-            <B24Button
-              v-for="c in TARGET_CHOICES"
-              :key="String(c.id)"
-              :label="c.label"
-              size="sm"
-              :color="targetEtid === c.id ? 'air-primary' : 'air-tertiary-no-accent'"
-              :aria-pressed="targetEtid === c.id"
-              @click="() => chooseTarget(c.id)"
-            />
-            <span class="text-xs text-(--ui-color-base-4)">или ID (смарт-процесс ≥ 1000):</span>
-            <B24InputNumber
-              :model-value="targetEtid"
-              :min="1"
-              class="w-24"
-              aria-label="ID типа целевой сущности"
-              @update:model-value="(v: unknown) => chooseTarget(typeof v === 'number' && v > 0 ? v : null)"
-            />
-            <B24Select
-              v-if="showDirection"
-              :model-value="catValue"
-              :items="catItems"
-              class="w-full sm:w-52"
-              aria-label="Направление (воронка)"
-              @update:model-value="onCategory"
-            />
-            <B24Select
-              v-if="showStage"
-              :model-value="stageValue"
-              :items="stageItems"
-              class="w-full sm:w-48"
-              aria-label="Стадия"
-              @update:model-value="onStage"
-            />
-          </div>
-        </div>
-      </div>
+      <!-- PRIMARY ACTION: stage files → set a per-file target → import one-by-one on «Импортировать».
+           `upload` comes from THIS page's single useImport() so uploads land in the same job list/poll. -->
+      <ImportStaging :upload="upload" />
 
       <B24Alert
         v-if="error"
@@ -364,7 +225,7 @@ watch(jobs, (list) => {
             :loading="loading"
             :disabled="loading"
             :label="loading ? 'Обновление…' : 'Обновить'"
-            @click="refresh"
+            @click="refreshNow"
           />
         </div>
       </div>

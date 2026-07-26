@@ -1,6 +1,6 @@
 # План проверок procure-ai
 
-> Last reviewed: 2026-07-22
+> Last reviewed: 2026-07-26
 
 Этот документ — практический чек-лист ручных и автоматических проверок procure-ai по подсистемам. Пользоваться им так: начните с раздела «Быстрый старт (smoke)», убедитесь, что приложение вообще поднимается, затем идите по нужной подсистеме и прогоняйте строки таблицы (колонка «Метка» показывает, что уже покрыто vitest, а что требует ручного прогона, живого портала или LLM-ключа). Документ детализирует три уровня из [`07-testing.md`](07-testing.md): чистое ядро (unit, `pnpm test`), интеграция роутов/пайплайна (ручной прогон бэкенда) и сквозные проверки на живом портале Bitrix24. Каждая метка `[нужен живой портал]` / `[нужен LLM-ключ]` собрана отдельно в разделе «Что заблокировано и почему».
 
@@ -156,7 +156,7 @@
 | `vatRate=0` не в портале / NaN-ставка | `tests/crmSyncCore.test.ts`, `tests/vat.test.ts` | Жёсткая ошибка (0% ≠ «Без НДС»); `matchVatRate` NaN → null → ошибка | [авто] |
 | Валюта не в портале | `tests/crmSyncCore.test.ts` | «Валюта X отсутствует», не создана, `notifySuccess` не вызван | [авто] |
 | Товар по name/article | `tests/productLookup.test.ts` | `by='name'` игнорирует article; `by='article'`: `%PROPERTY_<id>` (order ID ASC) сужает → точная сверка `articleMatches`; отсекает ложные `A-10`⊄`{A-100}`; оба варианта (text/string); нечисловое поле → пропуск; фолбэк NAME | [авто] |
-| Товар не найден skip/create | `tests/crmSyncCore.test.ts` | `skip-warn` пропуск+warning; `create` зовёт `createProduct`, null→«произвольная позиция» | [авто] |
+| Товар не найден skip/freeform | `tests/crmSyncCore.test.ts` | `skip-warn` пропуск+warning; `freeform` — строка без `productId` (произвольная позиция). Создание товара удалено | [авто] |
 | Единица/отриц. значения/пустой items | `tests/crmSyncCore.test.ts`, `tests/units.test.ts` | Единица не сопоставлена → WARNING+дефолт; отриц. price/qty→clamp 0+warning; пустой items→create без `setRows` | [авто] |
 | `ownerTypeCode`/`buildProductRow` | `tests/server-crm.test.ts` | 2→D,7→Q,31→SI,≥1000→`T<id>`; `taxIncluded` Y/N; `productId` опускается | [авто] |
 | Живая проверка productrow.set / SI / T<id> | Портал: смарт-процесс + `crm.item.productrow.set` | НДС 1-в-1, ownerType корректен | [нужен живой портал] |

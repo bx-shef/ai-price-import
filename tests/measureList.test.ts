@@ -21,6 +21,14 @@ describe('normalizeMeasures', () => {
     expect(normalizeMeasures([{ code: 6, symbolIntl: 'MTR' }])).toEqual([{ value: '6', label: 'MTR' }])
     expect(normalizeMeasures([{ code: 9 }])).toEqual([{ value: '9', label: 'код 9' }])
   })
+  it('prefers the RUSSIAN symbol over the international one (owner ask: «шт», not «pc.»)', () => {
+    // Uppercase B24 field forms with both symbols present → the label shows SYMBOL_RUS.
+    expect(normalizeMeasures([{ CODE: 796, MEASURE_TITLE: 'Штука', SYMBOL_RUS: 'шт', SYMBOL_INTL: 'pc.' }]))
+      .toEqual([{ value: '796', label: 'Штука (шт)' }])
+    // camelCase, only the intl symbol present → falls back to it.
+    expect(normalizeMeasures([{ code: 796, measureTitle: 'Штука', symbolIntl: 'pc.' }]))
+      .toEqual([{ value: '796', label: 'Штука (pc.)' }])
+  })
   it('drops rows with a bad code, dedups by code, skips null/primitive elements', () => {
     const out = normalizeMeasures([
       { code: 0, measureTitle: 'Ноль' },
@@ -39,13 +47,11 @@ describe('normalizeMeasures', () => {
 })
 
 describe('listMeasures', () => {
-  it('calls catalog.measure.list (active filter + code/title/symbol select) and normalizes', async () => {
+  it('calls catalog.measure.list (active filter, all fields) and normalizes', async () => {
     const call = vi.fn(async () => [{ code: 796, measureTitle: 'Штука', symbol: 'шт' }])
     const out = await listMeasures(call)
-    expect(call).toHaveBeenCalledWith('catalog.measure.list', {
-      select: ['code', 'measureTitle', 'symbol', 'symbolIntl', 'isDefault'],
-      filter: { active: 'Y' }
-    })
+    // No `select` — the method returns all fields incl. SYMBOL_RUS (a narrow select risked omitting it).
+    expect(call).toHaveBeenCalledWith('catalog.measure.list', { filter: { active: 'Y' } })
     expect(out).toEqual([{ value: '796', label: 'Штука (шт)' }])
   })
   it('propagates a REST error (route maps it to a status)', async () => {

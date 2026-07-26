@@ -1,5 +1,6 @@
 import type { PortalMapping, RoutingRule, TargetRef } from '~/types/mapping'
 import { FALLBACK_TARGET } from './routing'
+import { normalizeUnitKey } from './measureCreate'
 
 // Parse raw app.option JSON into a validated PortalMapping with safe defaults.
 // Never trust stored/user data — coerce and default. Pure (docs/redesign 02 §5).
@@ -79,11 +80,14 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     },
     product: {
       by: prod.by === 'name' ? 'name' : 'article',
-      onMissing: prod.onMissing === 'create' || prod.onMissing === 'freeform' ? prod.onMissing : 'skip-warn'
+      // Product creation was removed. A portal that had the legacy `'create'` stored degrades to
+      // `'freeform'` (keep the line as a free-form position — the closest non-dropping behaviour),
+      // anything else → `'skip-warn'` (the default).
+      onMissing: prod.onMissing === 'freeform' || prod.onMissing === 'create' ? 'freeform' : 'skip-warn'
     },
     units: {
       dictionary: units.dictionary && typeof units.dictionary === 'object'
-        ? Object.fromEntries(Object.entries(units.dictionary as Record<string, unknown>).slice(0, MAX_UNIT_DICT_ENTRIES).map(([k, v]) => [k.toLowerCase(), Number(v)]).filter(([, v]) => Number.isInteger(v as number) && (v as number) > 0)) // DoS cap (#83); a measure code is a positive integer (aligned with the editor's rowsToDictionary)
+        ? Object.fromEntries(Object.entries(units.dictionary as Record<string, unknown>).slice(0, MAX_UNIT_DICT_ENTRIES).map(([k, v]) => [normalizeUnitKey(k), Number(v)]).filter(([k, v]) => k !== '' && Number.isInteger(v as number) && (v as number) > 0)) // DoS cap (#83); key canonicalised (same as editor rowsToDictionary + resolveMeasure); code a positive integer
         : {},
       defaultCode: Number.isFinite(Number(units.defaultCode)) ? Number(units.defaultCode) : 796,
       autoCreate: units.autoCreate === true

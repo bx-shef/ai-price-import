@@ -22,6 +22,14 @@ describe('parsePortalSettings', () => {
     expect(m.saveFile).toBe(false)
   })
 
+  it('legacy onMissing:"create" (removed) coerces to freeform, not skip-warn', () => {
+    // Product creation was removed; a portal that still has 'create' stored must degrade to the
+    // closest non-dropping behaviour (free-form line), not silently start skipping lines.
+    expect(parsePortalSettings({ product: { by: 'article', onMissing: 'create' } }).product.onMissing).toBe('freeform')
+    // Anything unrecognised → the safe default.
+    expect(parsePortalSettings({ product: { onMissing: 'nonsense' } }).product.onMissing).toBe('skip-warn')
+  })
+
   it('drops routing rules with empty condition, keeps valid', () => {
     const m = parsePortalSettings({
       routingRules: [
@@ -69,7 +77,7 @@ describe('isPortalConfigured', () => {
     expect(cfg({ units: { dictionary: { шт: 796 } } })).toBe(true)
     expect(cfg({ saveFile: true })).toBe(true)
     expect(cfg({ product: { by: 'name', onMissing: 'skip-warn' } })).toBe(true)
-    expect(cfg({ product: { by: 'article', onMissing: 'create' } })).toBe(true)
+    expect(cfg({ product: { by: 'article', onMissing: 'freeform' } })).toBe(true)
     expect(cfg({ units: { defaultCode: 166 } })).toBe(true)
     expect(cfg({ units: { autoCreate: true } })).toBe(true)
     expect(cfg({ defaultTarget: { entityTypeId: 31 } })).toBe(true) // moved off the deal anchor

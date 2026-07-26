@@ -12,10 +12,12 @@ export const MEASURE_CODE_FLOOR = 1000
 /** Cap on DISTINCT measures one import job may auto-create — anti-flooding for a hostile document. */
 export const MAX_AUTO_MEASURES_PER_JOB = 30
 
-/** Normalize a unit for matching/caching: trim, lowercase, collapse internal whitespace. Shared by
- *  the find-before-create index and the per-job cache so "шт " and "шт" don't diverge. */
+/** Canonical unit key for matching/caching/dictionary: trim, lowercase, collapse internal whitespace,
+ *  and drop trailing abbreviation dots/space so "ШТ", "шт", "Шт", "шт." all fold to one key ("шт").
+ *  Shared by the measure index, the per-job cache, the portal units-dictionary (storage + lookup) and
+ *  resolveMeasure — one normalizer so a stored synonym and a document unit can't diverge. */
 export function normalizeUnitKey(unit: string | undefined): string {
-  return (unit ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  return (unit ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.\s]+$/, '')
 }
 
 /**
@@ -47,7 +49,7 @@ export function buildMeasureIndex(rows: Array<Record<string, unknown>>): Measure
     const code = codeOf(row.code ?? row.CODE)
     if (code === null) continue
     codes.push(code)
-    for (const field of [row.measureTitle, row.MEASURE_TITLE, row.symbol, row.SYMBOL, row.symbolIntl, row.SYMBOL_INTL]) {
+    for (const field of [row.measureTitle, row.MEASURE_TITLE, row.symbolRus, row.SYMBOL_RUS, row.symbol, row.SYMBOL, row.symbolIntl, row.SYMBOL_INTL]) {
       const key = normalizeUnitKey(typeof field === 'string' ? field : undefined)
       if (key && !byName.has(key)) byName.set(key, code) // first (lowest-listed) code wins on a tie
     }

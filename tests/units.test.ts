@@ -16,6 +16,10 @@ describe('resolveMeasure', () => {
     expect(resolveMeasure('дана', CFG)).toEqual({ code: 796, matched: true }) // kk «дана»
   })
 
+  it('folds ШТ/Шт/шт. (case + trailing dot) to the same «шт» dictionary entry', () => {
+    for (const u of ['ШТ', 'Шт', 'шт.', ' шт. ']) expect(resolveMeasure(u, CFG)).toEqual({ code: 796, matched: true })
+  })
+
   it('unknown → default code, matched=false (auto-create + error)', () => {
     expect(resolveMeasure('рулон', CFG)).toEqual({ code: 796, matched: false })
     expect(resolveMeasure(undefined, CFG)).toEqual({ code: 796, matched: false })
