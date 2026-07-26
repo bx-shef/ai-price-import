@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildErrorMessage,
   buildSuccessMessage,
+  entityChatLink,
   entityLink,
   neutralizeBb,
   sendChatMessage
@@ -26,6 +27,18 @@ describe('entityLink', () => {
   })
 })
 
+describe('entityChatLink', () => {
+  it('builds an ABSOLUTE clickable BB-link when the portal host is known', () => {
+    expect(entityChatLink(2, 31, 'bel.bitrix24.by')).toBe('[URL=https://bel.bitrix24.by/crm/deal/details/31/]Открыть в CRM[/URL]')
+  })
+  it('normalises a scheme/path off the passed domain', () => {
+    expect(entityChatLink(2, 31, 'https://bel.bitrix24.by/')).toBe('[URL=https://bel.bitrix24.by/crm/deal/details/31/]Открыть в CRM[/URL]')
+  })
+  it('falls back to a portal-relative BB-link when no host is known', () => {
+    expect(entityChatLink(2, 31)).toBe('[URL=/crm/deal/details/31/]Открыть в CRM[/URL]')
+  })
+})
+
 describe('buildSuccessMessage', () => {
   it('neutralises supplier + warnings and appends the entity link', () => {
     const msg = buildSuccessMessage({
@@ -39,7 +52,12 @@ describe('buildSuccessMessage', () => {
     expect(msg).toContain('✅ Импортирован документ')
     expect(msg).not.toContain('[url=evil]')
     expect(msg).toContain('Позиций: 3')
-    expect(msg).toContain('/crm/deal/details/5/')
+    // The entity link is now a clickable BB-link, not a bare path (owner ask).
+    expect(msg).toContain('[URL=/crm/deal/details/5/]Открыть в CRM[/URL]')
+  })
+  it('emits an absolute clickable link when a portal domain is supplied', () => {
+    const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 5, created: true, rowCount: 1, warnings: [] }, 'bel.bitrix24.by')
+    expect(msg).toContain('[URL=https://bel.bitrix24.by/crm/deal/details/5/]Открыть в CRM[/URL]')
   })
   it('marks an already-imported (not created) document', () => {
     const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 1, created: false, rowCount: 0, warnings: [] })

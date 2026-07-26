@@ -19,6 +19,18 @@ export function entityLink(entityTypeId: number, id: number): string {
   return fn ? fn(id) : `/crm/type/${entityTypeId}/details/${id}/`
 }
 
+/** Build a clickable BB-code link to the created entity for the chat message. B24 messenger
+ *  renders `[URL=…]текст[/URL]`; a bare path is NOT a link (owner ask). An absolute
+ *  `https://<host>/…` is used when the portal host is known (reliable across web/desktop/mobile
+ *  clients); with no host we fall back to the portal-relative path (still safe — can't leave the
+ *  portal). `portalDomain` is a host or a full URL; the scheme/path are normalised off. */
+export function entityChatLink(entityTypeId: number, id: number, portalDomain?: string): string {
+  const path = entityLink(entityTypeId, id)
+  const host = (portalDomain ?? '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim().toLowerCase()
+  const url = host ? `https://${host}${path}` : path
+  return `[URL=${url}]Открыть в CRM[/URL]`
+}
+
 /** Neutralise BB-code brackets in external text (fullwidth) so it can't inject markup. */
 export function neutralizeBb(text: string): string {
   return String(text ?? '').replace(/\[/g, '［').replace(/\]/g, '］')
@@ -33,8 +45,9 @@ export interface SuccessSummary {
   warnings: string[]
 }
 
-/** Build the success chat message (BB-safe). External fields are neutralised. */
-export function buildSuccessMessage(s: SuccessSummary): string {
+/** Build the success chat message (BB-safe). External fields are neutralised. `portalDomain`
+ *  (optional) makes the entity link an absolute clickable BB-link. */
+export function buildSuccessMessage(s: SuccessSummary, portalDomain?: string): string {
   const who = s.supplierName ? neutralizeBb(s.supplierName) : 'документ'
   const head = s.created ? '✅ Импортирован документ' : 'ℹ️ Документ уже был импортирован'
   const lines = [
@@ -45,7 +58,7 @@ export function buildSuccessMessage(s: SuccessSummary): string {
     lines.push(`Предупреждения (${s.warnings.length}):`)
     for (const w of s.warnings.slice(0, 10)) lines.push(`• ${neutralizeBb(w)}`)
   }
-  lines.push(entityLink(s.entityTypeId, s.entityId))
+  lines.push(entityChatLink(s.entityTypeId, s.entityId, portalDomain))
   return lines.join('\n')
 }
 

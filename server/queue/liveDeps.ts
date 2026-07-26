@@ -287,7 +287,10 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     notifySuccess: async (summary) => {
       if (!mapping.notifyChatId) return
       const t = await need()
-      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary), t.call)
+      // Portal host → an absolute clickable BB-link «Открыть в CRM» in the chat message
+      // (a bare path is not a link). Best-effort: no token row ⇒ relative fallback.
+      const domain = (await getToken(memberId, infra.query))?.domain
+      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call)
     },
     // Configurable timeline activity on the created entity (crm.activity.configurable.add,
     // OAuth app context — verified live). Best-effort; runCrmSync swallows failures.
