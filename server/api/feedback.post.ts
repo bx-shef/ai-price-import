@@ -90,7 +90,13 @@ export default defineEventHandler(async (event) => {
               const diskId = await getDiskFileId(member.memberId, jobId, jobRedis)
               if (diskId) {
                 const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
-                const binFetch: BinaryFetchFn = url => (globalThis.fetch as typeof fetch)(url)
+                // redirect:'manual' — never follow a portal's redirect off-host (SSRF on the shared
+                // multitenant backend); AbortSignal.timeout — a slow/huge Disk body must not stall the
+                // 👍/👎 request. Body streamed + capped in downloadDiskFile.
+                const binFetch: BinaryFetchFn = async (url) => {
+                  const r = await (globalThis.fetch as typeof fetch)(url, { redirect: 'manual', signal: AbortSignal.timeout(15_000) })
+                  return { ok: r.ok, status: r.status, body: r.body as AsyncIterable<Uint8Array> | null }
+                }
                 const dl = await downloadDiskFile(diskId, auth.domain, call, binFetch)
                 if (dl) {
                   const commit = await commitFeedbackFile(

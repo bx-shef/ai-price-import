@@ -67,18 +67,31 @@ export interface FeedbackContext {
 }
 
 const MAX_CONTEXT_VALUE = 300
+/** «Замечания» (triage notes: every warning/error) is the actionable payload of a report — give it a
+ *  MUCH larger budget and preserve line breaks, so a 40-line invoice's «товар не найден» list isn't
+ *  clipped to the first ~300 chars. */
+export const MAX_NOTES_VALUE = 4000
 
 /**
- * One `- **Label:** `value`` line, rendered fully INERT. Client-supplied context values (fileName is
- * attacker-influenced — an uploaded document name) must not forge markdown into the issue body:
- *   - collapse interior CR/LF/tab (which `stripHostileChars` intentionally keeps) → a single space,
- *     so a value can't break out of its line and inject extra sections (the body is `join('\n')`d);
- *   - strip backticks, then wrap the value in an inline code span — inside a code span markdown
- *     metacharacters ([](), ![](), *, _, |, #) render literally, so no live links/images/formatting.
- * Empty value → null (omit the line entirely). Cap applied before wrapping.
+ * One `- **Label:** `value`` context line, rendered fully INERT. Client-supplied context values
+ * (fileName is attacker-influenced — an uploaded document name) must not forge markdown into the issue
+ * body:
+ *   - strip backticks always (so no ``` can escape a code span/fence);
+ *   - single-line fields collapse interior CR/LF/tab → one space and wrap in an inline code span;
+ *   - a `multiline` field keeps its line breaks and, when it spans lines, renders in a fenced block —
+ *     inside code spans/fences markdown metacharacters ([](), *, _, |, #) render literally (no live
+ *     links/images/formatting).
+ * Empty value → null (omit the line entirely). `cap` applied before wrapping.
  */
-function contextLine(label: string, value: unknown): string | null {
-  const flat = stripHostileChars(value).replace(/[\r\n\t]+/g, ' ').replace(/`/g, '').trim().slice(0, MAX_CONTEXT_VALUE)
+function contextLine(label: string, value: unknown, opts: { cap?: number, multiline?: boolean } = {}): string | null {
+  const cap = opts.cap ?? MAX_CONTEXT_VALUE
+  const noTicks = stripHostileChars(value).replace(/`/g, '')
+  if (opts.multiline) {
+    const kept = noTicks.replace(/\t/g, ' ').replace(/\r\n?/g, '\n').trim().slice(0, cap)
+    if (!kept) return null
+    return kept.includes('\n') ? `- **${label}:**\n\`\`\`\n${kept}\n\`\`\`` : `- **${label}:** \`${kept}\``
+  }
+  const flat = noTicks.replace(/[\r\n\t]+/g, ' ').trim().slice(0, cap)
   return flat ? `- **${label}:** \`${flat}\`` : null
 }
 
@@ -101,7 +114,7 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
   const contextLines = [
     contextLine('Статус разбора', context.status),
     contextLine('Исход', context.outcome),
-    contextLine('Замечания', context.notes),
+    contextLine('Замечания', context.notes, { cap: MAX_NOTES_VALUE, multiline: true }),
     contextLine('Задача (jobId)', context.jobId),
     contextLine('Файл', context.fileName),
     // #332: the actual source file, committed to the PRIVATE feedback repo (accessible to the

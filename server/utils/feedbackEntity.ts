@@ -84,7 +84,9 @@ export function resolveFeedbackOutcome(view: JobResultView, status: string): Fee
   if (meta.terminal && typeof view.created === 'boolean') {
     out.outcome = view.created ? 'Сущность создана' : 'Сущность не создана'
   }
-  const notes = [...view.warnings, ...view.errors].filter(Boolean).join('; ')
+  // One note per line (rendered as a fenced block in the issue) so the FULL warning/error list is
+  // legible, not clipped/run together — the triage notes are the actionable payload of a report.
+  const notes = [...view.warnings, ...view.errors].filter(Boolean).join('\n')
   if (notes) out.notes = notes
   return out
 }

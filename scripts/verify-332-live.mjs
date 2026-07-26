@@ -5,10 +5,14 @@
 // → assert bytes match → delete. With `--commit` (and GITHUB_FEEDBACK_* set) it also really commits the
 // file into the private feedback repo via `commitFeedbackFile`.
 //
-//   pnpm verify:332            # upload → download round-trip (+ SSRF-guard check) → delete
+//   pnpm verify:332            # upload → download round-trip → delete
 //   pnpm verify:332 --commit   # ALSO commit the file to the private feedback repo (needs GITHUB_FEEDBACK_*)
 //
 // Reads git-ignored .env.b24test (B24_TEST_WEBHOOK). Webhook scopes must include `disk`.
+// SCOPE: this drives the download over the WEBHOOK. The SSRF-guard reject and streaming cap are covered
+// by the unit tests (tests/diskDownload.test.ts), not here. ⚠ The production path uses the per-portal
+// OAuth frame token (makeBareTokenSdkCall), whose disk.file.get may return a differently-shaped
+// DOWNLOAD_URL — verify that end-to-end on a real installed portal (via the feedback widget) too.
 import { readFileSync } from 'node:fs'
 import { downloadDiskFile } from '../server/utils/diskDownload.ts'
 import { uploadFile } from '../server/utils/disk.ts'

@@ -6,8 +6,10 @@ import type { RestCall } from './b24Rest'
 // it through the webhook — same REST method (`disk.file.get`), different transport. Best-effort: any
 // benign miss returns null and the caller just files the issue without the file.
 
-/** Binary fetch (FetchFn only exposes json()); prod passes globalThis.fetch, tests a fake. */
-export type BinaryFetchFn = (url: string) => Promise<{ ok: boolean, status: number, arrayBuffer: () => Promise<ArrayBuffer> }>
+/** Binary fetch exposing the response BODY as a byte stream (so we cap size WHILE reading, never
+ *  buffering an unbounded body into RAM). Prod passes a redirect:'manual' + timeout globalThis.fetch;
+ *  tests a fake. `body` is null on a non-body / redirect / error response. */
+export type BinaryFetchFn = (url: string) => Promise<{ ok: boolean, status: number, body: AsyncIterable<Uint8Array> | null }>
 
 export interface DownloadedFile { name: string, base64: string, size: number }
 
@@ -53,9 +55,20 @@ export async function downloadDiskFile(
   const declared = Number(info?.SIZE)
   if (Number.isFinite(declared) && declared > maxBytes) return null
   const res = await fetchFn(url)
-  if (!res.ok || res.status !== 200) return null
-  const buf = await res.arrayBuffer()
-  if (buf.byteLength === 0 || buf.byteLength > maxBytes) return null
+  // redirect:'manual' (prod) → a 3xx redirect surfaces as ok:false here, so we NEVER follow a portal's
+  // redirect off-host (SSRF); any non-200 / bodyless response → skip (best-effort).
+  if (!res.ok || res.status !== 200 || !res.body) return null
+  // Stream with an EARLY byte cap: never buffer an unbounded body. A portal that under-reports/omits
+  // SIZE and streams a huge (or slow) body is aborted as soon as the running total crosses the cap
+  // (breaking the for-await cancels the underlying stream).
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for await (const chunk of res.body) {
+    total += chunk.byteLength
+    if (total > maxBytes) return null
+    chunks.push(chunk)
+  }
+  if (total === 0) return null
   const name = typeof info?.NAME === 'string' && info.NAME ? info.NAME : `file-${fileId}`
-  return { name, base64: Buffer.from(new Uint8Array(buf)).toString('base64'), size: buf.byteLength }
+  return { name, base64: Buffer.concat(chunks).toString('base64'), size: total }
 }

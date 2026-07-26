@@ -41,7 +41,7 @@ describe('FeedbackWidget', () => {
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await tick()
     // 👍 stays instant and never attaches a file (consent lives in the 👎 box) → attachFile false.
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, expect.any(Object), false)
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, expect.any(Object), true)
     expect(w.text()).toContain('Спасибо')
   })
 
@@ -49,7 +49,7 @@ describe('FeedbackWidget', () => {
     const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-7', fileName: 'счёт.xlsx' } })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-7', fileName: 'счёт.xlsx' }, false)
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-7', fileName: 'счёт.xlsx' }, true)
   })
 
   it('👎 opens the comment box; the «Отправить» button sends with the comment', async () => {

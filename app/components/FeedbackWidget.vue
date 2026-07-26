@@ -39,10 +39,12 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
   error.value = ''
   try {
     // submit() returns false (without throwing) outside a portal frame — do NOT claim success.
+    // 👍 attaches the source file too (owner wants the document on positive reports for triage — same
+    // as 👎); 👎 respects the explicit «приложить файл» checkbox. Server attaches only if it was archived.
     const ok = await submit(kind, comment.value.trim() || undefined, {
       jobId: props.jobId,
       fileName: props.fileName
-    }, attachFile.value)
+    }, kind === 'up' ? true : attachFile.value)
     if (ok) {
       sent.value = true
       // Remember it locally so a reload doesn't re-ask for this job (the client is the dedup owner).

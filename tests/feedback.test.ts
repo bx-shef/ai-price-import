@@ -14,6 +14,12 @@ describe('feedbackFilePath (#332 byte-upload repo path)', () => {
     expect(feedbackFilePath('a/b!', '')).toBe('files/ab/file')
     expect(feedbackFilePath('', '')).toBe('files/job/file')
   })
+  it('caps the jobId (64) and basename (80)', () => {
+    const p = feedbackFilePath('j'.repeat(100), `${'n'.repeat(100)}.pdf`)
+    const [, id, name] = p.split('/')
+    expect(id!.length).toBe(64)
+    expect(name!.length).toBe(80)
+  })
 })
 
 // Build hostile chars from code points (never type the invisible characters literally — that would
@@ -113,6 +119,14 @@ describe('feedback — buildFeedbackIssue', () => {
     expect(p.body).toContain('- **Исход:** `Сущность создана`')
     expect(p.body).toContain('- **Замечания:** `Поставщик не найден; Валюта XXX отсутствует`')
     expect(p.body).toContain('- **Исходный файл:** `https://bel.bitrix24.by/docs/file/123/`')
+  })
+  it('«Замечания»: keeps the FULL multi-line notes (big cap) in a fenced block, inert', () => {
+    const notes = Array.from({ length: 40 }, (_, i) => `Товар «позиция ${i}» не найден — строка пропущена`).join('\n')
+    expect(notes.length).toBeGreaterThan(300) // would be clipped by the old 300-char cap
+    const p = buildFeedbackIssue('down', 'плохо', { notes })
+    expect(p.body).toContain('Товар «позиция 0» не найден')
+    expect(p.body).toContain('Товар «позиция 39» не найден') // the LAST one survives (not clipped)
+    expect(p.body).toContain('- **Замечания:**\n```\n') // multi-line → fenced block
   })
   it('omits the Контекст section entirely when no context is given', () => {
     expect(buildFeedbackIssue('up', 'ok').body).not.toContain('**Контекст:**')

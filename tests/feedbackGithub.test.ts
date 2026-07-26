@@ -31,6 +31,11 @@ describe('commitFeedbackFile', () => {
     expect(sent).toMatchObject({ content: 'YmFzZTY0', message: 'msg' })
   })
 
+  it('201 but no content.html_url → ok without htmlUrl', async () => {
+    const r = await commitFeedbackFile(config, 'files/j1/a.pdf', 'x', 'm', fake(201, {}))
+    expect(r).toEqual({ ok: true, status: 201 })
+  })
+
   it('non-2xx (e.g. 422 already exists) → not ok, no throw', async () => {
     const r = await commitFeedbackFile(config, 'files/j1/a.pdf', 'x', 'm', fake(422, {}))
     expect(r).toEqual({ ok: false, status: 422 })
