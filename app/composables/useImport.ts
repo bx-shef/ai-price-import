@@ -139,6 +139,17 @@ export function useImport() {
     scheduleNext()
   }
 
+  /** Manual «Обновить» (button): refresh once and, on success, RESUME auto-following — a run of transient
+   *  poll failures may have stopped the loop (MAX_POLL_FAILURES) while jobs are still in flight; a
+   *  successful manual refresh clears the failure streak and re-arms polling so «обновляется» is honest. */
+  async function refreshNow(): Promise<void> {
+    await refresh()
+    if (!error.value) {
+      pollFailures = 0
+      scheduleNext() // no-op when nothing is active; resumes following when a job is still running
+    }
+  }
+
   /** Clear the employee's import history (localStorage) + the visible list. The server keeps only
    *  ephemeral per-job status (Redis TTL); this just forgets which jobIds the browser polls. */
   function clearHistory(): void {
@@ -146,5 +157,5 @@ export function useImport() {
     jobs.value = []
   }
 
-  return { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll, clearHistory }
+  return { jobs, loading, uploading, error, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory }
 }

@@ -19,7 +19,7 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'AI-импорт прайсов' })
 
-const { jobs, loading, uploading, error, hasActive, refresh, upload, startAutoPoll, stopAutoPoll, clearHistory } = useImport()
+const { jobs, loading, uploading, error, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
 function doClearHistory(): void {
@@ -225,7 +225,7 @@ watch(jobs, (list) => {
             :loading="loading"
             :disabled="loading"
             :label="loading ? 'Обновление…' : 'Обновить'"
-            @click="refresh"
+            @click="refreshNow"
           />
         </div>
       </div>

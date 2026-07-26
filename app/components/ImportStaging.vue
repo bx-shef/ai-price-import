@@ -34,9 +34,10 @@ const importing = ref(false)
 const notice = ref('')
 
 /** Stable idempotency key per staged file → reused across retries so a re-upload can't create a second
- *  CRM entity (the server keys the job on it). Falls back to a random string if crypto is unavailable. */
+ *  CRM entity (the server keys the job on it). ALWAYS a valid v4 UUID (uuidv4 has non-crypto fallbacks) —
+ *  a non-UUID key would be rejected server-side and desync the client job record (see uuid.ts). */
 function newKey(): string {
-  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${nextId}-${Math.round(Math.random() * 1e9)}`
+  return uuidv4()
 }
 /** Loose identity of a picked File (same file picked twice = same signature) for dedup. */
 function sig(f: File): string {

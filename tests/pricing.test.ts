@@ -16,6 +16,11 @@ describe('lineGross', () => {
     expect(lineGross(50, 3, null, false)).toBe(150)
     expect(lineGross(100, NaN, 20, true)).toBe(100)
   })
+  it('DISCOUNT line (negative price) contributes negatively — NOT clamped to 0', () => {
+    // A discount of −20 @20% must subtract 24 from the gross (else the deal amount inflates).
+    expect(lineGross(-20, 1, 20, false)).toBe(-24)
+    expect(lineGross(-20, 1, null, false)).toBe(-20)
+  })
 })
 
 describe('computeGrossTotal', () => {

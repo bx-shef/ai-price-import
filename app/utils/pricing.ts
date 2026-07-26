@@ -18,19 +18,17 @@ function round2(n: number): number {
 function finite(n: number, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback
 }
-/** Clamp to a non-negative finite number — MIRRORS crm-sync's clampNonNeg on the written row so the
- *  reconcile interpretation matches what is actually persisted (negative price/qty are zeroed on both
- *  sides; a non-finite qty falls back to 1, matching buildProductRow). */
-function nonNeg(n: number, fallback = 0): number {
-  const v = finite(n, fallback)
-  return v < 0 ? 0 : v
-}
 
-/** Per-line gross (VAT-inclusive) total for one line. Net line = round2(price × qty) with price/qty
- *  clamped non-negative (same as the written row); when the price already includes VAT that IS the
- *  line gross, otherwise VAT is added on the LINE total (rounded once). A non-positive rate = no VAT. */
+/** Per-line gross (VAT-inclusive) total for one line. Net line = round2(price × qty); when the price
+ *  already includes VAT that IS the line gross, otherwise VAT is added on the LINE total (rounded once).
+ *  A non-positive rate = no VAT.
+ *  Negatives are NOT clamped here — a discount is legitimately encoded as a negative line (price < 0),
+ *  and the entity total must reflect it (clamping it to 0 would silently inflate the deal amount).
+ *  NB the PERSISTED product row still clamps price to ≥0 (B24 requires it) — but the deal opportunity is
+ *  set from this reconciled total, so it stays correct even though an individual row can't hold a
+ *  negative price. A non-finite qty falls back to 1 (matching buildProductRow). */
 export function lineGross(price: number, qty: number, rate: number | null | undefined, inclusive: boolean): number {
-  const net = round2(nonNeg(price) * nonNeg(qty, 1))
+  const net = round2(finite(price) * finite(qty, 1))
   if (inclusive) return net
   const r = rate == null ? 0 : finite(rate)
   const effRate = r > 0 ? r : 0 // 0 / negative = «Без НДС» (a negative rate is rejected upstream)

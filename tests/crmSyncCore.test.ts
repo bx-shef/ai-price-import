@@ -101,6 +101,23 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.warnings.some(w => /уточнён по итогу/.test(w))).toBe(true)
   })
 
+  it('DISCOUNT line (negative price) → deal opportunity reflects the discount, not the inflated row-sum', async () => {
+    // Товар 100 + скидка −20, оба @20%. Реальный итог = (100−20)×1.2 = 96. Строка скидки в CRM пишется
+    // с ценой 0 (B24 не держит отрицательную цену), но opportunity сделки должен быть 96, не 120.
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false, total: 96,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [
+        { name: 'Товар', price: 100, quantity: 1, unit: 'шт', vatRate: 20 },
+        { name: 'Скидка', price: -20, quantity: 1, unit: 'шт', vatRate: 20 }
+      ]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 96, isManualOpportunity: 'Y' }))
+    expect(r.errors).toHaveLength(0)
+  })
+
   it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {
     const deps = baseDeps()
     await runCrmSync('job1', doc, mapping(), {}, deps)

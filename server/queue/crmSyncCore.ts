@@ -237,11 +237,13 @@ export async function runCrmSync(
     entityId = existingId
     created = false
   } else {
-    // Entity total: prefer the document's PRINTED grand total when the WHOLE document was written
-    // (no line skipped) and it was trusted — an exact match to the paper, no rounding drift. A partial
-    // write (skip-warn dropped a line) or no printed total → sum the rows actually written (per-line).
+    // Entity total: when the WHOLE document was written (no line skipped) use the reconciled document
+    // total — that is the printed «Всего к оплате» when trusted, else the per-line sum over the ORIGINAL
+    // items. Both reflect a discount line (negative price), which the persisted rows can't (row price is
+    // clamped ≥0 for B24) — so we must NOT re-sum the clamped rows here or a discount would be lost. Only
+    // a PARTIAL write (skip-warn dropped a line) falls back to the sum of rows actually written.
     const allLinesWritten = rows.length === doc.items.length
-    const opportunityValue = allLinesWritten && pricing.usedStatedTotal ? pricing.grossTotal : computeOpportunity(rows)
+    const opportunityValue = allLinesWritten ? pricing.grossTotal : computeOpportunity(rows)
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
