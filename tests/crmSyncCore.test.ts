@@ -54,6 +54,42 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     ]))
   })
 
+  it('vatRate 0 → «Без НДС» (taxRate null), NOT a lookup for a 0% portal rate', async () => {
+    // The portal has ONLY «Без НДС» (null) + 22% — no explicit «НДС 0%». A 0-rate line must still
+    // import (taxRate null), not hard-error «ставка 0% отсутствует».
+    const deps = baseDeps()
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Услуга', price: 100, quantity: 1, unit: 'шт', vatRate: 0 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.errors).toHaveLength(0)
+    expect(r.created).toBe(true)
+    expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
+      expect.objectContaining({ taxRate: null, taxIncluded: 'N', price: 100, quantity: 1 })
+    ]))
+  })
+
+  it('reconciles a WRONG priceIncludesVat against the printed total + anchors opportunity to it (deal #37 bug)', async () => {
+    // The reported real invoice: net 0.86 × 10000 @20% → «Итого» 8600 → «Всего к оплате» 10320. Even if
+    // the model wrongly says prices INCLUDE VAT, the printed total (10320) matches the NET reading →
+    // correct to excluded (taxIncluded 'N'), and set opportunity to the paper's 10320 (not 10300 that
+    // per-unit rounding, nor 8600 that the wrong flag, would give).
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '1', name: 'Без НДС', rate: null }, { id: '6', name: 'НДС 20%', rate: 20 }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: true, total: 10320,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Мешок', price: 0.86, quantity: 10000, unit: 'шт', vatRate: 20 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 10320, isManualOpportunity: 'Y' }))
+    expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
+      expect.objectContaining({ taxIncluded: 'N', price: 0.86, quantity: 10000, taxRate: 20 })
+    ]))
+    expect(r.warnings.some(w => /уточнён по итогу/.test(w))).toBe(true)
+  })
+
   it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {
     const deps = baseDeps()
     await runCrmSync('job1', doc, mapping(), {}, deps)
@@ -349,12 +385,17 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     expect(notifySuccess).not.toHaveBeenCalled()
   })
 
-  it('vatRate 0 not in portal → hard error (not «Без НДС»)', async () => {
+  it('vatRate 0 → «Без НДС» (taxRate null), NOT a hard error even when the portal has no 0% rate', async () => {
+    // Reversed from the old behaviour (#owner): a 0-rate line is tax-exempt (B24 «Без НДС» flag), so it
+    // imports with taxRate null instead of failing «ставка 0% отсутствует в портале».
     const deps = baseDeps()
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 1, quantity: 1, unit: 'шт', vatRate: 0 }] }
+    const d: ExtractedDocument = { ...doc, priceIncludesVat: false, items: [{ name: 'x', price: 1, quantity: 1, unit: 'шт', vatRate: 0 }] }
     const r = await runCrmSync('j', d, mapping(), {}, deps)
-    expect(r.created).toBe(false)
-    expect(r.errors.some(e => /0%/.test(e))).toBe(true)
+    expect(r.created).toBe(true)
+    expect(r.errors).toHaveLength(0)
+    expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
+      expect.objectContaining({ taxRate: null })
+    ]))
   })
 
   it('VAT present but priceIncludesVat undefined → hard error (total would flip)', async () => {

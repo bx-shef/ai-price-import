@@ -39,6 +39,11 @@ export interface ExtractedDocument {
   currency?: string
   /** Whether prices include VAT — must be uniform across the document. */
   priceIncludesVat?: boolean
+  /** The document's printed GRAND TOTAL to pay ("Всего к оплате" / "на сумму …"), VAT-inclusive,
+   *  if the document states one. Used to (a) reconcile priceIncludesVat when the model guesses wrong
+   *  and (b) set the entity total to the document's own figure instead of a re-derived one (avoids
+   *  per-unit rounding drift on net-priced lines). Absent when the document prints no total. */
+  total?: number
   supplier?: DocumentParty
   items: DocumentItem[]
 }

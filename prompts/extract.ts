@@ -10,14 +10,17 @@
 const OUTPUT_SCHEMA = `{
   "documentType": "накладная" | "счёт" | "КП" | "спецификация" | "прайс" | "" ,
   "currency": "ISO 4217, напр. BYN, RUB, KZT, USD (3 буквы) или пропусти",
-  "priceIncludesVat": true | false,
+  "priceIncludesVat": false | true,
+  "total": "число «Всего к оплате»/итоговая сумма С НДС, как напечатано, или пропусти",
   "supplier": { "name": "как в документе", "taxId": "только цифры", "taxIdKind": "INN|UNP|BIN|IIN" },
   "items": [
     { "name": "наименование", "article": "артикул поставщика", "quantity": 0, "unit": "шт", "price": 0, "vatRate": 20 }
   ]
 }`
 
-const EXAMPLE = `{"documentType":"накладная","currency":"BYN","priceIncludesVat":true,"supplier":{"name":"ООО \\"Ромашка\\"","taxId":"190000000","taxIdKind":"UNP"},"items":[{"name":"Болт М6","article":"BM6-01","quantity":100,"unit":"шт","price":0.45,"vatRate":20}]}`
+// Example mirrors the common РБ/РФ invoice: NET unit prices + VAT added on top → priceIncludesVat=false,
+// total = «Всего к оплате» (gross). (10×5.00 = 50.00 net; +20% = 60.00 gross.)
+const EXAMPLE = `{"documentType":"счёт","currency":"BYN","priceIncludesVat":false,"total":60.00,"supplier":{"name":"ООО \\"Ромашка\\"","taxId":"190000000","taxIdKind":"UNP"},"items":[{"name":"Болт М6","article":"BM6-01","quantity":10,"unit":"шт","price":5.00,"vatRate":20}]}`
 
 /**
  * Build the extraction system prompt. Parameterless for the MVP — the agent only
@@ -42,11 +45,14 @@ ${OUTPUT_SCHEMA}
    Понимай метку на языке документа (напр. каз. «сатушының БСН-і»). Не распознал — пропусти supplier.taxId.
 3. НДС: определи ОДНО значение priceIncludesVat на весь документ ПО СТРУКТУРЕ ИТОГОВ, а не по картинке:
    • цены/суммы строк и «Итого» показаны БЕЗ НДС, а НДС идёт отдельной строкой и прибавляется сверху
-     (Итого → НДС → «Всего к оплате» = Итого + НДС) ⇒ priceIncludesVat = false;
+     (Итого → НДС → «Всего к оплате» = Итого + НДС) ⇒ priceIncludesVat = false; ← ЧАСТЫЙ случай (счёт РБ/РФ);
    • цена уже с НДС («в т.ч. НДС», «цена с НДС», «включая НДС») ИЛИ «Всего» равно сумме строк без отдельного
      прибавления НДС ⇒ priceIncludesVat = true;
    • НДС в документе нет ⇒ priceIncludesVat = false.
-   Ставку каждой позиции (vatRate, число процентов, напр. 0/10/20) бери как напечатано у строки.
+   Проверь себя арифметикой: если Цена×Кол-во по строкам даёт «Итого» (без НДС), а «Всего к оплате» больше на
+   сумму НДС — это priceIncludesVat = false. Ставку каждой позиции (vatRate, напр. 0/10/20) бери как напечатано.
+7. Итоговая сумма (total): число из «Всего к оплате» / «Итого к оплате» / «на сумму …» — итоговая сумма
+   С НДС (gross). Бери как напечатано (разряды — пробелы, десятичный — точка/запятая). Нет итога — пропусти.
 4. Тип документа (documentType) классифицируй ПО СМЫСЛУ, а не по букве: накладная / счёт / КП / спецификация /
    прайс. Устойчиво к языку (бел. «рахунак» = счёт; каз. «жүкқұжат» = накладная; каз. «коммерциялық ұсыныс» = КП).
 5. Артикул поставщика (article) — код/артикул рядом с наименованием, если есть. Единицу (unit) — как напечатано

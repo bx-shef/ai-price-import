@@ -117,6 +117,10 @@ export function validateExtractedDocument(raw: unknown): ExtractedDocument | nul
   const cur = (str(o.currency) ?? '').replace(/[^a-zA-Z]/g, '').toUpperCase()
   if (cur.length === 3) doc.currency = cur
   if (typeof o.priceIncludesVat === 'boolean') doc.priceIncludesVat = o.priceIncludesVat
+  // Printed grand total ("Всего к оплате"), if any — a positive finite number. Used to reconcile
+  // VAT-inclusion and to anchor the entity total to the document's own figure.
+  const total = num(o.total)
+  if (total !== undefined && total > 0) doc.total = total
   const supplier = normaliseSupplier(o.supplier)
   if (supplier) doc.supplier = supplier
   return doc

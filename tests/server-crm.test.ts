@@ -20,9 +20,11 @@ describe('computeOpportunity', () => {
     expect(computeOpportunity([{ price: NaN, quantity: 2, taxIncluded: 'Y' }])).toBe(0)
     expect(computeOpportunity([{ price: 100, quantity: NaN, taxIncluded: 'Y' }])).toBe(100)
   })
-  it('rounds per-unit gross BEFORE ×qty (matches Bitrix priceBrutto), not once at the end', () => {
-    // net 10.11 @20% → unit round2(12.132)=12.13 ×3 = 36.39 (NOT 36.40 from line-then-round)
-    expect(computeOpportunity([{ price: 10.11, quantity: 3, taxRate: 20, taxIncluded: 'N' }])).toBe(36.39)
+  it('adds VAT on the LINE total (round once per line), not per unit', () => {
+    // net line round2(10.11×3)=30.33 @20% → round2(36.396)=36.40 (per-line, matches printed «Сумма НДС»)
+    expect(computeOpportunity([{ price: 10.11, quantity: 3, taxRate: 20, taxIncluded: 'N' }])).toBe(36.40)
+    // the reported invoice: 0.86 × 10000 @20% → 8600 net → 10320 gross (NOT 10300 from per-unit rounding)
+    expect(computeOpportunity([{ price: 0.86, quantity: 10000, taxRate: 20, taxIncluded: 'N' }])).toBe(10320)
   })
 })
 

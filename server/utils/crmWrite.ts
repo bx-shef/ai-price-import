@@ -1,6 +1,7 @@
 import type { RestCall } from './b24Rest'
 import type { DocumentItem } from '~/types/document'
 import type { TargetRef } from '~/types/mapping'
+import { lineGross } from '~/utils/pricing'
 
 // Pure builders + thin callers for creating the target CRM entity and its rows.
 // VAT model validated live: crm.item.productrow.set computes НДС 1-в-1 (no kernel patch).
@@ -104,20 +105,18 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
  * parent `opportunity` (it stays 0). Setting `opportunity` = this sum + `isManualOpportunity:'Y'`
  * at create time makes the entity total correct regardless of portal auto-recalc.
  *
- * Rounding mirrors Bitrix EXACTLY: the per-unit gross price is rounded to 2 dp FIRST
- * (`priceBrutto = round2(price × (1+rate/100))`), THEN multiplied by quantity — otherwise
- * the header total would diverge from the row grid (Σ priceBrutto·qty) by kopecks on
- * net-priced multi-row docs, and `isManualOpportunity` would freeze that mismatch.
+ * VAT is added on the LINE total (round once per line — `lineGross`), the way invoices print
+ * «Сумма НДС» = Сумма × ставка. A tiny unit price × large qty (0.86 × 10000 @20%) is 10 320
+ * per-line but 10 300 if the per-unit gross (1.032→1.03) is rounded first — the document and
+ * standard accounting use the per-line figure, so we do too. (crm-sync prefers the document's
+ * printed grand total when it states one — see reconcilePricing — this is the fallback/partial path.)
  */
 export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
   let sum = 0
   for (const r of rows) {
-    const price = finite(Number(r.price))
-    const qty = finite(Number(r.quantity), 1)
     const inclusive = r.taxIncluded === 'Y'
     const rate = r.taxRate == null ? 0 : finite(Number(r.taxRate))
-    const unitGross = inclusive ? price : round2(price * (1 + rate / 100))
-    sum += unitGross * qty
+    sum += lineGross(finite(Number(r.price)), finite(Number(r.quantity), 1), rate, inclusive)
   }
   return round2(sum)
 }
