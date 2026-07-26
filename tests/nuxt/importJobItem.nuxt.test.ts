@@ -13,9 +13,17 @@ mockNuxtImport('useFeedback', () => () => ({
 
 // Controllable frame state: the «Открыть в CRM» entity button only renders IN a portal frame.
 const framed = ref(false)
+// Records every slider.openPath(getUrl(x)) so a test can assert WHICH path was opened (entity vs Disk).
+const sliderCalls: string[] = []
+const frameMock = {
+  slider: {
+    getUrl: (p: string) => `URL:${p}`,
+    openPath: async (u: string) => { sliderCalls.push(u) }
+  }
+}
 mockNuxtImport('useB24', () => () => ({
-  init: async () => null,
-  get: () => null,
+  init: async () => (framed.value ? frameMock : null),
+  get: () => (framed.value ? frameMock : null),
   auth: () => null,
   inFrame: () => framed.value,
   placementPlace: () => undefined,
@@ -83,6 +91,19 @@ describe('ImportJobItem', () => {
     const fileLink = w.findAll('a').find(a => a.text().includes('накладная.pdf'))
     expect(fileLink).toBeTruthy()
     expect(fileLink!.attributes('title')).toContain('исходный файл')
+    framed.value = false
+  })
+
+  it('clicking the Disk file-name link opens the DISK path via the slider (not the entity path)', async () => {
+    framed.value = true
+    sliderCalls.length = 0
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"warnings":[],"errors":[]}', { diskUrl: '/docs/file/9/' }) } })
+    const fileLink = w.findAll('a').find(a => a.text().includes('накладная.pdf'))!
+    await fileLink.trigger('click')
+    await new Promise(r => setTimeout(r))
+    // Opened the Disk url, NOT the CRM entity detail path (guards against a copy-paste of entityPath).
+    expect(sliderCalls).toContain('URL:/docs/file/9/')
+    expect(sliderCalls.some(u => u.includes('/crm/'))).toBe(false)
     framed.value = false
   })
 

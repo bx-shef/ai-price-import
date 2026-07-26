@@ -133,7 +133,9 @@ export async function runCrmSync(
   // removes per-unit rounding drift. Undefined flag + VAT present + no usable printed total ⇒ hard
   // error, never guess.
   const hasVat = doc.items.some(it => (it.vatRate ?? 0) > 0)
-  const pricing = reconcilePricing(doc.items, doc.priceIncludesVat === true, doc.total)
+  // Pass the TRI-STATE flag through (boolean | undefined) — reconcilePricing distinguishes «model said
+  // net» from «model didn't say» so the «уточнён по итогу» warning fires when an unknown flag is resolved.
+  const pricing = reconcilePricing(doc.items, doc.priceIncludesVat, doc.total)
   const priceIncludesVat = pricing.priceIncludesVat
   if (hasVat && doc.priceIncludesVat === undefined && !pricing.usedStatedTotal) {
     errors.push('Не определено, включён ли НДС в цену — уточните документ и повторите импорт')
@@ -244,6 +246,13 @@ export async function runCrmSync(
     // a PARTIAL write (skip-warn dropped a line) falls back to the sum of rows actually written.
     const allLinesWritten = rows.length === doc.items.length
     const opportunityValue = allLinesWritten ? pricing.grossTotal : computeOpportunity(rows)
+    // Partial write (skip-warn dropped a line): the deal amount is the sum of the WRITTEN rows, so it
+    // will NOT equal the document's printed total. Warn explicitly — otherwise a bookkeeper sees a deal
+    // whose sum is silently smaller than the paper (the per-line «строка пропущена» warnings don't say
+    // the TOTAL is now off). Only when the document actually printed a total to diverge from.
+    if (!allLinesWritten && doc.total != null && Number.isFinite(doc.total)) {
+      warnings.push('Сумма сделки не включает пропущенные позиции — не совпадает с итогом документа')
+    }
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),

@@ -60,14 +60,21 @@ export interface PricingReconciliation {
  * confirm the net-priced reading and anchor the entity amount — but NEVER let it flip a «net» model to
  * «inclusive» (see the module note: Σ price×qty ≡ «Итого», so that direction can drop the VAT). No
  * printed total → keep the model's flag and compute the total from the lines.
+ *
+ * `modelFlag` is TRI-STATE: `true` = model said «includes VAT», `false` = model said «net», `undefined`
+ * = model didn't say. When the printed total determines «net», we set `corrected: true` for BOTH `true`
+ * (we flipped it) AND `undefined` (we resolved the unknown) — so the operator-facing «уточнён по итогу»
+ * warning fires whenever the flag was inferred, not only when it was explicitly wrong. `undefined`
+ * computes as «net» (the safe assumption).
  */
-export function reconcilePricing(items: DocumentItem[], modelFlag: boolean, statedTotal: number | undefined): PricingReconciliation {
+export function reconcilePricing(items: DocumentItem[], modelFlag: boolean | undefined, statedTotal: number | undefined): PricingReconciliation {
+  const flag = modelFlag === true // for the net/gross computation, undefined ⇒ net (safe default)
   const grossExclusive = computeGrossTotal(items, false) // prices are net → VAT added
   const grossInclusive = computeGrossTotal(items, true) // prices already gross → = Σ round2(price×qty)
   const hasVatEffect = round2(grossExclusive - grossInclusive) > 0 // positive VAT actually changes the total
 
-  const compute = (flag: boolean): number => computeGrossTotal(items, flag)
-  const noAnchor = (): PricingReconciliation => ({ priceIncludesVat: modelFlag, grossTotal: compute(modelFlag), corrected: false, totalMismatch: false, usedStatedTotal: false })
+  const compute = (f: boolean): number => computeGrossTotal(items, f)
+  const noAnchor = (): PricingReconciliation => ({ priceIncludesVat: flag, grossTotal: compute(flag), corrected: false, totalMismatch: false, usedStatedTotal: false })
 
   if (statedTotal == null || !Number.isFinite(statedTotal) || statedTotal <= 0) return noAnchor()
 
@@ -79,22 +86,24 @@ export function reconcilePricing(items: DocumentItem[], modelFlag: boolean, stat
 
   // Unambiguous EXCLUSIVE: printed total == net-priced gross and NOT the inclusive/net figure. Prices are
   // net; anchor to the printed gross. This is the safe direction (adds VAT) — the deal #37 correction.
+  // `corrected` fires when the flag was inferred here (model said «inclusive», or didn't say at all).
   if (matchesExcl && !matchesIncl) {
-    return { priceIncludesVat: false, grossTotal: round2(statedTotal), corrected: modelFlag === true, totalMismatch: false, usedStatedTotal: true }
+    return { priceIncludesVat: false, grossTotal: round2(statedTotal), corrected: modelFlag !== false, totalMismatch: false, usedStatedTotal: true }
   }
   // Printed total == the inclusive figure (Σ price×qty), NOT the exclusive gross. Ambiguous when VAT
   // exists: it is either the gross of a VAT-inclusive doc OR the NET subtotal («Итого») of a net-priced
-  // doc — numerically identical. Trust it as «inclusive» ONLY when the model itself says inclusive;
+  // doc — numerically identical. Trust it as «inclusive» ONLY when the model EXPLICITLY says inclusive;
   // otherwise keep «net» and compute the real gross (net + VAT) — never drop the VAT on a mis-read total.
   if (matchesIncl && !matchesExcl) {
     if (!hasVatEffect) {
       // No VAT differential → the flag is total-neutral; anchor, no «corrected» noise.
       return { priceIncludesVat: false, grossTotal: round2(statedTotal), corrected: false, totalMismatch: false, usedStatedTotal: true }
     }
-    if (modelFlag) {
+    if (modelFlag === true) {
       return { priceIncludesVat: true, grossTotal: round2(statedTotal), corrected: false, totalMismatch: false, usedStatedTotal: true }
     }
-    // Model says net + total looks like «Итого» → keep net, DO NOT anchor; real gross = net + VAT.
+    // Model says net (or didn't say) + total looks like «Итого» → keep net, DO NOT anchor; real gross =
+    // net + VAT. (For `undefined` this is the safe read — trusting the «Итого»-looking total would drop VAT.)
     return { priceIncludesVat: false, grossTotal: grossExclusive, corrected: false, totalMismatch: false, usedStatedTotal: false }
   }
   // Matches BOTH (only when grossExcl ≈ grossIncl, i.e. no VAT) → anchor; the flag is total-neutral.
@@ -103,5 +112,5 @@ export function reconcilePricing(items: DocumentItem[], modelFlag: boolean, stat
   }
   // Matches neither → the printed number is off (mis-extraction / an unmodelled discount). Keep the
   // model flag, compute, and flag the mismatch so crm-sync warns the operator (don't silently trust it).
-  return { priceIncludesVat: modelFlag, grossTotal: compute(modelFlag), corrected: false, totalMismatch: true, usedStatedTotal: false }
+  return { priceIncludesVat: flag, grossTotal: compute(flag), corrected: false, totalMismatch: true, usedStatedTotal: false }
 }
