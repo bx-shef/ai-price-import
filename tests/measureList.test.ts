@@ -47,12 +47,12 @@ describe('normalizeMeasures', () => {
 })
 
 describe('listMeasures', () => {
-  it('calls catalog.measure.list (active filter, all fields) and normalizes', async () => {
-    const call = vi.fn(async () => [{ code: 796, measureTitle: 'Штука', symbol: 'шт' }])
+  it('calls crm.measure.list (classic — Russian MEASURE_TITLE/SYMBOL_RUS) and normalizes', async () => {
+    // Classic shape: uppercase fields with the Russian symbol (what real portals actually return).
+    const call = vi.fn(async () => [{ CODE: '796', MEASURE_TITLE: 'Штука', SYMBOL_RUS: 'шт', SYMBOL_INTL: 'pc. 1' }])
     const out = await listMeasures(call)
-    // No `select` — the method returns all fields incl. SYMBOL_RUS (a narrow select risked omitting it).
-    expect(call).toHaveBeenCalledWith('catalog.measure.list', { filter: { active: 'Y' } })
-    expect(out).toEqual([{ value: '796', label: 'Штука (шт)' }])
+    expect(call).toHaveBeenCalledWith('crm.measure.list', {})
+    expect(out).toEqual([{ value: '796', label: 'Штука (шт)' }]) // Russian, not «pc. 1»
   })
   it('propagates a REST error (route maps it to a status)', async () => {
     const call = vi.fn(async () => {

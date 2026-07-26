@@ -157,7 +157,7 @@ operating-limit-адаптив (сервер сам сигналит перег�
 
 **Живой нагруз-тест — `pnpm loadtest:123`** (`scripts/load-test-123.mjs`, dev-only; вебхук из env
 `B24_HOOK` **или** git-ignored `.env.b24test`; читает реальные `crm.item.list`/`crm.vat.list`/
-`crm.requisite.list`/`catalog.measure.list`/`crm.currency.list`, как crm-sync). Гейт зачётен, только
+`crm.requisite.list`/`crm.measure.list`/`crm.currency.list`, как crm-sync). Гейт зачётен, только
 если троттл **реально сработал** (Scenario A `limitHits>0`) — иначе «0 QLE» ничего не доказывает. QLE
 ловим по `AjaxError.code` (в `.message` — человеческий текст, регексп по нему не сматчил бы). Прогоны
 вживую (портал `b24-*.bitrix24.com`, стандартный тариф):

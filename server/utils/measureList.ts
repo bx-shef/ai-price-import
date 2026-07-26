@@ -8,9 +8,15 @@ import type { RestCall } from './b24Rest'
 // 006 = метр) — the same thing resolveMeasure returns and crm.item.productrow's measureCode
 // wants (matches the app's `defaultCode: 796` convention).
 //
-// Envelope: this app's RestCall unwraps to `result`. catalog.measure.list returns the rows
-// either directly as an array OR wrapped as `{ measures: [...] }` (B24 catalog list methods
-// vary); normalizeMeasures accepts both.
+// Method: the CLASSIC `crm.measure.list` (NOT the modern `catalog.measure.list`). LIVE-VERIFIED on
+// bel.bitrix24.by that `catalog.measure.list` returns `measureTitle:null, symbol:null` and ONLY the
+// international `symbolIntl` («pc.»/«kg») — so the Russian name/symbol («Метр»/«шт.») is unavailable and
+// the label degrades to «pc. 1» (defeating the owner's «show шт, not pc.» ask AND breaking unit matching
+// in the auto-create index, whose title/symbol keys would all be null). `crm.measure.list` returns the
+// full classic row `{ID, CODE, MEASURE_TITLE, SYMBOL_RUS, SYMBOL_INTL, …}`. Both read the same underlying
+// measure table, so a measure created via `catalog.measure.add` still appears here.
+// Envelope: this app's RestCall unwraps to `result`; crm.measure.list returns a flat array (older/other
+// portals may wrap as `{ measures: [...] }`) — normalizeMeasures accepts both.
 
 /** One pickable measure: `value` is the numeric code (as a string, for the b24ui Select),
  *  `label` a human name. The index signature keeps it assignable to a Select item row. */
@@ -71,19 +77,19 @@ function codeOf(code: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null
 }
 
-/** List the portal's measures (active only). Pure otherwise; a REST error propagates. No `select` —
- *  the method returns all fields including the Russian symbol (SYMBOL_RUS); a narrow camelCase select
- *  risked omitting it (B24 returns the uppercase field regardless). */
+/** List the portal's measures. Uses `crm.measure.list` (classic) so labels carry the RUSSIAN name +
+ *  symbol (MEASURE_TITLE/SYMBOL_RUS) — see the file note. Pure otherwise; a REST error propagates. */
 export async function listMeasures(call: RestCall): Promise<MeasureOption[]> {
-  const result = await call('catalog.measure.list', { filter: { active: 'Y' } })
+  const result = await call('crm.measure.list', {})
   return normalizeMeasures(result)
 }
 
-/** Raw measure rows (title/symbol/code) for the auto-create index — NO active filter (so the code
- *  allocator sees every existing code and find-before-create matches any measure, Q11) and NO select
- *  (all symbol variants, incl. SYMBOL_RUS, are indexed). */
+/** Raw measure rows (title/symbol/code) for the auto-create index. `crm.measure.list` (classic) so the
+ *  index keys on the Russian title/symbol — otherwise a document unit like «рулон»/«шт» never matches an
+ *  existing measure (the modern method's title/symbol are null on real portals) and every unit
+ *  auto-creates or falls to the default (Q11). */
 export async function fetchMeasureRows(call: RestCall): Promise<Array<Record<string, unknown>>> {
-  const result = await call('catalog.measure.list', {})
+  const result = await call('crm.measure.list', {})
   if (Array.isArray(result)) return result as Array<Record<string, unknown>>
   const wrapped = (result as Record<string, unknown>)?.measures
   return Array.isArray(wrapped) ? wrapped as Array<Record<string, unknown>> : []
