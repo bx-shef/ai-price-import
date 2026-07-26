@@ -47,6 +47,11 @@ describe('absPortalUrl', () => {
     expect(absPortalUrl('/docs/file/1/', '')).toBe('/docs/file/1/')
     expect(absPortalUrl('/docs/file/1/', null)).toBe('/docs/file/1/')
   })
+  it('strips an existing scheme + trailing slash on the domain (no double https://)', () => {
+    expect(absPortalUrl('/crm/deal/details/5/', 'https://bel.bitrix24.by')).toBe('https://bel.bitrix24.by/crm/deal/details/5/')
+    expect(absPortalUrl('/crm/deal/details/5/', 'https://bel.bitrix24.by/')).toBe('https://bel.bitrix24.by/crm/deal/details/5/')
+    expect(absPortalUrl('/x/', 'HTTP://bel.bitrix24.by')).toBe('https://bel.bitrix24.by/x/')
+  })
 })
 
 describe('resolveFeedbackOutcome (#192 п.1)', () => {
@@ -58,9 +63,9 @@ describe('resolveFeedbackOutcome (#192 п.1)', () => {
   it('done + not created → outcome «Сущность не создана»', () => {
     expect(resolveFeedbackOutcome(view({ created: false }), 'done').outcome).toBe('Сущность не создана')
   })
-  it('joins warnings + errors into notes', () => {
+  it('joins warnings + errors into notes, one per line (full list)', () => {
     const r = resolveFeedbackOutcome(view({ created: true, warnings: ['Поставщик не найден'], errors: ['Валюта XXX отсутствует'] }), 'done')
-    expect(r.notes).toBe('Поставщик не найден; Валюта XXX отсутствует')
+    expect(r.notes).toBe('Поставщик не найден\nВалюта XXX отсутствует')
   })
   it('bare error message (pre-crm-sync failure) → «Ошибка обработки» + message as notes', () => {
     const r = resolveFeedbackOutcome(view({ message: 'документ не найден' }), 'error')

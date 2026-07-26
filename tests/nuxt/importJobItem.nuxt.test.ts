@@ -39,21 +39,21 @@ describe('ImportJobItem', () => {
     expect(text).not.toContain('Создано в CRM')
   })
 
-  it('done with a created entity, STANDALONE (no frame) → plain «Создано в CRM» text, no button', async () => {
+  it('done with a created entity, STANDALONE (no frame) → plain «Создано в CRM» text, no link', async () => {
     framed.value = false
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"created":true,"warnings":[],"errors":[]}') } })
     expect(w.text()).toContain('Создано в CRM · сущность #5')
-    expect(w.find('button').exists()).toBe(false)
+    expect(w.find('a').exists()).toBe(false)
     // no progress bar once terminal
     expect(w.find('[aria-label^="Стадия:"]').exists()).toBe(false)
   })
 
-  it('done with a created entity, IN a frame → «Открыть в CRM» button (opens the entity)', async () => {
+  it('done with a created entity, IN a frame → «Открыть в CRM» link (opens the entity)', async () => {
     framed.value = true
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"created":true,"warnings":[],"errors":[]}') } })
-    const btn = w.find('button')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toContain('Открыть в CRM · сущность #5')
+    const link = w.find('a')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toContain('Открыть в CRM · сущность #5')
     framed.value = false
   })
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { ImportJobView } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
@@ -22,6 +22,21 @@ const result = computed(() => parseJobResult(props.job.result))
 const { init: initB24, get: getFrame, auth: frameAuth, inFrame } = useB24()
 const entityPath = computed(() => entityDetailPath(result.value.entityTypeId, result.value.entityId))
 const canOpen = computed(() => !!entityPath.value && inFrame())
+// Real absolute portal URL so the result row shows a COPYABLE link (href), while the click still opens
+// the entity in a portal slider (@click.prevent → openEntity). `frameReady` re-evaluates the href once
+// the (singleton) frame handshake resolves — frameAuth() is not reactive on its own.
+const frameReady = ref(false)
+onMounted(async () => {
+  await initB24()
+  frameReady.value = true
+})
+const entityHref = computed<string | undefined>(() => {
+  void frameReady.value
+  const path = entityPath.value
+  if (!path) return undefined
+  const domain = (frameAuth()?.domain ?? '').replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+  return domain ? `https://${domain}${path}` : undefined
+})
 async function openEntity(): Promise<void> {
   const path = entityPath.value
   if (!path) return
@@ -33,8 +48,9 @@ async function openEntity(): Promise<void> {
       return
     } catch { /* framed but the slider call threw → fall back to a plain new-tab open */ }
   }
-  // Fallback only reaches here framed (canOpen gated on inFrame), so the domain is available.
-  const domain = frameAuth()?.domain
+  // Fallback only reaches here framed (canOpen gated on inFrame), so the domain is available. The frame
+  // may report the domain WITH a scheme ("https://portal…") — strip it, else the URL doubles the scheme.
+  const domain = (frameAuth()?.domain ?? '').replace(/^https?:\/\//i, '').replace(/\/+$/, '')
   if (domain && typeof window !== 'undefined') window.open(`https://${domain}${path}`, '_blank', 'noopener')
 }
 
@@ -107,14 +123,14 @@ const stepDot: Record<string, string> = {
       class="text-xs text-(--ui-color-base-3)"
     >
       <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <button
+        <!-- Real portal URL (copyable) in href; click opens the entity in a portal slider (prevent
+             default so we don't also navigate the tab). -->
+        <a
           v-if="result.entityId && canOpen"
-          type="button"
+          :href="entityHref"
           class="font-medium text-(--ui-color-accent-main-success) hover:underline"
-          @click="openEntity"
-        >
-          Открыть в CRM · сущность #{{ result.entityId }} →
-        </button>
+          @click.prevent="openEntity"
+        >Открыть в CRM · сущность #{{ result.entityId }} →</a>
         <span
           v-else-if="result.entityId"
           class="text-(--ui-color-accent-main-success)"

@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { buildFeedbackIssue, escapeHtml, MAX_COMMENT_LENGTH, normalizeKind, sanitizeComment, stripHostileChars } from '../app/utils/feedback'
+import { buildFeedbackIssue, escapeHtml, feedbackFilePath, MAX_COMMENT_LENGTH, normalizeKind, sanitizeComment, stripHostileChars } from '../app/utils/feedback'
+
+describe('feedbackFilePath (#332 byte-upload repo path)', () => {
+  it('builds files/<jobId>/<safe basename>', () => {
+    expect(feedbackFilePath('job-1', 'invoice.pdf')).toBe('files/job-1/invoice.pdf')
+  })
+  it('strips directory parts (no traversal) + unsafe chars', () => {
+    expect(feedbackFilePath('j1', '../../etc/passwd')).toBe('files/j1/passwd')
+    expect(feedbackFilePath('j1', 'a b/c<>d.xlsx')).toBe('files/j1/c__d.xlsx')
+    expect(feedbackFilePath('j1', '..hidden')).toBe('files/j1/hidden')
+  })
+  it('sanitises the jobId and falls back when parts empty', () => {
+    expect(feedbackFilePath('a/b!', '')).toBe('files/ab/file')
+    expect(feedbackFilePath('', '')).toBe('files/job/file')
+  })
+  it('caps the jobId (64) and basename (80)', () => {
+    const p = feedbackFilePath('j'.repeat(100), `${'n'.repeat(100)}.pdf`)
+    const [, id, name] = p.split('/')
+    expect(id!.length).toBe(64)
+    expect(name!.length).toBe(80)
+  })
+})
 
 // Build hostile chars from code points (never type the invisible characters literally — that would
 // itself be a Trojan-Source vector, and the point of the strip is to remove exactly these).
@@ -97,7 +118,15 @@ describe('feedback — buildFeedbackIssue', () => {
     expect(p.body).toContain('- **Статус разбора:** `Готово`')
     expect(p.body).toContain('- **Исход:** `Сущность создана`')
     expect(p.body).toContain('- **Замечания:** `Поставщик не найден; Валюта XXX отсутствует`')
-    expect(p.body).toContain('- **Файл на Диске портала (нужен доступ к порталу):** `https://bel.bitrix24.by/docs/file/123/`')
+    expect(p.body).toContain('- **Исходный файл:** `https://bel.bitrix24.by/docs/file/123/`')
+  })
+  it('«Замечания»: keeps the FULL multi-line notes (big cap) in a fenced block, inert', () => {
+    const notes = Array.from({ length: 40 }, (_, i) => `Товар «позиция ${i}» не найден — строка пропущена`).join('\n')
+    expect(notes.length).toBeGreaterThan(300) // would be clipped by the old 300-char cap
+    const p = buildFeedbackIssue('down', 'плохо', { notes })
+    expect(p.body).toContain('Товар «позиция 0» не найден')
+    expect(p.body).toContain('Товар «позиция 39» не найден') // the LAST one survives (not clipped)
+    expect(p.body).toContain('- **Замечания:**\n```\n') // multi-line → fenced block
   })
   it('omits the Контекст section entirely when no context is given', () => {
     expect(buildFeedbackIssue('up', 'ok').body).not.toContain('**Контекст:**')

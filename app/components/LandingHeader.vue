@@ -39,7 +39,7 @@ function openCardMobile() {
       <a
         href="#top"
         class="shrink-0 text-lg font-bold tracking-tight text-white"
-        aria-label="AI-импорт документов в Bitrix24 — наверх"
+        aria-label="AI-импорт прайсов в Bitrix24 — наверх"
       >
         <span class="text-cyan-400">AI</span>-импорт
       </a>

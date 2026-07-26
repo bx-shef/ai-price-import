@@ -8,7 +8,7 @@ definePageMeta({ layout: 'clear' })
 // `http-equiv=refresh` is a no-JS fallback (marketplace handler / crawlers): redirects even before
 // the client router runs. The onMounted replace handles the normal JS path (cleaner history entry).
 useHead({
-  title: 'Импорт документов',
+  title: 'AI-импорт прайсов',
   meta: [
     { name: 'robots', content: 'noindex' },
     { 'http-equiv': 'refresh', 'content': '0; url=/app' }

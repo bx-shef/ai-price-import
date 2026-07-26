@@ -67,18 +67,31 @@ export interface FeedbackContext {
 }
 
 const MAX_CONTEXT_VALUE = 300
+/** «Замечания» (triage notes: every warning/error) is the actionable payload of a report — give it a
+ *  MUCH larger budget and preserve line breaks, so a 40-line invoice's «товар не найден» list isn't
+ *  clipped to the first ~300 chars. */
+export const MAX_NOTES_VALUE = 4000
 
 /**
- * One `- **Label:** `value`` line, rendered fully INERT. Client-supplied context values (fileName is
- * attacker-influenced — an uploaded document name) must not forge markdown into the issue body:
- *   - collapse interior CR/LF/tab (which `stripHostileChars` intentionally keeps) → a single space,
- *     so a value can't break out of its line and inject extra sections (the body is `join('\n')`d);
- *   - strip backticks, then wrap the value in an inline code span — inside a code span markdown
- *     metacharacters ([](), ![](), *, _, |, #) render literally, so no live links/images/formatting.
- * Empty value → null (omit the line entirely). Cap applied before wrapping.
+ * One `- **Label:** `value`` context line, rendered fully INERT. Client-supplied context values
+ * (fileName is attacker-influenced — an uploaded document name) must not forge markdown into the issue
+ * body:
+ *   - strip backticks always (so no ``` can escape a code span/fence);
+ *   - single-line fields collapse interior CR/LF/tab → one space and wrap in an inline code span;
+ *   - a `multiline` field keeps its line breaks and, when it spans lines, renders in a fenced block —
+ *     inside code spans/fences markdown metacharacters ([](), *, _, |, #) render literally (no live
+ *     links/images/formatting).
+ * Empty value → null (omit the line entirely). `cap` applied before wrapping.
  */
-function contextLine(label: string, value: unknown): string | null {
-  const flat = stripHostileChars(value).replace(/[\r\n\t]+/g, ' ').replace(/`/g, '').trim().slice(0, MAX_CONTEXT_VALUE)
+function contextLine(label: string, value: unknown, opts: { cap?: number, multiline?: boolean } = {}): string | null {
+  const cap = opts.cap ?? MAX_CONTEXT_VALUE
+  const noTicks = stripHostileChars(value).replace(/`/g, '')
+  if (opts.multiline) {
+    const kept = noTicks.replace(/\t/g, ' ').replace(/\r\n?/g, '\n').trim().slice(0, cap)
+    if (!kept) return null
+    return kept.includes('\n') ? `- **${label}:**\n\`\`\`\n${kept}\n\`\`\`` : `- **${label}:** \`${kept}\``
+  }
+  const flat = noTicks.replace(/[\r\n\t]+/g, ' ').trim().slice(0, cap)
   return flat ? `- **${label}:** \`${flat}\`` : null
 }
 
@@ -101,12 +114,12 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
   const contextLines = [
     contextLine('Статус разбора', context.status),
     contextLine('Исход', context.outcome),
-    contextLine('Замечания', context.notes),
+    contextLine('Замечания', context.notes, { cap: MAX_NOTES_VALUE, multiline: true }),
     contextLine('Задача (jobId)', context.jobId),
     contextLine('Файл', context.fileName),
-    // Portal-INTERNAL Disk path — opens only for someone logged into that client's portal; the
-    // publisher can't fetch it externally. Proper file delivery (bytes → private feedback repo) is #332.
-    contextLine('Файл на Диске портала (нужен доступ к порталу)', context.fileUrl),
+    // #332: the actual source file, committed to the PRIVATE feedback repo (accessible to the
+    // publisher) — set only on a successful byte-upload; omitted otherwise.
+    contextLine('Исходный файл', context.fileUrl),
     contextLine('Сущность', context.entityType),
     contextLine('ID сущности', context.entityId),
     contextLine('Ссылка', context.entityUrl),
@@ -122,4 +135,15 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
     ...(contextLines.length ? ['', '**Контекст:**', ...contextLines] : [])
   ].join('\n')
   return { title, body, labels: ['user-feedback', `feedback:${kind}`] }
+}
+
+/** Repo-relative path for a source file committed to the PRIVATE feedback repo (#332, byte-upload).
+ *  jobId groups files per run; the filename is sanitised to a safe basename (strip directory parts →
+ *  no path traversal, allowlist chars, drop leading dots, cap length). Both parts fall back to a
+ *  constant so the path is always well-formed. */
+export function feedbackFilePath(jobId: string, fileName: string): string {
+  const id = String(jobId ?? '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'job'
+  const base = String(fileName ?? '').split(/[\\/]/).pop() ?? ''
+  const safe = base.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 80) || 'file'
+  return `files/${id}/${safe}`
 }

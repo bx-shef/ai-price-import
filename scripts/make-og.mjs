@@ -38,7 +38,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 </style></head><body>
   <div class="card">
     <div class="eyebrow">Приложение для Bitrix24</div>
-    <div class="title">AI-импорт документов<br>в <span>Bitrix24</span></div>
+    <div class="title">AI-импорт прайсов<br>в <span>Bitrix24</span></div>
     <div class="sub">Накладные, счета, КП и прайсы → товары в вашей CRM. Контрагент, суммы и НДС — 1-в-1.</div>
     <div class="foot">PDF · скан / фото (OCR) · Excel · Word · 1С</div>
   </div>

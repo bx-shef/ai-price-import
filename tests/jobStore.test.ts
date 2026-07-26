@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claimJobNotify, createJob, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus } from '../server/utils/jobStore'
+import { claimJobNotify, createJob, getDiskFileId, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus } from '../server/utils/jobStore'
 import { createMemoryJobRedis } from '../server/utils/jobStoreRedis'
 
 // The store logic is exercised over the in-memory JobRedis (same interface as the live ioredis
@@ -45,6 +45,18 @@ describe('jobStore (Redis-backed)', () => {
     // absent → null
     await createJob('m', 'j2', 'f.pdf', r)
     expect(await getDiskFileUrl('m', 'j2', r)).toBeNull()
+  })
+
+  it('getDiskFileId: returns the stored id, null when absent/invalid', async () => {
+    const r = createMemoryJobRedis()
+    await createJob('m', 'j1', 'f.pdf', r)
+    await setDiskFile('m', 'j1', { id: 7, detailUrl: 'https://x/docs/file/7/' }, r)
+    expect(await getDiskFileId('m', 'j1', r)).toBe(7)
+    // no diskFile → null
+    await createJob('m', 'j2', 'f.pdf', r)
+    expect(await getDiskFileId('m', 'j2', r)).toBeNull()
+    // unknown member/job → null
+    expect(await getDiskFileId('m', 'nope', r)).toBeNull()
   })
 
   it('claimJobNotify is once-only: first caller true, all later false', async () => {

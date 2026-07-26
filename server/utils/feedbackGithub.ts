@@ -40,3 +40,44 @@ export async function postFeedbackIssue(config: FeedbackConfig, payload: IssuePa
   }
   return { ok: false, status, retryable: status >= 500 || status === 429 }
 }
+
+export interface CommitFileResult {
+  ok: boolean
+  status: number
+  /** Blob URL of the committed file in the (private) repo, for linking in the issue. */
+  htmlUrl?: string
+}
+
+/**
+ * Commit a base64 file into the PRIVATE feedback repo via the Contents API (#332 byte-upload). Used to
+ * attach the actual source document to a feedback issue — unlike a portal-Disk link, a file in the
+ * owner's own repo IS accessible to them. DI over FetchFn. SECURITY: never log the token/URL/body.
+ * Idempotent-ish: a repeated same-path PUT without a sha 422s (already exists) — treated as non-ok,
+ * best-effort (the caller still files the issue).
+ */
+export async function commitFeedbackFile(config: FeedbackConfig, path: string, contentBase64: string, message: string, fetchFn: FetchFn): Promise<CommitFileResult> {
+  let res: Awaited<ReturnType<FetchFn>>
+  try {
+    res = await fetchFn(`https://api.github.com/repos/${config.repo}/contents/${path}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${config.token}`,
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'procure-ai-feedback',
+        'X-GitHub-Api-Version': '2022-11-28'
+      },
+      body: JSON.stringify({ message, content: contentBase64 })
+    })
+  } catch {
+    return { ok: false, status: 0 }
+  }
+  const status = res.status
+  if (status === 201 || status === 200) {
+    const html = await res.json()
+      .then((j: unknown) => String((j as { content?: { html_url?: unknown } })?.content?.html_url ?? ''))
+      .catch(() => '')
+    return { ok: true, status, ...(html ? { htmlUrl: html } : {}) }
+  }
+  return { ok: false, status }
+}

@@ -1,14 +1,16 @@
 import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { resolveFeedbackConfig } from '../utils/feedbackConfig'
-import { postFeedbackIssue } from '../utils/feedbackGithub'
-import { buildFeedbackIssue, normalizeKind } from '~/utils/feedback'
+import { commitFeedbackFile, postFeedbackIssue } from '../utils/feedbackGithub'
+import { buildFeedbackIssue, feedbackFilePath, normalizeKind } from '~/utils/feedback'
 import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
-import { getDiskFileUrl, getJob } from '../utils/jobStore'
+import { getDiskFileId, getJob } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
-import { absPortalUrl, resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
+import { resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
+import { makeBareTokenSdkCall } from '../utils/b24Sdk'
+import { downloadDiskFile, type BinaryFetchFn } from '../utils/diskDownload'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import type { FetchFn } from '../utils/b24Rest'
 
@@ -81,10 +83,28 @@ export default defineEventHandler(async (event) => {
             entity = resolveFeedbackEntity(view, auth.domain)
             outcome = resolveFeedbackOutcome(view, job.status)
             if (attachFile) {
-              // getDiskFileUrl returns a same-portal RELATIVE path (SSRF-guarded) or null (file not
-              // archived — the raw upload is deleted after extraction, so only Disk-saved files survive).
-              const rel = await getDiskFileUrl(member.memberId, jobId, jobRedis)
-              if (rel) fileUrl = absPortalUrl(rel, auth.domain)
+              // #332 byte-upload: download the archived source file via the portal OAuth (frame) token
+              // (scope `disk`) and COMMIT it to the PRIVATE feedback repo, so the publisher gets the
+              // actual file — a portal-Disk link is inaccessible to them. Best-effort: any failure
+              // (no archived file, download/commit error) yields no file, the issue is still filed.
+              const diskId = await getDiskFileId(member.memberId, jobId, jobRedis)
+              if (diskId) {
+                const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
+                // redirect:'manual' — never follow a portal's redirect off-host (SSRF on the shared
+                // multitenant backend); AbortSignal.timeout — a slow/huge Disk body must not stall the
+                // 👍/👎 request. Body streamed + capped in downloadDiskFile.
+                const binFetch: BinaryFetchFn = async (url) => {
+                  const r = await (globalThis.fetch as typeof fetch)(url, { redirect: 'manual', signal: AbortSignal.timeout(15_000) })
+                  return { ok: r.ok, status: r.status, body: r.body as AsyncIterable<Uint8Array> | null }
+                }
+                const dl = await downloadDiskFile(diskId, auth.domain, call, binFetch)
+                if (dl) {
+                  const commit = await commitFeedbackFile(
+                    config, feedbackFilePath(jobId, dl.name), dl.base64, `feedback file for job ${jobId}`, fetchImpl
+                  )
+                  if (commit.ok && commit.htmlUrl) fileUrl = commit.htmlUrl
+                }
+              }
             }
           }
         } catch { /* best-effort: less context rather than a failed submission */ }

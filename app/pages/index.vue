@@ -20,7 +20,7 @@ import { B24_BOOKING_URL } from '~/utils/booking'
 // landing (dark vibecode shell, mouse-glow cards, left-aligned section headers,
 // two-column hero), reusing this project's blocks and content; accent stays cyan.
 useHead({
-  title: 'AI-импорт документов в Bitrix24',
+  title: 'AI-импорт прайсов в Bitrix24',
   bodyAttrs: { class: 'bg-[#05010f]' },
   // The landing shell is hardcoded dark (vibecode hex) — pin dark so app.vue's theme-init keeps b24ui
   // components on dark tokens here regardless of the visitor's OS theme (in-portal pages stay auto).
@@ -108,7 +108,7 @@ onMounted(async () => {
                 <PartnerBadge />
 
                 <h1 class="text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-6xl lg:text-7xl">
-                  AI-импорт документов в <span class="text-cyan-400">Bitrix24</span>
+                  AI-импорт прайсов в <span class="text-cyan-400">Bitrix24</span>
                 </h1>
 
                 <p class="max-w-[560px] text-lg leading-relaxed text-white/70 sm:text-xl">

@@ -1,7 +1,7 @@
 // Landing content + pure helpers (single source of truth, testable). Marketing
 // copy is Russian; see docs/redesign/04-marketing-landing.md.
 
-export const LANDING_TITLE = 'AI-импорт документов в Bitrix24'
+export const LANDING_TITLE = 'AI-импорт прайсов в Bitrix24'
 export const LANDING_SUBTITLE
   = 'Накладные, счета, КП и прайсы превращаются в товары в вашей CRM: контрагент находится сам, суммы и НДС сходятся 1-в-1.'
 
@@ -50,14 +50,14 @@ export const LANDING_WHY_SUBTITLE = 'Бесплатное приложение �
 /** Промо-карточка «Приложение в Маркете» (бесплатная точка входа, self-install). */
 export const LANDING_MARKET_PROMO = {
   eyebrow: 'Приложение для Bitrix24',
-  title: 'Импорт документов прямо в Bitrix24',
+  title: 'AI-импорт прайсов прямо в Bitrix24',
   text: 'Само приложение — бесплатное, есть в Маркете Bitrix24. Установите за минуту и загружайте документы прямо в портале.',
   cta: 'Открыть в Маркете Bitrix24'
 } as const
 
 /** Текст блока для интеграторов/партнёров. */
 export const LANDING_INTEGRATORS
-  = 'Внедряете Bitrix24 клиентам? Подключим AI-импорт документов под их процессы — свои поля, сущности и источники — и развернём в вашем контуре.'
+  = 'Внедряете Bitrix24 клиентам? Подключим AI-импорт прайсов под их процессы — свои поля, сущности и источники — и развернём в вашем контуре.'
 
 /** Bitrix24 Market listing code (slug) of this app — the single source of truth also used to build
  *  the in-portal «оцените приложение» openPath and the public listing URL below. */
