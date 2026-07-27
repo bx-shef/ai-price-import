@@ -9,7 +9,7 @@ export interface LandingStep { n: number, title: string, text: string }
 export const LANDING_STEPS: LandingStep[] = [
   { n: 1, title: 'Загрузите документ', text: 'Прямо в портале — PDF, скан, фото, Excel или Word. Одним файлом или пачкой.' },
   { n: 2, title: 'AI разбирает', text: 'Распознаёт контрагента (ИНН/УНП/БИН), позиции, единицы и НДС — на русском, белорусском или казахском.' },
-  { n: 3, title: 'Товары в CRM', text: 'Создаётся целевая сущность (сделка / счёт / смарт-процесс) с товарными позициями — 1-в-1 с документом.' }
+  { n: 3, title: 'Товары в CRM', text: 'Создаётся целевая сущность (сделка / лид / счёт / смарт-процесс) с товарными позициями — 1-в-1 с документом.' }
 ]
 
 export interface LandingFeature { title: string, text: string }
@@ -58,6 +58,13 @@ export const LANDING_MARKET_PROMO = {
 /** Текст блока для интеграторов/партнёров. */
 export const LANDING_INTEGRATORS
   = 'Внедряете Bitrix24 клиентам? Подключим AI-импорт прайсов под их процессы — свои поля, сущности и источники — и развернём в вашем контуре.'
+
+/** Индивидуальная доработка: автоматический сбор прайсов из внешних источников (на сервере клиента —
+ *  облачное приложение Маркета этого не делает, это платная интеграция под ваш контур). */
+export const LANDING_SOURCES = {
+  title: 'Прайс приходит сам — из вашего источника',
+  text: 'Не хотите загружать файлы вручную? Забираем прайсы автоматически — из почты, Telegram, по FTP или из другого источника. Это индивидуальная доработка на вашем сервере.'
+} as const
 
 /** Bitrix24 Market listing code (slug) of this app — the single source of truth also used to build
  *  the in-portal «оцените приложение» openPath and the public listing URL below. */
