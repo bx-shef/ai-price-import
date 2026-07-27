@@ -42,6 +42,12 @@ const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(ma
 // a PORTAL-relative path (it resolved to `<portal>/settings` → 404). Fallback to in-frame navigation
 // when not framed (standalone) or if the SDK call fails, so settings always opens.
 const { openAppSlider } = useB24()
+// While files are uploading, LOCK the rest of the UI (recent-operations list + savings/metrics) so the
+// operator can't clear history / remove rows / reset metrics mid-run (owner ask «при загрузке блокируй
+// списки»). `stagingBusy` comes from ImportStaging's one-by-one loop; `uploading` is a single POST in
+// flight. Either → busy.
+const stagingBusy = ref(false)
+const busy = computed(() => stagingBusy.value || uploading.value)
 // Detect the Bitrix24 MOBILE APP via b24ui's own mechanism (useDevice → platform «bitrix-mobile», set by
 // the b24ui platform plugin from the BitrixMobile UA — NOT the JS SDK). In the mobile app we hide
 // desktop-only chrome (settings gear + «Подробные метрики»); hiding is a `v-if`, so it's theme-agnostic.
@@ -123,10 +129,15 @@ watch(jobs, (list) => {
     <div class="mx-auto max-w-2xl p-4 sm:p-6">
       <div class="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h1 class="text-xl font-semibold">
+          <!-- В мобильном приложении Б24 нативная шапка УЖЕ показывает «AI-импорт прайсов» — не дублируем
+               заголовок своим h1 (b24ui useDevice). В портале/standalone h1 остаётся. -->
+          <h1
+            v-if="!isBitrixMobile"
+            class="text-xl font-semibold"
+          >
             AI-импорт прайсов
           </h1>
-          <p class="text-sm text-(--ui-color-base-3)">
+          <p class="text-base text-(--ui-color-base-3)">
             Перетащите или сфотографируйте накладную, счёт, КП или прайс — товары уйдут в CRM.
           </p>
         </div>
@@ -168,7 +179,10 @@ watch(jobs, (list) => {
 
       <!-- PRIMARY ACTION: stage files → set a per-file target → import one-by-one on «Импортировать».
            `upload` comes from THIS page's single useImport() so uploads land in the same job list/poll. -->
-      <ImportStaging :upload="upload" />
+      <ImportStaging
+        :upload="upload"
+        @update:busy="v => stagingBusy = v"
+      />
 
       <B24Alert
         v-if="error"
@@ -182,10 +196,11 @@ watch(jobs, (list) => {
            not an empty «Последние операции» block. -->
       <div
         v-if="jobs.length || uploading"
-        class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2"
+        class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
+        :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
       >
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 class="text-sm font-semibold">
+          <h2 class="text-base font-semibold">
             Последние операции
           </h2>
           <span
@@ -244,6 +259,8 @@ watch(jobs, (list) => {
       <B24Card
         v-if="jobs.length || uploading"
         variant="outline"
+        class="transition-opacity"
+        :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
         :b24ui="{ body: 'p-0 sm:p-0' }"
       >
         <ul class="divide-y divide-(--ui-color-base-5)">
@@ -267,10 +284,11 @@ watch(jobs, (list) => {
       <!-- Экономия (компактно, внизу): сколько времени/денег сберёг импорт (оценка), + сброс метрик -->
       <B24Card
         variant="outline"
-        class="mt-4"
+        class="mt-4 transition-opacity"
+        :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
       >
         <div class="mb-3 flex items-center justify-between gap-2">
-          <h2 class="text-sm font-semibold">
+          <h2 class="text-base font-semibold">
             Экономия
           </h2>
           <div class="flex items-center gap-2 text-xs">

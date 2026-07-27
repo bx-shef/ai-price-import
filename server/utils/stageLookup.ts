@@ -8,10 +8,11 @@ import type { RestCall } from './b24Rest'
 //   deal (2), cat N>0 → 'DEAL_STAGE_<N>'               (C<N>:NEW/…)
 //   smart-invoice(31) → 'SMART_INVOICE_STAGE_<cat>'    (DT31_<cat>:N/…) — NOT DYNAMIC_31_*
 //   smart-process ≥1000 → 'DYNAMIC_<etid>_STAGE_<cat>' (DT<etid>_<cat>:NEW/…)
-// Leads (1) are intentionally NOT offered a stage: live-verified that crm.item.add for a lead
-// SILENTLY IGNORES both `stageId` and `statusId` (the lead lands on the portal's default status, no
-// error) — so pinning a lead stage would be a control that does nothing. Mirrors the lead
-// categoryId carve-out (#135); createTargetItem likewise doesn't forward stageId for leads.
+//   lead (1)          → 'STATUS'                       (NEW/IN_PROCESS/PROCESSED/… — lead statuses)
+// Lead status caveat (live-verified): `crm.item.ADD` for a lead SILENTLY DROPS `stageId` (the field
+// exists — `stageId`, type crm_status — but the add path ignores it), so a lead lands on the portal
+// default. `crm.item.UPDATE`, however, DOES honor `stageId` — so createTargetItem applies the chosen
+// lead stage in a SECOND step (add → update). We therefore DO offer a lead stage picker now.
 
 export interface CrmStage {
   id: string
@@ -22,7 +23,7 @@ export interface CrmStage {
  *  stages can't be addressed (a smart-process/smart-invoice with no category pinned yet). */
 export function stageEntityId(entityTypeId: number, categoryId: number | null | undefined): string | null {
   if (!Number.isInteger(entityTypeId) || entityTypeId <= 0) return null
-  if (entityTypeId === 1) return null // lead — crm.item.add ignores the stage, so don't offer one
+  if (entityTypeId === 1) return 'STATUS' // lead statuses (applied via a follow-up crm.item.update)
   if (entityTypeId === 2) return categoryId && categoryId > 0 ? `DEAL_STAGE_${categoryId}` : 'DEAL_STAGE'
   const cat = categoryId
   if (cat == null || !Number.isInteger(cat) || cat < 0) return null // smart-* need a category

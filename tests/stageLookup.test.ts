@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { fetchCrmStages, stageEntityId } from '../server/utils/stageLookup'
 
 describe('stageEntityId (live-verified ENTITY_ID forms)', () => {
-  it('lead → null (crm.item.add ignores the stage, so none is offered)', () => {
-    expect(stageEntityId(1, null)).toBeNull()
-    expect(stageEntityId(1, 7)).toBeNull() // category irrelevant for a lead
+  it('lead → STATUS (lead statuses; applied via a follow-up crm.item.update, category irrelevant)', () => {
+    expect(stageEntityId(1, null)).toBe('STATUS')
+    expect(stageEntityId(1, 7)).toBe('STATUS') // leads have no category — ignored
   })
   it('deal default funnel (cat 0 / none) → DEAL_STAGE, categorized → DEAL_STAGE_<N>', () => {
     expect(stageEntityId(2, null)).toBe('DEAL_STAGE')

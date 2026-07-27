@@ -18,6 +18,7 @@ import { readMapping } from '../utils/appSettings'
 import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
+import { fetchCrmMode, leadsEnabled } from '../utils/crmMode'
 import { findProduct } from '../utils/productLookup'
 import { resolveOffersIblockId } from '../utils/offerLookup'
 import { fetchMeasureRows } from '../utils/measureList'
@@ -250,6 +251,19 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     }
     return offersIblockId
   }
+  // Portal CRM mode — resolved ONCE per job. In the SIMPLE CRM (no leads) a lead target is redirected to
+  // a deal (crmSyncCore). Fail-open: an unreadable mode keeps leads enabled.
+  let crmMode: number | null | undefined
+  const ensureLeadsEnabled = async (): Promise<boolean> => {
+    if (crmMode === undefined) {
+      try {
+        crmMode = await fetchCrmMode((await need()).call)
+      } catch {
+        crmMode = null
+      }
+    }
+    return leadsEnabled(crmMode)
+  }
   return {
     // One-time finalize claim (#164): the run that wins flips import_job.notified false→true, so
     // the success chat + timeline дело fire exactly once even when a retry resumes after a
@@ -286,6 +300,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     // Valid funnel ids for an entity type → crm-sync falls back off a DELETED direction
     // (rule/default → deal/direction-0). One crm.category.list only when a target pins a categoryId.
     listCategoryIds: async entityTypeId => (await fetchCrmCategories(entityTypeId, (await need()).call)).map(c => c.id),
+    leadsEnabled: ensureLeadsEnabled,
     createTarget: async (target, fields) => createTargetItem(target, fields, (await need()).call),
     setRows: async (etid, id, rows) => setProductRows(etid, id, rows, (await need()).call),
     reportErrors: async (messages, supplierName) => {

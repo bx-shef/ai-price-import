@@ -72,6 +72,21 @@ describe('crmWrite', () => {
     await setProductRows(2, 55, [{ price: 1 }], call)
     expect(call).toHaveBeenLastCalledWith('crm.item.productrow.set', { ownerType: 'D', ownerId: 55, productRows: [{ price: 1 }] })
   })
+
+  it('stage rides in the ADD for deals AND leads (one step); a lead drops only the categoryId', async () => {
+    // Deal: stageId + categoryId in the add.
+    const dealCall = vi.fn().mockResolvedValueOnce({ item: { id: 7 } })
+    await createTargetItem({ entityTypeId: 2, categoryId: 3, stageId: 'C3:NEW' }, { title: 'd' }, dealCall)
+    expect(dealCall).toHaveBeenCalledTimes(1)
+    expect(dealCall).toHaveBeenCalledWith('crm.item.add', { entityTypeId: 2, fields: { title: 'd', categoryId: 3, stageId: 'C3:NEW' } })
+
+    // Lead: ONE crm.item.add with stageId; the categoryId is dropped (leads have no category).
+    const leadCall = vi.fn().mockResolvedValueOnce({ item: { id: 9 } })
+    const id = await createTargetItem({ entityTypeId: 1, categoryId: 3, stageId: 'IN_PROCESS' }, { title: 'l' }, leadCall)
+    expect(id).toBe(9)
+    expect(leadCall).toHaveBeenCalledTimes(1)
+    expect(leadCall).toHaveBeenCalledWith('crm.item.add', { entityTypeId: 1, fields: { title: 'l', stageId: 'IN_PROCESS' } })
+  })
 })
 
 describe('companyLookup', () => {
