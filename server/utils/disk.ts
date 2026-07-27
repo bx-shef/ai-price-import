@@ -28,6 +28,21 @@ export function monthlySubfolderName(date: { getFullYear: () => number, getMonth
   return `${y}-${m}`
 }
 
+/** In-portal view URL for a file on the COMMON drive, addressed by its human path under the drive root
+ *  (`/docs/file/<appFolder>/<month>/<name>`). The `?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER` suffix opens it in
+ *  a portal side-slider (the form owner confirmed as the working link). We CONSTRUCT this rather than use
+ *  the API's DETAIL_URL because DETAIL_URL points at the id-based document route, which did not open the
+ *  file. Each segment is `encodeURIComponent`-encoded (space → %20, `()` → %28/%29), matching the portal's
+ *  own URL form. Returned RELATIVE (leading `/`) so it stays same-portal (SSRF-safe) and survives
+ *  detailUrlToRelative unchanged (query kept). */
+export function commonDiskFileUrl(appFolder: string, month: string, fileName: string): string {
+  // encodeURIComponent leaves `!'()*` unescaped, but the portal's own URL encodes parentheses
+  // (`(` → %28, `)` → %29). Escape that whole sub-delim set too so the path matches byte-for-byte.
+  const enc = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+  const seg = [appFolder, month, fileName].map(enc).join('/')
+  return `/docs/file/${seg}?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`
+}
+
 /** Find or create a subfolder by name under a folder; returns its id. Idempotent. */
 export async function ensureSubfolder(folderId: number, name: string, call: RestCall): Promise<number> {
   const children = await call('disk.folder.getchildren', { id: folderId }) as Array<{ ID: string, NAME: string, TYPE: string }>
@@ -88,11 +103,16 @@ export async function saveSourceFileToDisk(
   const rootId = Number(common?.ROOT_OBJECT_ID)
   if (!common || !Number.isInteger(rootId) || rootId <= 0) throw new Error('disk: общий диск не найден')
   const appFolderId = await ensureSubfolder(rootId, DISK_APP_FOLDER, call)
-  const monthId = await ensureSubfolder(appFolderId, monthlySubfolderName(input.date), call)
+  const monthName = monthlySubfolderName(input.date)
+  const monthId = await ensureSubfolder(appFolderId, monthName, call)
   const name = sanitizeFileName(input.fileName)
+  // The OPEN link is CONSTRUCTED from the human path (not the API's DETAIL_URL, which didn't open the
+  // file). Same for a freshly-uploaded and an already-archived file → the id from REST, the URL from us.
+  const detailUrl = commonDiskFileUrl(DISK_APP_FOLDER, monthName, name)
   const already = await findChildFile(monthId, name, call)
-  if (already) return already
-  return uploadFile(monthId, name, input.base64, call)
+  if (already) return { id: already.id, detailUrl }
+  const uploaded = await uploadFile(monthId, name, input.base64, call)
+  return { id: uploaded.id, detailUrl }
 }
 
 /** Injected deps for the file-extract `saveSourceFile` hook (kept pure for tests). */

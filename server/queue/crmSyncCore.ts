@@ -49,6 +49,9 @@ export interface CrmSyncDeps {
   writeActivity?: (input: {
     entityTypeId: number
     entityId: number
+    /** Matched client company id (RQ_INN hit), or null when the supplier wasn't found. When present,
+     *  the дело is ALSO recorded on the company card (owner ask — visible in company AND deal). */
+    companyId?: number | null
     supplierName?: string
     rowCount: number
     /** Import problems (товар не найден / единица / НДС уточнён / итог не сошёлся …) to record on the
@@ -314,7 +317,7 @@ export async function runCrmSync(
   // no-op only on the dev webhook path, never in prod.
   if (deps.writeActivity && finalize) {
     try {
-      await deps.writeActivity({ entityTypeId, entityId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings })
+      await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings })
     } catch {
       warnings.push('Дело в таймлайне не создано')
     }

@@ -4,20 +4,39 @@ import { neutralizeBb } from './chatNotify'
 // Build a configurable activity («настраиваемое дело») for crm.activity.configurable.add.
 // The app owns the layout (icon/header/body/footer + «открыть» button). Admin only
 // toggles whether the source file is saved (docs/redesign/02 §«Исходный файл и дело»).
+//
+// OWNER (owner ask): the дело is recorded on BOTH the client COMPANY and the created entity
+// (deal/…) — one activity per owner, so the manager sees it in the company card AND on the deal.
+// The «Открыть» button cross-links: on the company's activity it opens the deal, on the deal's
+// activity it opens the company. When no company matched, only the deal activity exists and the
+// «Открыть» button is omitted (there is nothing else to jump to).
+//
 // SECURITY: the title/body lines carry the uploader-controlled supplier name / document
 // fields, so — like the chat path (chatNotify) — they are BB-neutralised before they reach
 // the CRM timeline, otherwise `[url=…]` / mentions could be injected into the activity.
 
+/** CRM entity type id for a Company (RQ_INN counterparty) — the client company timeline owner. */
+export const COMPANY_ENTITY_TYPE_ID = 4
+
 export interface ActivityLayoutInput {
-  entityTypeId: number
+  /** Timeline owner TYPE — the created entity's type, or COMPANY_ENTITY_TYPE_ID for the company card. */
+  ownerTypeId: number
+  /** Timeline owner id — the created entity id, or the matched company id. */
   ownerId: number
   responsibleId?: number
   title: string
   /** Short lines shown in the activity body (e.g. counts, supplier). */
   lines: string[]
-  /** Deep link to open the created entity (path in portal). */
+  /** Deep link the logo click + the (optional) «Открыть» button redirect to — the RELATED entity to
+   *  jump to (the deal from the company's activity, or the company from the deal's activity). Always a
+   *  same-portal relative path. */
   openPath: string
-  /** Optional in-portal link to the archived SOURCE file on the Disk (its DETAIL_URL). When set
+  /** Add the «Открыть» footer button (pointing at `openPath`). Omitted when there is nothing to jump
+   *  to (a deal activity without a matched company). */
+  showOpenButton?: boolean
+  /** Label for the «Открыть» button (e.g. «Открыть сделку» / «Открыть компанию»). Default «Открыть». */
+  openButtonTitle?: string
+  /** Optional in-portal link to the archived SOURCE file on the Disk (its view URL). When set
    *  (and a valid same-portal relative path), a «Исходный файл» button is added to the timeline
    *  дело so the operator can open the original document (#129 follow-up). */
   sourceFileUrl?: string
@@ -25,8 +44,28 @@ export interface ActivityLayoutInput {
 
 /** Build the crm.activity.configurable.add params. Pure. */
 export function buildConfigurableActivity(input: ActivityLayoutInput): Record<string, unknown> {
+  // Footer allows at most TWO buttons — «Открыть» (opt) + «Исходный файл» (opt). Build only the
+  // present ones; an all-absent footer is omitted (an empty buttons map adds no value).
+  const buttons: Record<string, unknown> = {}
+  if (input.showOpenButton) {
+    buttons.open = {
+      title: input.openButtonTitle ?? 'Открыть',
+      type: 'primary',
+      action: { type: 'redirect', uri: safeRelativePath(input.openPath) }
+    }
+  }
+  // Link to the archived source file — only when the URL is a valid same-portal relative path (never
+  // a scheme/protocol-relative URL that could redirect off-portal). It may carry a query
+  // (`?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`) — kept as-is; the guard only checks the path prefix.
+  if (input.sourceFileUrl && isRelativePath(input.sourceFileUrl)) {
+    buttons.sourceFile = {
+      title: 'Исходный файл',
+      type: 'secondary',
+      action: { type: 'redirect', uri: input.sourceFileUrl }
+    }
+  }
   return {
-    ownerTypeId: input.entityTypeId,
+    ownerTypeId: input.ownerTypeId,
     ownerId: input.ownerId,
     fields: {
       typeId: 'CONFIGURABLE',
@@ -41,7 +80,7 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
         // BodyDto должно быть заполнено» (verified live on an OAuth portal; the webhook
         // path never reached this because configurable.add returns ERROR_WRONG_CONTEXT
         // over a webhook). `document` is a valid system logo code (crm.timeline.logo.list);
-        // clicking it opens the created entity, same as the footer button.
+        // clicking it redirects to the related entity, same as the «Открыть» button.
         logo: { code: 'document', action: { type: 'redirect', uri: safeRelativePath(input.openPath) } },
         // B24 requires 1..20 blocks — guarantee at least one so an empty `lines` can't 400.
         blocks: Object.fromEntries(
@@ -51,28 +90,7 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
           ])
         )
       },
-      // B24 allows at most TWO footer buttons — «Открыть» + optional «Исходный файл». Do NOT add a
-      // third here (it would be silently dropped / rejected by the timeline layout).
-      footer: {
-        buttons: {
-          open: {
-            title: 'Открыть',
-            type: 'primary',
-            action: { type: 'redirect', uri: safeRelativePath(input.openPath) }
-          },
-          // Link to the archived source file — only when the DETAIL_URL is a valid same-portal
-          // relative path (never a scheme/protocol-relative URL that could redirect off-portal).
-          ...(input.sourceFileUrl && isRelativePath(input.sourceFileUrl)
-            ? {
-                sourceFile: {
-                  title: 'Исходный файл',
-                  type: 'secondary',
-                  action: { type: 'redirect', uri: input.sourceFileUrl }
-                }
-              }
-            : {})
-        }
-      }
+      ...(Object.keys(buttons).length ? { footer: { buttons } } : {})
     }
   }
 }
@@ -98,4 +116,9 @@ export function entityOpenPath(entityTypeId: number, id: number): string {
   if (code === 'Q') return `/crm/quote/show/${id}/`
   // Universal smart-process / smart-invoice detail path.
   return `/crm/type/${entityTypeId}/details/${id}/`
+}
+
+/** Portal path to open a company card. */
+export function companyOpenPath(id: number): string {
+  return `/crm/company/details/${id}/`
 }

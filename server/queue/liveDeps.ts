@@ -26,7 +26,7 @@ import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_ME
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { buildConfigurableActivity, entityOpenPath } from '../utils/configurableActivity'
+import { buildConfigurableActivity, companyOpenPath, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { extractText } from '../utils/textExtract'
 import { readFile } from 'node:fs/promises'
@@ -308,9 +308,11 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       const domain = (await getToken(memberId, infra.query))?.domain
       await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call)
     },
-    // Configurable timeline activity on the created entity (crm.activity.configurable.add,
-    // OAuth app context — verified live). Best-effort; runCrmSync swallows failures.
-    writeActivity: async ({ entityTypeId, entityId, supplierName, rowCount, warnings }) => {
+    // Configurable timeline activity (crm.activity.configurable.add, OAuth app context — verified
+    // live). Recorded on BOTH the created entity AND the client company (owner ask — visible in the
+    // deal AND the company card), so up to two activities are written. Best-effort; runCrmSync
+    // swallows failures.
+    writeActivity: async ({ entityTypeId, entityId, companyId, supplierName, rowCount, warnings }) => {
       // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
       // Best-effort — a lookup failure just omits the button, never fails the import.
       const sourceFileUrl = await getDiskFileUrl(memberId, jobId, jobRedis).catch(() => null)
@@ -320,15 +322,38 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       const problems = warnings.length
         ? [`Проблемы (${warnings.length}):`, ...warnings.slice(0, 6).map(w => `• ${w}`)]
         : []
-      const params = buildConfigurableActivity({
-        entityTypeId,
+      const lines = [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : []), ...problems]
+      const title = `Импорт: ${supplierName ?? 'документ'}`
+      const hasCompany = !!companyId && companyId > 0
+      const call = (await need()).call
+      // Deal activity: «Открыть компанию» → jumps to the client card (only when matched — else there's
+      // nothing to open, so no button, per owner ask).
+      await call('crm.activity.configurable.add', buildConfigurableActivity({
+        ownerTypeId: entityTypeId,
         ownerId: entityId,
-        title: `Импорт: ${supplierName ?? 'документ'}`,
-        lines: [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : []), ...problems],
-        openPath: entityOpenPath(entityTypeId, entityId),
+        title,
+        lines,
+        openPath: hasCompany ? companyOpenPath(companyId!) : entityOpenPath(entityTypeId, entityId),
+        showOpenButton: hasCompany,
+        openButtonTitle: 'Открыть компанию',
         ...(sourceFileUrl ? { sourceFileUrl } : {})
-      })
-      await (await need()).call('crm.activity.configurable.add', params)
+      }))
+      // Company activity (only when matched): the SAME дело on the company card, «Открыть сделку» → the
+      // created entity. Best-effort — a failure here must not undo the deal activity above.
+      if (hasCompany) {
+        try {
+          await call('crm.activity.configurable.add', buildConfigurableActivity({
+            ownerTypeId: COMPANY_ENTITY_TYPE_ID,
+            ownerId: companyId!,
+            title,
+            lines,
+            openPath: entityOpenPath(entityTypeId, entityId),
+            showOpenButton: true,
+            openButtonTitle: 'Открыть сделку',
+            ...(sourceFileUrl ? { sourceFileUrl } : {})
+          }))
+        } catch { /* the company-side дело is a nice-to-have; the deal дело already succeeded */ }
+      }
     }
   }
 }

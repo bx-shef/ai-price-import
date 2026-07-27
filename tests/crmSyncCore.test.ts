@@ -212,7 +212,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
   it('writeActivity records a configurable дело on the created entity', async () => {
     const writeActivity = vi.fn(async () => {})
     await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
-    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, supplierName: 'ООО Ромашка', rowCount: 1, warnings: [] })
+    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, companyId: 42, supplierName: 'ООО Ромашка', rowCount: 1, warnings: [] })
   })
 
   it('passes import PROBLEMS (warnings) to writeActivity so they land on the timeline дело', async () => {

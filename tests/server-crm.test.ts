@@ -99,7 +99,7 @@ describe('disk + activity', () => {
     expect(entityOpenPath(1030, 9)).toBe('/crm/type/1030/details/9/')
   })
   it('buildConfigurableActivity shape', () => {
-    const a = buildConfigurableActivity({ entityTypeId: 2, ownerId: 5, title: 'Импорт', lines: ['1 позиция'], openPath: '/crm/deal/details/5/' })
+    const a = buildConfigurableActivity({ ownerTypeId: 2, ownerId: 5, title: 'Импорт', lines: ['1 позиция'], openPath: '/crm/deal/details/5/', showOpenButton: true })
     expect(a.ownerTypeId).toBe(2)
     expect((a.fields as { typeId: string }).typeId).toBe('CONFIGURABLE')
     expect(a.layout).toBeDefined()
