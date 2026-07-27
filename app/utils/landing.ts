@@ -9,7 +9,7 @@ export interface LandingStep { n: number, title: string, text: string }
 export const LANDING_STEPS: LandingStep[] = [
   { n: 1, title: 'Загрузите документ', text: 'Прямо в портале — PDF, скан, фото, Excel или Word. Одним файлом или пачкой.' },
   { n: 2, title: 'AI разбирает', text: 'Распознаёт контрагента (ИНН/УНП/БИН), позиции, единицы и НДС — на русском, белорусском или казахском.' },
-  { n: 3, title: 'Товары в CRM', text: 'Создаётся целевая сущность (сделка / счёт / смарт-процесс) с товарными позициями — 1-в-1 с документом.' }
+  { n: 3, title: 'Товары в CRM', text: 'Создаётся целевая сущность (сделка / лид / счёт / смарт-процесс) с товарными позициями — 1-в-1 с документом.' }
 ]
 
 export interface LandingFeature { title: string, text: string }
