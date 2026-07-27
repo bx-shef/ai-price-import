@@ -10,6 +10,7 @@ import {
   LANDING_MARKET_PROMO,
   LANDING_MARKET_URL,
   LANDING_PUBLISHER,
+  LANDING_SOURCES,
   LANDING_STEPS,
   LANDING_SUBTITLE,
   LANDING_WHY_SUBTITLE
@@ -414,10 +415,19 @@ onMounted(async () => {
             <h2 class="mb-3 px-8 text-3xl font-bold tracking-tight text-white sm:px-0 sm:text-4xl">
               Обсудить индивидуальную интеграцию
             </h2>
-            <p class="mb-8 px-8 text-lg text-white/70 sm:px-0">
+            <p class="mb-6 px-8 text-lg text-white/70 sm:px-0">
               Свои поля, свои сущности, свой источник документов — доработаем и развернём
               под ваш процесс. Ответим в течение рабочего дня.
             </p>
+            <!-- Автосбор прайсов из внешних источников — платная доработка на сервере клиента. -->
+            <div class="mx-8 mb-8 rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-5 sm:mx-0">
+              <h3 class="mb-1.5 text-base font-semibold text-white sm:text-lg">
+                {{ LANDING_SOURCES.title }}
+              </h3>
+              <p class="text-sm leading-relaxed text-white/70 sm:text-base">
+                {{ LANDING_SOURCES.text }}
+              </p>
+            </div>
             <BriefForm />
           </div>
         </section>

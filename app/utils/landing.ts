@@ -59,6 +59,13 @@ export const LANDING_MARKET_PROMO = {
 export const LANDING_INTEGRATORS
   = 'Внедряете Bitrix24 клиентам? Подключим AI-импорт прайсов под их процессы — свои поля, сущности и источники — и развернём в вашем контуре.'
 
+/** Индивидуальная доработка: автоматический сбор прайсов из внешних источников (на сервере клиента —
+ *  облачное приложение Маркета этого не делает, это платная интеграция под ваш контур). */
+export const LANDING_SOURCES = {
+  title: 'Прайс приходит сам — из вашего источника',
+  text: 'Не хотите загружать файлы вручную? Забираем прайсы автоматически — из почты, Telegram, по FTP или из другого источника. Это индивидуальная доработка на вашем сервере.'
+} as const
+
 /** Bitrix24 Market listing code (slug) of this app — the single source of truth also used to build
  *  the in-portal «оцените приложение» openPath and the public listing URL below. */
 export const LANDING_MARKET_CODE = 'shef.priceimport'
