@@ -10,9 +10,11 @@ const stubs = { TargetPicker: true }
 
 const file = (name: string) => new File(['x'], name, { type: 'application/pdf' })
 const tick = () => new Promise(r => setTimeout(r))
-// Emit picked files the way B24FileUpload would (v-model:update).
+// Stage files the way the native <input type=file> does: set .files then fire `change`.
 async function pick(w: Awaited<ReturnType<typeof mountSuspended>>, files: File[]) {
-  w.findComponent({ name: 'B24FileUpload' }).vm.$emit('update:modelValue', files)
+  const input = w.find('input[type="file"]')
+  Object.defineProperty(input.element, 'files', { value: files, configurable: true })
+  await input.trigger('change')
   await tick()
 }
 const clickText = (w: Awaited<ReturnType<typeof mountSuspended>>, label: string) =>

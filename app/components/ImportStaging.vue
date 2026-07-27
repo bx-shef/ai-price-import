@@ -44,7 +44,25 @@ function sig(f: File): string {
   return `${f.name}|${f.size}|${f.lastModified}`
 }
 
-const picked = ref<File[] | null>(null)
+// File input is a PLAIN native <input type="file"> (like the landing demo), NOT b24ui's B24FileUpload:
+// on mobile the native picker lets the OS offer «Файлы / Фото / Камера», while B24FileUpload's JS-driven
+// useFileDialog did NOT surface the camera on the phone. `dragging` toggles the dropzone highlight.
+const fileInput = ref<HTMLInputElement | null>(null)
+const dragging = ref(false)
+/** Native <input change>: collect the chosen files → stage them; reset value so the SAME file can be
+ *  re-picked (change doesn't fire otherwise). */
+function onInputChange(e: Event): void {
+  const input = e.target as HTMLInputElement
+  onPicked(input.files ? Array.from(input.files) : [])
+  input.value = ''
+}
+/** Drag-drop onto the dropzone label → stage the dropped files. */
+function onDrop(e: DragEvent): void {
+  dragging.value = false
+  if (importing.value) return
+  onPicked(e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : [])
+}
+
 /** Files still awaiting import (queued/uploading/error) — the cap counts these, «отправленные» don't. */
 function pendingCount(): number {
   return staged.value.filter(s => s.status !== 'done').length
@@ -56,7 +74,6 @@ function onPicked(files: File[] | null | undefined): void {
   const room = MAX_UPLOAD_FILES - pendingCount()
   if (room <= 0) {
     notice.value = `В очереди уже максимум файлов (${MAX_UPLOAD_FILES}) — импортируйте или уберите часть.`
-    picked.value = null
     return
   }
   const known = new Set(staged.value.map(s => sig(s.file)))
@@ -83,7 +100,6 @@ function onPicked(files: File[] | null | undefined): void {
   if (dupes) notes.push(`${dupes} уже в списке — пропущены`)
   if (added < files.length - dupes) notes.push(`очередь ограничена ${MAX_UPLOAD_FILES} файлами`)
   notice.value = notes.length ? `Добавлено ${added} из ${files.length}: ${notes.join('; ')}.` : ''
-  picked.value = null
 }
 function remove(id: number): void {
   staged.value = staged.value.filter(s => s.id !== id)
@@ -145,17 +161,35 @@ async function startImport(): Promise<void> {
 
 <template>
   <div>
-    <!-- Dropzone STAGES files (no auto-upload). -->
-    <B24FileUpload
-      v-model="picked"
-      multiple
-      :accept="UPLOAD_ACCEPT"
-      :disabled="importing"
-      size="lg"
-      label="Перетащите файл(ы) сюда или нажмите"
-      description="PDF, фото, Excel, Word · до 20 МБ · импорт по кнопке ниже"
-      @update:model-value="onPicked"
-    />
+    <!-- Dropzone STAGES files (no auto-upload). PLAIN native <input type=file> (like the landing demo)
+         so the mobile OS offers «Файлы / Фото / Камера» — b24ui's B24FileUpload didn't surface the
+         camera. Styled with semantic --ui-color-* tokens → light/dark-auto. -->
+    <label
+      class="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors"
+      :class="[
+        importing ? 'pointer-events-none opacity-60' : '',
+        dragging ? 'border-(--ui-color-accent-main-primary) bg-(--ui-color-accent-main-primary)/5' : 'border-(--ui-color-base-5) hover:border-(--ui-color-accent-main-primary)'
+      ]"
+      @dragover.prevent="dragging = true"
+      @dragleave.prevent="dragging = false"
+      @drop.prevent="onDrop"
+    >
+      <span class="text-sm font-medium text-(--ui-color-base-1)">
+        Перетащите файл(ы) или нажмите — выберите файл или сделайте фото
+      </span>
+      <span class="text-xs text-(--ui-color-base-3)">
+        PDF, фото, Excel, Word · до 20 МБ · импорт по кнопке ниже
+      </span>
+      <input
+        ref="fileInput"
+        type="file"
+        multiple
+        :accept="UPLOAD_ACCEPT"
+        :disabled="importing"
+        class="hidden"
+        @change="onInputChange"
+      >
+    </label>
 
     <!-- Staged list: each file + its own «куда импортировать» + status. -->
     <B24Card
