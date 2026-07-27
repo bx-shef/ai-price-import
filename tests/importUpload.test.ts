@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fileExtension, MAX_UPLOAD_BYTES, planUploadBatch, validateUploadFile } from '../app/utils/importUpload'
+import { ALLOWED_EXT, fileExtension, MAX_UPLOAD_BYTES, planUploadBatch, UPLOAD_ACCEPT, validateUploadFile } from '../app/utils/importUpload'
 
 describe('validateUploadFile', () => {
   it('accepts allowed formats', () => {
@@ -10,6 +10,17 @@ describe('validateUploadFile', () => {
     expect(validateUploadFile({ name: 'a.exe', size: 10 }).error).toMatch(/формат/)
     expect(validateUploadFile({ name: 'a.pdf', size: 0 }).error).toMatch(/Пустой/)
     expect(validateUploadFile({ name: 'a.pdf', size: MAX_UPLOAD_BYTES + 1 }).error).toMatch(/больше/)
+  })
+})
+
+describe('UPLOAD_ACCEPT (mobile-friendly file picker)', () => {
+  it('lists MIME types (so mobile pickers don\'t grey out valid files) + image/* for the camera', () => {
+    expect(UPLOAD_ACCEPT).toContain('application/pdf')
+    expect(UPLOAD_ACCEPT).toContain('image/*') // camera / photo library on mobile
+    expect(UPLOAD_ACCEPT).toContain('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') // .xlsx
+  })
+  it('still lists every ALLOWED_EXT extension as a fallback', () => {
+    for (const ext of ALLOWED_EXT) expect(UPLOAD_ACCEPT).toContain(`.${ext}`)
   })
 })
 

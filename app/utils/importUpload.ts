@@ -4,6 +4,20 @@ export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024 // 20 MB
 export const MAX_UPLOAD_FILES = 10
 export const ALLOWED_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'xlsx', 'xls', 'docx'] as const
 
+/** `accept` for the file `<input>`. Includes MIME TYPES first, then the extensions. On MOBILE (Bitrix24
+ *  app / phone browser) an extension-only accept greys out otherwise-valid files (the OS matches by MIME,
+ *  not extension) — so a phone user «can't pick a file». Listing MIME types fixes that; `image/*` also
+ *  surfaces the camera so a document can be photographed. The server still re-validates by extension
+ *  (validateUploadFile), so this only widens what the picker OFFERS, never what is accepted. */
+export const UPLOAD_ACCEPT = [
+  'application/pdf',
+  'image/*',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.ms-excel', // .xls
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  '.pdf', '.png', '.jpg', '.jpeg', '.xlsx', '.xls', '.docx'
+].join(',')
+
 export interface UploadFileMeta { name: string, size: number }
 export interface UploadValidation { ok: boolean, error?: string }
 
