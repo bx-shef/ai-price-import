@@ -42,6 +42,10 @@ const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(ma
 // a PORTAL-relative path (it resolved to `<portal>/settings` → 404). Fallback to in-frame navigation
 // when not framed (standalone) or if the SDK call fails, so settings always opens.
 const { openAppSlider } = useB24()
+// Detect the Bitrix24 MOBILE APP via b24ui's own mechanism (useDevice → platform «bitrix-mobile», set by
+// the b24ui platform plugin from the BitrixMobile UA — NOT the JS SDK). In the mobile app we hide
+// desktop-only chrome (settings gear + «Подробные метрики»); hiding is a `v-if`, so it's theme-agnostic.
+const { isBitrixMobile } = useDevice()
 async function openSettings(): Promise<void> {
   const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 900, title: 'Настройки импорта' })
   if (!opened) await navigateTo('/settings')
@@ -126,7 +130,9 @@ watch(jobs, (list) => {
             Перетащите или сфотографируйте накладную, счёт, КП или прайс — товары уйдут в CRM.
           </p>
         </div>
+        <!-- Скрыта в мобильном приложении Б24: настройки там не правят, экран тесный (b24ui useDevice). -->
         <B24Button
+          v-if="!isBitrixMobile"
           :icon="SettingsIcon"
           color="air-tertiary-no-accent"
           size="sm"
@@ -322,7 +328,9 @@ watch(jobs, (list) => {
           <span>Документов: {{ counters.docs || 0 }}</span>
           <span>Создано в CRM: {{ counters.created || 0 }}</span>
           <span>Позиций: {{ counters.lines || 0 }}</span>
+          <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
           <button
+            v-if="!isBitrixMobile"
             type="button"
             class="ml-auto text-(--ui-color-accent-main-link) hover:underline"
             @click="openMetrics"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
-import { MAX_UPLOAD_FILES, validateUploadFile } from '~/utils/importUpload'
+import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, validateUploadFile } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
 
 // Manual, one-by-one import staging (owner rework): picking files STAGES them into a list (no auto
@@ -149,7 +149,7 @@ async function startImport(): Promise<void> {
     <B24FileUpload
       v-model="picked"
       multiple
-      accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.docx"
+      :accept="UPLOAD_ACCEPT"
       :disabled="importing"
       size="lg"
       label="Перетащите файл(ы) сюда или нажмите"
