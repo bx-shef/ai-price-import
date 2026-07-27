@@ -172,6 +172,25 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     )
   })
 
+  it('lead target on a NO-LEADS portal → redirected to a deal + warning', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 1 } // lead
+    const deps = baseDeps({ leadsEnabled: vi.fn(async () => false) })
+    const r = await runCrmSync('job1', doc, m, {}, deps)
+    // Created as a DEAL (2), not a lead (1); marker/filter use the deal.
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.objectContaining({ entityTypeId: 2 }), expect.any(Object))
+    expect(deps.findExisting).toHaveBeenCalledWith(2, expect.any(Object))
+    expect(r.warnings.some(w => /простом режиме CRM/.test(w))).toBe(true)
+  })
+
+  it('lead target with leads ENABLED (classic) stays a lead', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 1 }
+    const deps = baseDeps({ leadsEnabled: vi.fn(async () => true) })
+    await runCrmSync('job1', doc, m, {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.objectContaining({ entityTypeId: 1 }), expect.any(Object))
+  })
+
   it('originatorPrefix overrides the marker/filter originator', async () => {
     const deps = baseDeps({ originatorPrefix: 'acme' })
     await runCrmSync('job1', doc, mapping(), {}, deps)

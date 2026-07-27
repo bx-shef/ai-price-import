@@ -55,6 +55,11 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
       см. `06-multilingual`); сопоставление единицы документа — по словарю, не по символу.
     - **Идемпотентность**: маркер `originId`+`originatorId` (сделка) / `xmlId` (инвойс/СП), `findExisting`-поиск
       в Б24 перед созданием; повтор одним `jobId` → `created:false`, дубля нет.
+    - **Цель/роутинг**: удалённое направление → фолбэк на дефолт/сделку (`resolveValidTarget`, `crm.category.list`).
+      **Лид на портале «без лидов»** (простой режим CRM, `crm.settings.mode.get`=2) авто-конвертится → crm-sync
+      **редиректит лид в сделку** (`crmMode.ts` `fetchCrmMode`/`leadsEnabled`, мемо на джобу, fail-open) + warning.
+      **Стадия лида** — одним шагом: поле lead-item `stageId` (crm_status, статусы `crm.status.list ENTITY_ID='STATUS'`),
+      `stageEntityId(1)→'STATUS'`, `createTargetItem` кладёт `stageId` и лиду; категорию лиду не форвардим.
     - **Настраиваемое дело в таймлайне** (`configurableActivity.ts`+`liveDeps.writeActivity`, `crm.activity.configurable.add`,
       только OAuth-контекст): пишется **и в сделку, и в компанию клиента одновременно** — два дела, owner=созданная
       сущность и owner=компания (тип **4**), если контрагент найден по `RQ_INN`. Кнопка «Открыть» **перекрёстная**

@@ -31,6 +31,9 @@ export interface CrmSyncDeps {
   /** Valid category (воронка) ids for an entity type (crm.category.list) — used to fall back off a
    *  DELETED funnel (rule/default → deal/direction-0). Optional: absent ⇒ no direction validation. */
   listCategoryIds?: (entityTypeId: number) => Promise<number[]>
+  /** Whether the portal has leads (classic CRM). In the SIMPLE CRM (no leads) a created lead is
+   *  auto-converted at once, so a lead target is redirected to a deal. Optional: absent ⇒ no check. */
+  leadsEnabled?: () => Promise<boolean>
   createTarget: (target: TargetRef, fields: Record<string, unknown>) => Promise<number>
   setRows: (entityTypeId: number, entityId: number, rows: Array<Record<string, unknown>>) => Promise<void>
   /** One error-chat message per document (batched). Supplier name for BB-safe context. */
@@ -103,6 +106,15 @@ export async function runCrmSync(
     if (target.entityTypeId !== resolved.entityTypeId || target.categoryId !== resolved.categoryId) {
       warnings.push('Направление цели недоступно (воронка удалена в CRM) — импорт направлен в запасную цель')
     }
+  }
+
+  // Lead target on a NO-LEADS portal (simple CRM mode): a created lead is auto-converted immediately
+  // (pointless), so redirect it to a DEAL (default funnel) with a warning. Fail-open: an unknown mode
+  // (read failed) keeps the lead. Runs after the direction fallback, before the marker check (so the
+  // deal's marker is used).
+  if (deps.leadsEnabled && target.entityTypeId === ENTITY_TYPE_ID.lead && !(await deps.leadsEnabled())) {
+    target = { entityTypeId: ENTITY_TYPE_ID.deal }
+    warnings.push('Портал в простом режиме CRM (без лидов) — импорт направлен в сделку вместо лида')
   }
 
   // Idempotency requires a filterable marker on the target type (originId/xmlId). A markerless
