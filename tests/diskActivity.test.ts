@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
-import { buildConfigurableActivity, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
+import { commonDiskFileUrl, DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
+import { buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
 
 describe('disk — common storage + monthly folder', () => {
   it('picks the ENTITY_TYPE=common drive (live shape)', () => {
@@ -50,7 +50,8 @@ describe('disk — saveSourceFileToDisk (composition)', () => {
       return null
     })
     const ref = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'н/акл:адная.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
-    expect(ref).toEqual({ id: 45, detailUrl: '/company/personal/user/1/disk/file/45/' })
+    // URL is CONSTRUCTED from the human path (not the API DETAIL_URL): /docs/file/<enc path>?IFRAME...
+    expect(ref).toEqual({ id: 45, detailUrl: commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'н_акл:адная.pdf') })
     expect(call).toHaveBeenCalledWith('disk.folder.addsubfolder', { id: 3, data: { NAME: DISK_APP_FOLDER } }) // app folder under root
     expect(call).toHaveBeenCalledWith('disk.folder.addsubfolder', { id: 39, data: { NAME: '2026-07' } }) // month under app folder
     expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 77, data: { NAME: 'н_акл:адная.pdf' }, fileContent: ['н_акл:адная.pdf', 'QQ=='] })
@@ -70,7 +71,8 @@ describe('disk — saveSourceFileToDisk (composition)', () => {
       return null
     })
     const ref = await saveSourceFileToDisk({ base64: 'QQ==', fileName: 'j1__doc.pdf', date: { getFullYear: () => 2026, getMonth: () => 6 } }, call)
-    expect(ref).toEqual({ id: 46, detailUrl: '/company/disk/file/46/' })
+    // Existing file → its id from REST, but the open URL is still the constructed one (not DETAIL_URL).
+    expect(ref).toEqual({ id: 46, detailUrl: commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'j1__doc.pdf') })
     expect(call).not.toHaveBeenCalledWith('disk.folder.uploadfile', expect.anything())
   })
 })
@@ -147,7 +149,8 @@ describe('disk — makeSaveSourceFile (file-extract wiring)', () => {
       now: () => Date.UTC(2026, 6, 1)
     })
     await hook('m', 'j1', 'doc.pdf')
-    expect(recordDiskFile).toHaveBeenCalledWith('m', 'j1', { id: 45, detailUrl: '/company/disk/file/45/' })
+    // The recorded ref carries the id from REST but the CONSTRUCTED open URL (job-scoped name j1__doc.pdf).
+    expect(recordDiskFile).toHaveBeenCalledWith('m', 'j1', { id: 45, detailUrl: commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'j1__doc.pdf') })
   })
 })
 
@@ -166,51 +169,69 @@ describe('disk — uploadFile', () => {
 describe('configurableActivity', () => {
   it('builds header/body/footer with a same-portal open button', () => {
     const params = buildConfigurableActivity({
-      entityTypeId: 2,
+      ownerTypeId: 2,
       ownerId: 5,
       title: 'Импорт: Ромашка',
       lines: ['Позиций: 3', 'Поставщик: Ромашка'],
-      openPath: '/crm/deal/details/5/'
+      openPath: '/crm/company/details/8/',
+      showOpenButton: true,
+      openButtonTitle: 'Открыть компанию'
     }) as Record<string, Record<string, unknown>>
     expect(params.ownerTypeId).toBe(2)
     expect(params.ownerId).toBe(5)
     const layout = params.layout as Record<string, Record<string, Record<string, unknown>>>
-    expect(layout.footer.buttons.open).toMatchObject({ action: { type: 'redirect', uri: '/crm/deal/details/5/' } })
+    expect(layout.footer.buttons.open).toMatchObject({ title: 'Открыть компанию', action: { type: 'redirect', uri: '/crm/company/details/8/' } })
     // body.logo is REQUIRED by B24 (verified live: missing → «Поле logo в BodyDto должно быть заполнено»).
-    expect(layout.body.logo).toMatchObject({ code: 'document', action: { type: 'redirect', uri: '/crm/deal/details/5/' } })
+    expect(layout.body.logo).toMatchObject({ code: 'document', action: { type: 'redirect', uri: '/crm/company/details/8/' } })
     expect(Object.keys(layout.body.blocks as object)).toEqual(['line0', 'line1'])
   })
 
+  it('omits the «Открыть» button (and the whole footer) when showOpenButton is false and no file', () => {
+    const params = buildConfigurableActivity({
+      ownerTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', showOpenButton: false
+    }) as Record<string, Record<string, unknown>>
+    const layout = params.layout as Record<string, unknown>
+    expect(layout.footer).toBeUndefined()
+    // logo still redirects (required) even without a button.
+    expect((layout.body as Record<string, Record<string, unknown>>).logo).toMatchObject({ action: { uri: '/crm/deal/details/5/' } })
+  })
+
   it('guarantees at least one body block when lines is empty (B24 needs 1..20)', () => {
-    const params = buildConfigurableActivity({ entityTypeId: 2, ownerId: 5, title: 'x', lines: [], openPath: '/crm/deal/details/5/' }) as Record<string, Record<string, unknown>>
+    const params = buildConfigurableActivity({ ownerTypeId: 2, ownerId: 5, title: 'x', lines: [], openPath: '/crm/deal/details/5/', showOpenButton: true }) as Record<string, Record<string, unknown>>
     const blocks = ((params.layout as Record<string, Record<string, Record<string, unknown>>>).body.blocks) as Record<string, unknown>
     expect(Object.keys(blocks).length).toBeGreaterThanOrEqual(1)
   })
-  it('adds an «Исходный файл» button ONLY for a valid same-portal DETAIL_URL', () => {
+  it('adds an «Исходный файл» button ONLY for a valid same-portal file URL (keeps its IFRAME query)', () => {
+    const fileUrl = commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'j1__doc.xls')
     const withFile = buildConfigurableActivity({
-      entityTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/',
-      sourceFileUrl: '/company/personal/user/1/disk/file/45/'
+      ownerTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', showOpenButton: false,
+      sourceFileUrl: fileUrl
     }) as Record<string, Record<string, Record<string, Record<string, Record<string, unknown>>>>>
     expect(withFile.layout.footer.buttons.sourceFile).toMatchObject({
-      title: 'Исходный файл', action: { type: 'redirect', uri: '/company/personal/user/1/disk/file/45/' }
+      title: 'Исходный файл', action: { type: 'redirect', uri: fileUrl }
     })
-    // protocol-relative / absolute DETAIL_URL is dropped (no off-portal redirect button)
+    // protocol-relative / absolute URL is dropped (no off-portal redirect button)
     const hostile = buildConfigurableActivity({
-      entityTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', sourceFileUrl: '//evil.test/x'
-    }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>
-    expect(hostile.layout.footer.buttons.sourceFile).toBeUndefined()
-    // absent → no button
-    const none = buildConfigurableActivity({ entityTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/' }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>
-    expect(none.layout.footer.buttons.sourceFile).toBeUndefined()
+      ownerTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', showOpenButton: false, sourceFileUrl: '//evil.test/x'
+    }) as Record<string, Record<string, unknown>>
+    expect((hostile.layout as Record<string, unknown>).footer).toBeUndefined()
   })
   it('safeRelativePath rejects absolute/scheme URLs', () => {
     expect(safeRelativePath('/crm/deal/details/5/')).toBe('/crm/deal/details/5/')
     expect(safeRelativePath('https://evil.test/')).toBe('/crm/')
     expect(safeRelativePath('//evil.test')).toBe('/crm/')
   })
-  it('entityOpenPath maps deal/quote/smart-process', () => {
+  it('entityOpenPath / companyOpenPath map the entity paths', () => {
     expect(entityOpenPath(2, 5)).toBe('/crm/deal/details/5/')
     expect(entityOpenPath(7, 9)).toBe('/crm/quote/show/9/')
     expect(entityOpenPath(1032, 3)).toBe('/crm/type/1032/details/3/')
+    expect(companyOpenPath(8)).toBe('/crm/company/details/8/')
+  })
+  it('commonDiskFileUrl encodes each segment + appends the IFRAME slider query', () => {
+    const url = commonDiskFileUrl('procure-ai (импорт прайсов)', '2026-07', 'f5__шевчик июнь.xls')
+    expect(url.startsWith('/docs/file/')).toBe(true)
+    expect(url).toContain('procure-ai%20%28') // space → %20, «(» → %28
+    expect(url).toContain('%20%D0%B8%D1%8E%D0%BD%D1%8C.xls') // «·июнь.xls» encoded, dot kept
+    expect(url.endsWith('?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER')).toBe(true)
   })
 })

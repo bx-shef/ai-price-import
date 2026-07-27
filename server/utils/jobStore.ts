@@ -87,17 +87,18 @@ export async function setDiskFile(memberId: string, jobId: string, ref: DiskFile
   await redis.put(jobKey(memberId, jobId), { diskFile: JSON.stringify({ id: ref.id, detailUrl: ref.detailUrl }) }, JOB_TTL_MS)
 }
 
-/** Normalize a Disk DETAIL_URL to a same-portal RELATIVE path. `disk.folder.uploadfile` returns an
- *  ABSOLUTE URL (`https://<portal>/docs/file/…`, live-verified), so we strip it to its path — a
- *  relative `/…` redirect can never leave the portal, so this is SSRF-safe even for a tampered value.
- *  Returns null for anything that can't be reduced to a clean leading-slash path. */
+/** Normalize a stored Disk open-URL to a same-portal RELATIVE path. We now store a CONSTRUCTED relative
+ *  URL (`/docs/file/<path>?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`, see disk.commonDiskFileUrl) → the first
+ *  branch returns it verbatim, KEEPING its query (the query is our own static IFRAME flags, no token).
+ *  A legacy ABSOLUTE URL is reduced to its path (host+query discarded) — still SSRF-safe. Returns null
+ *  for anything that can't be reduced to a clean leading-slash path. */
 export function detailUrlToRelative(url: unknown): string | null {
   if (typeof url !== 'string' || !url) return null
-  if (isRelativePath(url)) return url // already a safe relative path (shared guard)
+  if (isRelativePath(url)) return url // safe relative path (shared guard) — query preserved
   try {
     const u = new URL(url) // absolute → take the PATH only; host+query discarded, so the redirect
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null // stays on-portal and can't
-    const path = u.pathname // ever surface a query token (DETAIL_URL has none, DOWNLOAD_URL isn't stored)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null // stays on-portal
+    const path = u.pathname
     return isRelativePath(path) ? path : null
   } catch {
     return null // protocol-relative («//host») / garbage → no button

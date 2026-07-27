@@ -82,6 +82,14 @@ export function importJobIds(storage: StorageLike, now: number = Date.now()): st
   return readHistory(storage, now).map(e => e.jobId)
 }
 
+/** Forget a SINGLE job (one «Последние операции» row). Best-effort — never throws; unknown id is a no-op. */
+export function removeImportJob(storage: StorageLike, jobId: string, now: number = Date.now()): void {
+  if (!jobId) return
+  const prev = readHistory(storage, now)
+  if (!prev.some(e => e.jobId === jobId)) return
+  write(storage, prev.filter(e => e.jobId !== jobId))
+}
+
 /** Wipe the employee's whole import history (the /app list). Best-effort — never throws. */
 export function clearImportHistory(storage: StorageLike): void {
   write(storage, [])

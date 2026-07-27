@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addImportJob, clearImportHistory, importFeedbackKind, importJobIds, markImportFeedback, readHistory, type StorageLike } from '../app/utils/importHistory'
+import { addImportJob, clearImportHistory, importFeedbackKind, importJobIds, markImportFeedback, readHistory, removeImportJob, type StorageLike } from '../app/utils/importHistory'
 
 function memStorage(): StorageLike & { dump: () => string | null } {
   let v: string | null = null
@@ -67,6 +67,23 @@ describe('importHistory (localStorage, keyed by jobId)', () => {
     expect(h).toHaveLength(50)
     expect(h[0]!.jobId).toBe('j59')
     expect(h.some(e => e.jobId === 'j0')).toBe(false)
+  })
+
+  it('removeImportJob forgets ONE row, keeps the rest', () => {
+    const s = memStorage()
+    addImportJob(s, 'a', 'a.pdf', 1000)
+    addImportJob(s, 'b', 'b.pdf', 2000)
+    addImportJob(s, 'c', 'c.pdf', 3000)
+    removeImportJob(s, 'b', 4000)
+    expect(readHistory(s, 4000).map(e => e.jobId)).toEqual(['c', 'a'])
+  })
+
+  it('removeImportJob on an unknown id is a no-op (never throws)', () => {
+    const s = memStorage()
+    addImportJob(s, 'a', 'a.pdf', 1000)
+    removeImportJob(s, 'missing', 2000)
+    removeImportJob(s, '', 2000)
+    expect(importJobIds(s, 2000)).toEqual(['a'])
   })
 
   it('bad / non-array JSON → empty, never throws', () => {

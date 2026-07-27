@@ -114,4 +114,19 @@ describe('ImportJobItem', () => {
     expect(fileLink).toBeUndefined()
     framed.value = false
   })
+
+  it('terminal job → «убрать из списка» button emits remove with the jobId', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":[],"errors":[]}') } })
+    const btn = w.findAll('button').find(b => (b.attributes('aria-label') || '').startsWith('Убрать из списка'))
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(w.emitted('remove')).toBeTruthy()
+    expect(w.emitted('remove')![0]).toEqual(['j1'])
+  })
+
+  it('in-flight job → no «убрать из списка» button (can\'t drop an active row)', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('extracting') } })
+    const btn = w.findAll('button').find(b => (b.attributes('aria-label') || '').startsWith('Убрать из списка'))
+    expect(btn).toBeUndefined()
+  })
 })

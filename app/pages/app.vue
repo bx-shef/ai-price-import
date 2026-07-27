@@ -19,7 +19,7 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'AI-импорт прайсов' })
 
-const { jobs, loading, uploading, error, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory } = useImport()
+const { jobs, loading, uploading, error, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
 function doClearHistory(): void {
@@ -171,8 +171,13 @@ watch(jobs, (list) => {
         :title="error"
       />
 
-      <!-- STATUS: recent operations with compact inline counts. -->
-      <div class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2">
+      <!-- STATUS: recent operations with compact inline counts. Shown only once there's history to show
+           (or a file is uploading) — a brand-new operator on first open sees just the dropzone + savings,
+           not an empty «Последние операции» block. -->
+      <div
+        v-if="jobs.length || uploading"
+        class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2"
+      >
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 class="text-sm font-semibold">
             Последние операции
@@ -231,6 +236,7 @@ watch(jobs, (list) => {
       </div>
 
       <B24Card
+        v-if="jobs.length || uploading"
         variant="outline"
         :b24ui="{ body: 'p-0 sm:p-0' }"
       >
@@ -243,16 +249,11 @@ watch(jobs, (list) => {
             <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
             Загружаем файл…
           </li>
-          <li
-            v-if="!jobs.length && !uploading"
-            class="p-6 text-center text-sm text-(--ui-color-base-4)"
-          >
-            Пока нет загрузок — перетащите или сфотографируйте документ выше.
-          </li>
           <ImportJobItem
             v-for="job in jobs"
             :key="job.jobId"
             :job="job"
+            @remove="removeJob"
           />
         </ul>
       </B24Card>

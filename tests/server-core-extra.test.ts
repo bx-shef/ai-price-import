@@ -134,7 +134,7 @@ describe('configurableActivity deeper', () => {
     expect(entityOpenPath(7, 3)).toBe('/crm/quote/show/3/')
   })
   it('builds body blocks from lines (capped) + footer button', () => {
-    const a = buildConfigurableActivity({ entityTypeId: 2, ownerId: 5, title: 'T', lines: Array.from({ length: 15 }, (_, i) => `l${i}`), openPath: '/crm/deal/details/5/' })
+    const a = buildConfigurableActivity({ ownerTypeId: 2, ownerId: 5, title: 'T', lines: Array.from({ length: 15 }, (_, i) => `l${i}`), openPath: '/crm/deal/details/5/', showOpenButton: true })
     const blocks = (a.layout as { body: { blocks: Record<string, unknown> } }).body.blocks
     expect(Object.keys(blocks)).toHaveLength(10)
     const btn = (a.layout as { footer: { buttons: { open: { action: { uri: string } } } } }).footer.buttons.open
@@ -142,10 +142,10 @@ describe('configurableActivity deeper', () => {
   })
   it('BB-neutralises the uploader-controlled title + lines (no [url=…]/mention injection into the timeline)', () => {
     const a = buildConfigurableActivity({
-      entityTypeId: 2, ownerId: 5,
+      ownerTypeId: 2, ownerId: 5,
       title: 'Импорт: [url=http://evil]ООО[/url]',
       lines: ['Поставщик: [b]X[/b]', 'Позиций: 3'],
-      openPath: '/crm/deal/details/5/'
+      openPath: '/crm/deal/details/5/', showOpenButton: true
     })
     const title = (a.layout as { header: { title: string } }).header.title
     const blocks = (a.layout as { body: { blocks: Record<string, { properties: { value: string } }> } }).body.blocks

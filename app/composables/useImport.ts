@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { jobStatusMeta, type JobStatus } from '~/utils/jobStatus'
-import { addImportJob, clearImportHistory, importJobIds, readHistory } from '~/utils/importHistory'
+import { addImportJob, clearImportHistory, importJobIds, readHistory, removeImportJob } from '~/utils/importHistory'
 import type { TargetRef } from '~/types/mapping'
 
 // In-portal import client: upload a document and poll job status via the frame-token
@@ -157,5 +157,12 @@ export function useImport() {
     jobs.value = []
   }
 
-  return { jobs, loading, uploading, error, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory }
+  /** Forget a SINGLE «Последние операции» row (localStorage + the visible list). Server keeps only
+   *  ephemeral status; this just stops the browser polling/showing that jobId. */
+  function removeJob(jobId: string): void {
+    if (typeof window !== 'undefined') removeImportJob(window.localStorage, jobId)
+    jobs.value = jobs.value.filter(j => j.jobId !== jobId)
+  }
+
+  return { jobs, loading, uploading, error, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob }
 }
