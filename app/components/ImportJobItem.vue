@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import type { ImportJobView } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
@@ -10,6 +11,9 @@ import { useB24 } from '~/composables/useB24'
 // (Извлечение текста → Распознавание и запись → Готово, driven by the real backend status), and the
 // outcome («разбор») once terminal. Pure presentation over the injected job — no I/O.
 const props = defineProps<{ job: ImportJobView }>()
+// «Убрать из списка» — forgets just THIS row (localStorage) in the parent; server keeps only ephemeral
+// status, so this is purely the employee tidying their own history. Emitted with the jobId.
+const emit = defineEmits<{ remove: [jobId: string] }>()
 
 const meta = computed(() => jobStatusMeta(props.job.status))
 const progress = computed(() => jobProgress(props.job.status))
@@ -123,11 +127,23 @@ const stepDot: Record<string, string> = {
       >
         {{ job.fileName || 'документ' }}
       </p>
-      <B24Badge
-        :label="meta.label"
-        :color="badgeColor[meta.tone]"
-        size="sm"
-      />
+      <div class="flex shrink-0 items-center gap-2">
+        <B24Badge
+          :label="meta.label"
+          :color="badgeColor[meta.tone]"
+          size="sm"
+        />
+        <!-- Убрать эту строку из «Последних операций» (только локальная история сотрудника). Пока задание
+             в работе — не показываем (нельзя «потерять» строку активного импорта); доступно по завершении. -->
+        <B24Button
+          v-if="meta.terminal"
+          :icon="CrossMIcon"
+          color="air-tertiary-no-accent"
+          size="xs"
+          :aria-label="`Убрать из списка: ${job.fileName || 'документ'}`"
+          @click="() => emit('remove', job.jobId)"
+        />
+      </div>
     </div>
 
     <!-- IN-FLIGHT: per-stage stepper + progress bar so the user sees where the file is. -->
