@@ -1,48 +1,40 @@
 <script setup lang="ts">
 import CloudIcon from '@bitrix24/b24icons-vue/outline/CloudIcon'
+import { useRuntimeConfig } from '#app'
 import { useMetrikaGoal } from '~/composables/useMetrikaGoal'
 
-// Marketing banner on /app: the cloud plan is reliable but queues under load, so pitch the
-// self-hosted («развернём на вашем сервере») offer to high-volume portals. Honest message per
-// docs/redesign/11-pricing-selfhosted.md — no «за секунды», and the data caveat (text still goes
-// to the LLM provider) is stated so we don't mislead. CTA → the offer site's brief.
-// UTM (query BEFORE the #hash so analytics reads it) makes the click measurable on the offer site —
-// in-portal Metrika self-disables, so reachGoal() is a no-op here; the UTM is the real attribution.
-const OFFER_BRIEF_URL = 'https://offer.bx-shef.by/?utm_source=b24app&utm_medium=selfhosted_banner#brief'
-const { reachGoal } = useMetrikaGoal() // no-op inside the B24 iframe (Metrika self-disables there)
+// Marketing callout on /app — rebuilt on the canonical b24ui B24Alert (native look, air-copilot promo
+// colour) instead of a hand-styled tinted card. Pitches the paid custom-integration angle: pull the
+// price list from the client's own sources (e-mail / Telegram / FTP) AND run the app on their server.
+// Honest per docs/redesign/11-pricing-selfhosted.md (text still goes to the LLM provider).
+//
+// CTA → OUR landing's brief form (`${siteUrl}/#brief`), not the separate offer site — the owner asked
+// the app's «Обсудить» to lead to the landing. `siteUrl` is the app's public URL (NUXT_PUBLIC_SITE_URL);
+// UTM (before the #hash) makes the click measurable on the landing. In-portal Metrika self-disables, so
+// reachGoal() is a no-op here — the UTM is the real attribution.
+const siteUrl = (useRuntimeConfig().public.siteUrl as string || '').replace(/\/+$/, '')
+const BRIEF_URL = `${siteUrl}/?utm_source=b24app&utm_medium=app_promo#brief`
+const { reachGoal } = useMetrikaGoal()
 </script>
 
 <template>
-  <B24Card
-    variant="tinted"
+  <B24Alert
     class="mt-4"
+    color="air-primary-copilot"
+    :icon="CloudIcon"
+    title="Прайс — сам, из ваших источников"
+    description="Заберём прайсы автоматически из почты, Telegram, по FTP или из другого источника и развернём приложение на вашем сервере — обработка без общей очереди. Индивидуальная доработка под ваш контур. (Текст документа при этом всё равно уходит на LLM-провайдера.)"
   >
-    <div class="flex items-start gap-3">
-      <CloudIcon
-        class="mt-0.5 size-5 shrink-0 text-(--ui-color-accent-main-primary)"
-        aria-hidden="true"
+    <template #actions>
+      <B24Button
+        label="Обсудить"
+        :href="BRIEF_URL"
+        target="_blank"
+        rel="noopener noreferrer"
+        color="air-primary"
+        size="md"
+        @click="() => reachGoal('app_promo_brief')"
       />
-      <div class="min-w-0">
-        <h2 class="text-sm font-semibold">
-          Нужна скорость или сервер под вашим контролем?
-        </h2>
-        <p class="mt-1 text-xs text-(--ui-color-base-3)">
-          Облако работает надёжно, но в пик документы встают в очередь. Для больших объёмов
-          развернём приложение <b>на вашем сервере</b> — обработка параллельно, без соседей-арендаторов.
-          Текст документа при этом всё равно уходит на LLM-провайдера; полностью локальный контур —
-          отдельный разговор.
-        </p>
-        <B24Button
-          label="Обсудить разворот на своём сервере"
-          :href="OFFER_BRIEF_URL"
-          target="_blank"
-          rel="noopener noreferrer"
-          color="air-primary"
-          size="sm"
-          class="mt-3"
-          @click="() => reachGoal('selfhosted_brief')"
-        />
-      </div>
-    </div>
-  </B24Card>
+    </template>
+  </B24Alert>
 </template>

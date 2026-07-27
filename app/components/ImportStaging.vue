@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, validateUploadFile } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
@@ -27,10 +27,14 @@ interface StagedFile {
 }
 
 const props = defineProps<{ upload: (file: File, target?: TargetRef | null, jobId?: string) => Promise<boolean> }>()
+// Surface the «идёт импорт» state to the parent so it can BLOCK the rest of the UI (recent-operations
+// list, metrics) while files upload — the operator shouldn't touch those mid-run (owner ask).
+const emit = defineEmits<{ 'update:busy': [boolean] }>()
 
 const staged = ref<StagedFile[]>([])
 let nextId = 1
 const importing = ref(false)
+watch(importing, v => emit('update:busy', v)) // notify the parent to lock/unlock the rest of the UI
 const notice = ref('')
 
 /** Stable idempotency key per staged file → reused across retries so a re-upload can't create a second
@@ -174,10 +178,10 @@ async function startImport(): Promise<void> {
       @dragleave.prevent="dragging = false"
       @drop.prevent="onDrop"
     >
-      <span class="text-sm font-medium text-(--ui-color-base-1)">
+      <span class="text-base font-medium text-(--ui-color-base-1)">
         Перетащите файл(ы) или нажмите — выберите файл или сделайте фото
       </span>
-      <span class="text-xs text-(--ui-color-base-3)">
+      <span class="text-sm text-(--ui-color-base-3)">
         PDF, фото, Excel, Word · до 20 МБ · импорт по кнопке ниже
       </span>
       <input
