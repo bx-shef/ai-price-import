@@ -38,3 +38,7 @@ legacy/**/*.pyc
 # Generated symlink / nuxt local rc
 dist
 .nuxtrc
+
+# Local Redis dump — appears when a dev Redis is started from the repo root
+# (pnpm loadtest:queue). Never part of the project.
+dump.rdb
