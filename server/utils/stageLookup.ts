@@ -9,10 +9,13 @@ import type { RestCall } from './b24Rest'
 //   smart-invoice(31) → 'SMART_INVOICE_STAGE_<cat>'    (DT31_<cat>:N/…) — NOT DYNAMIC_31_*
 //   smart-process ≥1000 → 'DYNAMIC_<etid>_STAGE_<cat>' (DT<etid>_<cat>:NEW/…)
 //   lead (1)          → 'STATUS'                       (NEW/IN_PROCESS/PROCESSED/… — lead statuses)
-// Lead status caveat (live-verified): `crm.item.ADD` for a lead SILENTLY DROPS `stageId` (the field
-// exists — `stageId`, type crm_status — but the add path ignores it), so a lead lands on the portal
-// default. `crm.item.UPDATE`, however, DOES honor `stageId` — so createTargetItem applies the chosen
-// lead stage in a SECOND step (add → update). We therefore DO offer a lead stage picker now.
+// Lead status: the field is `stageId` (type crm_status). Per the owner's decision the chosen stage is
+// written in ONE step — straight into `crm.item.add` (see createTargetItem, no follow-up update).
+// ⚠ NOT re-verified that `add` applies a lead's `stageId` on a CLASSIC portal: our live test portal runs
+// the SIMPLE CRM (no leads) where a lead is auto-converted regardless (and crm-sync redirects a lead
+// target to a deal there anyway), so the one-step lead stage is effectively exercised only on a
+// classic-mode portal — live-verify there when one is available. (crm.item.UPDATE does honor `stageId`
+// if a follow-up ever proves necessary.)
 
 export interface CrmStage {
   id: string

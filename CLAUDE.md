@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-27
+> Last reviewed: 2026-07-28
 
 AI-импорт прайсов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -59,7 +59,12 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
       **Лид на портале «без лидов»** (простой режим CRM, `crm.settings.mode.get`=2) авто-конвертится → crm-sync
       **редиректит лид в сделку** (`crmMode.ts` `fetchCrmMode`/`leadsEnabled`, мемо на джобу, fail-open) + warning.
       **Стадия лида** — одним шагом: поле lead-item `stageId` (crm_status, статусы `crm.status.list ENTITY_ID='STATUS'`),
-      `stageEntityId(1)→'STATUS'`, `createTargetItem` кладёт `stageId` и лиду; категорию лиду не форвардим.
+      `stageEntityId(1)→'STATUS'`, `createTargetItem` кладёт `stageId` и лиду; категорию лиду не форвардим (⚠ приём
+      стадии лида `add`-ом на **классическом** портале не переверифицирован — тест-портал в простом режиме).
+      **UI в упрощённой CRM**: `GET /api/crm-mode` (`{leadsEnabled}`, фрейм-токен) + `useCrmMode` → TargetPicker (импорт)
+      и `/settings` **скрывают вариант «Лид»** на портале без лидов (fail-open: по умолчанию показываем).
+      **Гейт настройки** (`/app`): пока `needsSetup` (дефолтные настройки) — показываем **только баннер** (не-админу «обратитесь
+      к администратору», админу — кнопка «Настроить»), весь рабочий контент скрыт (`v-if="!needsSetup"`).
     - **Настраиваемое дело в таймлайне** (`configurableActivity.ts`+`liveDeps.writeActivity`, `crm.activity.configurable.add`,
       только OAuth-контекст): **модель «владелец + доп. привязки»** — у дела **один владелец** (`ownerTypeId`/
       `ownerId`, карточка, где оно физически живёт), всё остальное — **привязки** через `crm.activity.binding.add`

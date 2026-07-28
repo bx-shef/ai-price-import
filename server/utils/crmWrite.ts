@@ -80,8 +80,6 @@ export async function createTargetItem(target: TargetRef, fields: Record<string,
   // Leads (entityTypeId 1) have NO categories (crm.category.list etid=1 → ENTITY_TYPE_NOT_SUPPORTED);
   // a stray categoryId — e.g. carried over when a deal routing rule is switched to «Лид» — makes
   // crm.item.add reject with «Item has no CATEGORY_ID field» (live-verified, #135). Skip it for leads.
-  // Leads have NO category (crm.category.list etid=1 → ENTITY_TYPE_NOT_SUPPORTED) — a stray categoryId
-  // makes crm.item.add reject «Item has no CATEGORY_ID field» (live-verified, #135). Skip it for leads.
   if (target.categoryId != null && target.entityTypeId !== 1) (params.fields as Record<string, unknown>).categoryId = target.categoryId
   // Stage goes straight into the add for ALL entity types, leads included (owner: одним шагом, без
   // второго вызова) — a lead's status field is `stageId` (crm_status; statuses via crm.status.list

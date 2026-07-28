@@ -363,7 +363,13 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       if (hasCompany && activityId) {
         try {
           await call('crm.activity.binding.add', { activityId, entityTypeId, entityId })
-        } catch { /* дело is on the company timeline regardless */ }
+        } catch (e) {
+          // Best-effort: the дело is on the company timeline regardless. But log it (not silent) — a
+          // binding failure means the дело WON'T show on the entity (deal/…) timeline, where the manager
+          // usually looks. The withDependencySpan wrapper records the REST error separately; this warn
+          // makes it visible in plain logs too.
+          console.warn(`[crm-sync] activity binding failed (activity ${activityId} → entity ${entityTypeId}:${entityId}):`, (e as { message?: string })?.message ?? e)
+        }
       }
     }
   }

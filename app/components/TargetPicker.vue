@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
+import { useCrmMode } from '~/composables/useCrmMode'
 import * as catPicker from '~/utils/categoryPicker'
 import * as stagePicker from '~/utils/stagePicker'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
@@ -24,12 +25,17 @@ const stageId = ref<string | undefined>(target.value?.stageId)
 const cats = ref<CrmCategoryOption[] | undefined>(undefined)
 const stages = ref<CrmStageOption[] | undefined>(undefined)
 
-const CHOICES: Array<{ id: number | null, label: string }> = [
+// Hide «Лид» on a no-leads (simple CRM) portal — a lead there is auto-converted at once, so offering it
+// is misleading (crm-sync would redirect it to a deal anyway). Loaded once via useCrmMode (frame token).
+const { leadsEnabled, load: loadCrmMode } = useCrmMode()
+onMounted(() => void loadCrmMode())
+const ALL_CHOICES: Array<{ id: number | null, label: string }> = [
   { id: null, label: 'Авто (по правилам)' },
   { id: 1, label: 'Лид' },
   { id: 2, label: 'Сделка' },
   { id: 31, label: 'Смарт-счёт' }
 ]
+const CHOICES = computed(() => ALL_CHOICES.filter(c => c.id !== 1 || leadsEnabled.value))
 
 function emit(): void {
   target.value = etid.value
