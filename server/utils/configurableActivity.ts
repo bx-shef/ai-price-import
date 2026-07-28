@@ -5,11 +5,13 @@ import { neutralizeBb } from './chatNotify'
 // The app owns the layout (icon/header/body/footer + «открыть» button). Admin only
 // toggles whether the source file is saved (docs/redesign/02 §«Исходный файл и дело»).
 //
-// OWNER (owner ask): the дело is recorded on BOTH the client COMPANY and the created entity
-// (deal/…) — one activity per owner, so the manager sees it in the company card AND on the deal.
-// The «Открыть» button cross-links: on the company's activity it opens the deal, on the deal's
-// activity it opens the company. When no company matched, only the deal activity exists and the
-// «Открыть» button is omitted (there is nothing else to jump to).
+// OWNER MODEL (owner ask): a дело has ONE owner (ownerTypeId/ownerId — the card it physically lives in);
+// every other entity is an ADDITIONAL binding (crm.activity.binding.add), NOT a second activity. crm-sync
+// makes the CLIENT COMPANY the owner when matched and binds the created entity to it (so the SAME дело
+// shows in both timelines); with no company the created entity is the owner. This builder produces one
+// activity's params + owns the layout; the extra binding is added by the caller (liveDeps). The «Открыть»
+// button opens the created entity (useful from the company timeline); omitted when the entity IS the
+// owner (no company — nothing else to jump to).
 //
 // SECURITY: the title/body lines carry the uploader-controlled supplier name / document
 // fields, so — like the chat path (chatNotify) — they are BB-neutralised before they reach

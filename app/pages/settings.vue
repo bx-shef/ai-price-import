@@ -10,6 +10,7 @@ import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
+import { useCrmMode } from '~/composables/useCrmMode'
 import * as catPicker from '~/utils/categoryPicker'
 import * as stagePicker from '~/utils/stagePicker'
 import type { CrmStageOption } from '~/utils/stagePicker'
@@ -45,6 +46,7 @@ onMounted(async () => {
     isSlider.value = placementPlace() === APP_SLIDER_PLACE_SETTINGS
   } catch { /* standalone → stay put on Save/Cancel */ }
   await load()
+  void loadCrmMode() // detect no-leads CRM → hide the «Лид» target option/mention (best-effort)
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
   seedRoutingRows() // build editable routing rules from the loaded mapping (once)
   await loadMeasures() // populate the measure dropdowns
@@ -253,11 +255,15 @@ function setRowEntity(row: EditableRoutingRow, v: unknown): void {
   row.entityTypeId = next
 }
 
-const TARGET_PRESETS = [
+// Hide «Лид» on a no-leads (simple CRM) portal — a lead there is auto-converted at once (crm-sync would
+// redirect it to a deal anyway), so offering/mentioning it only misleads. Loaded once via useCrmMode.
+const { leadsEnabled, load: loadCrmMode } = useCrmMode()
+const ALL_TARGET_PRESETS = [
   { id: 1, label: 'Лид' },
   { id: 2, label: 'Сделка' },
   { id: 31, label: 'Смарт-счёт' }
 ]
+const TARGET_PRESETS = computed(() => ALL_TARGET_PRESETS.filter(p => p.id !== 1 || leadsEnabled.value))
 
 // Direction (воронка/категория) pickers for routing targets: «тип документа → сущность +
 // НАПРАВЛЕНИЕ» (owner ask). Categories are loaded per entity type from the portal
@@ -441,7 +447,7 @@ const ON_MISSING_ITEMS = [
             <!-- Правила маршрутизации -->
             <B24FormField label="Правила маршрутизации (по типу/словам → цель)">
               <p class="mb-2 text-xs text-(--ui-color-base-3)">
-                Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: 1 = лид, 2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
+                Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: {{ leadsEnabled ? '1 = лид, ' : '' }}2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
               </p>
               <div class="space-y-2">
                 <div

@@ -191,6 +191,14 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(deps.createTarget).toHaveBeenCalledWith(expect.objectContaining({ entityTypeId: 1 }), expect.any(Object))
   })
 
+  it('lead target when leadsEnabled dep is ABSENT → no redirect (guard off)', async () => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 1 }
+    const deps = baseDeps() // no leadsEnabled wired → the `deps.leadsEnabled &&` guard skips the check
+    await runCrmSync('job1', doc, m, {}, deps)
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.objectContaining({ entityTypeId: 1 }), expect.any(Object))
+  })
+
   it('originatorPrefix overrides the marker/filter originator', async () => {
     const deps = baseDeps({ originatorPrefix: 'acme' })
     await runCrmSync('job1', doc, mapping(), {}, deps)
