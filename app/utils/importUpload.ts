@@ -31,13 +31,13 @@ export function fileExtension(name: string): string {
 export function validateUploadFile(file: UploadFileMeta, maxBytes = MAX_UPLOAD_BYTES): UploadValidation {
   const ext = fileExtension(file.name)
   if (!(ALLOWED_EXT as readonly string[]).includes(ext)) {
-    return { ok: false, error: `Неподдерживаемый формат: .${ext || '—'}` }
+    return { ok: false, error: `Такой формат не подходит${ext ? ` (.${ext})` : ''}. Загрузите PDF, фото, Excel или Word.` }
   }
   if (!Number.isFinite(file.size) || file.size <= 0) {
-    return { ok: false, error: 'Пустой файл' }
+    return { ok: false, error: 'Файл пустой. Проверьте его на компьютере и загрузите ещё раз.' }
   }
   if (file.size > maxBytes) {
-    return { ok: false, error: `Файл больше ${Math.round(maxBytes / 1024 / 1024)} МБ` }
+    return { ok: false, error: `Файл слишком большой — можно до ${Math.round(maxBytes / 1024 / 1024)} МБ. Сожмите его или загрузите страницы по частям.` }
   }
   return { ok: true }
 }

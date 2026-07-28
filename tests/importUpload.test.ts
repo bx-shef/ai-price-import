@@ -8,8 +8,8 @@ describe('validateUploadFile', () => {
   })
   it('rejects unknown ext / empty / oversize', () => {
     expect(validateUploadFile({ name: 'a.exe', size: 10 }).error).toMatch(/формат/)
-    expect(validateUploadFile({ name: 'a.pdf', size: 0 }).error).toMatch(/Пустой/)
-    expect(validateUploadFile({ name: 'a.pdf', size: MAX_UPLOAD_BYTES + 1 }).error).toMatch(/больше/)
+    expect(validateUploadFile({ name: 'a.pdf', size: 0 }).error).toMatch(/пустой/)
+    expect(validateUploadFile({ name: 'a.pdf', size: MAX_UPLOAD_BYTES + 1 }).error).toMatch(/слишком большой/)
   })
 })
 

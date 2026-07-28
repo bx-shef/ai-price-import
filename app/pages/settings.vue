@@ -237,8 +237,8 @@ const ARTICLE_KIND_ITEMS = [
 ]
 
 const ON_MISSING_ITEMS = [
-  { label: 'Пропустить строку (предупреждение)', value: 'skip-warn' },
-  { label: 'Внести как произвольную позицию', value: 'freeform' }
+  { label: 'Пропустить строку и предупредить', value: 'skip-warn' },
+  { label: 'Внести строку как есть, без товара из каталога', value: 'freeform' }
 ]
 </script>
 
@@ -260,7 +260,7 @@ const ON_MISSING_ITEMS = [
         Настройки импорта
       </h1>
       <p class="mb-5 text-sm text-(--ui-color-base-3)">
-        Куда и как приложение вносит товары из документов в вашем портале.
+        Здесь вы задаёте, куда приложение вносит товары из документов и как ищет их в вашем каталоге.
       </p>
 
       <B24Alert
@@ -276,7 +276,7 @@ const ON_MISSING_ITEMS = [
         color="air-primary-warning"
         variant="soft"
         title="Настройки доступны только администратору"
-        description="Изменять параметры импорта может только администратор портала Bitrix24."
+        description="Менять эти настройки может только администратор портала Bitrix24. Попросите его открыть эту страницу."
       />
 
       <B24Accordion
@@ -289,7 +289,7 @@ const ON_MISSING_ITEMS = [
         <template #routing>
           <div class="space-y-6 pt-2">
             <!-- Целевая сущность по умолчанию — тот же TargetPicker, что и на импорте (без «Авто»). -->
-            <B24FormField label="Целевая сущность CRM (по умолчанию)">
+            <B24FormField label="Куда вносить документы по умолчанию">
               <TargetPicker
                 v-model:target="defaultTargetModel"
                 :include-auto="false"
@@ -297,9 +297,9 @@ const ON_MISSING_ITEMS = [
             </B24FormField>
 
             <!-- Правила маршрутизации: по СЛОВАМ → цель (тот же TargetPicker). Первое совпавшее выигрывает. -->
-            <B24FormField label="Правила маршрутизации (по словам → цель)">
+            <B24FormField label="Правила: какие документы куда вносить">
               <p class="mb-2 text-xs text-(--ui-color-base-3)">
-                Первое правило, чьи слова встретились в документе, задаёт цель; иначе — цель по умолчанию выше.
+                Приложение читает документ и ищет в нём эти слова. Сработает первое подходящее правило — документ уйдёт в его цель. Если ни одно не подошло, документ уйдёт в цель по умолчанию, указанную выше.
               </p>
               <div class="space-y-3">
                 <div
@@ -309,7 +309,7 @@ const ON_MISSING_ITEMS = [
                 >
                   <B24Input
                     v-model="row.keywords"
-                    placeholder="слова через запятую"
+                    placeholder="например: накладная, ттн"
                     class="w-56"
                     :aria-label="`Правило ${i + 1}: ключевые слова`"
                   />
@@ -345,13 +345,13 @@ const ON_MISSING_ITEMS = [
         <template #products>
           <div class="space-y-6 pt-2">
             <!-- Поле артикула поставщика -->
-            <B24FormField label="Поле артикула поставщика">
+            <B24FormField label="По какому полю искать товар в каталоге">
               <AsyncSearchSelect
                 v-model="articleField"
                 :fetcher="articleFetcher"
                 :selected-option="selectedArticle"
                 :min-chars="0"
-                placeholder="Выберите свойство каталога…"
+                placeholder="Нажмите и выберите свойство каталога…"
                 @update:selected-option="onArticlePicked"
               />
               <B24RadioGroup
@@ -369,7 +369,7 @@ const ON_MISSING_ITEMS = [
             </B24FormField>
 
             <!-- Стратегия товара -->
-            <B24FormField label="Если товар не найден">
+            <B24FormField label="Что делать, если товар не найден в каталоге">
               <B24Select
                 v-model="mapping.product.onMissing"
                 :items="ON_MISSING_ITEMS"
@@ -380,18 +380,18 @@ const ON_MISSING_ITEMS = [
             <!-- Единицы измерения -->
             <B24FormField label="Единицы измерения">
               <div class="flex flex-wrap items-center gap-2">
-                <span class="text-xs text-(--ui-color-base-3)">По умолчанию (если единица не сопоставлена):</span>
+                <span class="text-xs text-(--ui-color-base-3)">Какую единицу подставить, если в документе встретилась незнакомая:</span>
                 <B24Select
                   v-model="defaultMeasure"
                   :items="measureItems"
-                  placeholder="Ед. Б24"
+                  placeholder="единица в Б24"
                   class="w-56"
                   aria-label="Единица по умолчанию"
                 />
               </div>
 
               <p class="mt-3 mb-1 text-xs text-(--ui-color-base-3)">
-                Сопоставление единиц из документа с единицами Б24:
+                Как называется единица в документе и какой единице Битрикс24 она соответствует:
               </p>
               <div class="space-y-2">
                 <div
@@ -401,7 +401,7 @@ const ON_MISSING_ITEMS = [
                 >
                   <B24Input
                     v-model="row.unit"
-                    placeholder="из документа, напр. м"
+                    placeholder="как в документе, напр. м"
                     class="w-40"
                     :aria-label="`Единица ${i + 1}: из документа`"
                   />
@@ -412,7 +412,7 @@ const ON_MISSING_ITEMS = [
                   <B24Select
                     :model-value="row.code != null ? String(row.code) : undefined"
                     :items="measureItems"
-                    placeholder="Ед. Б24"
+                    placeholder="единица в Б24"
                     class="w-56"
                     :aria-label="`Единица ${i + 1}: соответствие Б24`"
                     @update:model-value="(v) => { row.code = v ? Number(v) : null }"
@@ -437,7 +437,7 @@ const ON_MISSING_ITEMS = [
                 v-if="duplicateUnits"
                 class="mt-2"
                 color="air-primary-warning"
-                title="Повторяющиеся единицы — сработает последняя."
+                title="Если одна и та же единица указана дважды, сработает последняя строка."
               />
             </B24FormField>
           </div>
@@ -449,7 +449,7 @@ const ON_MISSING_ITEMS = [
             <B24Switch
               v-model="mapping.saveFile"
               label="Сохранять исходный файл"
-              description="На общий Диск портала, в папку приложения по месяцам."
+              description="Копия каждого загруженного документа сохранится на Диск портала, в папку приложения с разбивкой по месяцам."
             />
 
             <!-- Чат уведомлений об успешном импорте -->
@@ -459,11 +459,11 @@ const ON_MISSING_ITEMS = [
                 :fetcher="chatFetcher"
                 :selected-option="selectedNotifyChat"
                 :min-chars="3"
-                placeholder="Выберите чат для уведомлений об импорте…"
+                placeholder="Нажмите и выберите чат…"
                 @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
               />
               <p class="mt-1 text-xs text-(--ui-color-base-3)">
-                Куда слать сообщение после успешной записи документа. Пусто — не уведомляем.
+                Сюда придёт сообщение, когда документ успешно внесён в CRM. Не выбирайте чат, если уведомления не нужны.
               </p>
             </B24FormField>
 
@@ -474,11 +474,11 @@ const ON_MISSING_ITEMS = [
                 :fetcher="chatFetcher"
                 :selected-option="selectedErrorChat"
                 :min-chars="3"
-                placeholder="Выберите чат для сообщений об ошибках…"
+                placeholder="Нажмите и выберите чат…"
                 @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
               />
               <p class="mt-1 text-xs text-(--ui-color-base-3)">
-                Куда слать сообщение, если документ не удалось внести (нет ставки НДС, валюты и т.п.). Пусто — не уведомляем.
+                Сюда придёт сообщение, если документ внести не удалось — например, в портале нет нужной ставки НДС или валюты. Не выбирайте чат, если уведомления не нужны.
               </p>
             </B24FormField>
           </div>
@@ -493,7 +493,7 @@ const ON_MISSING_ITEMS = [
           color="air-primary-success"
           :loading="saving"
           :disabled="saving || loading || !isAdmin"
-          :label="saving ? 'Сохранение…' : 'Сохранить'"
+          :label="saving ? 'Сохраняем…' : 'Сохранить'"
           @click="saveAndClose"
         />
         <B24Button
@@ -507,7 +507,7 @@ const ON_MISSING_ITEMS = [
           class="text-sm text-(--ui-color-accent-main-success)"
           role="status"
           aria-live="polite"
-        >Сохранено ✓</span>
+        >Настройки сохранены ✓</span>
       </div>
 
       <BuildFooter />

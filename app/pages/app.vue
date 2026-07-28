@@ -141,7 +141,7 @@ watch(jobs, (list) => {
             v-if="!needsSetup"
             class="text-base text-(--ui-color-base-3)"
           >
-            Перетащите или сфотографируйте накладную, счёт, КП или прайс — товары уйдут в CRM.
+            Загрузите или сфотографируйте накладную, счёт, КП или прайс — приложение само внесёт товары в CRM.
           </p>
         </div>
         <!-- Скрыта в мобильном приложении Б24: настройки там не правят, экран тесный (b24ui useDevice). -->
@@ -162,17 +162,17 @@ watch(jobs, (list) => {
         v-if="needsSetup"
         class="mb-4"
         :color="isAdmin ? 'air-primary-warning' : 'air-primary-copilot'"
-        :title="isAdmin ? 'Приложение не настроено' : 'Приложение ещё не настроено'"
+        :title="isAdmin ? 'Сначала настройте приложение' : 'Приложение ещё не настроено'"
         :description="isAdmin
-          ? 'Задайте настройки импорта (поле артикула, целевую сущность, чаты уведомлений) перед первой загрузкой документа.'
-          : 'Обратитесь к администратору портала — настройки импорта ещё не заданы.'"
+          ? 'Осталось указать, куда вносить товары, по какому полю искать их в каталоге и в какой чат слать уведомления. Нажмите «Настроить» — это займёт пару минут.'
+          : 'Импорт пока не запустить. Попросите администратора портала настроить приложение — после этого загрузка документов станет доступна.'"
       >
         <template
           v-if="isAdmin"
           #actions
         >
           <B24Button
-            label="Настроить"
+            label="Настроить импорт"
             color="air-primary"
             size="sm"
             @click="openSettings"
@@ -230,16 +230,16 @@ watch(jobs, (list) => {
           <div class="flex items-center gap-2">
             <template v-if="jobs.length && !confirmClear">
               <B24Button
-                label="Очистить историю"
+                label="Очистить список"
                 color="air-tertiary-no-accent"
                 size="xs"
                 @click="() => { confirmClear = true }"
               />
             </template>
             <template v-else-if="confirmClear">
-              <span class="text-xs text-(--ui-color-base-3)">Очистить историю импортов?</span>
+              <span class="text-xs text-(--ui-color-base-3)">Убрать все строки из списка? Документы в CRM останутся.</span>
               <B24Button
-                label="Да"
+                label="Да, очистить"
                 color="air-primary-alert"
                 size="xs"
                 @click="doClearHistory"
@@ -257,7 +257,7 @@ watch(jobs, (list) => {
               size="xs"
               :loading="loading"
               :disabled="loading"
-              :label="loading ? 'Обновление…' : 'Обновить'"
+              :label="loading ? 'Обновляем…' : 'Обновить'"
               @click="refreshNow"
             />
           </div>
@@ -277,7 +277,7 @@ watch(jobs, (list) => {
               class="flex items-center gap-2 p-3 text-sm text-(--ui-color-base-3)"
             >
               <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-              Загружаем файл…
+              Отправляем файл…
             </li>
             <ImportJobItem
               v-for="job in jobs"
@@ -307,13 +307,13 @@ watch(jobs, (list) => {
                 @click="() => { confirmReset = true }"
               />
               <template v-else>
-                <span class="text-(--ui-color-base-3)">Сбросить метрики?</span>
+                <span class="text-(--ui-color-base-3)">Обнулить счётчики экономии? Документы в CRM останутся.</span>
                 <B24Button
                   color="air-primary-alert"
                   size="xs"
                   :loading="resetting"
                   :disabled="resetting"
-                  :label="resetting ? 'Сброс…' : 'Да'"
+                  :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
                   @click="doReset"
                 />
                 <B24Button
@@ -345,7 +345,7 @@ watch(jobs, (list) => {
                 {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
               </div>
               <div class="mt-1 text-xs text-(--ui-color-base-3)">
-                Сэкономлено денег (оценка)
+                Сэкономлено денег (примерно)
               </div>
             </B24Card>
           </div>

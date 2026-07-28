@@ -60,7 +60,7 @@ async function doReset(): Promise<void> {
             Метрики импорта
           </h1>
           <p class="mt-1 text-sm text-(--ui-color-base-3)">
-            Что приложение сделало для вашего портала.
+            Сколько документов приложение обработало и сколько времени вам сэкономило.
           </p>
         </div>
         <button
@@ -95,7 +95,7 @@ async function doReset(): Promise<void> {
             {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
           </div>
           <div class="mt-1 text-xs text-(--ui-color-base-3)">
-            Сэкономлено денег (оценка)
+            Сэкономлено денег (примерно)
           </div>
         </div>
       </div>
@@ -103,11 +103,11 @@ async function doReset(): Promise<void> {
       <!-- Успешность -->
       <div class="mt-3 rounded-lg border border-(--ui-color-base-5) p-4">
         <div class="flex items-baseline justify-between">
-          <span class="text-sm text-(--ui-color-base-3)">Успешно создано в CRM</span>
+          <span class="text-sm text-(--ui-color-base-3)">Документов дошло до CRM</span>
           <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
         </div>
         <p class="mt-1 text-xs text-(--ui-color-base-4)">
-          Доля обработанных документов, по которым создана сущность в CRM.
+          Из скольких загруженных документов получилась запись в CRM. Остальные — с ошибкой, их видно в списке операций.
         </p>
       </div>
 
@@ -120,7 +120,7 @@ async function doReset(): Promise<void> {
           v-if="summary.empty"
           class="px-4 py-6 text-center text-sm text-(--ui-color-base-4)"
         >
-          Пока нет данных — загрузите первый документ.
+          Пока пусто. Загрузите первый документ на главной странице — счётчики появятся здесь.
         </p>
         <ul
           v-else
@@ -149,19 +149,19 @@ async function doReset(): Promise<void> {
         <div class="ml-auto flex items-center gap-2">
           <B24Button
             v-if="!confirmReset"
-            label="Сбросить метрики"
+            label="Обнулить счётчики"
             color="air-tertiary-no-accent"
             size="sm"
             @click="() => { confirmReset = true }"
           />
           <template v-else>
-            <span class="text-sm text-(--ui-color-base-3)">Сбросить метрики?</span>
+            <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
             <B24Button
               color="air-primary-alert"
               size="sm"
               :loading="resetting"
               :disabled="resetting"
-              :label="resetting ? 'Сброс…' : 'Да'"
+              :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
               @click="doReset"
             />
             <B24Button

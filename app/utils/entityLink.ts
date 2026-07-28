@@ -6,6 +6,19 @@
 // smart processes) → universal /crm/type/<etid>/details/. Keep in sync with those (a shared util is the
 // eventual fix). Portal-relative — the caller anchors it to the portal origin. Null for invalid ids.
 
+/** Plain-Russian name of a CRM entity type, for user-facing result lines («Открыть сделку №12»)
+ *  instead of the jargon «сущность #12». A smart process's real title isn't known here (it's
+ *  portal-specific) → the neutral «запись». Accusative case — reads right after «Открыть». */
+export function entityTypeLabel(entityTypeId: number | undefined | null): string {
+  switch (entityTypeId) {
+    case 1: return 'лид'
+    case 2: return 'сделку'
+    case 7: return 'предложение'
+    case 31: return 'счёт'
+    default: return 'запись'
+  }
+}
+
 export function entityDetailPath(entityTypeId: number | undefined | null, entityId: number | undefined | null): string | null {
   if (!Number.isInteger(entityTypeId) || (entityTypeId as number) <= 0) return null
   if (!Number.isInteger(entityId) || (entityId as number) <= 0) return null
