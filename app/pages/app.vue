@@ -137,7 +137,10 @@ watch(jobs, (list) => {
           >
             AI-импорт прайсов
           </h1>
-          <p class="text-base text-(--ui-color-base-3)">
+          <p
+            v-if="!needsSetup"
+            class="text-base text-(--ui-color-base-3)"
+          >
             Перетащите или сфотографируйте накладную, счёт, КП или прайс — товары уйдут в CRM.
           </p>
         </div>
@@ -177,196 +180,201 @@ watch(jobs, (list) => {
         </template>
       </B24Alert>
 
-      <!-- PRIMARY ACTION: stage files → set a per-file target → import one-by-one on «Импортировать».
-           `upload` comes from THIS page's single useImport() so uploads land in the same job list/poll. -->
-      <ImportStaging
-        :upload="upload"
-        @update:busy="v => stagingBusy = v"
-      />
+      <!-- Пока приложение НЕ настроено (needsSetup) показываем ТОЛЬКО баннер выше (админу — с кнопкой
+           «Настроить», не-админу — «обратитесь к администратору»); весь рабочий контент скрыт до настройки
+           (owner ask). Вне портала (standalone) needsSetup=false → всё видно как обычно. -->
+      <template v-if="!needsSetup">
+        <!-- PRIMARY ACTION: stage files → set a per-file target → import one-by-one on «Импортировать».
+             `upload` comes from THIS page's single useImport() so uploads land in the same job list/poll. -->
+        <ImportStaging
+          :upload="upload"
+          @update:busy="v => stagingBusy = v"
+        />
 
-      <B24Alert
-        v-if="error"
-        class="mt-3"
-        color="air-primary-warning"
-        :title="error"
-      />
+        <B24Alert
+          v-if="error"
+          class="mt-3"
+          color="air-primary-warning"
+          :title="error"
+        />
 
-      <!-- STATUS: recent operations with compact inline counts. Shown only once there's history to show
+        <!-- STATUS: recent operations with compact inline counts. Shown only once there's history to show
            (or a file is uploading) — a brand-new operator on first open sees just the dropzone + savings,
            not an empty «Последние операции» block. -->
-      <div
-        v-if="jobs.length || uploading"
-        class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
-        :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
-      >
-        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 class="text-base font-semibold">
-            Последние операции
-          </h2>
-          <span
-            v-if="jobs.length"
-            class="flex items-center gap-2 text-xs"
-          >
-            <span class="text-(--ui-color-accent-main-success)">готово: {{ stats.done }}</span>
-            <span class="text-(--ui-color-accent-main-primary)">в работе: {{ stats.running }}</span>
-            <span class="text-(--ui-color-accent-main-alert)">ошибки: {{ stats.error }}</span>
-          </span>
-          <span
-            v-if="hasActive"
-            class="flex items-center gap-1 text-xs text-(--ui-color-accent-main-primary)"
-            role="status"
-          >
-            <span class="inline-block size-1.5 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-            обновляется
-          </span>
-        </div>
-        <div class="flex items-center gap-2">
-          <template v-if="jobs.length && !confirmClear">
-            <B24Button
-              label="Очистить историю"
-              color="air-tertiary-no-accent"
-              size="xs"
-              @click="() => { confirmClear = true }"
-            />
-          </template>
-          <template v-else-if="confirmClear">
-            <span class="text-xs text-(--ui-color-base-3)">Очистить историю импортов?</span>
-            <B24Button
-              label="Да"
-              color="air-primary-alert"
-              size="xs"
-              @click="doClearHistory"
-            />
-            <B24Button
-              label="Отмена"
-              color="air-tertiary-no-accent"
-              size="xs"
-              @click="() => { confirmClear = false }"
-            />
-          </template>
-          <B24Button
-            :icon="RefreshIcon"
-            color="air-tertiary-no-accent"
-            size="xs"
-            :loading="loading"
-            :disabled="loading"
-            :label="loading ? 'Обновление…' : 'Обновить'"
-            @click="refreshNow"
-          />
-        </div>
-      </div>
-
-      <B24Card
-        v-if="jobs.length || uploading"
-        variant="outline"
-        class="transition-opacity"
-        :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
-        :b24ui="{ body: 'p-0 sm:p-0' }"
-      >
-        <ul class="divide-y divide-(--ui-color-base-5)">
-          <!-- Immediate feedback while the POST is in flight, before the job row appears. -->
-          <li
-            v-if="uploading"
-            class="flex items-center gap-2 p-3 text-sm text-(--ui-color-base-3)"
-          >
-            <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-            Загружаем файл…
-          </li>
-          <ImportJobItem
-            v-for="job in jobs"
-            :key="job.jobId"
-            :job="job"
-            @remove="removeJob"
-          />
-        </ul>
-      </B24Card>
-
-      <!-- Экономия (компактно, внизу): сколько времени/денег сберёг импорт (оценка), + сброс метрик -->
-      <B24Card
-        variant="outline"
-        class="mt-4 transition-opacity"
-        :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
-      >
-        <div class="mb-3 flex items-center justify-between gap-2">
-          <h2 class="text-base font-semibold">
-            Экономия
-          </h2>
-          <div class="flex items-center gap-2 text-xs">
-            <B24Button
-              v-if="!confirmReset"
-              label="Сбросить"
-              color="air-tertiary-no-accent"
-              size="xs"
-              @click="() => { confirmReset = true }"
-            />
-            <template v-else>
-              <span class="text-(--ui-color-base-3)">Сбросить метрики?</span>
+        <div
+          v-if="jobs.length || uploading"
+          class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
+          :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+        >
+          <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 class="text-base font-semibold">
+              Последние операции
+            </h2>
+            <span
+              v-if="jobs.length"
+              class="flex items-center gap-2 text-xs"
+            >
+              <span class="text-(--ui-color-accent-main-success)">готово: {{ stats.done }}</span>
+              <span class="text-(--ui-color-accent-main-primary)">в работе: {{ stats.running }}</span>
+              <span class="text-(--ui-color-accent-main-alert)">ошибки: {{ stats.error }}</span>
+            </span>
+            <span
+              v-if="hasActive"
+              class="flex items-center gap-1 text-xs text-(--ui-color-accent-main-primary)"
+              role="status"
+            >
+              <span class="inline-block size-1.5 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+              обновляется
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <template v-if="jobs.length && !confirmClear">
               <B24Button
+                label="Очистить историю"
+                color="air-tertiary-no-accent"
+                size="xs"
+                @click="() => { confirmClear = true }"
+              />
+            </template>
+            <template v-else-if="confirmClear">
+              <span class="text-xs text-(--ui-color-base-3)">Очистить историю импортов?</span>
+              <B24Button
+                label="Да"
                 color="air-primary-alert"
                 size="xs"
-                :loading="resetting"
-                :disabled="resetting"
-                :label="resetting ? 'Сброс…' : 'Да'"
-                @click="doReset"
+                @click="doClearHistory"
               />
               <B24Button
                 label="Отмена"
                 color="air-tertiary-no-accent"
                 size="xs"
-                @click="() => { confirmReset = false }"
+                @click="() => { confirmClear = false }"
               />
             </template>
+            <B24Button
+              :icon="RefreshIcon"
+              color="air-tertiary-no-accent"
+              size="xs"
+              :loading="loading"
+              :disabled="loading"
+              :label="loading ? 'Обновление…' : 'Обновить'"
+              @click="refreshNow"
+            />
           </div>
         </div>
-        <div class="grid grid-cols-2 gap-3">
-          <B24Card
-            variant="tinted-success"
-            class="text-center"
-          >
-            <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
-              {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-            </div>
-            <div class="mt-1 text-xs text-(--ui-color-base-3)">
-              Сэкономлено времени
-            </div>
-          </B24Card>
-          <B24Card
-            variant="tinted-success"
-            class="text-center"
-          >
-            <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
-              {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
-            </div>
-            <div class="mt-1 text-xs text-(--ui-color-base-3)">
-              Сэкономлено денег (оценка)
-            </div>
-          </B24Card>
-        </div>
-        <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3)">
-          <span>Документов: {{ counters.docs || 0 }}</span>
-          <span>Создано в CRM: {{ counters.created || 0 }}</span>
-          <span>Позиций: {{ counters.lines || 0 }}</span>
-          <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
-          <button
-            v-if="!isBitrixMobile"
-            type="button"
-            class="ml-auto text-(--ui-color-accent-main-link) hover:underline"
-            @click="openMetrics"
-          >
-            Подробные метрики →
-          </button>
-        </div>
-        <B24Alert
-          v-if="metricsError"
-          class="mt-3"
-          color="air-primary-warning"
-          size="sm"
-          :title="metricsError"
-        />
-      </B24Card>
 
-      <!-- Маркетинг: self-hosted оффер «развернём на вашем сервере» (внизу, ненавязчиво). -->
-      <SelfHostedPromo />
+        <B24Card
+          v-if="jobs.length || uploading"
+          variant="outline"
+          class="transition-opacity"
+          :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+          :b24ui="{ body: 'p-0 sm:p-0' }"
+        >
+          <ul class="divide-y divide-(--ui-color-base-5)">
+            <!-- Immediate feedback while the POST is in flight, before the job row appears. -->
+            <li
+              v-if="uploading"
+              class="flex items-center gap-2 p-3 text-sm text-(--ui-color-base-3)"
+            >
+              <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+              Загружаем файл…
+            </li>
+            <ImportJobItem
+              v-for="job in jobs"
+              :key="job.jobId"
+              :job="job"
+              @remove="removeJob"
+            />
+          </ul>
+        </B24Card>
+
+        <!-- Экономия (компактно, внизу): сколько времени/денег сберёг импорт (оценка), + сброс метрик -->
+        <B24Card
+          variant="outline"
+          class="mt-4 transition-opacity"
+          :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+        >
+          <div class="mb-3 flex items-center justify-between gap-2">
+            <h2 class="text-base font-semibold">
+              Экономия
+            </h2>
+            <div class="flex items-center gap-2 text-xs">
+              <B24Button
+                v-if="!confirmReset"
+                label="Сбросить"
+                color="air-tertiary-no-accent"
+                size="xs"
+                @click="() => { confirmReset = true }"
+              />
+              <template v-else>
+                <span class="text-(--ui-color-base-3)">Сбросить метрики?</span>
+                <B24Button
+                  color="air-primary-alert"
+                  size="xs"
+                  :loading="resetting"
+                  :disabled="resetting"
+                  :label="resetting ? 'Сброс…' : 'Да'"
+                  @click="doReset"
+                />
+                <B24Button
+                  label="Отмена"
+                  color="air-tertiary-no-accent"
+                  size="xs"
+                  @click="() => { confirmReset = false }"
+                />
+              </template>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <B24Card
+              variant="tinted-success"
+              class="text-center"
+            >
+              <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
+                {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+              </div>
+              <div class="mt-1 text-xs text-(--ui-color-base-3)">
+                Сэкономлено времени
+              </div>
+            </B24Card>
+            <B24Card
+              variant="tinted-success"
+              class="text-center"
+            >
+              <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
+                {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
+              </div>
+              <div class="mt-1 text-xs text-(--ui-color-base-3)">
+                Сэкономлено денег (оценка)
+              </div>
+            </B24Card>
+          </div>
+          <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3)">
+            <span>Документов: {{ counters.docs || 0 }}</span>
+            <span>Создано в CRM: {{ counters.created || 0 }}</span>
+            <span>Позиций: {{ counters.lines || 0 }}</span>
+            <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
+            <button
+              v-if="!isBitrixMobile"
+              type="button"
+              class="ml-auto text-(--ui-color-accent-main-link) hover:underline"
+              @click="openMetrics"
+            >
+              Подробные метрики →
+            </button>
+          </div>
+          <B24Alert
+            v-if="metricsError"
+            class="mt-3"
+            color="air-primary-warning"
+            size="sm"
+            :title="metricsError"
+          />
+        </B24Card>
+
+        <!-- Маркетинг: self-hosted оффер «развернём на вашем сервере» (внизу, ненавязчиво). -->
+        <SelfHostedPromo />
+      </template>
 
       <!-- «Оцените приложение»: всплывает после успешного импорта (когда польза очевидна). Показ/
          троттлинг/верификация — на сервере (portal_app_rating). Инертен вне портала. -->
