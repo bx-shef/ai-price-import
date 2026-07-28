@@ -27,7 +27,7 @@ import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_ME
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { buildConfigurableActivity, companyOpenPath, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
+import { buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { extractText } from '../utils/textExtract'
 import { readFile } from 'node:fs/promises'
@@ -323,10 +323,13 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       const domain = (await getToken(memberId, infra.query))?.domain
       await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call)
     },
-    // Configurable timeline activity (crm.activity.configurable.add, OAuth app context — verified
-    // live). Recorded on BOTH the created entity AND the client company (owner ask — visible in the
-    // deal AND the company card), so up to two activities are written. Best-effort; runCrmSync
-    // swallows failures.
+    // Configurable timeline activity (crm.activity.configurable.add, OAuth app context — verified live).
+    // OWNER MODEL (owner ask, live-verified): a дело has ONE owner (ownerTypeId/ownerId — where it
+    // physically lives); every other entity is an ADDITIONAL binding via crm.activity.binding.add.
+    //   • company matched → owner = COMPANY, +binding to the created entity (deal/lead/invoice/СПА);
+    //   • no company      → owner = the created entity (nothing else to bind).
+    // So exactly ONE activity is written (was two) and it shows in BOTH timelines via the binding.
+    // Best-effort; runCrmSync swallows failures.
     writeActivity: async ({ entityTypeId, entityId, companyId, supplierName, rowCount, warnings }) => {
       // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
       // Best-effort — a lookup failure just omits the button, never fails the import.
@@ -341,33 +344,26 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       const title = `Импорт: ${supplierName ?? 'документ'}`
       const hasCompany = !!companyId && companyId > 0
       const call = (await need()).call
-      // Deal activity: «Открыть компанию» → jumps to the client card (only when matched — else there's
-      // nothing to open, so no button, per owner ask).
-      await call('crm.activity.configurable.add', buildConfigurableActivity({
-        ownerTypeId: entityTypeId,
-        ownerId: entityId,
+      // ONE дело. Owner = the client company when matched (its card is the natural home), else the
+      // created entity. «Открыть» jumps to the created entity from the company timeline; with no company
+      // the owner IS the entity → no button (nothing else to open).
+      const res = await call('crm.activity.configurable.add', buildConfigurableActivity({
+        ownerTypeId: hasCompany ? COMPANY_ENTITY_TYPE_ID : entityTypeId,
+        ownerId: hasCompany ? companyId! : entityId,
         title,
         lines,
-        openPath: hasCompany ? companyOpenPath(companyId!) : entityOpenPath(entityTypeId, entityId),
+        openPath: entityOpenPath(entityTypeId, entityId),
         showOpenButton: hasCompany,
-        openButtonTitle: 'Открыть компанию',
         ...(sourceFileUrl ? { sourceFileUrl } : {})
-      }))
-      // Company activity (only when matched): the SAME дело on the company card, «Открыть сделку» → the
-      // created entity. Best-effort — a failure here must not undo the deal activity above.
-      if (hasCompany) {
+      })) as { activity?: { id?: number } } | undefined
+      // Additional binding to the created entity so the SAME дело shows on both the company AND the
+      // entity timeline (crm.activity.binding.add — live-verified with a configurable activity). Best-
+      // effort: the дело is already on the company timeline; a binding failure (or already-bound) is fine.
+      const activityId = res?.activity?.id
+      if (hasCompany && activityId) {
         try {
-          await call('crm.activity.configurable.add', buildConfigurableActivity({
-            ownerTypeId: COMPANY_ENTITY_TYPE_ID,
-            ownerId: companyId!,
-            title,
-            lines,
-            openPath: entityOpenPath(entityTypeId, entityId),
-            showOpenButton: true,
-            openButtonTitle: 'Открыть сделку',
-            ...(sourceFileUrl ? { sourceFileUrl } : {})
-          }))
-        } catch { /* the company-side дело is a nice-to-have; the deal дело already succeeded */ }
+          await call('crm.activity.binding.add', { activityId, entityTypeId, entityId })
+        } catch { /* дело is on the company timeline regardless */ }
       }
     }
   }
