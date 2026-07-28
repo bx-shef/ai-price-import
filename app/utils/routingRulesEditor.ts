@@ -1,36 +1,15 @@
 import type { RoutingRule } from '~/types/mapping'
 import { MAX_ROUTING_RULES, MAX_RULE_KEYWORDS } from './portalSettings'
 
-// Pure record↔rows logic for the routing-rules editor (settings form). A routing rule sends a
-// document to a target by its classified type and/or keywords (see routing.ts ruleMatches);
-// first matching rule wins, else the default target. Keeping the conversion pure + tested keeps
-// the Vue component thin. Mirrors parsePortalSettings' normalization (skip conditionless rules).
+// Pure record↔rows logic for the routing-rules editor (settings form). A routing rule sends a document
+// to a target by KEYWORDS (owner ask: «убери Тип — хватит слов»); first matching rule wins, else the
+// default target. The stored `match.type` is no longer edited here — a rule the UI produces matches by
+// keywords only. (routing.ts still honours a stored `type` at runtime for backward compatibility, but the
+// editor neither shows nor writes it.) Keeping the conversion pure + tested keeps the Vue component thin.
 
-/** Document types the agent classifies (prompts/extract.ts) — offered as the rule's `type`. */
-export const DOCUMENT_TYPES = ['накладная', 'счёт', 'КП', 'спецификация', 'прайс'] as const
-
-/** Non-empty Select value for «любой тип» (match by keywords only). The stored `type` is '' for «any»,
- *  but b24ui/Reka SelectItem forbids an empty-string value — so the dropdown uses this sentinel and
- *  maps it back to '' via `typeFromSelect`. Mirrors the CATEGORY/STAGE sentinels in the pickers. */
-export const ANY_TYPE_VALUE = '__any__'
-
-/** Stored rule type ('' = any) → the Select value (sentinel for any). */
-export function typeSelectValue(type: string | undefined | null): string {
-  return (type ?? '') || ANY_TYPE_VALUE
-}
-
-/** Select value → stored rule type (sentinel/'' → '' = any). */
-export function typeFromSelect(v: unknown): string {
-  const s = typeof v === 'string' ? v : String(v ?? '')
-  return s === ANY_TYPE_VALUE ? '' : s
-}
-
-/** One editable rule row: document type to match (empty = any), keywords (comma/newline text),
- *  the target entityTypeId (null while unset) and its `categoryId` (направление/воронка — now
- *  picked in the UI from the portal's crm.category.list). `stageId` is still not edited by the UI
- *  but rides along so a stage-scoped target (settable via app.option) survives the round-trip. */
+/** One editable rule row: keywords (comma/newline text) + the target (entityTypeId while unset = null,
+ *  plus its `categoryId`/`stageId`, all now picked via the shared TargetPicker). */
 export interface EditableRoutingRule {
-  type: string
   keywords: string
   entityTypeId: number | null
   categoryId?: number
@@ -39,8 +18,7 @@ export interface EditableRoutingRule {
 
 /** Split a keywords string (comma OR newline separated) into a clean array: trimmed, non-empty,
  *  deduped case-insensitively (keyword matching in routing.ts is homoglyph-folded substring).
- *  Capped at MAX_RULE_KEYWORDS — the same cap parsePortalSettings applies, so what the editor
- *  emits is not silently truncated on save. */
+ *  Capped at MAX_RULE_KEYWORDS — the same cap parsePortalSettings applies. */
 export function parseKeywords(text: string): string[] {
   const out: string[] = []
   const seen = new Set<string>()
@@ -56,8 +34,9 @@ export function parseKeywords(text: string): string[] {
   return out
 }
 
-/** Editable rows ← stored rules. Keywords are joined for the textarea; a non-positive/absent
- *  target entityTypeId becomes null (the editor shows it unset); categoryId/stageId are carried. */
+/** Editable rows ← stored rules. Keywords are joined for the input; a non-positive/absent target
+ *  entityTypeId becomes null (unset); categoryId/stageId are carried. A stored `match.type` is ignored
+ *  (the editor is keyword-only now). */
 export function rulesToRows(rules: RoutingRule[] | null | undefined): EditableRoutingRule[] {
   const rs = Array.isArray(rules) ? rules : []
   return rs.map((r) => {
@@ -65,7 +44,6 @@ export function rulesToRows(rules: RoutingRule[] | null | undefined): EditableRo
     const catId = r?.target?.categoryId
     const stageId = r?.target?.stageId
     return {
-      type: r?.match?.type ?? '',
       keywords: Array.isArray(r?.match?.keywords) ? r.match.keywords.join(', ') : '',
       entityTypeId: Number.isInteger(etid) && (etid as number) > 0 ? etid as number : null,
       ...(Number.isInteger(catId) ? { categoryId: catId as number } : {}),
@@ -74,22 +52,19 @@ export function rulesToRows(rules: RoutingRule[] | null | undefined): EditableRo
   })
 }
 
-/** Stored rules ← editable rows. Drops a row that could never work: NO condition (no type AND
- *  no keywords → routing.ts ruleMatches returns false) OR an invalid target (non-positive
- *  entityTypeId → would create a markerless/duplicate-prone entity). Preserves categoryId/stageId
- *  on the target. Capped at MAX_ROUTING_RULES. Mirrors parsePortalSettings' skip-empty + caps, so
- *  what the editor writes survives the parse round-trip unchanged. */
+/** Stored rules ← editable rows. Drops a row that could never work: NO keywords (→ ruleMatches returns
+ *  false) OR an invalid target (non-positive entityTypeId). Preserves categoryId/stageId. Capped at
+ *  MAX_ROUTING_RULES. Mirrors parsePortalSettings' skip-empty + caps. */
 export function rowsToRules(rows: EditableRoutingRule[]): RoutingRule[] {
   const out: RoutingRule[] = []
   for (const row of rows) {
     if (out.length >= MAX_ROUTING_RULES) break
-    const type = (row.type ?? '').trim()
     const keywords = parseKeywords(row.keywords ?? '')
-    if (!type && keywords.length === 0) continue // no condition → never matches, drop
+    if (keywords.length === 0) continue // no keyword condition → never matches, drop
     const etid = row.entityTypeId
     if (etid == null || !Number.isInteger(etid) || etid <= 0) continue // no valid target, drop
     out.push({
-      match: { ...(type ? { type } : {}), ...(keywords.length ? { keywords } : {}) },
+      match: { keywords },
       target: {
         entityTypeId: etid,
         ...(Number.isInteger(row.categoryId) ? { categoryId: row.categoryId as number } : {}),

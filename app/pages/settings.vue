@@ -8,15 +8,9 @@ import { useB24 } from '~/composables/useB24'
 import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
-import { useCrmCategories } from '~/composables/useCrmCategories'
-import { useCrmStages } from '~/composables/useCrmStages'
-import { useCrmMode } from '~/composables/useCrmMode'
-import * as catPicker from '~/utils/categoryPicker'
-import * as stagePicker from '~/utils/stagePicker'
-import type { CrmStageOption } from '~/utils/stagePicker'
-import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
-import { rulesToRows, rowsToRules, DOCUMENT_TYPES, ANY_TYPE_VALUE, typeSelectValue, typeFromSelect } from '~/utils/routingRulesEditor'
+import { rulesToRows, rowsToRules } from '~/utils/routingRulesEditor'
+import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
@@ -46,14 +40,9 @@ onMounted(async () => {
     isSlider.value = placementPlace() === APP_SLIDER_PLACE_SETTINGS
   } catch { /* standalone → stay put on Save/Cancel */ }
   await load()
-  void loadCrmMode() // detect no-leads CRM → hide the «Лид» target option/mention (best-effort)
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
   seedRoutingRows() // build editable routing rules from the loaded mapping (once)
   await loadMeasures() // populate the measure dropdowns
-  // The category/stage `immediate` watchers reconcile the loaded mapping (dropping a categoryId/
-  // stageId whose funnel/stage was deleted in the portal) AFTER their REST fetches resolve — later
-  // than this onMounted. Await those same (cached) fetches so open-time normalization is applied.
-  await settleOpenReconciles()
   await nextTick()
 })
 
@@ -96,18 +85,6 @@ const sections = computed(() => [
   { label: 'Товары и единицы', slot: 'products' },
   { label: 'Файл и уведомления', slot: 'notify' }
 ] satisfies AccordionItem[])
-
-/** Await the open-time direction/stage reconcile fetches for the default target and every routing
- *  row (the same idempotent/cached `ensure*` the immediate watchers use), so their normalization of
- *  the loaded mapping settles before the autosave baseline is taken. */
-async function settleOpenReconciles(): Promise<void> {
-  const dt = mapping.value.defaultTarget
-  const jobs: Array<Promise<void>> = [ensureCategories(dt.entityTypeId), ensureStages(dt.entityTypeId, dt.categoryId)]
-  for (const r of routingRows.value) {
-    if (r.entityTypeId) jobs.push(ensureCategories(r.entityTypeId), ensureStages(r.entityTypeId, r.categoryId))
-  }
-  await Promise.allSettled(jobs)
-}
 
 // Supplier-article field: searchable picker over the portal's catalog product
 // properties (P7). The model carries the property CODE (string); coerce the picker's
@@ -214,128 +191,45 @@ const measureItems = computed(() => {
   return items
 })
 
-// Routing rules editor: send a document to a target by its classified type and/or keywords
-// (first matching rule wins, else the default target below). Same rows↔stored pattern as units.
-// categoryId/stageId are not edited by the UI but ride along so a category/stage-scoped target
-// (only settable via app.option today) is not stripped on the round-trip.
-interface EditableRoutingRow { id: number, type: string, keywords: string, entityTypeId: number | null, categoryId?: number, stageId?: string }
+// Routing rules editor: send a document to a target BY KEYWORDS (owner ask — «Тип» removed; first
+// matching rule wins, else the default target below). Both the default target and each rule's target
+// are picked with the SAME shared <TargetPicker> as the import screen (owner: код общий) — so entity/
+// direction/stage selection (incl. named smart processes, smart-invoice = stage-only, no-leads hiding)
+// behaves identically everywhere. The row keeps the client-only `id` for a stable v-for key.
+interface EditableRoutingRow { id: number, keywords: string, entityTypeId: number | null, categoryId?: number, stageId?: string }
 let nextRuleId = 1
 const routingRows = ref<EditableRoutingRow[]>([])
 function seedRoutingRows() {
   routingRows.value = rulesToRows(mapping.value.routingRules).map(r => ({ id: nextRuleId++, ...r }))
 }
 function addRoutingRow() {
-  routingRows.value.push({ id: nextRuleId++, type: '', keywords: '', entityTypeId: null })
+  routingRows.value.push({ id: nextRuleId++, keywords: '', entityTypeId: null })
 }
 function removeRoutingRow(id: number) {
   routingRows.value = routingRows.value.filter(r => r.id !== id)
 }
 watch(routingRows, (rows) => {
-  mapping.value.routingRules = rowsToRules(rows.map(r => ({ type: r.type, keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId })))
+  mapping.value.routingRules = rowsToRules(rows.map(r => ({ keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId })))
 }, { deep: true })
-// Type dropdown: «любой тип» (non-empty sentinel — b24ui/Reka SelectItem forbids empty-string) + the
-// known document types. Value↔stored-type mapping lives in routingRulesEditor (pure, tested).
-const DOCUMENT_TYPE_ITEMS = [{ label: 'любой тип', value: ANY_TYPE_VALUE }, ...DOCUMENT_TYPES.map(t => ({ label: t, value: t }))]
 
-// Quote (КП, id 7) is intentionally absent — it has no filterable external-marker field, so
-// retry-idempotency by B24-search is impossible; support deferred (issue #135).
-// Switching the entity type invalidates the direction (a deal funnel id doesn't belong to a
-// smart-invoice, and a lead has none — crm.item.add would reject «Item has no CATEGORY_ID field»).
-// Clear categoryId SYNCHRONOUSLY on any change so a stale id can't be saved in the sub-second
-// window before the async category reload reconciles it (crm-sync also guards leads, #135).
-function selectDefaultTarget(id: number): void {
-  if (mapping.value.defaultTarget.entityTypeId !== id) mapping.value.defaultTarget.categoryId = undefined
-  mapping.value.defaultTarget.entityTypeId = id
+// The default target ⇄ a TargetPicker model. The default target is always concrete (never «Авто»), so
+// the picker is used with :include-auto="false"; a null emit (shouldn't happen without the Авто option)
+// falls back to a deal so the default stays valid.
+const defaultTargetModel = computed<TargetRef | null>({
+  get: () => mapping.value.defaultTarget,
+  set: (t) => { mapping.value.defaultTarget = t ?? { entityTypeId: 2 } }
+})
+// Per-rule target ⇄ TargetPicker: build a TargetRef from the row's fields and write the picked one back.
+function rowTarget(row: EditableRoutingRow): TargetRef | null {
+  return row.entityTypeId
+    ? { entityTypeId: row.entityTypeId, ...(row.categoryId != null ? { categoryId: row.categoryId } : {}), ...(row.stageId ? { stageId: row.stageId } : {}) }
+    : null
 }
-/** Rule-row entity change: coerce to a positive int (or null) and clear a now-stale direction. */
-function setRowEntity(row: EditableRoutingRow, v: unknown): void {
-  const n = typeof v === 'number' ? v : Number(v)
-  const next = Number.isInteger(n) && n > 0 ? n : null
-  if (next !== row.entityTypeId) row.categoryId = undefined
-  row.entityTypeId = next
+function setRowTarget(row: EditableRoutingRow, t: TargetRef | null): void {
+  row.entityTypeId = t?.entityTypeId ?? null
+  row.categoryId = t?.categoryId
+  row.stageId = t?.stageId
 }
-
-// Hide «Лид» on a no-leads (simple CRM) portal — a lead there is auto-converted at once (crm-sync would
-// redirect it to a deal anyway), so offering/mentioning it only misleads. Loaded once via useCrmMode.
-const { leadsEnabled, load: loadCrmMode } = useCrmMode()
-const ALL_TARGET_PRESETS = [
-  { id: 1, label: 'Лид' },
-  { id: 2, label: 'Сделка' },
-  { id: 31, label: 'Смарт-счёт' }
-]
-const TARGET_PRESETS = computed(() => ALL_TARGET_PRESETS.filter(p => p.id !== 1 || leadsEnabled.value))
-
-// Direction (воронка/категория) pickers for routing targets: «тип документа → сущность +
-// НАПРАВЛЕНИЕ» (owner ask). Categories are loaded per entity type from the portal
-// (crm.category.list, frame token) and cached; lead (1) has none → the picker hides. Switching
-// entity type clears a categoryId that isn't valid for the new type (a deal funnel id must not
-// ride onto a smart-invoice / lead). Stage selection is a separate later slice. Outside a portal
-// frame there's no data → the picker stays hidden (like the article picker).
-const { load: loadCrmCategories } = useCrmCategories()
-const catCache = ref<Record<number, CrmCategoryOption[]>>({})
-
-async function ensureCategories(entityTypeId: number | null | undefined): Promise<void> {
-  const etid = Number(entityTypeId)
-  if (!Number.isInteger(etid) || etid <= 0 || etid in catCache.value) return
-  catCache.value[etid] = await loadCrmCategories(etid)
-}
-
-// Thin wrappers over the pure app/utils/categoryPicker helpers (unit-tested there): look the
-// entity's cached funnels up, delegate the transform. `catCache.value[etid]` is `undefined` until
-// loaded (→ reconcile leaves the id) and `[]` once loaded-empty (→ reconcile clears a stale id).
-const catsFor = (entityTypeId: number | null | undefined): CrmCategoryOption[] | undefined => catCache.value[Number(entityTypeId)]
-const categoryItems = (entityTypeId: number | null | undefined) => catPicker.categoryItems(catsFor(entityTypeId))
-const hasCategories = (entityTypeId: number | null | undefined) => catPicker.hasCategories(catsFor(entityTypeId))
-const categoryValue = (target: catPicker.CategoryTarget) => catPicker.categoryValue(target)
-const setCategory = (target: catPicker.CategoryTarget, v: unknown) => catPicker.setCategory(target, v)
-const reconcileCategory = (target: catPicker.CategoryTarget) => catPicker.reconcileCategory(target, catsFor(target.entityTypeId))
-
-// Default target: (re)load directions when its entity changes; reconcile a stale categoryId.
-watch(() => mapping.value.defaultTarget.entityTypeId, async (etid) => {
-  await ensureCategories(etid)
-  reconcileCategory(mapping.value.defaultTarget)
-}, { immediate: true })
-
-// Routing rows: load directions for each row's entity (memoized) and reconcile after load.
-// Runs on seed and on any row edit; ensureCategories short-circuits when already cached.
-watch(routingRows, (rows) => {
-  for (const r of rows) {
-    if (r.entityTypeId) void ensureCategories(r.entityTypeId).then(() => reconcileCategory(r as { entityTypeId: number, categoryId?: number }))
-  }
-}, { deep: true, immediate: true })
-
-// Stage (стадия) picker — cascades from entity + direction («тип → сущность → направление → СТАДИЯ»).
-// crm.status.list ENTITY_ID depends on both, so the cache is keyed by `entityTypeId:categoryId`.
-// Loaded from the portal (frame token) + reconciled when the direction/entity changes; the deal
-// default funnel and leads have stages without a direction. Outside a portal → hidden. Optional
-// (empty = the entity's default/first stage).
-const { load: loadCrmStages } = useCrmStages()
-const stageCache = ref<Record<string, CrmStageOption[]>>({})
-const stageKey = (etid: number | null | undefined, cat: number | null | undefined): string => `${Number(etid)}:${cat ?? ''}`
-async function ensureStages(etid: number | null | undefined, cat: number | null | undefined): Promise<void> {
-  const n = Number(etid)
-  if (!Number.isInteger(n) || n <= 0) return
-  const key = stageKey(etid, cat)
-  if (key in stageCache.value) return
-  stageCache.value[key] = await loadCrmStages(n, cat ?? null)
-}
-const stagesFor = (t: { entityTypeId?: number | null, categoryId?: number }): CrmStageOption[] | undefined => stageCache.value[stageKey(t.entityTypeId, t.categoryId)]
-const stageItemsFor = (t: { entityTypeId?: number | null, categoryId?: number }) => stagePicker.stageItems(stagesFor(t))
-const hasStagesFor = (t: { entityTypeId?: number | null, categoryId?: number }) => stagePicker.hasStages(stagesFor(t))
-const stageValueOf = (t: stagePicker.StageTarget) => stagePicker.stageValue(t)
-const setStageOf = (t: stagePicker.StageTarget, v: unknown) => stagePicker.setStage(t, v)
-const reconcileStageOf = (t: { entityTypeId?: number | null, categoryId?: number, stageId?: string }) => stagePicker.reconcileStage(t, stagesFor(t))
-
-watch(() => [mapping.value.defaultTarget.entityTypeId, mapping.value.defaultTarget.categoryId], async () => {
-  await ensureStages(mapping.value.defaultTarget.entityTypeId, mapping.value.defaultTarget.categoryId)
-  reconcileStageOf(mapping.value.defaultTarget)
-}, { immediate: true })
-
-watch(routingRows, (rows) => {
-  for (const r of rows) {
-    if (r.entityTypeId) void ensureStages(r.entityTypeId, r.categoryId).then(() => reconcileStageOf(r))
-  }
-}, { deep: true, immediate: true })
 
 const ARTICLE_KIND_ITEMS = [
   { label: 'построчно (текст)', value: 'text' },
@@ -394,77 +288,28 @@ const ON_MISSING_ITEMS = [
       >
         <template #routing>
           <div class="space-y-6 pt-2">
-            <!-- Целевая сущность -->
-            <B24FormField label="Целевая сущность CRM">
-              <div class="flex flex-wrap gap-2">
-                <B24Button
-                  v-for="p in TARGET_PRESETS"
-                  :key="p.id"
-                  :label="p.label"
-                  size="sm"
-                  :color="mapping.defaultTarget.entityTypeId === p.id ? 'air-primary' : 'air-tertiary-no-accent'"
-                  :aria-pressed="mapping.defaultTarget.entityTypeId === p.id"
-                  @click="() => selectDefaultTarget(p.id)"
-                />
-              </div>
-              <div class="mt-2 flex items-center gap-2">
-                <span class="text-xs text-(--ui-color-base-3)">или ID типа (смарт-процесс ≥ 1000):</span>
-                <B24InputNumber
-                  v-model="mapping.defaultTarget.entityTypeId"
-                  :min="1"
-                  class="w-28"
-                  aria-label="ID типа целевой сущности"
-                />
-              </div>
-              <div
-                v-if="hasCategories(mapping.defaultTarget.entityTypeId)"
-                class="mt-2 flex items-center gap-2"
-              >
-                <span class="text-xs text-(--ui-color-base-3)">направление (воронка):</span>
-                <B24Select
-                  :model-value="categoryValue(mapping.defaultTarget)"
-                  :items="categoryItems(mapping.defaultTarget.entityTypeId)"
-                  class="w-56"
-                  aria-label="Направление целевой сущности по умолчанию"
-                  @update:model-value="(v: unknown) => setCategory(mapping.defaultTarget, v)"
-                />
-              </div>
-              <div
-                v-if="hasStagesFor(mapping.defaultTarget)"
-                class="mt-2 flex items-center gap-2"
-              >
-                <span class="text-xs text-(--ui-color-base-3)">стадия:</span>
-                <B24Select
-                  :model-value="stageValueOf(mapping.defaultTarget)"
-                  :items="stageItemsFor(mapping.defaultTarget)"
-                  class="w-56"
-                  aria-label="Стадия целевой сущности по умолчанию"
-                  @update:model-value="(v: unknown) => setStageOf(mapping.defaultTarget, v)"
-                />
-              </div>
+            <!-- Целевая сущность по умолчанию — тот же TargetPicker, что и на импорте (без «Авто»). -->
+            <B24FormField label="Целевая сущность CRM (по умолчанию)">
+              <TargetPicker
+                v-model:target="defaultTargetModel"
+                :include-auto="false"
+              />
             </B24FormField>
 
-            <!-- Правила маршрутизации -->
-            <B24FormField label="Правила маршрутизации (по типу/словам → цель)">
+            <!-- Правила маршрутизации: по СЛОВАМ → цель (тот же TargetPicker). Первое совпавшее выигрывает. -->
+            <B24FormField label="Правила маршрутизации (по словам → цель)">
               <p class="mb-2 text-xs text-(--ui-color-base-3)">
-                Первое совпавшее правило задаёт цель; иначе — целевая сущность выше. Тип цели: {{ leadsEnabled ? '1 = лид, ' : '' }}2 = сделка, 31 = смарт-счёт, ≥ 1000 = смарт-процесс.
+                Первое правило, чьи слова встретились в документе, задаёт цель; иначе — цель по умолчанию выше.
               </p>
-              <div class="space-y-2">
+              <div class="space-y-3">
                 <div
                   v-for="(row, i) in routingRows"
                   :key="row.id"
-                  class="flex flex-wrap items-center gap-2"
+                  class="flex flex-wrap items-center gap-2 rounded-lg border border-(--ui-color-base-5) p-2"
                 >
-                  <B24Select
-                    :model-value="typeSelectValue(row.type)"
-                    :items="DOCUMENT_TYPE_ITEMS"
-                    class="w-40"
-                    :aria-label="`Правило ${i + 1}: тип документа`"
-                    @update:model-value="(v: unknown) => { row.type = typeFromSelect(v) }"
-                  />
                   <B24Input
                     v-model="row.keywords"
-                    placeholder="слова через запятую (необязательно)"
+                    placeholder="слова через запятую"
                     class="w-56"
                     :aria-label="`Правило ${i + 1}: ключевые слова`"
                   />
@@ -472,28 +317,10 @@ const ON_MISSING_ITEMS = [
                     class="text-(--ui-color-base-4)"
                     aria-hidden="true"
                   >→</span>
-                  <B24InputNumber
-                    :model-value="row.entityTypeId"
-                    :min="1"
-                    class="w-28"
-                    :aria-label="`Правило ${i + 1}: тип целевой сущности`"
-                    @update:model-value="(v: unknown) => setRowEntity(row, v)"
-                  />
-                  <B24Select
-                    v-if="hasCategories(row.entityTypeId)"
-                    :model-value="categoryValue(row)"
-                    :items="categoryItems(row.entityTypeId)"
-                    class="w-48"
-                    :aria-label="`Правило ${i + 1}: направление`"
-                    @update:model-value="(v: unknown) => setCategory(row, v)"
-                  />
-                  <B24Select
-                    v-if="hasStagesFor(row)"
-                    :model-value="stageValueOf(row)"
-                    :items="stageItemsFor(row)"
-                    class="w-44"
-                    :aria-label="`Правило ${i + 1}: стадия`"
-                    @update:model-value="(v: unknown) => setStageOf(row, v)"
+                  <TargetPicker
+                    :target="rowTarget(row)"
+                    :include-auto="false"
+                    @update:target="(t: TargetRef | null) => setRowTarget(row, t)"
                   />
                   <B24Button
                     color="air-tertiary-no-accent"
