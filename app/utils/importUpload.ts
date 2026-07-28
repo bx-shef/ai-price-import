@@ -18,6 +18,16 @@ export const UPLOAD_ACCEPT = [
   '.pdf', '.png', '.jpg', '.jpeg', '.xlsx', '.xls', '.docx'
 ].join(',')
 
+/** Human file size for a staged row («1,2 МБ»). Russian decimal comma, one decimal for МБ/КБ.
+ *  Pure — no Intl dependency so the string is stable across environments/tests. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return ''
+  if (bytes < 1024) return `${Math.round(bytes)} Б`
+  const kb = bytes / 1024
+  if (kb < 1024) return `${Math.round(kb)} КБ`
+  return `${(kb / 1024).toFixed(1).replace('.', ',')} МБ`
+}
+
 export interface UploadFileMeta { name: string, size: number }
 export interface UploadValidation { ok: boolean, error?: string }
 

@@ -74,7 +74,7 @@ async function rate(kind: 'up' | 'down'): Promise<void> {
     </p>
     <template v-else>
       <div class="flex items-center gap-2 text-(--ui-color-base-4)">
-        <span>Результат помог?</span>
+        <span>Всё верно?</span>
         <button
           type="button"
           class="rounded px-1.5 py-0.5 hover:bg-(--ui-color-base-5) disabled:opacity-50"

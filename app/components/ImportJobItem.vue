@@ -95,20 +95,18 @@ const badgeColor: Record<string, 'air-primary' | 'air-primary-success' | 'air-pr
   success: 'air-primary-success',
   danger: 'air-primary-alert'
 }
-// Progress-bar color follows the pipeline state.
-const barColor = computed<'air-primary' | 'air-primary-success' | 'air-primary-alert'>(() =>
-  progress.value.failed ? 'air-primary-alert' : progress.value.terminal ? 'air-primary-success' : 'air-primary')
-// Per-step dot color token by state.
+// Step marker per state: filled + ✓ for a finished step, a ring for the current/upcoming one
+// (matches the approved design — the stepper alone carries progress, there is no separate bar).
 const stepDot: Record<string, string> = {
-  done: 'bg-(--ui-color-accent-main-success)',
-  active: 'bg-(--ui-color-accent-main-primary) animate-pulse',
-  error: 'bg-(--ui-color-accent-main-alert)',
-  pending: 'bg-(--ui-color-base-5)'
+  done: 'bg-(--ui-color-accent-main-success) text-(--ui-color-base-8)',
+  active: 'border-2 border-(--ui-color-accent-main-primary) animate-pulse',
+  error: 'bg-(--ui-color-accent-main-alert) text-(--ui-color-base-8)',
+  pending: 'border-2 border-(--ui-color-base-4)'
 }
 </script>
 
 <template>
-  <li class="flex flex-col gap-2 p-3">
+  <li class="flex flex-col gap-2.5 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3.5">
     <div class="flex items-center justify-between gap-3">
       <!-- When the source file was archived to the Disk, the file name links to it (opens in a slider);
            otherwise it's plain text. -->
@@ -146,36 +144,31 @@ const stepDot: Record<string, string> = {
       </div>
     </div>
 
-    <!-- IN-FLIGHT: per-stage stepper + progress bar so the user sees where the file is. -->
+    <!-- IN-FLIGHT: per-stage stepper so the user sees where the file is. -->
     <div
       v-if="!meta.terminal"
       class="flex flex-col gap-1.5"
     >
-      <div class="flex items-center gap-1.5 text-xs">
-        <template
-          v-for="(s, i) in progress.steps"
+      <div
+        class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs"
+        :aria-label="`Стадия: ${progress.label}`"
+        role="status"
+      >
+        <span
+          v-for="s in progress.steps"
           :key="s.key"
+          class="flex items-center gap-1.5"
         >
           <span
-            v-if="i > 0"
-            class="h-px w-3 shrink-0 bg-(--ui-color-base-5)"
-            aria-hidden="true"
-          />
-          <span
-            class="inline-block h-2 w-2 shrink-0 rounded-full"
+            class="flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] leading-none"
             :class="stepDot[s.state]"
-          />
+            aria-hidden="true"
+          >{{ s.state === 'done' ? '✓' : '' }}</span>
           <span :class="s.state === 'pending' ? 'text-(--ui-color-base-4)' : 'text-(--ui-color-base-2)'">
             {{ s.label }}
           </span>
-        </template>
+        </span>
       </div>
-      <B24Progress
-        :model-value="progress.percent"
-        size="xs"
-        :color="barColor"
-        :aria-label="`Стадия: ${progress.label}`"
-      />
     </div>
 
     <!-- DONE: what was recognized/created («разбор»). -->
@@ -210,23 +203,22 @@ const stepDot: Record<string, string> = {
           :class="result.lines === 0 ? 'text-(--ui-color-accent-main-warning)' : ''"
         >· {{ result.lines }} {{ pluralRu(result.lines, ['позиция', 'позиции', 'позиций']) }}</span>
       </div>
-      <ul
+      <div
         v-if="result.warnings.length"
-        class="mt-1 list-disc pl-4 text-(--ui-color-accent-main-warning)"
+        class="mt-1.5 flex flex-col gap-1 border-l-[3px] border-(--ui-color-accent-main-warning) pl-2.5"
       >
-        <li
+        <span
           v-for="(w, i) in result.warnings"
           :key="i"
-        >
-          {{ w }}
-        </li>
-      </ul>
+          class="leading-relaxed text-(--ui-color-base-2)"
+        >{{ w }}</span>
+      </div>
     </div>
 
     <!-- ERROR: the failure reason. -->
     <p
       v-else
-      class="text-xs text-(--ui-color-accent-main-alert)"
+      class="border-l-[3px] border-(--ui-color-accent-main-alert) pl-2.5 text-xs leading-relaxed text-(--ui-color-accent-main-alert)"
     >
       {{ result.errors[0] || result.message || 'Не удалось обработать документ. Проверьте, что файл открывается и в нём есть таблица с товарами, затем загрузите его снова.' }}
     </p>
