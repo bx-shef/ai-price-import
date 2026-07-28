@@ -50,7 +50,7 @@ describe('ImportJobItem', () => {
   it('done with a created entity, STANDALONE (no frame) → plain «Создано в CRM» text, no link', async () => {
     framed.value = false
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"created":true,"warnings":[],"errors":[]}') } })
-    expect(w.text()).toContain('Создано в CRM · сущность #5')
+    expect(w.text()).toContain('Создано в CRM: сделку №5')
     expect(w.find('a').exists()).toBe(false)
     // no progress bar once terminal
     expect(w.find('[aria-label^="Стадия:"]').exists()).toBe(false)
@@ -61,14 +61,14 @@ describe('ImportJobItem', () => {
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"created":true,"warnings":[],"errors":[]}') } })
     const link = w.find('a')
     expect(link.exists()).toBe(true)
-    expect(link.text()).toContain('Открыть в CRM · сущность #5')
+    expect(link.text()).toContain('открыть сделку №5 в CRM')
     framed.value = false
   })
 
   it('done → «разбор» shows supplier + line count with Russian plural', async () => {
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"created":true,"supplier":"ООО Ромашка","lines":3,"warnings":[],"errors":[]}') } })
     const text = w.text()
-    expect(text).toContain('распознан поставщик: ООО Ромашка')
+    expect(text).toContain('поставщик из документа: ООО Ромашка')
     expect(text).toContain('3 позиции')
   })
 

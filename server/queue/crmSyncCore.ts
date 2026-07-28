@@ -104,7 +104,7 @@ export async function runCrmSync(
     // Surface the redirect so it's NOT silent: the operator sees the document landed in a fallback
     // target (its chosen/rule direction — or entity — was gone). Warning, not error: import proceeds.
     if (target.entityTypeId !== resolved.entityTypeId || target.categoryId !== resolved.categoryId) {
-      warnings.push('Направление цели недоступно (воронка удалена в CRM) — импорт направлен в запасную цель')
+      warnings.push('Воронка, выбранная для импорта, удалена в CRM. Документ внесён в запасную цель. Чтобы задать другую — откройте настройки импорта и выберите направление заново.')
     }
   }
 
@@ -114,7 +114,7 @@ export async function runCrmSync(
   // deal's marker is used).
   if (deps.leadsEnabled && target.entityTypeId === ENTITY_TYPE_ID.lead && !(await deps.leadsEnabled())) {
     target = { entityTypeId: ENTITY_TYPE_ID.deal }
-    warnings.push('Портал в простом режиме CRM (без лидов) — импорт направлен в сделку вместо лида')
+    warnings.push('В вашей CRM отключены лиды (простой режим), поэтому документ внесён в сделку. Это нормально: лид всё равно сразу превратился бы в сделку.')
   }
 
   // Idempotency requires a filterable marker on the target type (originId/xmlId). A markerless
@@ -124,19 +124,19 @@ export async function runCrmSync(
   // a duplicate-prone entity. This is the code that ENFORCES «markerless types are not targets» (#135).
   const markerFilter = originSearchFilter(target.entityTypeId, jobId, deps.originatorPrefix)
   if (!markerFilter) {
-    errors.push(`Целевая сущность (тип ${target.entityTypeId}) не поддерживается импортом — нет поля-маркера идемпотентности; выберите сделку, смарт-счёт или смарт-процесс`)
+    errors.push(`Импорт остановлен: в этот тип CRM-сущности (${target.entityTypeId}) вносить нельзя — приложение не сможет защититься от повторной записи. Откройте настройки импорта и выберите сделку, смарт-счёт или смарт-процесс.`)
   }
 
   // Currency must exist in the portal (hard error → do not create a wrong-currency entity).
   if (doc.currency && deps.portalCurrencies) {
     const allowed = await deps.portalCurrencies()
-    if (!allowed.includes(doc.currency)) errors.push(`Валюта ${doc.currency} отсутствует в портале`)
+    if (!allowed.includes(doc.currency)) errors.push(`Импорт остановлен: валюты ${doc.currency} из документа нет в вашем Битрикс24. Добавьте её в CRM (Настройки → Валюты) и запустите импорт снова.`)
   }
 
   // Supplier: not found → still create, without company + warning.
   let companyId: number | null = null
   if (doc.supplier?.taxId) companyId = await deps.findCompanyByTaxId(doc.supplier.taxId)
-  if (!companyId) warnings.push('Поставщик не найден — создано без компании')
+  if (!companyId) warnings.push('Поставщик из документа не найден в CRM по УНП/ИНН — запись создана без привязки к компании. Заведите компанию с этим УНП/ИНН, и следующий импорт привяжется сам.')
 
   // Build rows. HARD errors (VAT rate not in portal) abort the whole document —
   // we must NOT drop lines (§8 «1-в-1, без потерь строк»); operator fixes the portal, re-imports.
@@ -153,13 +153,13 @@ export async function runCrmSync(
   const pricing = reconcilePricing(doc.items, doc.priceIncludesVat, doc.total)
   const priceIncludesVat = pricing.priceIncludesVat
   if (hasVat && doc.priceIncludesVat === undefined && !pricing.usedStatedTotal) {
-    errors.push('Не определено, включён ли НДС в цену — уточните документ и повторите импорт')
+    errors.push('Импорт остановлен: по документу не понять, включён НДС в цену или нет, а в итоге разница. Проверьте в документе строку «Всего к оплате» и загрузите его снова.')
   }
   if (pricing.corrected) {
-    warnings.push(`Признак «НДС включён в цену» уточнён по итогу документа: ${priceIncludesVat ? 'цена с НДС' : 'цена без НДС'}`)
+    warnings.push(`По итогу документа уточнили НДС: ${priceIncludesVat ? 'цены указаны с НДС' : 'цены указаны без НДС'}. Если это не так — сверьте сумму в созданной записи.`)
   }
   if (pricing.totalMismatch) {
-    warnings.push('Печатный итог документа не сошёлся с суммой строк — проверьте сумму сделки')
+    warnings.push('Итог, напечатанный в документе, не сошёлся с суммой строк. Откройте созданную запись и сверьте сумму вручную.')
   }
 
   // PRE-PASS: validate every line's VAT rate against the portal BEFORE any catalog write. The create
@@ -172,9 +172,9 @@ export async function runCrmSync(
     // garbage (bad extraction) — a hard error, never silently tax-exempt. A positive rate must exist in
     // the portal.
     if (item.vatRate != null && item.vatRate < 0) {
-      errors.push(`Отрицательная ставка НДС (${item.vatRate}%) в строке «${item.name}» — проверьте документ`)
+      errors.push(`Импорт остановлен: в строке «${item.name}» отрицательная ставка НДС (${item.vatRate}%) — так не бывает, документ распознан неверно. Проверьте эту строку в файле и загрузите документ снова.`)
     } else if ((item.vatRate ?? 0) > 0 && matchVatRate(item.vatRate!, vatRates) === null) {
-      errors.push(`Ставка НДС ${item.vatRate}% отсутствует в портале (строка «${item.name}»)`)
+      errors.push(`Импорт остановлен: ставки НДС ${item.vatRate}% (строка «${item.name}») нет в вашем Битрикс24. Добавьте её в CRM (Настройки → Ставки налога) и запустите импорт снова.`)
     }
   }
   // Hard errors (VAT inclusion undefined and/or an unknown rate) → report and create NOTHING (no
@@ -194,7 +194,7 @@ export async function runCrmSync(
 
     const productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
-      warnings.push(`Товар «${item.name}» не найден — строка пропущена`)
+      warnings.push(`Товар «${item.name}» не найден в каталоге — строка пропущена. Заведите товар (или поменяйте в настройках «Если товар не найден» на «Внести как произвольную позицию»).`)
       continue
     }
     // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
@@ -212,17 +212,17 @@ export async function runCrmSync(
         measureCode = res.code
         if (!warnedUnits.has(uKey)) {
           warnings.push(res.created
-            ? `Единица «${item.unit}» создана в каталоге (код ${res.code})`
-            : `Единица «${item.unit}» сопоставлена с мерой портала (код ${res.code})`)
+            ? `Единица измерения «${item.unit}» добавлена в каталог Битрикс24 (код ${res.code}).`
+            : `Единица измерения «${item.unit}» сопоставлена с единицей из вашего Битрикс24 (код ${res.code}).`)
           warnedUnits.add(uKey)
         }
       } else if (!warnedUnits.has(uKey)) {
-        warnings.push(`Единица «${item.unit}» не сопоставлена — использован дефолт`)
+        warnings.push(`Единица измерения «${item.unit}» не распознана — подставлена единица по умолчанию. Добавьте её в настройках импорта, в разделе «Товары и единицы».`)
         warnedUnits.add(uKey)
       }
     }
 
-    if (item.price < 0 || item.quantity < 0) warnings.push(`Отрицательная цена/кол-во в «${item.name}» — обнулено`)
+    if (item.price < 0 || item.quantity < 0) warnings.push(`В строке «${item.name}» цена или количество отрицательные — записаны как 0. Проверьте эту строку в созданной записи.`)
     rows.push(buildProductRow({
       productId: productId && productId > 0 ? productId : undefined,
       productName: item.name,
@@ -266,7 +266,7 @@ export async function runCrmSync(
     // whose sum is silently smaller than the paper (the per-line «строка пропущена» warnings don't say
     // the TOTAL is now off). Only when the document actually printed a total to diverge from.
     if (!allLinesWritten && doc.total != null && Number.isFinite(doc.total)) {
-      warnings.push('Сумма сделки не включает пропущенные позиции — не совпадает с итогом документа')
+      warnings.push('Часть строк пропущена, поэтому сумма записи меньше итога документа. Сверьте сумму вручную или добавьте недостающие товары в каталог и повторите импорт.')
     }
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
@@ -318,7 +318,7 @@ export async function runCrmSync(
         warnings
       })
     } catch {
-      warnings.push('Уведомление в чат не отправлено')
+      warnings.push('Документ внесён, но сообщение в чат отправить не удалось. Проверьте, что чат уведомлений выбран в настройках и приложение имеет к нему доступ.')
     }
   }
 
@@ -331,7 +331,7 @@ export async function runCrmSync(
     try {
       await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings })
     } catch {
-      warnings.push('Дело в таймлайне не создано')
+      warnings.push('Документ внесён, но запись в таймлайне создать не удалось. На сам импорт это не влияет — товары в CRM записаны.')
     }
   }
 

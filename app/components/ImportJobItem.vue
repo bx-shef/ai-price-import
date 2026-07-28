@@ -4,7 +4,7 @@ import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import type { ImportJobView } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
-import { entityDetailPath } from '~/utils/entityLink'
+import { entityDetailPath, entityTypeLabel } from '~/utils/entityLink'
 import { useB24 } from '~/composables/useB24'
 
 // One row in «Последние операции»: shows the file, a per-STAGE progress stepper while the job runs
@@ -191,11 +191,11 @@ const stepDot: Record<string, string> = {
           :href="entityHref"
           class="font-medium text-(--ui-color-accent-main-success) hover:underline"
           @click.prevent="openEntity"
-        >Открыть в CRM · сущность #{{ result.entityId }} →</a>
+        >Нажмите, чтобы открыть {{ entityTypeLabel(result.entityTypeId) }} №{{ result.entityId }} в CRM →</a>
         <span
           v-else-if="result.entityId"
           class="text-(--ui-color-accent-main-success)"
-        >Создано в CRM · сущность #{{ result.entityId }}</span>
+        >Создано в CRM: {{ entityTypeLabel(result.entityTypeId) }} №{{ result.entityId }}</span>
         <span v-else-if="result.message">{{ result.message }}</span>
         <span v-else>Документ обработан</span>
         <!-- «распознан» (not «привязан»): the name is what the AI read from the document — the company
@@ -203,7 +203,7 @@ const stepDot: Record<string, string> = {
         <span
           v-if="result.supplier"
           class="min-w-0 break-words"
-        >· распознан поставщик: {{ result.supplier }}</span>
+        >· поставщик из документа: {{ result.supplier }}</span>
         <!-- 0 lines on a created entity is notable (ничего не импортировалось) → surface as a warning. -->
         <span
           v-if="result.lines != null"
@@ -228,7 +228,7 @@ const stepDot: Record<string, string> = {
       v-else
       class="text-xs text-(--ui-color-accent-main-alert)"
     >
-      {{ result.errors[0] || result.message || 'Не удалось обработать документ' }}
+      {{ result.errors[0] || result.message || 'Не удалось обработать документ. Проверьте, что файл открывается и в нём есть таблица с товарами, затем загрузите его снова.' }}
     </p>
 
     <!-- Отзыв 👍/👎 — только по завершённым, если канал включён на сервере. -->

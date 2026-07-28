@@ -47,7 +47,7 @@ describe('ImportStaging', () => {
     expect(order).toEqual(['a.pdf', 'b.pdf']) // sequential, source order
     // Each call carries (File, null target, a UUID idempotency key).
     expect(upload).toHaveBeenCalledWith(expect.any(File), null, expect.stringMatching(/^[0-9a-f-]{36}$/i))
-    expect(w.text()).toContain('Отправлено в CRM: 2 из 2')
+    expect(w.text()).toContain('Отправили в CRM 2 из 2')
     expect(w.text()).toContain('Отправлен') // per-row done badge
   })
 
@@ -59,7 +59,7 @@ describe('ImportStaging', () => {
     await tick()
     const text = w.text()
     expect(text).toContain('Ошибка')
-    expect(text).toContain('Отправлено в CRM: 1 из 2')
+    expect(text).toContain('Отправили в CRM 1 из 2')
   })
 
   it('a failed (retryable) row re-imports on a second «Импортировать»; done rows are not re-sent', async () => {
@@ -80,7 +80,7 @@ describe('ImportStaging', () => {
     await tick()
     expect(upload).toHaveBeenCalledTimes(3)
     expect(upload).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'flaky.pdf' }), null, expect.any(String))
-    expect(w.text()).toContain('Отправлено в CRM: 1 из 1')
+    expect(w.text()).toContain('Отправили в CRM 1 из 1')
   })
 
   it('dedups the same file staged twice (would import twice) with a notice', async () => {

@@ -77,7 +77,7 @@ function onPicked(files: File[] | null | undefined): void {
   // doesn't build an unbounded one-by-one run. Excess is dropped with a notice — never silently.
   const room = MAX_UPLOAD_FILES - pendingCount()
   if (room <= 0) {
-    notice.value = `В очереди уже максимум файлов (${MAX_UPLOAD_FILES}) — импортируйте или уберите часть.`
+    notice.value = `В списке уже ${MAX_UPLOAD_FILES} файлов — это максимум. Нажмите «Импортировать» или уберите лишние файлы, чтобы добавить новые.`
     return
   }
   const known = new Set(staged.value.map(s => sig(s.file)))
@@ -101,8 +101,8 @@ function onPicked(files: File[] | null | undefined): void {
     added++
   }
   const notes: string[] = []
-  if (dupes) notes.push(`${dupes} уже в списке — пропущены`)
-  if (added < files.length - dupes) notes.push(`очередь ограничена ${MAX_UPLOAD_FILES} файлами`)
+  if (dupes) notes.push(`${dupes} уже в списке, их пропустили`)
+  if (added < files.length - dupes) notes.push(`за раз можно не больше ${MAX_UPLOAD_FILES} файлов`)
   notice.value = notes.length ? `Добавлено ${added} из ${files.length}: ${notes.join('; ')}.` : ''
 }
 function remove(id: number): void {
@@ -119,7 +119,7 @@ const doneCount = computed(() => staged.value.filter(s => s.status === 'done').l
 
 const STATUS_LABEL: Record<Status, string> = {
   queued: 'В очереди',
-  uploading: 'Отправка…',
+  uploading: 'Отправляем…',
   done: 'Отправлен',
   error: 'Ошибка'
 }
@@ -155,11 +155,11 @@ async function startImport(): Promise<void> {
       ok++
     } else {
       s.status = 'error'
-      s.error = 'не удалось отправить'
+      s.error = 'Не удалось отправить файл — проверьте связь и нажмите «Импортировать» ещё раз.'
     }
   }
   importing.value = false
-  notice.value = `Отправлено в CRM: ${ok} из ${attempted}. Статус обработки — ниже, в «Последние операции».`
+  notice.value = `Отправили в CRM ${ok} из ${attempted}. Что с ними дальше — смотрите ниже, в блоке «Последние операции».`
 }
 </script>
 
@@ -179,10 +179,10 @@ async function startImport(): Promise<void> {
       @drop.prevent="onDrop"
     >
       <span class="text-base font-medium text-(--ui-color-base-1)">
-        Перетащите файл(ы) или нажмите — выберите файл или сделайте фото
+        Нажмите, чтобы выбрать файл или сделать фото. Можно просто перетащить файлы сюда
       </span>
       <span class="text-sm text-(--ui-color-base-3)">
-        PDF, фото, Excel, Word · до 20 МБ · импорт по кнопке ниже
+        PDF, фото, Excel, Word · до 20 МБ · чтобы начать, нажмите «Импортировать» внизу
       </span>
       <input
         ref="fileInput"
@@ -260,7 +260,7 @@ async function startImport(): Promise<void> {
       />
       <B24Button
         v-if="doneCount"
-        label="Убрать отправленные"
+        label="Убрать отправленные из списка"
         color="air-tertiary-no-accent"
         size="sm"
         :disabled="importing"

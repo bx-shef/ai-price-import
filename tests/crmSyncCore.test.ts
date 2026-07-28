@@ -62,7 +62,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const r = await runCrmSync('j', d, mapping(), {}, deps)
     expect(r.created).toBe(false)
     expect(deps.createTarget).not.toHaveBeenCalled()
-    expect(r.errors.some(e => /Отрицательная ставка/.test(e))).toBe(true)
+    expect(r.errors.some(e => /отрицательная ставка НДС/i.test(e))).toBe(true)
   })
 
   it('vatRate 0 → «Без НДС» (taxRate null), NOT a lookup for a 0% portal rate', async () => {
@@ -98,7 +98,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
       expect.objectContaining({ taxIncluded: 'N', price: 0.86, quantity: 10000, taxRate: 20 })
     ]))
-    expect(r.warnings.some(w => /уточнён по итогу/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /уточнили НДС/.test(w))).toBe(true)
   })
 
   it('DISCOUNT line (negative price) → deal opportunity reflects the discount, not the inflated row-sum', async () => {
@@ -128,7 +128,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const r = await runCrmSync('j', d, mapping(), {}, deps)
     expect(r.created).toBe(true)
     expect(r.errors).toHaveLength(0)
-    expect(r.warnings.some(w => /итог документа не сошёлся/i.test(w))).toBe(true)
+    expect(r.warnings.some(w => /не сошёлся с суммой строк/i.test(w))).toBe(true)
     // NOT anchored to the bogus 99999 — opportunity computed from the lines (net-priced gross = 120).
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 120 }))
   })
@@ -151,7 +151,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     }
     const r = await runCrmSync('j', d, m, {}, deps)
     expect(r.rowCount).toBe(1) // discount line skipped
-    expect(r.warnings.some(w => /не включает пропущенные позиции/i.test(w))).toBe(true)
+    expect(r.warnings.some(w => /сумма записи меньше итога/i.test(w))).toBe(true)
   })
 
   it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {
@@ -180,7 +180,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     // Created as a DEAL (2), not a lead (1); marker/filter use the deal.
     expect(deps.createTarget).toHaveBeenCalledWith(expect.objectContaining({ entityTypeId: 2 }), expect.any(Object))
     expect(deps.findExisting).toHaveBeenCalledWith(2, expect.any(Object))
-    expect(r.warnings.some(w => /простом режиме CRM/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /отключены лиды/.test(w))).toBe(true)
   })
 
   it('lead target with leads ENABLED (classic) stays a lead', async () => {
@@ -213,7 +213,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ reportErrors })
     const r = await runCrmSync('job1', doc, m, {}, deps)
     expect(r.created).toBe(false)
-    expect(r.errors.some(e => /не поддерживается импортом/.test(e))).toBe(true)
+    expect(r.errors.some(e => /вносить нельзя/.test(e))).toBe(true)
     expect(deps.findExisting).not.toHaveBeenCalled()
     expect(deps.createTarget).not.toHaveBeenCalled()
     expect(reportErrors).toHaveBeenCalled()
@@ -233,7 +233,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ notifySuccess })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(r.created).toBe(true)
-    expect(r.warnings).toContain('Уведомление в чат не отправлено')
+    expect(r.warnings.some(w => /сообщение в чат отправить не удалось/.test(w))).toBe(true)
   })
 
   it('writeActivity records a configurable дело on the created entity', async () => {
@@ -248,7 +248,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ writeActivity, findCompanyByTaxId: vi.fn(async () => null) })
     await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(writeActivity).toHaveBeenCalledWith(expect.objectContaining({
-      warnings: expect.arrayContaining([expect.stringMatching(/Поставщик не найден/)])
+      warnings: expect.arrayContaining([expect.stringMatching(/Поставщик из документа не найден/)])
     }))
   })
 
@@ -264,7 +264,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const writeActivity = vi.fn(() => Promise.reject(new Error('timeline down')))
     const r = await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
     expect(r.created).toBe(true)
-    expect(r.warnings).toContain('Дело в таймлайне не создано')
+    expect(r.warnings.some(w => /запись в таймлайне создать не удалось/.test(w))).toBe(true)
   })
 
   it('writeActivity rowCount is WRITTEN rows, not document item count (skip-warn divergence)', async () => {
@@ -417,7 +417,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
       expect.any(Object)
     )
     // the redirect is surfaced, not silent
-    expect(r.warnings.some(w => /воронка удалена/i.test(w))).toBe(true)
+    expect(r.warnings.some(w => /Воронка, выбранная для импорта, удалена/i.test(w))).toBe(true)
   })
 
   it('validation is SKIPPED when listCategoryIds dep is absent (backward-compat)', async () => {
@@ -426,7 +426,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps() // no listCategoryIds
     const r = await runCrmSync('job1', doc, m, {}, deps)
     expect(deps.createTarget).toHaveBeenCalledWith(expect.objectContaining({ entityTypeId: 2, categoryId: 5 }), expect.any(Object))
-    expect(r.warnings.some(w => /воронка удалена/i.test(w))).toBe(false)
+    expect(r.warnings.some(w => /Воронка, выбранная для импорта, удалена/i.test(w))).toBe(false)
   })
 
   it('deleted funnel: rule direction gone → falls back to the (valid) default target', async () => {
@@ -453,7 +453,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(r.created).toBe(true)
-    expect(r.warnings.some(w => /Поставщик не найден/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /Поставщик из документа не найден/.test(w))).toBe(true)
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyId: expect.anything() }))
   })
 
@@ -505,7 +505,7 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     void priceIncludesVat
     const r = await runCrmSync('j', rest as ExtractedDocument, mapping(), {}, deps)
     expect(r.created).toBe(false)
-    expect(r.errors.some(e => /включён ли НДС/.test(e))).toBe(true)
+    expect(r.errors.some(e => /не понять, включён НДС/.test(e))).toBe(true)
     expect(deps.createTarget).not.toHaveBeenCalled()
   })
 
@@ -592,7 +592,7 @@ describe('runCrmSync — products / units / routing', () => {
     const r = await runCrmSync('j', d, m, {}, deps)
     expect(createMeasure).toHaveBeenCalledWith('рулон')
     expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 1001 })
-    expect(r.warnings.some(w => /создана в каталоге/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /добавлена в каталог/.test(w))).toBe(true)
   })
 
   it('autoCreate: unit matched an EXISTING measure (created:false) → "сопоставлена с мерой" warning', async () => {
@@ -604,7 +604,7 @@ describe('runCrmSync — products / units / routing', () => {
     const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
     const r = await runCrmSync('j', d, m, {}, deps)
     expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 796 })
-    expect(r.warnings.some(w => /сопоставлена с мерой портала/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /сопоставлена с единицей из вашего/.test(w))).toBe(true)
   })
 
   it('autoCreate: null → default code + "не сопоставлена"; warning deduped across repeated unit', async () => {
@@ -622,7 +622,7 @@ describe('runCrmSync — products / units / routing', () => {
     const r = await runCrmSync('j', d, m, {}, deps)
     expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: m.units.defaultCode })
     // same unit on two rows → the "не сопоставлена" warning appears once
-    expect(r.warnings.filter(w => /не сопоставлена/.test(w))).toHaveLength(1)
+    expect(r.warnings.filter(w => /не распознана/.test(w))).toHaveLength(1)
   })
 
   it('autoCreate OFF: createMeasure dep NOT called even if present', async () => {
@@ -672,7 +672,7 @@ describe('runCrmSync — products / units / routing', () => {
     const r = await runCrmSync('j', d, mapping(), {}, deps)
     const row = (deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]!
     expect(row.price).toBe(0)
-    expect(r.warnings.some(w => /Отрицательн/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /отрицательные/.test(w))).toBe(true)
   })
 
   it('manual override routes to a different entity type; stageId passes through', async () => {
