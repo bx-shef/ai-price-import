@@ -279,7 +279,8 @@ pnpm verify:chat  # экстрактор (openai SDK): --provider deepseek|bitri
 pnpm live:crm --ai# полный E2E: текст → DeepSeek → runCrmSync → сделка+позиции+уведомление+очистка
 pnpm verify:idem  # идемпотентность: 2 прогона одним jobId → повтор нашёл по маркеру, created:false
 pnpm loadtest:123 # доказательство rate-limiter (RestrictionManager)
-pnpm loadtest:queue # нагрузка на очередь (локальный Redis): backlog, дедуп, обрыв воркера, scale-out
+pnpm loadtest:queue # очередь под нагрузкой (локальный Redis): backlog, дедуп, обрыв воркера,
+                    # scale-out, приём под нагрузкой + реальный темп лимитера Б24 (~900 док/ч на портал)
 ```
 
 ## Конвенции

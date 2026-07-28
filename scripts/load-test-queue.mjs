@@ -28,15 +28,33 @@ const CONCURRENCY = arg('--concurrency', 4)
 const WORK_MS = arg('--work-ms', 12) // simulated per-document processing time
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379'
-const connection = (() => {
-  const u = new URL(REDIS_URL)
-  return {
-    host: u.hostname,
-    port: Number(u.port || 6379),
-    ...(u.password ? { password: u.password } : {}),
-    maxRetriesPerRequest: null
-  }
-})()
+const redisUrl = new URL(REDIS_URL)
+
+// SAFETY GATE. This script writes thousands of keys and calls queue.obliterate(). REDIS_URL is
+// commonly inherited from a shell that still holds production values, so refuse to run against
+// anything but a local Redis unless the operator opts in EXPLICITLY. Queue names are suffixed with
+// a run id and can never collide with the real b24-events/file-extract/agent-run/crm-sync queues,
+// but that is one barrier — this is the second, and it fails CLOSED.
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', 'redis'])
+if (!LOCAL_HOSTS.has(redisUrl.hostname) && !process.argv.includes('--allow-remote-redis')) {
+  console.error(`Отказ: REDIS_URL указывает на «${redisUrl.hostname}», а не на локальный Redis.`)
+  console.error('Скрипт создаёт тысячи задач и удаляет свои очереди — на боевом Redis это лишняя нагрузка и мусор.')
+  console.error('Поднимите локальный Redis (redis-server --daemonize yes) или, если вы точно уверены,')
+  console.error('запустите с флагом --allow-remote-redis.')
+  process.exit(1)
+}
+
+const connection = {
+  host: redisUrl.hostname,
+  port: Number(redisUrl.port || 6379),
+  ...(redisUrl.username ? { username: redisUrl.username } : {}),
+  ...(redisUrl.password ? { password: redisUrl.password } : {}),
+  ...(redisUrl.protocol === 'rediss:' ? { tls: {} } : {}),
+  ...(redisUrl.pathname.length > 1 ? { db: Number(redisUrl.pathname.slice(1)) || 0 } : {}),
+  maxRetriesPerRequest: null
+}
+/** Never print REDIS_URL raw — it may carry a password. */
+const SAFE_REDIS = `${redisUrl.protocol}//${redisUrl.host}${redisUrl.pathname}`
 
 // Mirrors server/queue/worker.ts crmLockTuning() — the whole point of the stalled-recovery scenario
 // is to exercise the SAME lock settings production uses.
@@ -60,6 +78,19 @@ async function makeQueue(suffix) {
   created.push(q)
   return q
 }
+/** Drop ONLY the temporary queues this run created. The name assert is defence-in-depth: a future
+ *  scenario that forgets the `qname()` helper must never be able to obliterate a real queue. */
+async function cleanup() {
+  for (const q of created) {
+    if (!q.name.startsWith('loadtest-')) {
+      console.error(`ОТКАЗ чистить очередь «${q.name}» — имя не похоже на временную очередь прогона`)
+      continue
+    }
+    await q.obliterate({ force: true }).catch(() => {})
+    await q.close().catch(() => {})
+  }
+}
+
 /** Deterministic job id per (portal, doc) — the same shape crm-sync uses so a retry dedupes. */
 const jobIdFor = (portal, n) => `cs|${portal}|doc${n}`
 
@@ -87,6 +118,7 @@ async function scenarioBacklog() {
   const processed = []
   let inFlight = 0
   let peakInFlight = 0
+  let peakActiveInRedis = 0
   const samples = []
   const started = Date.now()
 
@@ -104,7 +136,9 @@ async function scenarioBacklog() {
 
   // Watch the backlog drain instead of just waiting for the end — «держит очередь» is the claim.
   while (processed.length < JOBS && Date.now() - started < 120_000) {
-    samples.push(await q.getWaitingCount() + await q.getActiveCount())
+    const active = await q.getActiveCount()
+    peakActiveInRedis = Math.max(peakActiveInRedis, active)
+    samples.push(await q.getWaitingCount() + active)
     await sleep(120)
   }
   const elapsed = Date.now() - started
@@ -113,10 +147,20 @@ async function scenarioBacklog() {
   const unique = new Set(processed)
   check(processed.length === JOBS, `обработаны ВСЕ ${JOBS} документов (получено ${processed.length}) — ничего не потеряно`)
   check(unique.size === JOBS, `каждый документ обработан РОВНО один раз (уникальных ${unique.size}) — дублей нет`)
+  // Cross-check against REDIS, not just the in-process counter: a handler that ran but whose
+  // completion never committed would satisfy the array and still be a lost document.
+  const completedInRedis = await q.getCompletedCount()
+  const failedInRedis = await q.getFailedCount()
+  check(completedInRedis === JOBS, `Redis подтверждает завершение всех ${JOBS} задач (completed=${completedInRedis})`)
+  check(failedInRedis === 0, `упавших задач нет (failed=${failedInRedis})`)
   const left = await q.getWaitingCount() + await q.getActiveCount()
   check(left === 0, `очередь разгрузилась до нуля (осталось ${left})`)
   const cap = WORKERS * CONCURRENCY
-  check(peakInFlight <= cap, `одновременно в работе не больше лимита: пик ${peakInFlight} ≤ ${cap}`)
+  // Two independent views of the parallelism cap: the in-process counter (what our handler saw) and
+  // what REDIS reported as active while draining — the local counter alone is close to a tautology,
+  // BullMQ cannot call the handler more than `concurrency` times in one process by construction.
+  check(peakInFlight <= cap, `одновременно в работе не больше лимита: пик ${peakInFlight} ≤ ${cap} (счётчик обработчика)`)
+  check(peakActiveInRedis <= cap, `Redis тоже не видел больше ${cap} активных задач (пик ${peakActiveInRedis})`)
 
   const peakBacklog = Math.max(...samples, waitingAtStart)
   const rate = (JOBS / (elapsed / 1000)).toFixed(1)
@@ -144,7 +188,10 @@ async function scenarioIdempotency() {
   const c = await q.add('crm-sync', data, { jobId: id })
   check(a.id === b.id && b.id === c.id, 'три постановки одного документа дали ОДНУ задачу (дедуп по jobId)')
 
-  await sleep(400)
+  // Wait for the job to actually COMPLETE instead of sleeping a guessed interval — a fixed sleep
+  // turns into a flake the moment the machine is busy.
+  const until = Date.now() + 10_000
+  while (Date.now() < until && (await q.getCompletedCount()) < 1) await sleep(25)
   await worker.close()
   check(seen.length === 1, `обработчик вызван один раз (вызовов ${seen.length}) — сущность в CRM не задвоится`)
 }
@@ -198,12 +245,12 @@ async function scenarioWorkerCrash() {
   // «хотя бы один раз», а не «ровно один раз» — от задвоения сущности в CRM защищает не очередь,
   // а маркер идемпотентности (поиск перед созданием в crm-sync).
   const redelivered = [...handledCount.entries()].filter(([, n]) => n > 1)
-  if (redelivered.length) {
-    info(`повторно доставлено после обрыва: ${redelivered.length} шт. (${redelivered.map(([k]) => k).join(', ')})`)
-    info('это ожидаемо: очередь гарантирует «хотя бы один раз»; дубль в CRM ловит маркер идемпотентности')
-  } else {
-    info('повторных доставок не потребовалось (все задачи успели зафиксироваться до обрыва)')
-  }
+  // ASSERT, not log: without this the scenario would stay green even if stalled-recovery were
+  // broken outright — «все дошли» can also mean «ничего и не зависало», i.e. the path never ran.
+  check(stuck > 0, `после обрыва действительно зависли задачи в состоянии «в работе» (${stuck}) — было что восстанавливать`)
+  check(redelivered.length > 0, `зависшие задачи ПЕРЕДОСТАВЛЕНЫ новой реплике (${redelivered.length} шт.) — механизм восстановления сработал`)
+  info(`повторно доставлено: ${redelivered.map(([k]) => k).join(', ')}`)
+  info('это ожидаемо: очередь гарантирует «хотя бы один раз»; дубль в CRM ловит маркер идемпотентности')
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -233,6 +280,7 @@ async function scenarioScaleOut() {
 
   check(handled.length === N, `все ${N} задач разобраны (получено ${handled.length})`)
   check(new Set(handled).size === N, 'ни одна задача не досталась двум репликам сразу')
+  check(await q.getCompletedCount() === N, 'Redis подтверждает завершение всех задач')
   check(byWorker.every(c => c > 0), `нагрузка легла на все реплики: ${byWorker.join(' / ')}`)
 }
 
@@ -273,19 +321,91 @@ async function scenarioAcceptUnderLoad() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// 6. РЕАЛИСТИЧНЫЙ ТЕМП. Сценарии 1-5 меряют саму очередь, и её потолок (сотни док/с) к реальности
+//    отношения не имеет: настоящее узкое место — лимитер Битрикс24 (~2 запроса/с на портал), а один
+//    документ стоит ~8 REST-вызовов, то есть ~4 с на документ на портал. Здесь обработчик работает
+//    именно в этом темпе — чтобы ответить на вопрос владельца «держит ли очередь», а не «сколько
+//    задач в секунду прожуёт Redis». Пропускается флагом --skip-slow.
+// ---------------------------------------------------------------------------------------------
+const PORTAL_RPS = 2 // leaky-bucket лимитера Б24 на портал
+const REST_PER_DOC = 8 // сколько REST-вызовов делает crm-sync на один документ (оценка)
+const SEC_PER_DOC = REST_PER_DOC / PORTAL_RPS // ≈ 4 с на документ на портал
+
+async function scenarioRealisticPace() {
+  head('6 · Реалистичный темп: обработка в ритме лимитера Битрикс24')
+  if (process.argv.includes('--skip-slow')) {
+    info('пропущено (--skip-slow)')
+    return null
+  }
+  const q = await makeQueue('pace')
+  const portals = 3
+  const perPortal = 3
+  const N = portals * perPortal
+  info(`${REST_PER_DOC} REST-вызовов на документ при лимите ${PORTAL_RPS} зап/с ⇒ ${SEC_PER_DOC} с на документ на портал`)
+  info(`${N} документов от ${portals} порталов — ожидаем ≈ ${(perPortal * SEC_PER_DOC).toFixed(0)} с`)
+
+  await q.addBulk(Array.from({ length: N }, (_, i) => ({
+    name: 'crm-sync',
+    data: { memberId: `portal${i % portals}`, jobId: `doc${i}` },
+    opts: { jobId: jobIdFor(`pace${i % portals}`, i) }
+  })))
+
+  // Один «бакет» на портал: документы одного портала идут строго по очереди в темпе лимитера,
+  // разные порталы — параллельно. Так же ведёт себя прод: лимитер пер-портальный.
+  const busyUntil = new Map()
+  const done = []
+  const worker = new Worker(q.name, async (job) => {
+    const key = job.data.memberId
+    const now = Date.now()
+    const start = Math.max(now, busyUntil.get(key) ?? 0)
+    busyUntil.set(key, start + SEC_PER_DOC * 1000)
+    await sleep(start - now + SEC_PER_DOC * 1000)
+    done.push(job.data.jobId)
+  }, { connection, concurrency: portals * 2, ...CRM_LOCK })
+
+  const started = Date.now()
+  const until = started + 90_000
+  while (done.length < N && Date.now() < until) await sleep(200)
+  const elapsed = (Date.now() - started) / 1000
+  await worker.close()
+
+  check(done.length === N, `все ${N} документов обработаны в реальном темпе (получено ${done.length})`)
+  const left = await q.getWaitingCount() + await q.getActiveCount()
+  check(left === 0, `очередь разгрузилась (осталось ${left})`)
+  // Очередь не должна быть узким местом: время близко к теоретическому минимуму, который
+  // задаёт лимитер портала, а не накладные расходы BullMQ.
+  const floor = perPortal * SEC_PER_DOC
+  check(elapsed < floor * 1.6, `время разгрузки ${elapsed.toFixed(1)} с близко к пределу лимитера ${floor} с — тормозит портал, а не очередь`)
+
+  const perHourPerPortal = Math.floor(3600 / SEC_PER_DOC)
+  info(`РЕАЛЬНАЯ оценка: ≈ ${perHourPerPortal} документов в час НА ПОРТАЛ (упирается в лимитер Б24)`)
+  info(`1000 документов одного портала разгребались бы ≈ ${(1000 * SEC_PER_DOC / 3600).toFixed(1)} ч — очередь их держит, но быстрее лимитер не даст`)
+  return { perHourPerPortal }
+}
+
+// ---------------------------------------------------------------------------------------------
 async function main() {
   console.log(`${C.b}Нагрузочное тестирование очереди импорта${C.x}`)
-  console.log(`${C.d}Redis: ${REDIS_URL} · прогон ${runId}${C.x}`)
+  console.log(`${C.d}Redis: ${SAFE_REDIS} · прогон ${runId}${C.x}`)
   console.log(`${C.d}Цель: не отказывать и не терять документы — держать очередь и всё постепенно обработать.${C.x}`)
 
-  const summary = await scenarioBacklog()
-  await scenarioIdempotency()
-  await scenarioWorkerCrash()
-  await scenarioScaleOut()
-  await scenarioAcceptUnderLoad()
+  let summary
+  let pace
+  try {
+    summary = await scenarioBacklog()
+    await scenarioIdempotency()
+    await scenarioWorkerCrash()
+    await scenarioScaleOut()
+    await scenarioAcceptUnderLoad()
+    pace = await scenarioRealisticPace()
+  } finally {
+    // Clean up even when a scenario throws — otherwise a failed run leaves its keys in Redis forever.
+    await cleanup()
+  }
 
   head('Итог')
-  info(`пропускная способность ${summary.rate} док/с · пик очереди ${summary.peakBacklog} · разгрузка ${(summary.elapsed / 1000).toFixed(1)} с`)
+  info(`механика очереди (заглушка, НЕ реальная скорость): ${summary.rate} док/с · пик ${summary.peakBacklog} · разгрузка ${(summary.elapsed / 1000).toFixed(1)} с`)
+  if (pace) info(`реальный предел (лимитер Б24): ≈ ${pace.perHourPerPortal} документов в час на портал`)
   if (failures.length) {
     console.log(`\n${C.r}ПРОВАЛ: ${failures.length}${C.x}`)
     failures.forEach(f => console.log(`  - ${f}`))
@@ -293,10 +413,7 @@ async function main() {
     console.log(`\n${C.g}Все проверки пройдены — очередь держит нагрузку и разгружается полностью.${C.x}`)
   }
 
-  for (const q of created) {
-    await q.obliterate({ force: true }).catch(() => {})
-    await q.close().catch(() => {})
-  }
+  await cleanup()
   process.exit(failures.length ? 1 : 0)
 }
 
