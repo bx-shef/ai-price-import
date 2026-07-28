@@ -196,7 +196,7 @@ const measureItems = computed(() => {
 // are picked with the SAME shared <TargetPicker> as the import screen (owner: код общий) — so entity/
 // direction/stage selection (incl. named smart processes, smart-invoice = stage-only, no-leads hiding)
 // behaves identically everywhere. The row keeps the client-only `id` for a stable v-for key.
-interface EditableRoutingRow { id: number, keywords: string, entityTypeId: number | null, categoryId?: number, stageId?: string }
+interface EditableRoutingRow { id: number, keywords: string, entityTypeId: number | null, categoryId?: number, stageId?: string, type?: string }
 let nextRuleId = 1
 const routingRows = ref<EditableRoutingRow[]>([])
 function seedRoutingRows() {
@@ -209,7 +209,7 @@ function removeRoutingRow(id: number) {
   routingRows.value = routingRows.value.filter(r => r.id !== id)
 }
 watch(routingRows, (rows) => {
-  mapping.value.routingRules = rowsToRules(rows.map(r => ({ keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId })))
+  mapping.value.routingRules = rowsToRules(rows.map(r => ({ keywords: r.keywords, entityTypeId: r.entityTypeId, categoryId: r.categoryId, stageId: r.stageId, type: r.type })))
 }, { deep: true })
 
 // The default target ⇄ a TargetPicker model. The default target is always concrete (never «Авто»), so

@@ -13,13 +13,13 @@ describe('parseKeywords', () => {
 })
 
 describe('rulesToRows (keyword-only editor)', () => {
-  it('joins keywords + reads the target; a stored match.type is ignored (no longer edited)', () => {
+  it('joins keywords + reads the target; a stored match.type is CARRIED hidden (not edited, not destroyed)', () => {
     const rules: RoutingRule[] = [
       { match: { type: 'накладная', keywords: ['ттн', 'накл'] }, target: { entityTypeId: 2 } },
       { match: { keywords: ['счёт'] }, target: { entityTypeId: 31 } }
     ]
     expect(rulesToRows(rules)).toEqual([
-      { keywords: 'ттн, накл', entityTypeId: 2 },
+      { keywords: 'ттн, накл', entityTypeId: 2, type: 'накладная' },
       { keywords: 'счёт', entityTypeId: 31 }
     ])
   })
@@ -64,6 +64,15 @@ describe('rowsToRules (keyword-only editor)', () => {
     ]
     expect(rowsToRules(rulesToRows(rules))).toEqual(rules)
   })
+  it('CARRIES a legacy type-based rule through the round-trip (not destroyed on re-save)', () => {
+    // A rule saved before «Тип» was dropped from the UI: type-only (no keywords) survives editing.
+    const rules: RoutingRule[] = [
+      { match: { type: 'счёт' }, target: { entityTypeId: 31 } },
+      { match: { type: 'накладная', keywords: ['ттн'] }, target: { entityTypeId: 2 } }
+    ]
+    expect(rowsToRules(rulesToRows(rules))).toEqual(rules)
+  })
+
   it('preserves a category/stage-scoped target across the round-trip (not stripped)', () => {
     const rules: RoutingRule[] = [
       { match: { keywords: ['договор'] }, target: { entityTypeId: 1032, categoryId: 7, stageId: 'DT1032_7:NEW' } }

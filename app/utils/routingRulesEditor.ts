@@ -8,12 +8,17 @@ import { MAX_ROUTING_RULES, MAX_RULE_KEYWORDS } from './portalSettings'
 // editor neither shows nor writes it.) Keeping the conversion pure + tested keeps the Vue component thin.
 
 /** One editable rule row: keywords (comma/newline text) + the target (entityTypeId while unset = null,
- *  plus its `categoryId`/`stageId`, all now picked via the shared TargetPicker). */
+ *  plus its `categoryId`/`stageId`, all now picked via the shared TargetPicker). A legacy `type` (from a
+ *  rule saved before «Тип» was dropped from the UI) is CARRIED THROUGH silently — not shown/edited, but
+ *  not destroyed either, so an existing type-based rule survives a settings re-save (routing.ts still
+ *  honours it at runtime). */
 export interface EditableRoutingRule {
   keywords: string
   entityTypeId: number | null
   categoryId?: number
   stageId?: string
+  /** Legacy document-type condition — preserved round-trip, never edited by the current UI. */
+  type?: string
 }
 
 /** Split a keywords string (comma OR newline separated) into a clean array: trimmed, non-empty,
@@ -35,36 +40,40 @@ export function parseKeywords(text: string): string[] {
 }
 
 /** Editable rows ← stored rules. Keywords are joined for the input; a non-positive/absent target
- *  entityTypeId becomes null (unset); categoryId/stageId are carried. A stored `match.type` is ignored
- *  (the editor is keyword-only now). */
+ *  entityTypeId becomes null (unset); categoryId/stageId are carried. A stored `match.type` is CARRIED
+ *  (hidden) so a legacy type rule isn't destroyed on re-save. */
 export function rulesToRows(rules: RoutingRule[] | null | undefined): EditableRoutingRule[] {
   const rs = Array.isArray(rules) ? rules : []
   return rs.map((r) => {
     const etid = r?.target?.entityTypeId
     const catId = r?.target?.categoryId
     const stageId = r?.target?.stageId
+    const type = r?.match?.type
     return {
       keywords: Array.isArray(r?.match?.keywords) ? r.match.keywords.join(', ') : '',
       entityTypeId: Number.isInteger(etid) && (etid as number) > 0 ? etid as number : null,
       ...(Number.isInteger(catId) ? { categoryId: catId as number } : {}),
-      ...(typeof stageId === 'string' && stageId ? { stageId } : {})
+      ...(typeof stageId === 'string' && stageId ? { stageId } : {}),
+      ...(typeof type === 'string' && type ? { type } : {})
     }
   })
 }
 
-/** Stored rules ← editable rows. Drops a row that could never work: NO keywords (→ ruleMatches returns
- *  false) OR an invalid target (non-positive entityTypeId). Preserves categoryId/stageId. Capped at
- *  MAX_ROUTING_RULES. Mirrors parsePortalSettings' skip-empty + caps. */
+/** Stored rules ← editable rows. Drops a row that could never work: NO condition (no keywords AND no
+ *  carried type → ruleMatches returns false) OR an invalid target (non-positive entityTypeId). Preserves
+ *  categoryId/stageId AND a carried legacy `type` (so a pre-existing type rule survives re-save). Capped
+ *  at MAX_ROUTING_RULES. Mirrors parsePortalSettings' skip-empty + caps. */
 export function rowsToRules(rows: EditableRoutingRule[]): RoutingRule[] {
   const out: RoutingRule[] = []
   for (const row of rows) {
     if (out.length >= MAX_ROUTING_RULES) break
     const keywords = parseKeywords(row.keywords ?? '')
-    if (keywords.length === 0) continue // no keyword condition → never matches, drop
+    const type = (row.type ?? '').trim()
+    if (keywords.length === 0 && !type) continue // no condition → never matches, drop
     const etid = row.entityTypeId
     if (etid == null || !Number.isInteger(etid) || etid <= 0) continue // no valid target, drop
     out.push({
-      match: { keywords },
+      match: { ...(type ? { type } : {}), ...(keywords.length ? { keywords } : {}) },
       target: {
         entityTypeId: etid,
         ...(Number.isInteger(row.categoryId) ? { categoryId: row.categoryId as number } : {}),

@@ -6,8 +6,11 @@ import type { RestCall } from './b24Rest'
 // process actually uses them (owner ask). Pure over RestCall (DI).
 //
 // crm.type.list returns `{ types: [{ entityTypeId, title, isCategoriesEnabled:'Y'/'N',
-// isStagesEnabled:'Y'/'N', ... }] }` (live-verified). We keep only dynamic SPA types (entityTypeId ≥ 1000)
-// — smart-invoice (31) is offered as its own fixed preset, and deal/lead are static.
+// isStagesEnabled:'Y'/'N', isLinkWithProductsEnabled:'Y'/'N', ... }] }` (live-verified). We keep only
+// dynamic SPA types (entityTypeId ≥ 1000) that CAN hold product rows (isLinkWithProductsEnabled='Y') —
+// this app imports товарные позиции, so a products-off SPA (e.g. «Договоры») is NOT a valid target
+// (crm.item.productrow.set would fail), and offering it would be a footgun. Smart-invoice (31) is a
+// fixed preset (always has products); deal/lead are static.
 
 export interface SmartProcessType {
   entityTypeId: number
@@ -36,8 +39,11 @@ export async function fetchSmartProcessTypes(call: RestCall): Promise<SmartProce
       entityTypeId: Number(t.entityTypeId),
       title: String(t.title ?? '').trim(),
       hasCategories: yes(t.isCategoriesEnabled),
-      hasStages: yes(t.isStagesEnabled)
+      hasStages: yes(t.isStagesEnabled),
+      hasProducts: yes(t.isLinkWithProductsEnabled)
     }))
-    .filter(t => Number.isInteger(t.entityTypeId) && t.entityTypeId >= 1000 && t.title)
+    // Dynamic SPA (≥1000), titled, and able to hold product rows (else товары can't be written there).
+    .filter(t => Number.isInteger(t.entityTypeId) && t.entityTypeId >= 1000 && t.title && t.hasProducts)
+    .map(({ entityTypeId, title, hasCategories, hasStages }) => ({ entityTypeId, title, hasCategories, hasStages }))
     .sort((a, b) => a.title.localeCompare(b.title, 'ru'))
 }

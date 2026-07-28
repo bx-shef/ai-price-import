@@ -22,7 +22,9 @@ import type { TargetRef } from '~/types/mapping'
 const target = defineModel<TargetRef | null>('target', { default: null })
 // `includeAuto` adds the «Авто (по правилам)» option — on the per-file import picker (default true).
 // The settings page (default target + routing rules) passes false: those targets are always concrete.
-const props = defineProps<{ includeAuto?: boolean }>()
+// NB: Vue casts an ABSENT Boolean prop to `false` (not undefined), so the per-file import picker's
+// «Авто» default must be set explicitly via withDefaults — a `?? true` fallback would never fire.
+const props = withDefaults(defineProps<{ includeAuto?: boolean }>(), { includeAuto: true })
 
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
@@ -40,7 +42,7 @@ const stageId = ref<string | undefined>(target.value?.stageId)
 const cats = ref<CrmCategoryOption[] | undefined>(undefined)
 const stages = ref<CrmStageOption[] | undefined>(undefined)
 
-const CHOICES = computed(() => buildEntityChoices(leadsEnabled.value, smartProcesses.value, props.includeAuto ?? true))
+const CHOICES = computed(() => buildEntityChoices(leadsEnabled.value, smartProcesses.value, props.includeAuto))
 const spByEtid = computed(() => smartProcessByEtid(smartProcesses.value))
 const currentSp = computed(() => (etid.value != null ? spByEtid.value.get(etid.value) : undefined))
 
@@ -74,9 +76,20 @@ async function initCascade(): Promise<void> {
   const nextCats = await loadCrmCategories(etid.value)
   if (my !== seq) return
   cats.value = nextCats
+  // Reconcile a STALE direction: if the saved categoryId no longer exists on the portal (funnel
+  // deleted), clear it so the picker doesn't show a dangling value and a bad id isn't re-saved.
+  const before = { categoryId: categoryId.value, stageId: stageId.value }
+  const catT = { entityTypeId: etid.value, categoryId: categoryId.value }
+  catPicker.reconcileCategory(catT, nextCats)
+  categoryId.value = catT.categoryId
   const nextStages = await loadCrmStages(etid.value, categoryId.value ?? null)
   if (my !== seq) return
   stages.value = nextStages
+  // Reconcile a STALE stage likewise.
+  const stageT = { stageId: stageId.value }
+  stagePicker.reconcileStage(stageT, nextStages)
+  stageId.value = stageT.stageId
+  if (before.categoryId !== categoryId.value || before.stageId !== stageId.value) emit()
 }
 async function chooseEntity(id: number | null): Promise<void> {
   const my = ++seq
@@ -93,6 +106,10 @@ async function chooseEntity(id: number | null): Promise<void> {
   // or a category-less SPA with stages), silently auto-pick the single/first category so the stage list
   // can load (its stageEntityId needs a category).
   if (autoPickSingleCategory(id, spByEtid.value.get(id ?? -1)) && nextCats?.length) {
+    // Direction is hidden (e.g. smart-invoice = «always one»); use the sole category. If the portal
+    // unexpectedly has MORE than one, warn — we silently take the first, which may not be the intended
+    // one (the direction picker is hidden by design, so the user can't choose).
+    if (nextCats.length > 1) console.warn(`[TargetPicker] entity ${id} has ${nextCats.length} directions but the picker is hidden — using the first («${nextCats[0]!.name ?? nextCats[0]!.id}»)`)
     categoryId.value = nextCats[0]!.id
     emit()
   }

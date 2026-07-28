@@ -2,23 +2,25 @@ import { describe, expect, it, vi } from 'vitest'
 import { fetchSmartProcessTypes } from '../server/utils/typeLookup'
 
 describe('fetchSmartProcessTypes', () => {
-  it('maps crm.type.list → {entityTypeId,title,hasCategories,hasStages}, dynamic SPA only, sorted', () => {
+  it('maps dynamic SPA (≥1000) that CAN hold products → {…,hasCategories,hasStages}, sorted; drops the rest', async () => {
     const call = vi.fn(async () => ({
       types: [
-        { entityTypeId: 1050, title: 'Заявки', isCategoriesEnabled: 'Y', isStagesEnabled: 'N' },
-        { entityTypeId: 1044, title: 'Договоры', isCategoriesEnabled: 'N', isStagesEnabled: 'Y' },
-        { entityTypeId: 31, title: 'Смарт-счёт', isCategoriesEnabled: 'Y', isStagesEnabled: 'Y' } // NOT ≥1000 → excluded
+        { entityTypeId: 1050, title: 'Заявки', isCategoriesEnabled: 'Y', isStagesEnabled: 'N', isLinkWithProductsEnabled: 'Y' },
+        { entityTypeId: 1044, title: 'Договоры', isCategoriesEnabled: 'N', isStagesEnabled: 'Y', isLinkWithProductsEnabled: 'N' }, // NO products → excluded
+        { entityTypeId: 1060, title: 'Заказы', isCategoriesEnabled: 'N', isStagesEnabled: 'Y', isLinkWithProductsEnabled: 'Y' },
+        { entityTypeId: 31, title: 'Смарт-счёт', isLinkWithProductsEnabled: 'Y' } // NOT ≥1000 → excluded
       ]
     }))
-    expect(fetchSmartProcessTypes(call as never)).resolves.toEqual([
-      { entityTypeId: 1044, title: 'Договоры', hasCategories: false, hasStages: true },
+    expect(await fetchSmartProcessTypes(call as never)).toEqual([
+      { entityTypeId: 1060, title: 'Заказы', hasCategories: false, hasStages: true },
       { entityTypeId: 1050, title: 'Заявки', hasCategories: true, hasStages: false }
     ])
   })
-  it('drops titleless / non-integer entityTypeId rows', async () => {
+  it('drops titleless / non-integer entityTypeId / products-off rows', async () => {
     const call = vi.fn(async () => ({ types: [
-      { entityTypeId: 1044, title: '', isCategoriesEnabled: 'Y' },
-      { entityTypeId: 'x', title: 'Bad', isStagesEnabled: 'Y' }
+      { entityTypeId: 1044, title: '', isCategoriesEnabled: 'Y', isLinkWithProductsEnabled: 'Y' },
+      { entityTypeId: 'x', title: 'Bad', isStagesEnabled: 'Y', isLinkWithProductsEnabled: 'Y' },
+      { entityTypeId: 1070, title: 'НетТоваров', isLinkWithProductsEnabled: 'N' }
     ] }))
     expect(await fetchSmartProcessTypes(call as never)).toEqual([])
   })

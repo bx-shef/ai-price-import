@@ -15,7 +15,8 @@ let inFlight: Promise<void> | null = null
 export function useCrmTypes() {
   const { init, auth } = useB24()
 
-  /** Fetch once and cache. Idempotent — concurrent callers share one request. Inert outside a portal. */
+  /** Fetch and cache on SUCCESS. Idempotent — concurrent callers share one in-flight request; a FAILED
+   *  load isn't cached, so the next mounted picker retries (best-effort). Inert outside a portal. */
   async function load(): Promise<void> {
     if (loaded || inFlight) return inFlight ?? undefined
     inFlight = (async () => {
