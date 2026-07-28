@@ -31,11 +31,11 @@ const { reachGoal } = useMetrikaGoal()
         />
         <div class="min-w-0">
           <h2 class="text-base font-semibold sm:text-lg">
-            Прайс — сам, из ваших источников
+            Развернём приложение на вашем сервере
           </h2>
           <p class="mt-1 text-sm opacity-90 sm:text-base">
-            Заберём прайсы автоматически из почты, Telegram, по FTP или из другого источника и развернём
-            приложение на вашем сервере — обработка без общей очереди. Индивидуальная доработка под ваш контур.
+            Настроим импорт под ваши документы и будем забирать прайсы сами — из почты, Telegram, по FTP
+            или из другого источника. Обработка на вашем сервере, без общей очереди.
           </p>
         </div>
       </div>
@@ -47,7 +47,7 @@ const { reachGoal } = useMetrikaGoal()
 
     <template #footer>
       <B24Button
-        label="Обсудить"
+        label="Узнать подробнее"
         :href="BRIEF_URL"
         target="_blank"
         rel="noopener noreferrer"

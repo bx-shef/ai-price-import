@@ -101,7 +101,7 @@ const stepDot: Record<string, string> = {
   done: 'bg-(--ui-color-accent-main-success) text-(--ui-color-base-8)',
   active: 'border-2 border-(--ui-color-accent-main-primary) animate-pulse',
   error: 'bg-(--ui-color-accent-main-alert) text-(--ui-color-base-8)',
-  pending: 'border-2 border-(--ui-color-base-5)'
+  pending: 'border-2 border-(--ui-color-base-4)'
 }
 </script>
 

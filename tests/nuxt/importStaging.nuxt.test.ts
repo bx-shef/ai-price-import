@@ -134,4 +134,53 @@ describe('ImportStaging', () => {
     await tick()
     expect(w.text()).not.toContain('drop-me.pdf')
   })
+  // --- Регресс-гварды под утверждённый макет (PR #252) ---
+
+  it('во время отправки дропзона блокируется и объясняет почему', async () => {
+    let release: (v: boolean) => void = () => {}
+    const upload = vi.fn(() => new Promise<boolean>((r) => {
+      release = r
+    }))
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    await pick(w, [file('a.pdf')])
+    expect(w.text()).toContain('PDF, фото, Excel, Word')
+    const running = clickText(w, 'Импортировать')
+    await tick()
+    expect(w.text()).toContain('Заблокировано, пока идёт отправка')
+    expect(w.find('input[type="file"]').attributes('disabled')).toBeDefined()
+    release(true)
+    await running
+    await tick()
+  })
+
+  it('строка списка показывает размер файла', async () => {
+    const upload = vi.fn(async () => true)
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    const big = new File(['x'.repeat(2048)], 'big.pdf', { type: 'application/pdf' })
+    await pick(w, [big])
+    expect(w.text()).toContain('2 КБ')
+  })
+
+  it('подсказка живёт ВНУТРИ карточки списка (role=status), а не отдельным алертом', async () => {
+    const upload = vi.fn(async () => true)
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    await pick(w, [file('one.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    const notice = w.find('p[role="status"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toMatch(/Отправили в CRM \d+ из \d+/)
+  })
+
+  it('очистка списка сбрасывает подсказку — не показываем «письмо из прошлого»', async () => {
+    const upload = vi.fn(async () => true)
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    await pick(w, [file('one.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    expect(w.text()).toContain('Отправили в CRM')
+    await clickText(w, 'Убрать отправленные из списка')
+    await tick()
+    expect(w.text()).not.toContain('Отправили в CRM')
+  })
 })

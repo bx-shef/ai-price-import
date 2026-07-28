@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
+import AttachIcon from '@bitrix24/b24icons-vue/outline/AttachIcon'
 import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, formatBytes, validateUploadFile } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
 
@@ -105,11 +106,15 @@ function onPicked(files: File[] | null | undefined): void {
   if (added < files.length - dupes) notes.push(`за раз можно не больше ${MAX_UPLOAD_FILES} файлов`)
   notice.value = notes.length ? `Добавлено ${added} из ${files.length}: ${notes.join('; ')}.` : ''
 }
+// Dropping rows invalidates the notice ("Отправили в CRM 3 из 3") — once the list the notice talks
+// about is gone, keeping it would show a stale message over an unrelated, freshly staged batch.
 function remove(id: number): void {
   staged.value = staged.value.filter(s => s.id !== id)
+  if (!staged.value.length) notice.value = ''
 }
 function clearDone(): void {
   staged.value = staged.value.filter(s => s.status !== 'done')
+  if (!staged.value.length) notice.value = ''
 }
 
 // Uploadable rows: queued, or a retryable error (a network failure) — but NOT a pre-validation
@@ -179,13 +184,15 @@ async function startImport(): Promise<void> {
       @drop.prevent="onDrop"
     >
       <span
-        class="mb-1 flex size-11 items-center justify-center rounded-full text-xl"
+        class="mb-1 flex size-11 items-center justify-center rounded-full"
         :class="importing
           ? 'bg-(--ui-color-base-5)/40 text-(--ui-color-base-4)'
           : 'bg-(--ui-color-accent-main-primary)/10 text-(--ui-color-accent-main-primary)'"
         aria-hidden="true"
-      >↑</span>
-      <span class="max-w-[430px] text-base font-medium text-(--ui-color-base-1)">
+      ><AttachIcon class="size-5" /></span>
+      <!-- max-w-prose keeps the invitation on ~2 lines at the widths the app is shown at (in-portal
+           iframe and the B24 mobile app) instead of one long line the eye has to scan. -->
+      <span class="max-w-prose text-base font-medium text-(--ui-color-base-1)">
         Нажмите, чтобы выбрать файл или сделать фото. Можно просто перетащить файлы сюда
       </span>
       <span class="text-sm text-(--ui-color-base-3)">

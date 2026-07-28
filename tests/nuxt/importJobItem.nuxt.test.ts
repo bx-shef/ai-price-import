@@ -129,4 +129,19 @@ describe('ImportJobItem', () => {
     const btn = w.findAll('button').find(b => (b.attributes('aria-label') || '').startsWith('Убрать из списка'))
     expect(btn).toBeUndefined()
   })
+  // Регресс-гвард под макет (PR #252): полосу прогресса убрали, стёпер — единственный индикатор.
+  // Проверка по атрибуту aria-label прошла бы и со старой вёрсткой, поэтому целимся в сам элемент.
+  it('in-flight → полосы прогресса нет, стадию несёт только стёпер', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('extracting') } })
+    expect(w.find('[role="progressbar"]').exists()).toBe(false)
+    const status = w.find('[role="status"]')
+    expect(status.exists()).toBe(true)
+    expect(status.attributes('aria-label')).toContain('Стадия')
+    expect(status.text()).toContain('Извлечение текста')
+  })
+
+  it('на второй стадии первый шаг помечен галочкой', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('processing') } })
+    expect(w.find('[role="status"]').text()).toContain('✓')
+  })
 })

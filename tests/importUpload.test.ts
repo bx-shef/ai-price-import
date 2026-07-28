@@ -51,6 +51,13 @@ describe('formatBytes (размер файла в строке списка)', (
     expect(formatBytes(640 * 1024)).toBe('640 КБ')
     expect(formatBytes(1.2 * 1024 * 1024)).toBe('1,2 МБ')
   })
+  it('границы округления Б↔КБ↔МБ (частое место off-by-one)', () => {
+    expect(formatBytes(0)).toBe('0 Б')
+    expect(formatBytes(1023)).toBe('1023 Б')
+    expect(formatBytes(1024)).toBe('1 КБ')
+    expect(formatBytes(1024 * 1024 - 1)).toBe('1024 КБ')
+    expect(formatBytes(1024 * 1024)).toBe('1,0 МБ')
+  })
   it('пустая строка на мусорный размер (не показываем «NaN Б»)', () => {
     expect(formatBytes(Number.NaN)).toBe('')
     expect(formatBytes(-1)).toBe('')

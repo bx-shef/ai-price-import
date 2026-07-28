@@ -53,128 +53,112 @@ async function doReset(): Promise<void> {
 <template>
   <!-- CLIENT-ONLY: depends on the B24 frame handshake; prerender+hydrate framed mismatched (see /app). -->
   <ClientOnly>
-    <div class="mx-auto max-w-2xl p-4 sm:p-6">
-      <div class="mb-4 flex items-center justify-between">
-        <div>
-          <h1 class="text-xl font-semibold">
-            Метрики импорта
-          </h1>
-          <p class="mt-1 text-sm text-(--ui-color-base-3)">
-            Сколько документов приложение обработало и сколько времени вам сэкономило.
+    <div class="mx-auto max-w-2xl pb-6">
+      <SliderPageHeader
+        title="Метрики импорта"
+        subtitle="Сколько документов приложение обработало и сколько времени вам сэкономило."
+        :is-slider="isSlider"
+        @close="closeOrBack"
+      />
+      <div class="p-4 sm:p-6">
+        <B24Alert
+          v-if="error"
+          class="mb-4"
+          color="air-primary-warning"
+          size="sm"
+          :title="error"
+        />
+
+        <!-- Экономия — тот же MetricStat, что на /app: два экрана одной фичи читаются одинаково. -->
+        <div class="flex flex-wrap gap-3">
+          <MetricStat
+            variant="page"
+            label="Сэкономлено времени"
+            :value="savings ? formatMinutes(savings.minutesSaved) : '—'"
+          />
+          <MetricStat
+            variant="page"
+            label="Сэкономлено денег (примерно)"
+            :value="savings ? `${savings.moneySaved} ${savings.currency}` : '—'"
+          />
+        </div>
+
+        <!-- Успешность -->
+        <div class="mt-3 rounded-lg border border-(--ui-color-base-5) p-4">
+          <div class="flex items-baseline justify-between">
+            <span class="text-sm text-(--ui-color-base-3)">Документов дошло до CRM</span>
+            <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
+          </div>
+          <p class="mt-1 text-xs text-(--ui-color-base-4)">
+            Из скольких загруженных документов получилась запись в CRM. Остальные — с ошибкой, их видно в списке операций.
           </p>
         </div>
-        <button
-          type="button"
-          class="text-sm text-(--ui-color-accent-main-primary) hover:underline"
-          @click="closeOrBack"
-        >
-          {{ isSlider ? 'Закрыть' : '← К обзору' }}
-        </button>
-      </div>
 
-      <B24Alert
-        v-if="error"
-        class="mb-4"
-        color="air-primary-warning"
-        size="sm"
-        :title="error"
-      />
-
-      <!-- Экономия (мотивирующая) -->
-      <div class="grid grid-cols-2 gap-3">
-        <div class="rounded-lg bg-(--ui-color-accent-soft-green-2) p-4">
-          <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
-            {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+        <!-- Детальная разбивка -->
+        <div class="mt-3 rounded-lg border border-(--ui-color-base-5)">
+          <div class="border-b border-(--ui-color-base-5) px-4 py-2 text-xs font-semibold uppercase tracking-wide text-(--ui-color-base-4)">
+            Счётчики
           </div>
-          <div class="mt-1 text-xs text-(--ui-color-base-3)">
-            Сэкономлено времени
-          </div>
-        </div>
-        <div class="rounded-lg bg-(--ui-color-accent-soft-green-2) p-4">
-          <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
-            {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
-          </div>
-          <div class="mt-1 text-xs text-(--ui-color-base-3)">
-            Сэкономлено денег (примерно)
-          </div>
-        </div>
-      </div>
-
-      <!-- Успешность -->
-      <div class="mt-3 rounded-lg border border-(--ui-color-base-5) p-4">
-        <div class="flex items-baseline justify-between">
-          <span class="text-sm text-(--ui-color-base-3)">Документов дошло до CRM</span>
-          <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
-        </div>
-        <p class="mt-1 text-xs text-(--ui-color-base-4)">
-          Из скольких загруженных документов получилась запись в CRM. Остальные — с ошибкой, их видно в списке операций.
-        </p>
-      </div>
-
-      <!-- Детальная разбивка -->
-      <div class="mt-3 rounded-lg border border-(--ui-color-base-5)">
-        <div class="border-b border-(--ui-color-base-5) px-4 py-2 text-xs font-semibold uppercase tracking-wide text-(--ui-color-base-4)">
-          Счётчики
-        </div>
-        <p
-          v-if="summary.empty"
-          class="px-4 py-6 text-center text-sm text-(--ui-color-base-4)"
-        >
-          Пока пусто. Загрузите первый документ на главной странице — счётчики появятся здесь.
-        </p>
-        <ul
-          v-else
-          class="divide-y divide-(--ui-color-base-5)"
-        >
-          <li
-            v-for="row in summary.rows"
-            :key="row.key"
-            class="flex items-center justify-between px-4 py-2.5 text-sm"
+          <p
+            v-if="summary.empty"
+            class="px-4 py-6 text-center text-sm text-(--ui-color-base-4)"
           >
-            <span class="text-(--ui-color-base-3)">{{ row.label }}</span>
-            <span class="font-semibold text-(--ui-color-base-1) tabular-nums">{{ row.value }}</span>
-          </li>
-        </ul>
-      </div>
+            Пока пусто. Загрузите первый документ на главной странице — счётчики появятся здесь.
+          </p>
+          <ul
+            v-else
+            class="divide-y divide-(--ui-color-base-5)"
+          >
+            <li
+              v-for="row in summary.rows"
+              :key="row.key"
+              class="flex items-center justify-between px-4 py-2.5 text-sm"
+            >
+              <span class="text-(--ui-color-base-3)">{{ row.label }}</span>
+              <span class="font-semibold text-(--ui-color-base-1) tabular-nums">{{ row.value }}</span>
+            </li>
+          </ul>
+        </div>
 
-      <!-- Сброс -->
-      <div class="mt-4 flex items-center gap-2">
-        <B24Button
-          :icon="RefreshIcon"
-          color="air-tertiary-no-accent"
-          size="sm"
-          :label="'Обновить'"
-          @click="load"
-        />
-        <div class="ml-auto flex items-center gap-2">
+        <!-- Сброс -->
+        <div class="mt-4 flex items-center gap-2">
           <B24Button
-            v-if="!confirmReset"
-            label="Обнулить счётчики"
+            :icon="RefreshIcon"
             color="air-tertiary-no-accent"
             size="sm"
-            @click="() => { confirmReset = true }"
+            :label="'Обновить'"
+            @click="load"
           />
-          <template v-else>
-            <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
+          <div class="ml-auto flex items-center gap-2">
             <B24Button
-              color="air-primary-alert"
-              size="sm"
-              :loading="resetting"
-              :disabled="resetting"
-              :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
-              @click="doReset"
-            />
-            <B24Button
-              label="Отмена"
+              v-if="!confirmReset"
+              label="Обнулить счётчики"
               color="air-tertiary-no-accent"
               size="sm"
-              @click="() => { confirmReset = false }"
+              @click="() => { confirmReset = true }"
             />
-          </template>
+            <template v-else>
+              <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
+              <B24Button
+                color="air-primary-alert"
+                size="sm"
+                :loading="resetting"
+                :disabled="resetting"
+                :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
+                @click="doReset"
+              />
+              <B24Button
+                label="Отмена"
+                color="air-tertiary-no-accent"
+                size="sm"
+                @click="() => { confirmReset = false }"
+              />
+            </template>
+          </div>
         </div>
-      </div>
 
-      <BuildFooter />
+        <BuildFooter />
+      </div>
     </div>
   </ClientOnly>
 </template>

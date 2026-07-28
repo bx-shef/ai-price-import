@@ -296,22 +296,14 @@ watch(jobs, (list) => {
           :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
         >
           <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
-            <div class="flex flex-col gap-0.5">
-              <span class="text-xs uppercase tracking-wide text-(--ui-color-base-4)">
-                Сэкономлено времени
-              </span>
-              <span class="text-3xl font-semibold tracking-tight">
-                {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-              </span>
-            </div>
-            <div class="flex flex-col gap-0.5">
-              <span class="text-xs uppercase tracking-wide text-(--ui-color-base-4)">
-                Сэкономлено денег (примерно)
-              </span>
-              <span class="text-3xl font-semibold tracking-tight">
-                {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
-              </span>
-            </div>
+            <MetricStat
+              label="Сэкономлено времени"
+              :value="savings ? formatMinutes(savings.minutesSaved) : '—'"
+            />
+            <MetricStat
+              label="Сэкономлено денег (примерно)"
+              :value="savings ? `${savings.moneySaved} ${savings.currency}` : '—'"
+            />
             <div class="ml-auto flex flex-col items-end gap-2 text-xs">
               <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
               <button
@@ -361,7 +353,7 @@ watch(jobs, (list) => {
         </B24Card>
         <p
           class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
-          :class="busy ? 'opacity-60' : ''"
+          :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
         >
           <span>Документов: {{ counters.docs || 0 }}</span>
           <span>Создано в CRM: {{ counters.created || 0 }}</span>
