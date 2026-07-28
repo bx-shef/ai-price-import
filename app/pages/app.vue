@@ -288,17 +288,40 @@ watch(jobs, (list) => {
           </ul>
         </B24Card>
 
-        <!-- Экономия (компактно, внизу): сколько времени/денег сберёг импорт (оценка), + сброс метрик -->
+        <!-- Экономия (по макету 14-ui-spec §2.7): две крупные цифры в строку, справа — ссылка на
+             подробные метрики и сброс; счётчики отдельной тихой строкой ПОД карточкой. -->
         <B24Card
           variant="outline"
           class="mt-4 transition-opacity"
           :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
         >
-          <div class="mb-3 flex items-center justify-between gap-2">
-            <h2 class="text-base font-semibold">
-              Экономия
-            </h2>
-            <div class="flex items-center gap-2 text-xs">
+          <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs uppercase tracking-wide text-(--ui-color-base-4)">
+                Сэкономлено времени
+              </span>
+              <span class="text-3xl font-semibold tracking-tight">
+                {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+              </span>
+            </div>
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs uppercase tracking-wide text-(--ui-color-base-4)">
+                Сэкономлено денег (примерно)
+              </span>
+              <span class="text-3xl font-semibold tracking-tight">
+                {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
+              </span>
+            </div>
+            <div class="ml-auto flex flex-col items-end gap-2 text-xs">
+              <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
+              <button
+                v-if="!isBitrixMobile"
+                type="button"
+                class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline"
+                @click="openMetrics"
+              >
+                Подробные метрики →
+              </button>
               <B24Button
                 v-if="!confirmReset"
                 label="Сбросить"
@@ -306,7 +329,10 @@ watch(jobs, (list) => {
                 size="xs"
                 @click="() => { confirmReset = true }"
               />
-              <template v-else>
+              <div
+                v-else
+                class="flex flex-wrap items-center justify-end gap-2"
+              >
                 <span class="text-(--ui-color-base-3)">Обнулить счётчики экономии? Документы в CRM останутся.</span>
                 <B24Button
                   color="air-primary-alert"
@@ -322,46 +348,8 @@ watch(jobs, (list) => {
                   size="xs"
                   @click="() => { confirmReset = false }"
                 />
-              </template>
+              </div>
             </div>
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <B24Card
-              variant="tinted-success"
-              class="text-center"
-            >
-              <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
-                {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-              </div>
-              <div class="mt-1 text-xs text-(--ui-color-base-3)">
-                Сэкономлено времени
-              </div>
-            </B24Card>
-            <B24Card
-              variant="tinted-success"
-              class="text-center"
-            >
-              <div class="text-2xl font-semibold text-(--ui-color-accent-main-success)">
-                {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
-              </div>
-              <div class="mt-1 text-xs text-(--ui-color-base-3)">
-                Сэкономлено денег (примерно)
-              </div>
-            </B24Card>
-          </div>
-          <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3)">
-            <span>Документов: {{ counters.docs || 0 }}</span>
-            <span>Создано в CRM: {{ counters.created || 0 }}</span>
-            <span>Позиций: {{ counters.lines || 0 }}</span>
-            <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
-            <button
-              v-if="!isBitrixMobile"
-              type="button"
-              class="ml-auto text-(--ui-color-accent-main-link) hover:underline"
-              @click="openMetrics"
-            >
-              Подробные метрики →
-            </button>
           </div>
           <B24Alert
             v-if="metricsError"
@@ -371,6 +359,14 @@ watch(jobs, (list) => {
             :title="metricsError"
           />
         </B24Card>
+        <p
+          class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
+          :class="busy ? 'opacity-60' : ''"
+        >
+          <span>Документов: {{ counters.docs || 0 }}</span>
+          <span>Создано в CRM: {{ counters.created || 0 }}</span>
+          <span>Позиций: {{ counters.lines || 0 }}</span>
+        </p>
 
         <!-- Маркетинг: self-hosted оффер «развернём на вашем сервере» (внизу, ненавязчиво). -->
         <SelfHostedPromo />

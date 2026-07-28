@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
-import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, validateUploadFile } from '~/utils/importUpload'
+import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, formatBytes, validateUploadFile } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
 
 // Manual, one-by-one import staging (owner rework): picking files STAGES them into a list (no auto
@@ -178,11 +178,18 @@ async function startImport(): Promise<void> {
       @dragleave.prevent="dragging = false"
       @drop.prevent="onDrop"
     >
-      <span class="text-base font-medium text-(--ui-color-base-1)">
+      <span
+        class="mb-1 flex size-11 items-center justify-center rounded-full text-xl"
+        :class="importing
+          ? 'bg-(--ui-color-base-5)/40 text-(--ui-color-base-4)'
+          : 'bg-(--ui-color-accent-main-primary)/10 text-(--ui-color-accent-main-primary)'"
+        aria-hidden="true"
+      >↑</span>
+      <span class="max-w-[430px] text-base font-medium text-(--ui-color-base-1)">
         Нажмите, чтобы выбрать файл или сделать фото. Можно просто перетащить файлы сюда
       </span>
       <span class="text-sm text-(--ui-color-base-3)">
-        PDF, фото, Excel, Word · до 20 МБ · чтобы начать, нажмите «Импортировать» внизу
+        {{ importing ? 'Заблокировано, пока идёт отправка' : 'PDF, фото, Excel, Word · до 20 МБ · чтобы начать, нажмите «Импортировать» внизу' }}
       </span>
       <input
         ref="fileInput"
@@ -212,6 +219,7 @@ async function startImport(): Promise<void> {
             <p class="min-w-0 flex-1 truncate text-sm font-medium">
               {{ s.file.name }}
             </p>
+            <span class="shrink-0 text-xs text-(--ui-color-base-4)">{{ formatBytes(s.file.size) }}</span>
             <div class="flex shrink-0 items-center gap-2">
               <B24Badge
                 :label="STATUS_LABEL[s.status]"
@@ -244,6 +252,13 @@ async function startImport(): Promise<void> {
           </p>
         </li>
       </ul>
+      <p
+        v-if="notice"
+        class="border-t border-(--ui-color-base-5) bg-(--ui-color-base-7) px-3 py-2 text-xs text-(--ui-color-base-3)"
+        role="status"
+      >
+        {{ notice }}
+      </p>
     </B24Card>
 
     <!-- Action row: manual start + clear-done. -->
@@ -268,9 +283,9 @@ async function startImport(): Promise<void> {
       />
     </div>
 
-    <!-- Notification (instead of navigating to settings/metrics). -->
+    <!-- Notice when there is NO staged list to host it (the list renders its own footer line). -->
     <B24Alert
-      v-if="notice"
+      v-if="notice && !staged.length"
       class="mt-3"
       :color="importing ? 'air-primary' : 'air-primary-success'"
       size="sm"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALLOWED_EXT, fileExtension, MAX_UPLOAD_BYTES, planUploadBatch, UPLOAD_ACCEPT, validateUploadFile } from '../app/utils/importUpload'
+import { ALLOWED_EXT, fileExtension, MAX_UPLOAD_BYTES, planUploadBatch, UPLOAD_ACCEPT, formatBytes, validateUploadFile } from '../app/utils/importUpload'
 
 describe('validateUploadFile', () => {
   it('accepts allowed formats', () => {
@@ -42,5 +42,17 @@ describe('planUploadBatch', () => {
     expect(plan.accepted.length + plan.rejected.length).toBe(10)
     expect(plan.rejected[0]!.file.name).toBe('b.exe')
     expect(plan.truncated).toBe(files.length - 10)
+  })
+})
+
+describe('formatBytes (размер файла в строке списка)', () => {
+  it('Б / КБ / МБ с русской запятой', () => {
+    expect(formatBytes(512)).toBe('512 Б')
+    expect(formatBytes(640 * 1024)).toBe('640 КБ')
+    expect(formatBytes(1.2 * 1024 * 1024)).toBe('1,2 МБ')
+  })
+  it('пустая строка на мусорный размер (не показываем «NaN Б»)', () => {
+    expect(formatBytes(Number.NaN)).toBe('')
+    expect(formatBytes(-1)).toBe('')
   })
 })
