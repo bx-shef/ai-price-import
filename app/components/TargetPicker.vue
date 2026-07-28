@@ -3,21 +3,38 @@ import { computed, onMounted, ref } from 'vue'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
 import { useCrmMode } from '~/composables/useCrmMode'
+import { useCrmTypes } from '~/composables/useCrmTypes'
 import * as catPicker from '~/utils/categoryPicker'
 import * as stagePicker from '~/utils/stagePicker'
+import { autoPickSingleCategory, buildEntityChoices, directionApplies, smartProcessByEtid, stageApplies } from '~/utils/targetOptions'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import type { CrmStageOption } from '~/utils/stagePicker'
 import type { TargetRef } from '~/types/mapping'
 
-// Compact «куда импортировать» picker — reusable PER FILE (extracted from the old global /app override).
-// Default «Авто (по правилам)» (null target = follow the portal's routing rules). Entity → direction
-// (воронка) → stage cascade loaded lazily FROM the portal only when the user picks a concrete entity —
-// so N staged files don't each fire cascade fetches until actually customised. Emits the resolved
-// TargetRef | null via v-model:target.
+// Compact «куда импортировать» picker — reusable PER FILE and shared with /settings (via the same pure
+// rules in ~/utils/targetOptions). Default «Авто (по правилам)» (null target = follow routing rules).
+// Entity → direction (воронка) → stage cascade loaded lazily. Emits the resolved TargetRef | null.
+//
+// Entity list = Авто → Лид (only if leads enabled) → Сделка → Смарт-счёт → each SMART PROCESS by name
+// (crm.type.list — no raw entityTypeId input). Direction/stage pickers show per the entity's real rules:
+// deal has both; lead only a stage; smart-invoice only a stage (its single direction is auto-used); a
+// smart process shows direction/stage only when it actually uses them (isCategoriesEnabled/isStagesEnabled).
 const target = defineModel<TargetRef | null>('target', { default: null })
+// `includeAuto` adds the «Авто (по правилам)» option — on the per-file import picker (default true).
+// The settings page (default target + routing rules) passes false: those targets are always concrete.
+// NB: Vue casts an ABSENT Boolean prop to `false` (not undefined), so the per-file import picker's
+// «Авто» default must be set explicitly via withDefaults — a `?? true` fallback would never fire.
+const props = withDefaults(defineProps<{ includeAuto?: boolean }>(), { includeAuto: true })
 
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
+const { leadsEnabled, load: loadCrmMode } = useCrmMode()
+const { types: smartProcesses, load: loadCrmTypes } = useCrmTypes()
+onMounted(() => {
+  void loadCrmMode()
+  void loadCrmTypes()
+  void initCascade() // pre-load direction/stage lists for an ALREADY-set target (editing in settings)
+})
 
 const etid = ref<number | null>(target.value?.entityTypeId ?? null)
 const categoryId = ref<number | undefined>(target.value?.categoryId)
@@ -25,17 +42,9 @@ const stageId = ref<string | undefined>(target.value?.stageId)
 const cats = ref<CrmCategoryOption[] | undefined>(undefined)
 const stages = ref<CrmStageOption[] | undefined>(undefined)
 
-// Hide «Лид» on a no-leads (simple CRM) portal — a lead there is auto-converted at once, so offering it
-// is misleading (crm-sync would redirect it to a deal anyway). Loaded once via useCrmMode (frame token).
-const { leadsEnabled, load: loadCrmMode } = useCrmMode()
-onMounted(() => void loadCrmMode())
-const ALL_CHOICES: Array<{ id: number | null, label: string }> = [
-  { id: null, label: 'Авто (по правилам)' },
-  { id: 1, label: 'Лид' },
-  { id: 2, label: 'Сделка' },
-  { id: 31, label: 'Смарт-счёт' }
-]
-const CHOICES = computed(() => ALL_CHOICES.filter(c => c.id !== 1 || leadsEnabled.value))
+const CHOICES = computed(() => buildEntityChoices(leadsEnabled.value, smartProcesses.value, props.includeAuto))
+const spByEtid = computed(() => smartProcessByEtid(smartProcesses.value))
+const currentSp = computed(() => (etid.value != null ? spByEtid.value.get(etid.value) : undefined))
 
 function emit(): void {
   target.value = etid.value
@@ -48,8 +57,7 @@ function emit(): void {
 }
 
 // Guards against out-of-order cascade responses: each entity/category change bumps `seq`; an
-// awaited fetch that resolves after a newer change is dropped (its `my !== seq`), so cats/stages
-// can't end up mismatched with the current entity (legacy `runSeq` pattern).
+// awaited fetch that resolves after a newer change is dropped (its `my !== seq`).
 let seq = 0
 
 async function reloadStages(token: number): Promise<void> {
@@ -59,23 +67,57 @@ async function reloadStages(token: number): Promise<void> {
   stages.value = next
   emit()
 }
+// Load the direction/stage lists for an ALREADY-set target (e.g. a saved routing rule opened in
+// settings) WITHOUT clearing the stored categoryId/stageId — so the pickers show the current values
+// instead of appearing empty until the user re-picks the entity.
+async function initCascade(): Promise<void> {
+  if (etid.value == null) return
+  const my = ++seq
+  const nextCats = await loadCrmCategories(etid.value)
+  if (my !== seq) return
+  cats.value = nextCats
+  // Reconcile a STALE direction: if the saved categoryId no longer exists on the portal (funnel
+  // deleted), clear it so the picker doesn't show a dangling value and a bad id isn't re-saved.
+  const before = { categoryId: categoryId.value, stageId: stageId.value }
+  const catT = { entityTypeId: etid.value, categoryId: categoryId.value }
+  catPicker.reconcileCategory(catT, nextCats)
+  categoryId.value = catT.categoryId
+  const nextStages = await loadCrmStages(etid.value, categoryId.value ?? null)
+  if (my !== seq) return
+  stages.value = nextStages
+  // Reconcile a STALE stage likewise.
+  const stageT = { stageId: stageId.value }
+  stagePicker.reconcileStage(stageT, nextStages)
+  stageId.value = stageT.stageId
+  if (before.categoryId !== categoryId.value || before.stageId !== stageId.value) emit()
+}
 async function chooseEntity(id: number | null): Promise<void> {
   const my = ++seq
   etid.value = id
   categoryId.value = undefined
   stageId.value = undefined
   stages.value = undefined
-  // Commit the chosen entity to the model IMMEDIATELY — before the (async) direction/stage cascade
-  // resolves — so an import fired during the load window uploads with the right target, not a stale/
-  // null one.
+  // Commit the chosen entity to the model IMMEDIATELY — before the async cascade resolves.
   emit()
   const nextCats = id ? await loadCrmCategories(id) : undefined
   if (my !== seq) return // superseded by a newer entity pick
   cats.value = nextCats
+  // When the direction picker is HIDDEN but the entity still addresses stages by category (smart-invoice,
+  // or a category-less SPA with stages), silently auto-pick the single/first category so the stage list
+  // can load (its stageEntityId needs a category).
+  if (autoPickSingleCategory(id, spByEtid.value.get(id ?? -1)) && nextCats?.length) {
+    // Direction is hidden (e.g. smart-invoice = «always one»); use the sole category. If the portal
+    // unexpectedly has MORE than one, warn — we silently take the first, which may not be the intended
+    // one (the direction picker is hidden by design, so the user can't choose).
+    if (nextCats.length > 1) console.warn(`[TargetPicker] entity ${id} has ${nextCats.length} directions but the picker is hidden — using the first («${nextCats[0]!.name ?? nextCats[0]!.id}»)`)
+    categoryId.value = nextCats[0]!.id
+    emit()
+  }
   await reloadStages(my)
 }
 const catItems = computed(() => catPicker.categoryItems(cats.value))
-const showDirection = computed(() => catPicker.hasCategories(cats.value))
+// Show the direction picker only when the entity's rules allow it AND categories actually loaded.
+const showDirection = computed(() => directionApplies(etid.value, currentSp.value) && catPicker.hasCategories(cats.value))
 const catValue = computed(() => catPicker.categoryValue({ categoryId: categoryId.value ?? undefined }))
 async function onCategory(v: unknown): Promise<void> {
   const t: { categoryId?: number } = { categoryId: categoryId.value }
@@ -85,7 +127,8 @@ async function onCategory(v: unknown): Promise<void> {
   await reloadStages(++seq)
 }
 const stageItems = computed(() => stagePicker.stageItems(stages.value))
-const showStage = computed(() => stagePicker.hasStages(stages.value))
+// Show the stage picker only when the entity's rules allow it AND stages actually loaded.
+const showStage = computed(() => stageApplies(etid.value, currentSp.value) && stagePicker.hasStages(stages.value))
 const stageValue = computed(() => stagePicker.stageValue({ stageId: stageId.value ?? undefined }))
 function onStage(v: unknown): void {
   const t: { stageId?: string } = { stageId: stageId.value }
@@ -109,13 +152,6 @@ function onStage(v: unknown): void {
       :color="etid === c.id ? 'air-primary' : 'air-tertiary-no-accent'"
       :aria-pressed="etid === c.id"
       @click="() => chooseEntity(c.id)"
-    />
-    <B24InputNumber
-      :model-value="etid"
-      :min="1"
-      class="w-20"
-      aria-label="ID типа целевой сущности (смарт-процесс ≥ 1000)"
-      @update:model-value="(v: unknown) => chooseEntity(typeof v === 'number' && v > 0 ? v : null)"
     />
     <B24Select
       v-if="showDirection"
