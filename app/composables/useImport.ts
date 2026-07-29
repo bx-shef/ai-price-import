@@ -5,6 +5,7 @@ import { jobStatusMeta, type JobStatus } from '~/utils/jobStatus'
 import { nextPollDelay } from '~/utils/pollBackoff'
 import { addImportJob, clearImportHistory, importJobIds, readHistory, removeImportJob } from '~/utils/importHistory'
 import { mergeJobRows } from '~/utils/importMerge'
+import { truncationWarning } from '~~/server/utils/importStatusIds'
 import type { TargetRef } from '~/types/mapping'
 
 // In-portal import client: upload a document and poll job status via the frame-token
@@ -31,6 +32,10 @@ export function useImport() {
   // Separate from `error`, which is shared with upload() and «вне портала». Only set by refresh(), so
   // the empty state can say «историю получить не удалось» without claiming that after a failed UPLOAD.
   const listError = ref('')
+  // A SUCCESSFUL poll that couldn't cover every remembered job. Deliberately NOT `listError`: that one
+  // feeds the failure streak in scheduleNext, so a warning there would stop auto-polling after five
+  // successful-but-truncated answers — exactly for the user with the longest history (#260).
+  const listWarning = ref('')
 
   // Any job not yet in a terminal state → keep polling.
   const hasActive = computed(() => jobs.value.some(j => !jobStatusMeta(j.status).terminal))
@@ -93,13 +98,22 @@ export function useImport() {
     }
     loading.value = true
     try {
-      const res = await $fetch<{ jobs: ImportJobView[] }>('/api/import/status', { headers: h, query: { ids: ids.join(',') } })
+      // POST: the id list rides in the body, not in the URL (#260) — it grows with the history cap and
+      // would otherwise hit proxy header limits and leak job ids into access logs.
+      const res = await $fetch<{ jobs: ImportJobView[], requested?: number, answered?: number }>(
+        '/api/import/status',
+        { method: 'POST', headers: h, body: { ids } }
+      )
       // Merge: server gives the live status/result; localStorage gives the fileName we remembered
       // (and preserves display order = newest-first). A remembered row the server no longer knows
       // (its 48h status TTL ran out while the browser keeps 7 days) becomes an `expired` row rather
       // than disappearing — silently dropping it read as «истории нет» (#268).
       const local = store ? readHistory(store) : []
       jobs.value = mergeJobRows(local, res.jobs, { portal: auth()?.domain })
+      // The server caps how many ids it answers for. It used to drop the excess silently — those rows
+      // then just stopped updating, with no error anywhere (#260). Say it out loud instead. The counts
+      // come FROM the server: only it knows how many ids survived validation.
+      listWarning.value = truncationWarning(res.requested, res.answered)
       listError.value = ''
       firstLoadOk = true
     } catch (e) {
@@ -177,5 +191,5 @@ export function useImport() {
     jobs.value = jobs.value.filter(j => j.jobId !== jobId)
   }
 
-  return { jobs, loading, uploading, error, listError, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob }
+  return { jobs, loading, uploading, error, listError, listWarning, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob }
 }
