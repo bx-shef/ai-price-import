@@ -1,4 +1,4 @@
-// Pure Bitrix24 embedding constants (no I/O). See docs/redesign/02-target-architecture.md.
+// Pure Bitrix24 embedding constants (no I/O). See docs/PROCESS.md.
 
 /** OAuth scopes the app requests (Q9). `placement` intentionally excluded — the app lives on its
  *  own left-menu page (the standard universal «app URL» entry, configured in the Market card, no

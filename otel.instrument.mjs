@@ -4,9 +4,9 @@
 // hooks — hence a preload with EXTERNAL node_modules, not a bundled import).
 //
 // DEFAULT OFF: with no `OTEL_EXPORTER_OTLP_ENDPOINT` set, this file starts NOTHING and the app
-// runs exactly as before. Turn it on by pointing at a collector (see docs/OBSERVABILITY.md).
+// runs exactly as before. Turn it on by pointing at a collector (see docs/PROCESS.md §11 «Телеметрия»).
 //
-// PRIVACY (docs/OBSERVABILITY.md): a redaction SpanProcessor strips sensitive auto-instrumentation
+// PRIVACY (docs/PROCESS.md §11 «Телеметрия»): a redaction SpanProcessor strips sensitive auto-instrumentation
 // attributes (SQL text, URLs/tokens, bodies) before export. Our OWN manual spans already emit
 // only an allowlisted set (server/utils/telemetryAttributes.ts — the canonical list). The
 // collector filters again (belt, suspenders, and a second belt).

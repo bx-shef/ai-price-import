@@ -3,7 +3,7 @@ import type { QueryFn } from './tokenStore'
 // TTL backstop for client data the live cleanup paths missed (a best-effort delete
 // failed, or a job died past its cleanup point). The live paths (agent-run drops
 // text, crm-sync drops the doc, extract drops bytes, uninstall purges all) remain
-// primary; this is the safety net docs/redesign 05 requires. DI over QueryFn.
+// primary; this is the safety net docs/PROCESS.md requires. DI over QueryFn.
 
 export interface SweepResult { text: number, docs: number, tombstones: number }
 

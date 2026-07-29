@@ -5,8 +5,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-DOC="docs/FEEDBACK_TRIAGE_AGENT.md"
-CHANNEL_DOC="docs/FEEDBACK.md"
+DOC="docs/BACKLOG.md"
+CHANNEL_DOC="docs/BACKLOG.md"
 CLAUDE_MD="CLAUDE.md"
 SH="scripts/feedback-triage.sh"
 SELF="scripts/validate-docs.sh"

@@ -9,7 +9,7 @@ import type { FrameAuth } from './frameAuth'
 // be trusted to send member_id (cross-portal document-injection risk), so we:
 //  1) VERIFY the frame access token controls `domain` (a cheap authenticated REST call);
 //  2) derive member_id from `domain` via the token store (installed-portal 1:1).
-// DI over fetch + query → unit-tested. docs/redesign 02 §8.
+// DI over fetch + query → unit-tested. docs/PROCESS.md
 
 export interface FrameMemberDeps {
   query: QueryFn

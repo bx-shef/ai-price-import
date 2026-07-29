@@ -2,7 +2,7 @@
 # feedback-triage.sh — helper-функции для триажа обратной связи через GitHub REST API.
 #
 # Назначение: создание/комментирование/закрытие issue, когда путь MCP недоступен
-# (см. docs/FEEDBACK_TRIAGE_AGENT.md §8). Это FALLBACK; основной путь — MCP/GraphQL.
+# (см. docs/BACKLOG.md §8). Это FALLBACK; основной путь — MCP/GraphQL.
 #
 # ИСПОЛЬЗОВАНИЕ: `source scripts/feedback-triage.sh` (файл — библиотека функций).
 #   Строгий режим (set -euo pipefail) НЕ включается при source — иначе он протёк бы

@@ -1,5 +1,5 @@
 // Landing content + pure helpers (single source of truth, testable). Marketing
-// copy is Russian; see docs/redesign/04-marketing-landing.md.
+// copy is Russian; see docs/PROCESS.md.
 
 export const LANDING_TITLE = 'AI-импорт прайсов в Bitrix24'
 export const LANDING_SUBTITLE

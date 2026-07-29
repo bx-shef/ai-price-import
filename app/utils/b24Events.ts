@@ -1,6 +1,6 @@
 // Pure parsing of Bitrix24 outgoing event webhooks (PHP bracket form).
 // e.g. "event=ONAPPINSTALL&data[VERSION]=1&auth[member_id]=abc&auth[application_token]=T"
-// See docs/redesign 02 §4 «События Б24».
+// See docs/PROCESS.md §1 «Установка на портал».
 
 export type B24EventType = 'ONAPPINSTALL' | 'ONAPPUNINSTALL' | string
 

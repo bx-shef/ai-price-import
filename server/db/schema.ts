@@ -1,5 +1,5 @@
 // Postgres schema (idempotent). Applied on boot by a migrate plugin.
-// Scoped per portal member_id (multitenant). See docs/redesign 02 §3.
+// Scoped per portal member_id (multitenant). See docs/PROCESS.md
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS portal_tokens (
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS metrics_counter (
 --   opened_at   — when the user clicked «Оценить» and we opened the Market detail page. While set,
 --                 the modal is suppressed until an owner MANUALLY verifies the review (see docs);
 --   reviewed    — set MANUALLY (true) once a real Market review is confirmed → terminal, never prompt again.
--- Manual verification (docs/redesign/12): if after ~RATING_REPROMPT_DAYS no review appeared, clear
+-- Manual verification (docs/PROJECT_MAP.md): if after ~RATING_REPROMPT_DAYS no review appeared, clear
 -- opened_at (UPDATE ... SET opened_at=NULL) so the modal returns; if it did, set reviewed=true.
 CREATE TABLE IF NOT EXISTS portal_app_rating (
   member_id   TEXT PRIMARY KEY,

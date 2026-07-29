@@ -1,6 +1,6 @@
 // VAT model. Rates come ONLY from the portal (crm.vat.list); the document rate
 // must match one of them, otherwise it is an error (→ error chat).
-// See docs/redesign/02-target-architecture.md «Модель НДС».
+// See docs/PROCESS.md §6.3 «Деньги».
 
 /** A VAT rate as returned by crm.vat.list (RATE is null for «Без НДС»). */
 export interface PortalVatRate {

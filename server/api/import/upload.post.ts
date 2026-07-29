@@ -18,7 +18,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // POST /api/import/upload — in-portal document upload. Frame-token authenticated and
 // bound to a verified portal member_id (no client-trusted id → no cross-portal
-// injection). Stores the file, creates a job, enqueues file-extract. docs/redesign 02 §4.
+// injection). Stores the file, creates a job, enqueues file-extract. docs/PROCESS.md
 //
 // Wrapped in a manual OTel span (телеметрия, DEFAULT OFF): latency + a PII-safe outcome + hashed
 // portal id. The file bytes / name / target are NEVER attached to the span.

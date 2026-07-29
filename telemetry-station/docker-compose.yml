@@ -1,4 +1,4 @@
-# Shared telemetry station (#, docs/OBSERVABILITY.md) — ONE deployment that every app
+# Shared telemetry station (#, docs/PROJECT_MAP.md) — ONE deployment that every app
 # (this price-import app + up to N others) pushes OTLP into. Distinguished in Grafana by
 # `service.name`. Stand it up ONCE (on a monitoring host); apps just set two env vars
 # (OTEL_EXPORTER_OTLP_ENDPOINT + OTEL_SERVICE_NAME) — see clients/node/README.md.

@@ -6,7 +6,7 @@ import type { ExtractedDocument } from '~/types/document'
 import type { RoutingSignals } from '~/utils/routing'
 
 // Pure job handlers with DI. Live transports (REST/MCP/DB) are injected in worker.ts;
-// tests inject fakes. See docs/redesign 02 §4.
+// tests inject fakes. See docs/PROCESS.md
 
 /** Text kept in the stored signals for keyword routing (the rest is dropped). */
 export const MAX_ROUTING_TEXT = 131_072 // 128 KiB — routing keywords sit near the top
@@ -53,7 +53,7 @@ export interface HandlerDeps {
   setJobStatus: (memberId: string, jobId: string, status: 'done' | 'error', result: string) => Promise<void>
   /**
    * Best-effort cleanup of the stored raw client document once the job is
-   * terminal (data minimisation — docs/redesign 05). Optional: a failed sweep
+   * terminal (data minimisation — docs/PROCESS.md). Optional: a failed sweep
    * must not fail the job. crm-sync does not retry, so the doc is safe to drop
    * after the status is recorded.
    */

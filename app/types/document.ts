@@ -1,5 +1,5 @@
 // Domain model of a parsed source document with a tabular part.
-// Language-agnostic (see docs/redesign/06-multilingual.md): the agent fills this
+// Language-agnostic (see docs/PROCESS.md): the agent fills this
 // from a document in ru/be/kk. Pure data — no I/O.
 
 /** Tax-id label kinds recognised across countries. */

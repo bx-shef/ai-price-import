@@ -4,7 +4,7 @@ import { sweepOldUploads } from '../utils/nodeFileIO'
 
 // Hourly TTL sweep: purge orphaned client data (import_text/doc, old terminal jobs,
 // stale upload bytes) the live cleanup paths missed, and cap portal_tombstone growth
-// (TTL `TOMBSTONE_TTL_DAYS`, default 30). Safety net for docs/redesign 05.
+// (TTL `TOMBSTONE_TTL_DAYS`, default 30). Safety net for docs/PROCESS.md.
 // No-op without a DB / during prerender.
 export default defineNitroPlugin(() => {
   if (import.meta.prerender) return

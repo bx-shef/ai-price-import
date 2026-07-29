@@ -20,7 +20,7 @@ import { portalHash } from '../utils/telemetryAttributes'
 // Per-queue worker concurrency. Defaults keep prior behaviour (extract 4 / agent 2 / crm 4)
 // but are OVERRIDABLE via env so a minimal 2-vCPU host can drop them to ≤ cores — heavy OCR
 // running 3-4 abreast on few cores oversubscribes CPU and can push each tesseract past
-// RUN_TIMEOUT_MS (false failures). See GH #95, docs/redesign/09-deploy §«Ресурсы воркера».
+// RUN_TIMEOUT_MS (false failures). See GH #95, docs/PROCESS.md §12.3 «Масштабирование».
 export interface QueueConcurrency { extract: number, agent: number, crm: number }
 
 /** Sanity ceiling on an env concurrency override (a typo like `999999` mustn't spawn an

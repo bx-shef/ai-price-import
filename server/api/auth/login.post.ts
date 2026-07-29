@@ -9,7 +9,7 @@ import { LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS, edgeSecurityEnabled, edgeTrustXff,
 // "black hole" target (APP_EDGE_SECURITY on) we enforce it in-app below — keyed on
 // the real TCP peer (socket.remoteAddress), since without a trusted proxy X-Forwarded-For
 // is client-spoofable. Behind nginx this app-limiter stays OFF (else it'd bucket every
-// client under the shared proxy IP). See docs/AUTH.md.
+// client under the shared proxy IP). See docs/PROCESS.md §10 «Служебная зона».
 const FAILURE_DELAY_MS = 400
 
 // Module-scoped so the window persists across requests (single-process best-effort, like demoRateLimit).

@@ -1,5 +1,5 @@
 // Pure boot-time env validation (logged, non-fatal — same convention as the reference).
-// See docs/redesign 02 §5 / reviewer note «нет envCheck».
+// See docs/PROCESS.md / reviewer note «нет envCheck».
 
 export interface EnvReport {
   errors: string[]

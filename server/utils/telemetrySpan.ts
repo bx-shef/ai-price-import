@@ -5,7 +5,7 @@
 // is set.
 //
 // All attributes go through the PII allowlist (`pickSafeAttributes`) — a caller physically
-// cannot attach supplier / article / price / document content to a span (docs/OBSERVABILITY.md).
+// cannot attach supplier / article / price / document content to a span (docs/PROCESS.md §11 «Телеметрия»).
 // Attribute computation is gated behind `span.isRecording()` so the OFF path pays nothing.
 
 import { SpanStatusCode, trace } from '@opentelemetry/api'

@@ -3,7 +3,7 @@
 // (catalog.measure.add) lives in server/utils/measureCreateWrite.ts; here we keep the pure, tested
 // pieces: a sanity gate (so OCR noise doesn't litter the client's catalog), a title index for
 // FIND-before-create (so a unit already present in the catalog is reused, not duplicated), a code
-// allocator, and the add-params builder. See docs/redesign/02-target-architecture.md (Q11).
+// allocator, and the add-params builder. See docs/PROCESS.md §6.5 «Единицы измерения».
 
 /** Max length of a unit string we're willing to turn into a catalog measure. */
 export const MAX_MEASURE_UNIT_LEN = 20

@@ -2,7 +2,7 @@ import type { QueryFn } from './tokenStore'
 
 // Raw extracted DOCUMENT_TEXT store, keyed by job (per-portal). Written by
 // file-extract, read by agent-run, then dropped once the extracted structure is
-// persisted — the text never rides in a queue payload (docs/redesign 02 §7.3, 05).
+// persisted — the text never rides in a queue payload (docs/PROCESS.md §5).
 // DI over QueryFn (testable without a DB).
 
 export async function saveText(memberId: string, jobId: string, text: string, query: QueryFn): Promise<void> {

@@ -3,7 +3,7 @@
 // compact «Экономия» card) and /metrics (the detailed page). Extracted because the same markup was
 // copy-pasted in two places and had already drifted apart (different font sizes, caption above vs
 // below, tinted box vs plain) — the two screens of the SAME feature must read as one thing
-// (docs/redesign/14-ui-spec §2.7 and §4).
+// (docs/ui-spec.md §2.7 and §4).
 //
 // Caption goes ABOVE the value (approved design): the eye lands on the label first and the big number
 // second, so a row of stats scans as a list rather than as loose numbers.

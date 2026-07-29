@@ -6,7 +6,7 @@ import { useMetrikaGoal } from '~/composables/useMetrikaGoal'
 // Marketing widget on /app — built on b24ui B24Card variant="filled-copilot" (the «Sales dynamics
 // widget» pattern from the b24ui Card docs: header slot with title/description, footer slot with a pill
 // button). Pitches the paid custom-integration angle: pull the price list from the client's own sources
-// (e-mail / Telegram / FTP) AND run the app on their server. Honest per docs/redesign/11 (text still
+// (e-mail / Telegram / FTP) AND run the app on their server. Honest per docs/PROJECT_MAP.md (text still
 // goes to the LLM provider).
 //
 // CTA → OUR landing's brief form (`${siteUrl}/#brief`), not the separate offer site — owner asked the

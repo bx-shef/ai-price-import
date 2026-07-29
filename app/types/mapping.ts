@@ -1,5 +1,5 @@
 // Per-portal configuration (mapping). Stored in app.option via server-side REST.
-// Pure types — see docs/redesign/02-target-architecture.md §5.
+// Pure types — see docs/PROCESS.md §2 «Настройка».
 
 /** CRM entity kinds the import can create.
  *  - lead (entityTypeId 1, #135): carries originId/originatorId (marker), so idempotent; the

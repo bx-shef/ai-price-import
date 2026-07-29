@@ -3,7 +3,7 @@ import { FALLBACK_TARGET } from './routing'
 import { normalizeUnitKey } from './measureCreate'
 
 // Parse raw app.option JSON into a validated PortalMapping with safe defaults.
-// Never trust stored/user data — coerce and default. Pure (docs/redesign 02 §5).
+// Never trust stored/user data — coerce and default. Pure (docs/PROCESS.md).
 
 // Fallback default target when app.option has none / a broken one: deal, direction 0 (Default
 // pipeline) — the same hard anchor crm-sync falls back to when a funnel is deleted (routing.ts).
