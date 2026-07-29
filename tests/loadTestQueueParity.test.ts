@@ -36,6 +36,16 @@ describe('нагрузочный тест очереди сверен с бое�
     expect(test).toEqual(prod)
   })
 
+  it('число попыток и ТИП паузы совпадают с server/queue/connection.ts (#267)', () => {
+    // Сценарий ретраев «доказывает» боевой тюнинг повторов, поэтому он обязан быть тем же. Сам
+    // `delay` расходится НАМЕРЕННО (прод 5000 мс, сценарий ужат, иначе прогон занимал бы полминуты)
+    // — сверяем то, что определяет поведение: сколько попыток и растёт ли пауза.
+    const connection = read('../server/queue/connection.ts')
+    expect(num(script, /const ATTEMPTS = ([\d_]+)/)).toBe(num(connection, /attempts:\s*([\d_]+)/))
+    expect(script).toMatch(/backoff:\s*\{\s*type:\s*'exponential'/)
+    expect(connection).toMatch(/backoff:\s*\{\s*type:\s*'exponential'/)
+  })
+
   it('гард безопасности на месте: скрипт отказывается работать с удалённым Redis без явного флага', () => {
     expect(script).toContain('--allow-remote-redis')
     expect(script).toMatch(/LOCAL_HOSTS/)

@@ -385,6 +385,124 @@ async function scenarioRealisticPace() {
 }
 
 // ---------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------
+// 7. Ретраи: обработчик БРОСАЕТ. Проверяем обычный путь отказа — его не покрывал ни один сценарий.
+//
+// Почему это важно именно нам: crm-sync создаёт НЕидемпотентные сущности, in-SDK ретрай отключён,
+// и вся защита от дублей построена на том, что повторяет ЦЕЛУЮ джобу очередь, а find-before-create
+// ловит повтор по маркеру. То есть ретраи — несущая часть схемы, а проверены были только
+// рассуждением. Сценарий №3 рядом проверяет ДРУГОЙ механизм — восстановление зависшей задачи после
+// обрыва воркера; здесь же обработчик жив и честно бросает исключение.
+// ---------------------------------------------------------------------------------------------
+async function scenarioRetries() {
+  head('7 · Обработчик падает: повторы, пауза между ними, список неудачных')
+  const q = await makeQueue('retries')
+
+  // Прод: attempts 3, backoff exponential 5000 (server/queue/connection.ts). Тип backoff сохраняем —
+  // проверяем именно РОСТ пауз; сам delay ужимаем, иначе один прогон занял бы 35 секунд.
+  const ATTEMPTS = 3
+  const DELAY = 300
+  const jobOpts = {
+    attempts: ATTEMPTS,
+    backoff: { type: 'exponential', delay: DELAY },
+    removeOnComplete: false,
+    removeOnFail: false
+  }
+
+  // Три вида задач в ОДНОЙ пачке — как в жизни: часть падает навсегда, часть переживает сбой,
+  // часть проходит сразу.
+  const ALWAYS = 3 // падают всегда → должны осесть в списке неудачных
+  const FLAKY = 3 // падают дважды, на третьей попытке проходят → наш продовый случай (сбой Б24)
+  const GOOD = 6 // не падают вовсе → не должны страдать от чужих ретраев
+  const jobs = [
+    ...Array.from({ length: ALWAYS }, (_, i) => ({ kind: 'always', n: i })),
+    ...Array.from({ length: FLAKY }, (_, i) => ({ kind: 'flaky', n: i })),
+    ...Array.from({ length: GOOD }, (_, i) => ({ kind: 'good', n: i }))
+  ]
+  await q.addBulk(jobs.map(j => ({
+    name: 'crm-sync',
+    data: { memberId: 'portalR', jobId: `${j.kind}${j.n}`, kind: j.kind },
+    opts: { ...jobOpts, jobId: `cs|portalR|${j.kind}${j.n}` }
+  })))
+
+  const attemptsAt = new Map() // jobId → отметки времени каждой попытки
+  const doneAt = new Map() // jobId → когда успешно завершилась
+  const worker = new Worker(q.name, async (job) => {
+    const id = job.data.jobId
+    const seen = attemptsAt.get(id) ?? []
+    seen.push(Date.now())
+    attemptsAt.set(id, seen)
+    if (job.data.kind === 'always') throw new Error('в CRM не записалось (подстроенный сбой)')
+    if (job.data.kind === 'flaky' && seen.length < 3) throw new Error('связь с порталом оборвалась')
+    doneAt.set(id, Date.now())
+  }, { connection, concurrency: 4, ...CRM_LOCK })
+
+  // Дедуп поверх ретраев: ставим ту же задачу, пока предыдущая ЖДЁТ следующей попытки. Ждём именно
+  // появления отложенной задачи, а не «примерно столько же миллисекунд»: иначе на холодном Redis
+  // дубль пришёлся бы на состояние «в очереди», и проверялся бы уже не тот путь.
+  const untilDelayed = Date.now() + 5_000
+  while (Date.now() < untilDelayed && (await q.getDelayedCount()) === 0) await sleep(20)
+  const delayedBefore = await q.getDelayedCount()
+  await q.add('crm-sync', { memberId: 'portalR', jobId: 'always0', kind: 'always' },
+    { ...jobOpts, jobId: 'cs|portalR|always0' })
+
+  // Выходим по ФАКТУ (сколько осело в неудачных и сколько дошло), а не по сумме waiting/active/
+  // delayed: это три отдельных запроса, и задача, переехавшая из отложенных в очередь между первым
+  // и третьим, не попадёт ни в один — сумма покажет ноль при живой задаче. Причём переезд
+  // «отложена → в очереди» и есть механика повтора, то есть промах шёл бы в опасную сторону.
+  const until = Date.now() + 30_000
+  while (Date.now() < until) {
+    if ((await q.getFailedCount()) >= ALWAYS && doneAt.size >= FLAKY + GOOD) break
+    await sleep(50)
+  }
+  await worker.close()
+
+  // 1. Повторов ровно столько, сколько задано, — не больше и не меньше.
+  const alwaysTries = Array.from({ length: ALWAYS }, (_, i) => (attemptsAt.get(`always${i}`) ?? []).length)
+  check(alwaysTries.every(n => n === ATTEMPTS),
+    `падающая задача повторяется ровно ${ATTEMPTS} раза (получено: ${alwaysTries.join(', ')})`)
+
+  // 2. Пауза между попытками РАСТЁТ — проверяем по факту, а не по конфигу.
+  const gaps = (attemptsAt.get('always0') ?? []).slice(1).map((t, i) => t - attemptsAt.get('always0')[i])
+  // Сравниваем РАЗНОСТЬ, а не отношение. Замеряются интервалы между входами в обработчик, поэтому
+  // в каждый gap входят одинаковые накладные ε (промоушен, забор из очереди). В отношении
+  // (2d+ε)/(d+ε) эти ε давят результат вниз и на медленной машине уронили бы проверку; в разности
+  // они сокращаются. Просто «вторая больше первой» не годится: при фиксированном backoff это
+  // проскакивает на шуме планировщика — проверено мутацией, слабую версию она не роняла.
+  check(gaps.length >= 2 && gaps[1] - gaps[0] > DELAY * 0.5,
+    `пауза между попытками растёт на ${gaps.length >= 2 ? gaps[1] - gaps[0] : '?'} мс (${gaps.map(g => `${g} мс`).join(' → ')}) — backoff экспоненциальный, а не фиксированный`)
+
+  // 3. Перемежающийся отказ дорабатывает успешно — ровно то, что происходит при сбое связи с Б24.
+  const flakyDone = Array.from({ length: FLAKY }, (_, i) => doneAt.has(`flaky${i}`)).filter(Boolean).length
+  check(flakyDone === FLAKY,
+    `задача, упавшая дважды, на повторе доходит до конца (${flakyDone} из ${FLAKY}) — сетевой сбой сам себя лечит`)
+
+  // 4. Успешные соседи не страдают от чужих ретраев.
+  const goodDone = Array.from({ length: GOOD }, (_, i) => doneAt.has(`good${i}`)).filter(Boolean).length
+  check(goodDone === GOOD,
+    `исправные задачи проходят, пока рядом кто-то ретраится (${goodDone} из ${GOOD}) — очередь не встала`)
+
+  // 5. Список неудачных читается, и в нём именно те задачи и именно с причиной.
+  const failed = await q.getFailed()
+  check(failed.length === ALWAYS,
+    `в списке неудачных ровно ${ALWAYS} задачи (найдено ${failed.length}) — исчерпавшие попытки не потерялись`)
+  check(failed.every(j => /подстроенный сбой/.test(j.failedReason ?? '')),
+    'у каждой неудачной задачи сохранена причина отказа — оператор увидит, что случилось')
+  check(failed.every(j => j.attemptsMade === ATTEMPTS),
+    `у неудачных задач зафиксировано по ${ATTEMPTS} попытки`)
+
+  // 6. Дедуп поверх ретраев. Считаем РЕАЛЬНЫЕ задачи в очереди, а не разные ключи в нашей карте:
+  // карта ключуется по jobId из payload, поэтому дубль писал бы попытки в ту же ячейку и проверка
+  // «разных ключей 12» осталась бы зелёной при сломанном дедупе — она не измеряла ничего.
+  const total = await q.getJobCounts()
+  const EXPECTED = ALWAYS + FLAKY + GOOD
+  check(delayedBefore > 0, 'дубль ставился, когда предыдущая попытка действительно ждала повтора')
+  check(total.completed + total.failed === EXPECTED,
+    `в очереди ровно ${EXPECTED} задач (готово ${total.completed} + неудачных ${total.failed}) — повторная постановка того же id дубля не создала`)
+  info(`итог очереди: ${JSON.stringify(total)}`)
+}
+
 async function main() {
   console.log(`${C.b}Нагрузочное тестирование очереди импорта${C.x}`)
   console.log(`${C.d}Redis: ${SAFE_REDIS} · прогон ${runId}${C.x}`)
@@ -399,6 +517,7 @@ async function main() {
     await scenarioScaleOut()
     await scenarioAcceptUnderLoad()
     pace = await scenarioRealisticPace()
+    await scenarioRetries()
   } finally {
     // Clean up even when a scenario throws — otherwise a failed run leaves its keys in Redis forever.
     await cleanup()
