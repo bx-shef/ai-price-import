@@ -5,6 +5,7 @@ import type { ImportJobView } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
 import { entityDetailPath, entityTypeLabel } from '~/utils/entityLink'
+import { isKnownTargetType, targetTypeName } from '~/utils/importFailure'
 import { useB24 } from '~/composables/useB24'
 
 // One row in «Последние операции»: shows the file, a per-STAGE progress stepper while the job runs
@@ -16,6 +17,13 @@ const props = defineProps<{ job: ImportJobView }>()
 const emit = defineEmits<{ remove: [jobId: string] }>()
 
 const meta = computed(() => jobStatusMeta(props.job.status))
+// «в Сделку» / «в Смарт-счёт» — только для РУЧНОГО выбора; когда цель определили правила, показывать
+// нечего (и незачем: правило видно в настройках).
+const targetLabel = computed(() => {
+  const t = props.job.targetEntityTypeId
+  // Только когда тип реально узнан: «в выбранную запись» — бессмысленный бейдж, лучше ничего.
+  return t && isKnownTargetType(t) ? `в ${targetTypeName(t)}` : ''
+})
 const progress = computed(() => jobProgress(props.job.status))
 const result = computed(() => parseJobResult(props.job.result))
 
@@ -126,6 +134,14 @@ const stepDot: Record<string, string> = {
         {{ job.fileName || 'документ' }}
       </p>
       <div class="flex shrink-0 items-center gap-2">
+        <!-- Куда файл направлялся, если цель выбирали вручную (#269). К моменту результата — тем более
+             ошибки — сотрудник уже не помнит свой выбор, особенно при пакетной загрузке. -->
+        <B24Badge
+          v-if="targetLabel"
+          :label="targetLabel"
+          color="air-secondary"
+          size="sm"
+        />
         <B24Badge
           :label="meta.label"
           :color="badgeColor[meta.tone]"

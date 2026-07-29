@@ -13,6 +13,8 @@ const CATS: Record<number, Array<{ id: number, name: string }>> = {
   1050: [{ id: 1, name: 'A' }, { id: 2, name: 'B' }]
 }
 const STAGES: Array<{ id: string, name: string }> = [{ id: 'NEW', name: 'Новая' }, { id: 'WON', name: 'Успех' }]
+// Управляемый флаг доступности смарт-счетов — по умолчанию доступны (как на обычном портале).
+const smartInvoiceEnabled = ref(true)
 
 mockNuxtImport('useCrmCategories', () => () => ({ load: async (etid: number) => CATS[etid] ?? [] }))
 mockNuxtImport('useCrmStages', () => () => ({ load: async () => STAGES }))
@@ -23,6 +25,7 @@ mockNuxtImport('useCrmTypes', () => () => ({
     { entityTypeId: 1044, title: 'Договоры', hasCategories: false, hasStages: true },
     { entityTypeId: 1050, title: 'Заявки', hasCategories: true, hasStages: true }
   ]),
+  smartInvoiceEnabled,
   load: async () => {}
 }))
 
@@ -76,5 +79,33 @@ describe('TargetPicker', () => {
     const w = await mountSuspended(TargetPicker)
     await clickLabel(w, 'Сделка')
     expect(hasDirection(w)).toBe(true)
+  })
+})
+
+describe('TargetPicker: недоступный тип на портале (#269)', () => {
+  it('на портале без смарт-счетов вариант не показывается', async () => {
+    smartInvoiceEnabled.value = false
+    try {
+      const w = await mountSuspended(TargetPicker)
+      await tick()
+      expect(w.findAll('button').some((b: { text: () => string }) => b.text() === 'Смарт-счёт')).toBe(false)
+    } finally {
+      smartInvoiceEnabled.value = true
+    }
+  })
+
+  it('сохранённая, но исчезнувшая цель сбрасывается и объясняется — иначе импорт упал бы как раньше', async () => {
+    const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 31 } } })
+    await tick()
+    smartInvoiceEnabled.value = false
+    try {
+      await tick()
+      await tick()
+      expect(w.text()).toContain('Прежняя цель больше недоступна')
+      // Наружу больше не эмитится исчезнувший тип 31.
+      expect(lastTarget(w)?.entityTypeId).not.toBe(31)
+    } finally {
+      smartInvoiceEnabled.value = true
+    }
   })
 })

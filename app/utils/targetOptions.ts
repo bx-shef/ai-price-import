@@ -20,19 +20,32 @@ export interface EntityChoice {
 
 export const ENTITY = { lead: 1, deal: 2, smartInvoice: 31 } as const
 
-/** Build the entity choices: Авто → Лид (only when leads are enabled) → Сделка → Смарт-счёт → each smart
- *  process BY NAME (like a preset, not a raw id). `includeAuto` adds the «Авто (по правилам)» option
- *  (used in the per-file import picker; the settings entity selector omits it). */
+/** Options for buildEntityChoices. Both availability flags default to TRUE (fail-open): a picker that
+ *  hasn't loaded portal metadata yet shows the full list rather than silently dropping a valid target. */
+export interface EntityChoiceOptions {
+  /** Portal has leads (classic CRM). False on a «без лидов» portal. */
+  leadsEnabled?: boolean
+  /** Portal has smart invoices. False → the option is hidden (#269: it used to be offered
+   *  unconditionally, and picking it on such a portal failed at import time with the portal's raw
+   *  «Сущность CRM не поддерживается»). */
+  smartInvoiceEnabled?: boolean
+  /** Add «Авто (по правилам)» — the per-file import picker does, the settings selector doesn't. */
+  includeAuto?: boolean
+}
+
+/** Build the entity choices: Авто → Лид → Сделка → Смарт-счёт → each smart process BY NAME (like a
+ *  preset, not a raw id). Lead and smart invoice appear only when the portal supports them; smart
+ *  processes already arrive as a live list from the portal. */
 export function buildEntityChoices(
-  leadsEnabled: boolean,
   smartProcesses: SmartProcessOption[],
-  includeAuto = true
+  opts: EntityChoiceOptions = {}
 ): EntityChoice[] {
+  const { leadsEnabled = true, smartInvoiceEnabled = true, includeAuto = true } = opts
   const out: EntityChoice[] = []
   if (includeAuto) out.push({ id: null, label: 'Авто (по правилам)' })
   if (leadsEnabled) out.push({ id: ENTITY.lead, label: 'Лид' })
   out.push({ id: ENTITY.deal, label: 'Сделка' })
-  out.push({ id: ENTITY.smartInvoice, label: 'Смарт-счёт' })
+  if (smartInvoiceEnabled) out.push({ id: ENTITY.smartInvoice, label: 'Смарт-счёт' })
   for (const sp of smartProcesses) out.push({ id: sp.entityTypeId, label: sp.title })
   return out
 }

@@ -12,7 +12,15 @@ import type { TargetRef } from '~/types/mapping'
 // while any job is still running (queued/extracting/processing) so the /app progress moves on its
 // own, and stops once everything is terminal (done/error) — no idle polling.
 
-export interface ImportJobView { jobId: string, status: JobStatus, fileName: string, result: string, diskUrl?: string }
+export interface ImportJobView {
+  jobId: string
+  status: JobStatus
+  fileName: string
+  result: string
+  diskUrl?: string
+  /** CRM type the employee chose for this file, when they chose one manually (#269). */
+  targetEntityTypeId?: number
+}
 
 export function useImport() {
   const { init, auth } = useB24()

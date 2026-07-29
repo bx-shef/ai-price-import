@@ -15,9 +15,16 @@ export interface LocalJobRow {
   portal?: string
 }
 /** What the status endpoint returned for a job. */
-export interface ServerJobRow { jobId: string, status: JobStatus, fileName: string, result: string, diskUrl?: string }
-/** One row of «Последние операции». */
-export interface MergedJobRow { jobId: string, status: JobStatus, fileName: string, result: string, diskUrl?: string }
+export interface ServerJobRow {
+  jobId: string
+  status: JobStatus
+  fileName: string
+  result: string
+  diskUrl?: string
+  targetEntityTypeId?: number
+}
+/** One row of «Последние операции» — same shape as the server row (the merge only fills gaps). */
+export type MergedJobRow = ServerJobRow
 
 /** Shown instead of an outcome on a row whose server-side status has aged out. */
 export const EXPIRED_RESULT
@@ -63,7 +70,8 @@ export function mergeJobRows(local: LocalJobRow[], server: ServerJobRow[], opts:
       status: j.status,
       fileName: e.fileName || j.fileName,
       result: j.result,
-      ...(j.diskUrl ? { diskUrl: j.diskUrl } : {})
+      ...(j.diskUrl ? { diskUrl: j.diskUrl } : {}),
+      ...(j.targetEntityTypeId ? { targetEntityTypeId: j.targetEntityTypeId } : {})
     })
   }
   return rows

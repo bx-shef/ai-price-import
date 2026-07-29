@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useCrmCategories } from '~/composables/useCrmCategories'
 import { useCrmStages } from '~/composables/useCrmStages'
 import { useCrmMode } from '~/composables/useCrmMode'
 import { useCrmTypes } from '~/composables/useCrmTypes'
 import * as catPicker from '~/utils/categoryPicker'
 import * as stagePicker from '~/utils/stagePicker'
-import { autoPickSingleCategory, buildEntityChoices, directionApplies, smartProcessByEtid, stageApplies } from '~/utils/targetOptions'
+import { ENTITY, autoPickSingleCategory, buildEntityChoices, directionApplies, smartProcessByEtid, stageApplies } from '~/utils/targetOptions'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import type { CrmStageOption } from '~/utils/stagePicker'
 import type { TargetRef } from '~/types/mapping'
@@ -29,7 +29,7 @@ const props = withDefaults(defineProps<{ includeAuto?: boolean }>(), { includeAu
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
 const { leadsEnabled, load: loadCrmMode } = useCrmMode()
-const { types: smartProcesses, load: loadCrmTypes } = useCrmTypes()
+const { types: smartProcesses, smartInvoiceEnabled, load: loadCrmTypes } = useCrmTypes()
 onMounted(() => {
   void loadCrmMode()
   void loadCrmTypes()
@@ -42,7 +42,11 @@ const stageId = ref<string | undefined>(target.value?.stageId)
 const cats = ref<CrmCategoryOption[] | undefined>(undefined)
 const stages = ref<CrmStageOption[] | undefined>(undefined)
 
-const CHOICES = computed(() => buildEntityChoices(leadsEnabled.value, smartProcesses.value, props.includeAuto))
+const CHOICES = computed(() => buildEntityChoices(smartProcesses.value, {
+  leadsEnabled: leadsEnabled.value,
+  smartInvoiceEnabled: smartInvoiceEnabled.value,
+  includeAuto: props.includeAuto
+}))
 const spByEtid = computed(() => smartProcessByEtid(smartProcesses.value))
 const currentSp = computed(() => (etid.value != null ? spByEtid.value.get(etid.value) : undefined))
 
@@ -70,6 +74,27 @@ async function reloadStages(token: number): Promise<void> {
 // Load the direction/stage lists for an ALREADY-set target (e.g. a saved routing rule opened in
 // settings) WITHOUT clearing the stored categoryId/stageId — so the pickers show the current values
 // instead of appearing empty until the user re-picks the entity.
+/** Показать сотруднику, что прежняя цель больше недоступна на портале, а не молча её подменить. */
+const unavailableTarget = ref(false)
+
+// A target saved earlier can point at a type the portal no longer offers (smart invoices switched off,
+// smart process deleted). Hiding it from CHOICES is not enough: `etid` would keep the stale id, the
+// select would look empty, and the same id would still be emitted and saved — the import would fail
+// exactly as before the fix (#269). So drop it explicitly once the portal metadata has loaded.
+watch([CHOICES, () => etid.value], () => {
+  const id = etid.value
+  if (id == null) return
+  // Smart processes arrive asynchronously — don't drop a valid one just because the list is empty yet.
+  if (id >= 1000 && !smartProcesses.value.length) return
+  if (CHOICES.value.some(c => c.id === id)) return
+  etid.value = props.includeAuto ? null : ENTITY.deal
+  categoryId.value = undefined
+  stageId.value = undefined
+  stages.value = undefined
+  cats.value = undefined
+  unavailableTarget.value = true
+  emit()
+})
 async function initCascade(): Promise<void> {
   if (etid.value == null) return
   const my = ++seq
@@ -153,6 +178,15 @@ function onStage(v: unknown): void {
       :aria-pressed="etid === c.id"
       @click="() => chooseEntity(c.id)"
     />
+    <!-- Прежняя цель исчезла с портала (смарт-счета выключили, смарт-процесс удалили). Молча
+         подменить её нельзя — сотрудник должен понимать, почему выбор изменился (#269). -->
+    <p
+      v-if="unavailableTarget"
+      class="w-full text-xs text-(--ui-color-accent-main-warning)"
+      role="status"
+    >
+      Прежняя цель больше недоступна на портале — выберите другую.
+    </p>
     <B24Select
       v-if="showDirection"
       :model-value="catValue"

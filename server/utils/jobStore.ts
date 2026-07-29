@@ -25,6 +25,9 @@ export interface ImportJob {
    *  `saveFile`). Lets the UI turn the file name into a link to the original document. Absent when
    *  the file wasn't archived. Always relative (never off-portal) — see detailUrlToRelative. */
   diskUrl?: string
+  /** CRM type the employee manually chose for this file, when they did (#269) — shown in the row so
+   *  the target is visible next to the outcome. Absent when the routing rules decided. */
+  targetEntityTypeId?: number
 }
 
 /**
@@ -161,13 +164,23 @@ function mapJob(memberId: string, jobId: string, h: Record<string, string>): Imp
       diskUrl = detailUrlToRelative((JSON.parse(h.diskFile) as { detailUrl?: unknown })?.detailUrl)
     } catch { /* malformed → no link */ }
   }
+  // The manually chosen target, so the row can show WHERE the file was sent (#269). By the time a
+  // result (or an error) appears, the employee no longer remembers what they picked — especially in a
+  // batch, where every file has its own target. Re-validated, same as getManualOverride.
+  let targetEntityTypeId: number | undefined
+  if (h.manualOverride) {
+    try {
+      targetEntityTypeId = parseManualTarget(JSON.parse(h.manualOverride))?.entityTypeId
+    } catch { /* malformed → no target shown */ }
+  }
   return {
     memberId,
     jobId,
     status: (h.status || 'queued') as JobStatus,
     fileName: h.fileName ?? '',
     result: h.result ?? '',
-    ...(diskUrl ? { diskUrl } : {})
+    ...(diskUrl ? { diskUrl } : {}),
+    ...(targetEntityTypeId ? { targetEntityTypeId } : {})
   }
 }
 
