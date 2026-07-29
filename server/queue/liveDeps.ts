@@ -226,16 +226,21 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
   // an EMPTY index (createMeasure then degrades to null → default), never fails the job.
   let measureIndex: MeasureIndex | null = null
   let measuresCreated = 0 // distinct auto-creates this job (anti-flood cap)
-  const ensureMeasureIndex = async (): Promise<MeasureIndex> => {
-    if (!measureIndex) {
+  // `false` = the list call failed. Kept DISTINCT from an empty index: «catalogue unreadable» and
+  // «catalogue read, code absent» must lead to different decisions for the built-in unit map (#272).
+  let measureIndexFailed = false
+  const loadMeasureIndex = async (): Promise<MeasureIndex | null> => {
+    if (!measureIndex && !measureIndexFailed) {
       try {
         measureIndex = buildMeasureIndex(await fetchMeasureRows((await need()).call))
       } catch {
-        measureIndex = { codes: [], byName: new Map() }
+        measureIndexFailed = true
       }
     }
     return measureIndex
   }
+  const ensureMeasureIndex = async (): Promise<MeasureIndex> =>
+    (await loadMeasureIndex()) ?? { codes: [], byName: new Map() }
   // Offers (SKU / ТП) iblock — resolved ONCE per job, then passed to every findProduct so offers get
   // priority over the base product. Fail-soft: no offers catalog / no catalog subscription → null →
   // findProduct just does the base-product lookup (the pre-offer behaviour). Memoized (undefined = not
@@ -294,6 +299,19 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         return { code, created: true }
       }
       : undefined,
+    // The portal's REAL measure catalogue, loaded once per job (not gated on autoCreate). crm-sync
+    // needs it because the built-in synonym map yields a standard ОКЕИ code that a given portal may
+    // not have — a fresh portal ships only a handful of measures, and writing an absent code would
+    // put a silently wrong unit on the row. `null` = the list call failed (caller decides).
+    measureCatalog: async () => {
+      const idx = await loadMeasureIndex()
+      if (!idx) return null
+      const codes = new Set(idx.codes)
+      return {
+        hasCode: (code: number) => codes.has(code),
+        byName: (unit: string) => lookupExistingMeasure(unit, idx)
+      }
+    },
     // VAT rates: full-list fetch via the SDK's built-in pagination (SdkListCall).
     portalVatRates: async () => fetchVatRates((await need()).list),
     portalCurrencies: async () => fetchCurrencies((await need()).call),

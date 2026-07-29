@@ -4,6 +4,7 @@ import { ENTITY_TYPE_ID } from '~/config/b24'
 import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
 import { reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
+import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
@@ -12,6 +13,13 @@ import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
 // Pure crm-sync orchestration with injected dependencies (no I/O here).
 // Deps are abstract async fns → wired to the isolated MCP tools (not direct REST):
 // docs/PROCESS.md §6 «Запись в CRM».
+
+/** The portal's own measure catalogue, as crm-sync needs it: does this code exist, and does this
+ *  unit name a measure already in the portal? Loaded once per job by the live deps. */
+export interface MeasureCatalog {
+  hasCode: (code: number) => boolean
+  byName: (unit: string) => number | null
+}
 
 export interface CrmSyncDeps {
   /** Find a prior create of this job by its idempotency marker (originId/xmlId) via a
@@ -25,6 +33,11 @@ export interface CrmSyncDeps {
    *  find-before-create. Returns `{code, created}` (created=false ⇒ reused an existing measure), or
    *  null when not creatable / create failed / per-job cap reached (caller uses the default code). */
   createMeasure?: (unit: string) => Promise<{ code: number, created: boolean } | null>
+  /** Optional: the portal's own measure catalogue (catalog.measure.list), loaded once per job.
+   *  Needed because the built-in synonym map (#272) yields an ОКЕИ code that a given portal may not
+   *  actually have — writing such a code produces a silently wrong measure on the row. `null` means
+   *  the catalogue could not be read (distinct from «read, code absent»). */
+  measureCatalog?: () => Promise<MeasureCatalog | null>
   portalVatRates: () => Promise<PortalVatRate[]>
   /** Optional: allowed portal currency codes; when provided, an unknown currency is a hard error. */
   portalCurrencies?: () => Promise<string[]>
@@ -136,7 +149,10 @@ export async function runCrmSync(
   // Supplier: not found → still create, without company + warning.
   let companyId: number | null = null
   if (doc.supplier?.taxId) companyId = await deps.findCompanyByTaxId(doc.supplier.taxId)
-  if (!companyId) warnings.push('Поставщик из документа не найден в CRM по УНП/ИНН — запись создана без привязки к компании. Заведите компанию с этим УНП/ИНН, и следующий импорт привяжется сам.')
+  // Two different situations, two different messages (#264): a number we searched by and did not
+  // find, versus no number in the document at all (nothing was searched — «заведите компанию» would
+  // not help). The number itself is printed so the operator can check it against the document.
+  if (!companyId) warnings.push(supplierNotLinkedWarning(doc.supplier?.taxId, doc.supplier?.taxIdKind))
 
   // Build rows. HARD errors (VAT rate not in portal) abort the whole document —
   // we must NOT drop lines (§8 «1-в-1, без потерь строк»); operator fixes the portal, re-imports.
@@ -203,9 +219,29 @@ export async function runCrmSync(
     // Measure resolved only for a row we're actually writing (a SKIPPED row must not auto-create a
     // measure — #Q11 security). Auto-create (opt-in) when the unit isn't in the dictionary; best-
     // effort → a null (not creatable / create failed / cap reached) falls back to the default code.
+    // Three layers, then the portal catalogue as the reality check (#272):
+    //   1. the portal's own dictionary — the administrator said so, we don't second-guess it;
+    //   2. the portal's measure catalogue by name — a portal that has its own «Рулон» must get ITS
+    //      code, not the standard 736 from our map;
+    //   3. the built-in synonym map — but only if the portal actually HAS that code.
+    // Anything else falls through to auto-create (opt-in) / the default code, as before.
     const measure = resolveMeasure(item.unit, mapping.units)
     let measureCode = measure.code
-    if (!measure.matched && item.unit) {
+    let matched = measure.matched
+    if (measure.source !== 'portal' && item.unit) {
+      const catalog = deps.measureCatalog ? await deps.measureCatalog() : null
+      const own = catalog?.byName(item.unit) ?? null
+      if (own !== null) {
+        measureCode = own
+        matched = true
+      } else if (measure.source === 'builtin') {
+        // Catalogue unreadable (null) → keep the built-in code: it is still far closer to the truth
+        // than silently writing «шт», which is what happened before this map existed.
+        matched = !catalog || catalog.hasCode(measure.code)
+        if (!matched) measureCode = mapping.units.defaultCode
+      }
+    }
+    if (!matched && item.unit) {
       const res = mapping.units.autoCreate && deps.createMeasure ? await deps.createMeasure(item.unit) : null
       const uKey = normalizeUnitKey(item.unit) // same normalization as the measure index/cache
       if (res) {
