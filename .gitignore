@@ -38,3 +38,11 @@ legacy/**/*.pyc
 # Generated symlink / nuxt local rc
 dist
 .nuxtrc
+
+# Local Redis artefacts — appear when a dev Redis is started from the repo root
+# (pnpm loadtest:queue). Start it with `--dir /tmp` to avoid them entirely.
+# Never part of the project; tests/noLocalArtifacts.test.ts guards the index.
+dump.rdb
+*.rdb
+appendonly.aof
+appendonlydir/
