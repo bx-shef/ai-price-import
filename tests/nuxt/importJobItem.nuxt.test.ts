@@ -145,3 +145,21 @@ describe('ImportJobItem', () => {
     expect(w.find('[role="status"]').text()).toContain('✓')
   })
 })
+
+describe('ImportJobItem: истёкший статус (#268)', () => {
+  const EXPIRED = 'Статус этой загрузки больше не хранится на сервере — прошло больше 48 часов. Документ в CRM это не затрагивает.'
+
+  it('строка терминальна: объяснение видно, степпера нет, «Документ обработан» не подставляется', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('expired', EXPIRED) } })
+    const text = w.text()
+    expect(text).toContain('Статус не сохранился') // бейдж
+    expect(text).toContain('больше не хранится на сервере')
+    expect(text).not.toContain('Документ обработан')
+    expect(text).not.toContain('Извлечение текста') // степпер только у незавершённых
+  })
+
+  it('кнопка «Убрать из списка» доступна — строку можно самому почистить', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('expired', EXPIRED) } })
+    expect(w.find('button[aria-label^="Убрать из списка"]').exists()).toBe(true)
+  })
+})

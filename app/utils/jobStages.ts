@@ -42,14 +42,17 @@ const PERCENT: Record<string, number> = {
   extracting: 40,
   processing: 75,
   done: 100,
-  error: 100
+  error: 100,
+  expired: 100
 }
 
 /** Map a job status to a stepper + percent for the progress UI. Never throws (unknown → queued-like). */
 export function jobProgress(status: JobStatus | string): JobProgress {
   const failed = status === 'error'
   const isDone = status === 'done'
-  const terminal = isDone || failed
+  // `expired` (client-only) is terminal but NOT «done»: the server simply no longer keeps the status.
+  // It must agree with jobStatusMeta().terminal — a parity test pins the two together.
+  const terminal = isDone || failed || status === 'expired'
   const activeIndex = status in ACTIVE_INDEX ? ACTIVE_INDEX[status]! : -1
 
   const steps: JobStep[] = STEP_DEFS.map((def, i) => {
@@ -73,13 +76,15 @@ export function jobProgress(status: JobStatus | string): JobProgress {
     return { key: def.key, label: def.label, state }
   })
 
-  const label = failed
-    ? 'Ошибка'
-    : isDone
-      ? 'Готово'
-      : status === 'queued'
-        ? 'В очереди'
-        : (STEP_DEFS[activeIndex]?.label ?? 'В очереди')
+  const label = status === 'expired'
+    ? 'Статус не сохранился'
+    : failed
+      ? 'Ошибка'
+      : isDone
+        ? 'Готово'
+        : status === 'queued'
+          ? 'В очереди'
+          : (STEP_DEFS[activeIndex]?.label ?? 'В очереди')
 
   return {
     percent: status in PERCENT ? PERCENT[status]! : 8,

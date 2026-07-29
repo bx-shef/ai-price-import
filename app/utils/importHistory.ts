@@ -12,6 +12,10 @@ export interface ImportHistoryEntry {
   at: number
   /** The rating the employee already gave for this job, if any (suppresses re-asking). */
   feedback?: 'up' | 'down'
+  /** Portal (B24 domain) this job was uploaded from. localStorage is per-ORIGIN, not per-portal, so
+   *  one browser used in two portals shares this list; the field lets the merge tell them apart.
+   *  Absent on entries written before the field existed — those are treated as «unknown portal». */
+  portal?: string
 }
 
 /** Minimal localStorage surface (getItem/setItem) — injected so the core stays testable. */
@@ -43,7 +47,13 @@ export function readHistory(storage: StorageLike, now: number = Date.now()): Imp
     .filter((e): e is ImportHistoryEntry =>
       !!e && typeof (e as ImportHistoryEntry).jobId === 'string' && typeof (e as ImportHistoryEntry).at === 'number')
     .filter(e => e.at >= cutoff)
-    .map(e => ({ jobId: e.jobId, fileName: String(e.fileName ?? ''), at: e.at, ...(isKind(e.feedback) ? { feedback: e.feedback } : {}) }))
+    .map(e => ({
+      jobId: e.jobId,
+      fileName: String(e.fileName ?? ''),
+      at: e.at,
+      ...(isKind(e.feedback) ? { feedback: e.feedback } : {}),
+      ...(typeof e.portal === 'string' && e.portal ? { portal: e.portal } : {})
+    }))
     .sort((a, b) => b.at - a.at)
     .slice(0, MAX_ENTRIES)
 }
@@ -55,11 +65,18 @@ function write(storage: StorageLike, entries: ImportHistoryEntry[]): void {
 }
 
 /** Record a freshly-uploaded job (or refresh its fileName/time). Keeps any existing feedback flag. */
-export function addImportJob(storage: StorageLike, jobId: string, fileName: string, now: number = Date.now()): void {
+export function addImportJob(storage: StorageLike, jobId: string, fileName: string, now: number = Date.now(), portal?: string): void {
   if (!jobId) return
   const prev = readHistory(storage, now)
   const existing = prev.find(e => e.jobId === jobId)
-  const entry: ImportHistoryEntry = { jobId, fileName, at: now, ...(existing?.feedback ? { feedback: existing.feedback } : {}) }
+  const keepPortal = portal || existing?.portal
+  const entry: ImportHistoryEntry = {
+    jobId,
+    fileName,
+    at: now,
+    ...(existing?.feedback ? { feedback: existing.feedback } : {}),
+    ...(keepPortal ? { portal: keepPortal } : {})
+  }
   write(storage, [entry, ...prev.filter(e => e.jobId !== jobId)])
 }
 
@@ -68,7 +85,13 @@ export function markImportFeedback(storage: StorageLike, jobId: string, kind: 'u
   if (!jobId) return
   const prev = readHistory(storage, now)
   const existing = prev.find(e => e.jobId === jobId)
-  const entry: ImportHistoryEntry = { jobId, fileName: existing?.fileName ?? '', at: existing?.at ?? now, feedback: kind }
+  const entry: ImportHistoryEntry = {
+    jobId,
+    fileName: existing?.fileName ?? '',
+    at: existing?.at ?? now,
+    feedback: kind,
+    ...(existing?.portal ? { portal: existing.portal } : {})
+  }
   write(storage, [entry, ...prev.filter(e => e.jobId !== jobId)])
 }
 
