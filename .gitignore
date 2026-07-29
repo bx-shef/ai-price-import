@@ -39,6 +39,10 @@ legacy/**/*.pyc
 dist
 .nuxtrc
 
-# Local Redis dump — appears when a dev Redis is started from the repo root
-# (pnpm loadtest:queue). Never part of the project.
+# Local Redis artefacts — appear when a dev Redis is started from the repo root
+# (pnpm loadtest:queue). Start it with `--dir /tmp` to avoid them entirely.
+# Never part of the project; tests/noLocalArtifacts.test.ts guards the index.
 dump.rdb
+*.rdb
+appendonly.aof
+appendonlydir/

@@ -39,7 +39,8 @@ const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', 'redis'])
 if (!LOCAL_HOSTS.has(redisUrl.hostname) && !process.argv.includes('--allow-remote-redis')) {
   console.error(`Отказ: REDIS_URL указывает на «${redisUrl.hostname}», а не на локальный Redis.`)
   console.error('Скрипт создаёт тысячи задач и удаляет свои очереди — на боевом Redis это лишняя нагрузка и мусор.')
-  console.error('Поднимите локальный Redis (redis-server --daemonize yes) или, если вы точно уверены,')
+  // `--dir /tmp` matters: started from the repo root, Redis drops its dump.rdb right here.
+  console.error('Поднимите локальный Redis (redis-server --daemonize yes --dir /tmp) или, если вы точно уверены,')
   console.error('запустите с флагом --allow-remote-redis.')
   process.exit(1)
 }
