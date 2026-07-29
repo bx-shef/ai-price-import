@@ -25,7 +25,9 @@ export interface StorageLike {
 }
 
 const KEY = 'procure:import:history'
-const MAX_ENTRIES = 50
+/** Cap on remembered jobs. The status endpoint's MAX_IDS is derived from this — the browser must never
+ *  hold more ids than the server will answer for, or the oldest rows silently stop updating (#260). */
+export const MAX_ENTRIES = 50
 /** Drop entries older than this (slightly outlives the server's job TTL so a finished row lingers). */
 const TTL_MS = 7 * 24 * 60 * 60 * 1000
 

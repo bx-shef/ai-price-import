@@ -48,7 +48,9 @@ describe('ImportStaging', () => {
     // Each call carries (File, null target, a UUID idempotency key).
     expect(upload).toHaveBeenCalledWith(expect.any(File), null, expect.stringMatching(/^[0-9a-f-]{36}$/i))
     expect(w.text()).toContain('Отправили в CRM 2 из 2')
-    expect(w.text()).toContain('Отправлен') // per-row done badge
+    // Отправленные строки уходят из списка сразу (#261) — бейджа «Отправлен» больше нет.
+    expect(w.text()).not.toContain('a.pdf')
+    expect(w.text()).not.toContain('b.pdf')
   })
 
   it('если upload БРОСИЛ — страница не залипает: строка снова доступна, «Импортировать» разблокирована', async () => {
@@ -80,7 +82,7 @@ describe('ImportStaging', () => {
     expect(text).toContain('Отправили в CRM 1 из 2')
   })
 
-  it('a failed (retryable) row re-imports on a second «Импортировать»; done rows are not re-sent', async () => {
+  it('a failed (retryable) row re-imports on a second «Импортировать»; sent rows are gone, not re-sent', async () => {
     let failFirst = true
     const upload = vi.fn(async (f: File) => {
       if (f.name === 'flaky.pdf' && failFirst) {
@@ -91,10 +93,10 @@ describe('ImportStaging', () => {
     })
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('ok.pdf'), file('flaky.pdf')])
-    await clickText(w, 'Импортировать') // ok→done, flaky→error
+    await clickText(w, 'Импортировать') // ok → отправлена и убрана, flaky → ошибка
     await tick()
     expect(upload).toHaveBeenCalledTimes(2)
-    await clickText(w, 'Импортировать') // only flaky (error) retried; ok (done) NOT re-sent
+    await clickText(w, 'Импортировать') // повторяется только flaky; ok уже покинул список
     await tick()
     expect(upload).toHaveBeenCalledTimes(3)
     expect(upload).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'flaky.pdf' }), null, expect.any(String))
@@ -131,16 +133,37 @@ describe('ImportStaging', () => {
     expect(w.findAll('li').length).toBe(10)
   })
 
-  it('«Убрать отправленные» clears the done rows after import', async () => {
+  it('#261: отправленная строка уходит из списка сразу, без ручной кнопки', async () => {
     const upload = vi.fn(async () => true)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('one.pdf')])
     await clickText(w, 'Импортировать')
     await tick()
-    expect(w.text()).toContain('one.pdf')
-    await clickText(w, 'Убрать отправленные')
-    await tick()
     expect(w.text()).not.toContain('one.pdf')
+    expect(w.text()).not.toContain('Убрать отправленные') // мёртвая кнопка удалена
+    expect(w.text()).toContain('Отправили в CRM 1 из 1') // итог не потерян
+  })
+
+  it('#261: ТОТ ЖЕ файл можно залить повторно — прежде дедуп считал отправленную строку', async () => {
+    const upload = vi.fn(async () => true)
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    const again = file('one.pdf')
+    await pick(w, [again])
+    await clickText(w, 'Импортировать')
+    await tick()
+    await pick(w, [again]) // тот же самый файл
+    expect(w.text()).toContain('one.pdf')
+    expect(w.text()).not.toContain('уже в списке')
+  })
+
+  it('#261: неуспешные строки ОСТАЮТСЯ — их ещё можно перевыслать или прочитать причину', async () => {
+    const upload = vi.fn(async (f: File) => f.name !== 'bad.pdf')
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    await pick(w, [file('good.pdf'), file('bad.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    expect(w.text()).not.toContain('good.pdf') // ушла
+    expect(w.text()).toContain('bad.pdf') // осталась
   })
 
   it('remove button drops a staged file before import', async () => {
@@ -180,7 +203,9 @@ describe('ImportStaging', () => {
   })
 
   it('подсказка живёт ВНУТРИ карточки списка (role=status), а не отдельным алертом', async () => {
-    const upload = vi.fn(async () => true)
+    // Список должен остаться непустым, иначе итог показывает отдельный алерт (#261) — берём файл,
+    // отправка которого не удалась: такая строка не уходит.
+    const upload = vi.fn(async () => false)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('one.pdf')])
     await clickText(w, 'Импортировать')
@@ -190,14 +215,14 @@ describe('ImportStaging', () => {
     expect(notice.text()).toMatch(/Отправили в CRM \d+ из \d+/)
   })
 
-  it('очистка списка сбрасывает подсказку — не показываем «письмо из прошлого»', async () => {
-    const upload = vi.fn(async () => true)
+  it('удаление строки вручную сбрасывает подсказку — не показываем «письмо из прошлого»', async () => {
+    const upload = vi.fn(async () => false)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('one.pdf')])
     await clickText(w, 'Импортировать')
     await tick()
     expect(w.text()).toContain('Отправили в CRM')
-    await clickText(w, 'Убрать отправленные из списка')
+    await w.find('button[aria-label="Убрать one.pdf"]').trigger('click')
     await tick()
     expect(w.text()).not.toContain('Отправили в CRM')
   })

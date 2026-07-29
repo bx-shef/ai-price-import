@@ -14,7 +14,9 @@ import type { TargetRef } from '~/types/mapping'
 // The `upload` transport is INJECTED from the parent's single useImport() instance (not created here) —
 // so the page's job list + auto-poll follow the new jobs on the SAME reactive state; a second
 // useImport() here would poll a separate, unwatched list and leak a timer on unmount.
-type Status = 'queued' | 'uploading' | 'done' | 'error'
+// No 'done': a successfully sent row leaves the list immediately (#261), so that state would only
+// ever exist for the instant between the response and the removal — dead code with a label nobody sees.
+type Status = 'queued' | 'uploading' | 'error'
 interface StagedFile {
   id: number
   /** Stable idempotency key (desired jobId) reused across retries. */
@@ -68,9 +70,9 @@ function onDrop(e: DragEvent): void {
   onPicked(e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : [])
 }
 
-/** Files still awaiting import (queued/uploading/error) — the cap counts these, «отправленные» don't. */
+/** Files in the list — all of them are still awaiting import now that sent rows are removed at once. */
 function pendingCount(): number {
-  return staged.value.filter(s => s.status !== 'done').length
+  return staged.value.length
 }
 function onPicked(files: File[] | null | undefined): void {
   if (!files?.length) return
@@ -112,26 +114,18 @@ function remove(id: number): void {
   staged.value = staged.value.filter(s => s.id !== id)
   if (!staged.value.length) notice.value = ''
 }
-function clearDone(): void {
-  staged.value = staged.value.filter(s => s.status !== 'done')
-  if (!staged.value.length) notice.value = ''
-}
-
 // Uploadable rows: queued, or a retryable error (a network failure) — but NOT a pre-validation
 // failure (invalid), which can never succeed and must not be re-sent.
 const toImport = computed(() => staged.value.filter(s => s.status === 'queued' || (s.status === 'error' && !s.invalid)))
-const doneCount = computed(() => staged.value.filter(s => s.status === 'done').length)
 
 const STATUS_LABEL: Record<Status, string> = {
   queued: 'В очереди',
   uploading: 'Отправляем…',
-  done: 'Отправлен',
   error: 'Ошибка'
 }
-const STATUS_COLOR: Record<Status, 'air-secondary' | 'air-primary' | 'air-primary-success' | 'air-primary-alert'> = {
+const STATUS_COLOR: Record<Status, 'air-secondary' | 'air-primary' | 'air-primary-alert'> = {
   queued: 'air-secondary',
   uploading: 'air-primary',
-  done: 'air-primary-success',
   error: 'air-primary-alert'
 }
 
@@ -161,8 +155,14 @@ async function startImport(): Promise<void> {
       // a duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
       const success = await props.upload(s.file, s.target, s.key)
       if (success) {
-        s.status = 'done'
         ok++
+        // Отправленная строка уходит из списка СРАЗУ (#261). Пока она в нём висела, дедуп по имени
+        // считал её «уже добавленной», и тот же файл нельзя было залить повторно, не убрав строку
+        // руками — а крестика у отправленной строки не было. Прогресс дальше виден в «Последних
+        // операциях» ниже, туда и ведёт итоговая надпись.
+        // Удаляем НАПРЯМУЮ, не через remove(): тот гасит notice на опустевшем списке, а итог
+        // «Отправили в CRM N из M» выставляется уже после цикла.
+        staged.value = staged.value.filter(x => x !== s)
       } else {
         s.status = 'error'
         s.error = 'Не удалось отправить файл — проверьте связь и нажмите «Импортировать» ещё раз.'
@@ -255,7 +255,7 @@ async function startImport(): Promise<void> {
                 size="sm"
               />
               <B24Button
-                v-if="s.status !== 'uploading' && s.status !== 'done'"
+                v-if="s.status !== 'uploading'"
                 :icon="CrossMIcon"
                 color="air-tertiary-no-accent"
                 size="xs"
@@ -289,7 +289,8 @@ async function startImport(): Promise<void> {
       </p>
     </B24Card>
 
-    <!-- Action row: manual start + clear-done. -->
+    <!-- Action row: manual start. Кнопки «убрать отправленные» больше нет — успешные строки уходят
+         сами (#261). -->
     <div
       v-if="staged.length"
       class="mt-3 flex flex-wrap items-center gap-2"
@@ -300,14 +301,6 @@ async function startImport(): Promise<void> {
         :disabled="importing || !toImport.length"
         :label="importing ? 'Импорт…' : `Импортировать${toImport.length ? ` (${toImport.length})` : ''}`"
         @click="startImport"
-      />
-      <B24Button
-        v-if="doneCount"
-        label="Убрать отправленные из списка"
-        color="air-tertiary-no-accent"
-        size="sm"
-        :disabled="importing"
-        @click="clearDone"
       />
     </div>
 

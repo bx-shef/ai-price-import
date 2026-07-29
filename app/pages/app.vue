@@ -20,7 +20,7 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'AI-импорт прайсов' })
 
-const { jobs, loading, uploading, error, listError, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
+const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
 function doClearHistory(): void {
@@ -204,7 +204,7 @@ watch(jobs, (list) => {
            (or a file is uploading) — a brand-new operator on first open sees just the dropzone + savings,
            not an empty «Последние операции» block. -->
         <div
-          v-if="jobs.length || uploading || listError"
+          v-if="jobs.length || uploading || listError || listWarning"
           class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
           :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
         >
@@ -266,7 +266,7 @@ watch(jobs, (list) => {
         </div>
 
         <B24Card
-          v-if="jobs.length || uploading || listError"
+          v-if="jobs.length || uploading || listError || listWarning"
           variant="outline"
           class="transition-opacity"
           :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
@@ -287,6 +287,14 @@ watch(jobs, (list) => {
               :job="job"
               @remove="removeJob"
             />
+            <!-- Сервер ответил, но не по всем заданиям (#260): не ошибка — предупреждение, поэтому
+                 показываем и при непустом списке. -->
+            <li
+              v-if="listWarning"
+              class="p-3 text-sm text-(--ui-color-base-3)"
+            >
+              {{ listWarning }}
+            </li>
             <!-- Пустое состояние с причиной: «историю не удалось получить» и «истории нет» больше не
                  выглядят одинаково (#268). Кнопка «Обновить» в шапке блока теперь тоже видна. -->
             <li

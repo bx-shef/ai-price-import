@@ -233,8 +233,11 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     статус/мета каждого задания (`status`/`fileName`/`result`/`manualOverride`/`diskFile`/`notified`)
     живёт в Redis-хеше `import:job:{member}:{jobId}` с native PX-expiry (TTL `IMPORT_JOB_TTL_HOURS`, дефолт
     48ч). **Серверного списка заданий НЕТ** (#D): браузер сотрудника держит свою историю в **localStorage**
-    (`app/utils/importHistory.ts`, ключ `jobId`) и опрашивает статус **по id** (`GET /api/import/status?ids=`
-    → `getJob`); список задания нужен только тому, кто импорт запустил. Таблица Postgres `import_job`
+    (`app/utils/importHistory.ts`, ключ `jobId`) и опрашивает статус **по id** (`POST /api/import/status {ids:[…]}` → `getJob`;
+    **POST, не GET `?ids=`** — #260: список рос вместе с капом истории (50 UUID ≈ 1,9 КБ query) и упёрся
+    бы в буфер заголовков прокси, плюс id утекали в access-логи, хотя в телеметрию мы их специально не
+    кладём. Переполнение капа `MAX_IDS` больше не глушится молча — ответ несёт `truncated`);
+    список задания нужен только тому, кто импорт запустил. Таблица Postgres `import_job`
     **удалена** (`DROP TABLE IF EXISTS` в `schema.ts`; клиентов ещё не запускали — мигрировать нечего) →
     **ничего не копится** ни на сервере, ни в БД (`retentionSweep` её не чистит). `JobRedis` инъектируется
     (DI) — чистое ядро тестируется `createMemoryJobRedis`; прод — ioredis на том же `REDIS_URL`, что BullMQ;
