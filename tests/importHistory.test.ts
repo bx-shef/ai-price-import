@@ -94,3 +94,26 @@ describe('importHistory (localStorage, keyed by jobId)', () => {
     expect(readHistory(s)).toEqual([])
   })
 })
+
+describe('портал в записи истории (изоляция между порталами)', () => {
+  it('addImportJob запоминает портал и сохраняет его при повторной записи без портала', () => {
+    const s = memStorage()
+    addImportJob(s, 'j1', 'a.pdf', 1000, 'my.bitrix24.by')
+    expect(readHistory(s, 1000)[0]?.portal).toBe('my.bitrix24.by')
+    addImportJob(s, 'j1', 'a.pdf', 2000) // повтор без домена (фрейм ещё не отдал auth)
+    expect(readHistory(s, 2000)[0]?.portal).toBe('my.bitrix24.by')
+  })
+
+  it('markImportFeedback не теряет портал уже известной записи', () => {
+    const s = memStorage()
+    addImportJob(s, 'j1', 'a.pdf', 1000, 'my.bitrix24.by')
+    markImportFeedback(s, 'j1', 'up', 1500)
+    expect(readHistory(s, 1500)[0]).toMatchObject({ portal: 'my.bitrix24.by', feedback: 'up' })
+  })
+
+  it('запись без портала (старый формат) читается без ошибки и без поля', () => {
+    const s = memStorage()
+    addImportJob(s, 'j1', 'a.pdf', 1000)
+    expect(readHistory(s, 1000)[0]).not.toHaveProperty('portal')
+  })
+})

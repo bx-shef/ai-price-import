@@ -142,29 +142,50 @@ async function startImport(): Promise<void> {
   importing.value = true
   let ok = 0
   let attempted = 0
+  // try/finally around the whole loop: `importing` drives `pointer-events-none` on this component AND
+  // (via update:busy) on the rest of /app. If anything below ever threw, the flag would stay `true` and
+  // the page would look alive but ignore every click — the exact symptom reported in #258. `upload()`
+  // swallows its own errors today, so this is a backstop, not a fix for a known throw.
+  try {
   // ONE BY ONE — sequential, no parallel load (owner ask: «мне нагрузка не нужна»).
-  for (const s of queue) {
-    // The user can still click «убрать» on a not-yet-processed (queued) row while the loop runs —
-    // its remove button is visible until it starts uploading. Skip any row that left the staged
-    // list so a removed file is NOT uploaded from this snapshot.
-    if (!staged.value.includes(s)) continue
-    attempted++
-    s.status = 'uploading'
-    s.error = undefined
-    notice.value = `Импортируем «${s.file.name}»…`
-    // Pass the row's stable key as the desired jobId → a retry of THIS row reuses it and can't create
-    // a duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
-    const success = await props.upload(s.file, s.target, s.key)
-    if (success) {
-      s.status = 'done'
-      ok++
-    } else {
-      s.status = 'error'
-      s.error = 'Не удалось отправить файл — проверьте связь и нажмите «Импортировать» ещё раз.'
+    for (const s of queue) {
+      // The user can still click «убрать» on a not-yet-processed (queued) row while the loop runs —
+      // its remove button is visible until it starts uploading. Skip any row that left the staged
+      // list so a removed file is NOT uploaded from this snapshot.
+      if (!staged.value.includes(s)) continue
+      attempted++
+      s.status = 'uploading'
+      s.error = undefined
+      notice.value = `Импортируем «${s.file.name}»…`
+      // Pass the row's stable key as the desired jobId → a retry of THIS row reuses it and can't create
+      // a duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
+      const success = await props.upload(s.file, s.target, s.key)
+      if (success) {
+        s.status = 'done'
+        ok++
+      } else {
+        s.status = 'error'
+        s.error = 'Не удалось отправить файл — проверьте связь и нажмите «Импортировать» ещё раз.'
+      }
+    }
+    notice.value = `Отправили в CRM ${ok} из ${attempted}. Что с ними дальше — смотрите ниже, в блоке «Последние операции».`
+  } catch {
+    // `upload()` handles its own errors today, so reaching here means something unexpected broke.
+    // Swallow it into a visible notice instead of letting it escape the click handler as an
+    // unhandled rejection — the rows below are reset to a retryable state either way.
+    notice.value = 'Отправка прервалась. Проверьте связь и нажмите «Импортировать» ещё раз.'
+  } finally {
+    importing.value = false // never leave the page locked, whatever happened above
+    // A row interrupted mid-flight would otherwise stay «uploading» forever: that state hides its
+    // «убрать» button AND keeps it out of `toImport`, so the file could be neither retried nor
+    // removed without reloading the page. Put such rows back into a retryable error state.
+    for (const s of staged.value) {
+      if (s.status === 'uploading') {
+        s.status = 'error'
+        s.error = 'Отправка прервалась — нажмите «Импортировать» ещё раз.'
+      }
     }
   }
-  importing.value = false
-  notice.value = `Отправили в CRM ${ok} из ${attempted}. Что с ними дальше — смотрите ниже, в блоке «Последние операции».`
 }
 </script>
 

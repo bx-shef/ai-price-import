@@ -10,6 +10,7 @@ import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
 import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS } from '~/config/b24'
 import { isPortalConfigured } from '~/utils/portalSettings'
+import { jobStatusMeta } from '~/utils/jobStatus'
 import { formatMinutes } from '~/utils/savings'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
@@ -19,7 +20,7 @@ import { formatMinutes } from '~/utils/savings'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'AI-импорт прайсов' })
 
-const { jobs, loading, uploading, error, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
+const { jobs, loading, uploading, error, listError, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
 function doClearHistory(): void {
@@ -97,7 +98,9 @@ const stats = computed(() => {
   for (const j of jobs.value) {
     if (j.status === 'done') s.done++
     else if (j.status === 'error') s.error++
-    else s.running++
+    // Only genuinely unfinished jobs count as «в работе» — `expired` is terminal, and counting it
+    // here would show «в работе: N» while nothing is polling.
+    else if (!jobStatusMeta(j.status).terminal) s.running++
   }
   return s
 })
@@ -108,12 +111,11 @@ const stats = computed(() => {
 // read). `seenActive` remembers jobIds observed non-terminal; a done job that was in it = a fresh
 // completion. The show/throttle/verification decision is server-side (portal_app_rating); the modal
 // delays ~10s after this flips so the result is seen first. See docs/PROJECT_MAP.md.
-const TERMINAL_STATUSES = new Set(['done', 'error'])
 const seenActive = new Set<string>()
 const freshImportSuccess = ref(false)
 watch(jobs, (list) => {
   for (const j of list) {
-    if (!TERMINAL_STATUSES.has(j.status)) seenActive.add(j.jobId)
+    if (!jobStatusMeta(j.status).terminal) seenActive.add(j.jobId)
     else if (j.status === 'done' && seenActive.has(j.jobId)) freshImportSuccess.value = true
   }
 }, { deep: true })
@@ -202,7 +204,7 @@ watch(jobs, (list) => {
            (or a file is uploading) — a brand-new operator on first open sees just the dropzone + savings,
            not an empty «Последние операции» block. -->
         <div
-          v-if="jobs.length || uploading"
+          v-if="jobs.length || uploading || listError"
           class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
           :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
         >
@@ -264,7 +266,7 @@ watch(jobs, (list) => {
         </div>
 
         <B24Card
-          v-if="jobs.length || uploading"
+          v-if="jobs.length || uploading || listError"
           variant="outline"
           class="transition-opacity"
           :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
@@ -285,6 +287,15 @@ watch(jobs, (list) => {
               :job="job"
               @remove="removeJob"
             />
+            <!-- Пустое состояние с причиной: «историю не удалось получить» и «истории нет» больше не
+                 выглядят одинаково (#268). Кнопка «Обновить» в шапке блока теперь тоже видна. -->
+            <li
+              v-if="!jobs.length && !uploading && listError"
+              class="p-3 text-sm text-(--ui-color-base-3)"
+            >
+              Историю загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
+              откройте приложение заново.
+            </li>
           </ul>
         </B24Card>
 

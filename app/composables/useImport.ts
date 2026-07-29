@@ -2,7 +2,9 @@ import { ref, computed } from 'vue'
 import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { jobStatusMeta, type JobStatus } from '~/utils/jobStatus'
+import { nextPollDelay } from '~/utils/pollBackoff'
 import { addImportJob, clearImportHistory, importJobIds, readHistory, removeImportJob } from '~/utils/importHistory'
+import { mergeJobRows } from '~/utils/importMerge'
 import type { TargetRef } from '~/types/mapping'
 
 // In-portal import client: upload a document and poll job status via the frame-token
@@ -12,18 +14,15 @@ import type { TargetRef } from '~/types/mapping'
 
 export interface ImportJobView { jobId: string, status: JobStatus, fileName: string, result: string, diskUrl?: string }
 
-/** How often to re-poll status while a job is in flight. */
-const POLL_MS = 2500
-/** Stop auto-polling after this many CONSECUTIVE failed polls (e.g. a dead/expired frame token) so we
- *  don't hammer the endpoint forever; the user can still «Обновить» manually. */
-const MAX_POLL_FAILURES = 5
-
 export function useImport() {
   const { init, auth } = useB24()
   const jobs = ref<ImportJobView[]>([])
   const loading = ref(false)
   const uploading = ref(false)
   const error = ref('')
+  // Separate from `error`, which is shared with upload() and «вне портала». Only set by refresh(), so
+  // the empty state can say «историю получить не удалось» without claiming that after a failed UPLOAD.
+  const listError = ref('')
 
   // Any job not yet in a terminal state → keep polling.
   const hasActive = computed(() => jobs.value.some(j => !jobStatusMeta(j.status).terminal))
@@ -34,6 +33,9 @@ export function useImport() {
   // the dead component.
   let disposed = false
   let pollFailures = 0 // consecutive failed polls → stop after MAX_POLL_FAILURES
+  // The first successful `refresh()` of this instance. Until it happens we keep retrying on a backoff
+  // even with nothing active — otherwise a single failed first load left the list empty forever.
+  let firstLoadOk = false
   function clearTimer(): void {
     if (pollTimer) {
       clearTimeout(pollTimer)
@@ -44,18 +46,20 @@ export function useImport() {
     disposed = true
     clearTimer()
   }
-  // Schedule the next poll ONLY while there's an active job. Self-cancelling: when the last job goes
-  // terminal, `hasActive` is false and no further timer is armed. Client-only (no window on SSG).
+  // Arm the next poll if the pure rule says so (nextPollDelay): while a job is running, or until the
+  // first load succeeds. Self-cancelling. Client-only (no window on SSG).
   function scheduleNext(): void {
     clearTimer()
-    if (disposed || typeof window === 'undefined' || !hasActive.value) return
+    if (disposed || typeof window === 'undefined') return
+    const delay = nextPollDelay({ firstLoadOk, hasActive: hasActive.value, failures: pollFailures })
+    if (delay === null) return
     pollTimer = setTimeout(async () => {
       await refresh()
-      // refresh() swallows errors into error.value; count consecutive failures so a persistently
-      // dead frame token stops the loop instead of polling forever.
-      pollFailures = error.value ? pollFailures + 1 : 0
-      if (!disposed && pollFailures < MAX_POLL_FAILURES) scheduleNext() // don't re-arm after unmount / too many fails
-    }, POLL_MS)
+      // refresh() swallows errors into listError; count consecutive failures so a persistently dead
+      // frame token stops the loop instead of polling forever.
+      pollFailures = listError.value ? pollFailures + 1 : 0
+      if (!disposed) scheduleNext() // nextPollDelay stops the loop once failures hit the cap
+    }, delay)
   }
 
   async function headers(): Promise<Record<string, string> | null> {
@@ -66,7 +70,8 @@ export function useImport() {
   async function refresh(): Promise<void> {
     const h = await headers()
     if (!h) {
-      error.value = 'Импорт доступен только внутри портала Bitrix24'
+      listError.value = 'Импорт доступен только внутри портала Bitrix24'
+      error.value = listError.value
       return
     }
     // The client owns the job list (localStorage) — poll status only for OUR jobIds. No server list.
@@ -74,25 +79,23 @@ export function useImport() {
     const ids = store ? importJobIds(store) : []
     if (!ids.length) {
       jobs.value = []
-      error.value = ''
+      listError.value = ''
+      firstLoadOk = true // an empty history IS a successful load — nothing to retry
       return
     }
     loading.value = true
     try {
       const res = await $fetch<{ jobs: ImportJobView[] }>('/api/import/status', { headers: h, query: { ids: ids.join(',') } })
       // Merge: server gives the live status/result; localStorage gives the fileName we remembered
-      // (and preserves display order = newest-first). Jobs whose server status expired just drop off.
+      // (and preserves display order = newest-first). A remembered row the server no longer knows
+      // (its 48h status TTL ran out while the browser keeps 7 days) becomes an `expired` row rather
+      // than disappearing — silently dropping it read as «истории нет» (#268).
       const local = store ? readHistory(store) : []
-      const byId = new Map(res.jobs.map(j => [j.jobId, j]))
-      jobs.value = local
-        .filter(e => byId.has(e.jobId))
-        .map((e) => {
-          const j = byId.get(e.jobId)!
-          return { jobId: j.jobId, status: j.status, fileName: e.fileName || j.fileName, result: j.result, ...(j.diskUrl ? { diskUrl: j.diskUrl } : {}) }
-        })
-      error.value = ''
+      jobs.value = mergeJobRows(local, res.jobs, { portal: auth()?.domain })
+      listError.value = ''
+      firstLoadOk = true
     } catch (e) {
-      error.value = fetchErrorMessage(e, 'Не удалось получить статус импорта')
+      listError.value = fetchErrorMessage(e, 'Не удалось получить статус импорта')
     } finally {
       loading.value = false
     }
@@ -109,7 +112,7 @@ export function useImport() {
     // job UP FRONT — so even if the response is lost after the server committed the job, it still shows
     // in «Последние операции» and is polled (no invisible import). addImportJob is keyed by jobId (idempotent).
     const clientJob = !!jobId && typeof window !== 'undefined'
-    if (clientJob) addImportJob(window.localStorage, jobId!, file.name)
+    if (clientJob) addImportJob(window.localStorage, jobId!, file.name, Date.now(), auth()?.domain)
     try {
       const form = new FormData()
       form.append('file', file)
@@ -119,7 +122,7 @@ export function useImport() {
       if (jobId) form.append('jobId', jobId) // idempotency key (server validates it's a UUID)
       const res = await $fetch<{ jobId?: string }>('/api/import/upload', { method: 'POST', headers: h, body: form })
       // Remember this job in the browser (no-op if already recorded up-front). Client owns history now.
-      if (!clientJob && typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name)
+      if (!clientJob && typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name, Date.now(), auth()?.domain)
       await refresh()
       scheduleNext() // the new job is queued → start following its progress
       return true
@@ -135,6 +138,7 @@ export function useImport() {
   async function startAutoPoll(): Promise<void> {
     disposed = false // in case this instance was previously stopped and is restarted
     pollFailures = 0
+    firstLoadOk = false
     await refresh()
     scheduleNext()
   }
@@ -143,11 +147,12 @@ export function useImport() {
    *  poll failures may have stopped the loop (MAX_POLL_FAILURES) while jobs are still in flight; a
    *  successful manual refresh clears the failure streak and re-arms polling so «обновляется» is honest. */
   async function refreshNow(): Promise<void> {
+    // Reset the failure streak BEFORE re-arming: this button is the only way out once the loop has
+    // given up (MAX_POLL_FAILURES), so it must restart it even when this attempt also failed — with
+    // an unloaded list nextPollDelay then keeps retrying the first load on its backoff (#268).
+    pollFailures = 0
     await refresh()
-    if (!error.value) {
-      pollFailures = 0
-      scheduleNext() // no-op when nothing is active; resumes following when a job is still running
-    }
+    scheduleNext()
   }
 
   /** Clear the employee's import history (localStorage) + the visible list. The server keeps only
@@ -164,5 +169,5 @@ export function useImport() {
     jobs.value = jobs.value.filter(j => j.jobId !== jobId)
   }
 
-  return { jobs, loading, uploading, error, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob }
+  return { jobs, loading, uploading, error, listError, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob }
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { jobProgress } from '../app/utils/jobStages'
+import { jobStatusMeta, type JobStatus } from '../app/utils/jobStatus'
 
 describe('jobProgress', () => {
   it('queued → first step active (looks alive), «В очереди» label, low percent, not terminal', () => {
@@ -46,5 +47,12 @@ describe('jobProgress', () => {
     expect(p.terminal).toBe(false)
     expect(p.percent).toBe(8)
     expect(p.steps).toHaveLength(3)
+  })
+})
+
+describe('терминальность — один источник правды', () => {
+  it('jobProgress(s).terminal совпадает с jobStatusMeta(s).terminal для каждого статуса', () => {
+    const all: JobStatus[] = ['queued', 'extracting', 'processing', 'done', 'error', 'expired']
+    for (const s of all) expect(jobProgress(s).terminal, s).toBe(jobStatusMeta(s).terminal)
   })
 })

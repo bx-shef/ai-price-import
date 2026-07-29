@@ -1,7 +1,11 @@
 // Pure presentation model for import-job status (used by the /app upload/status UI).
 // Mirrors server JobStatus; keeps label/tone/terminal logic testable and out of components.
 
-export type JobStatus = 'queued' | 'extracting' | 'processing' | 'done' | 'error'
+// `expired` is CLIENT-ONLY: the browser remembers a job for 7 days (importHistory) but the server
+// keeps its status for 48h (IMPORT_JOB_TTL_HOURS). A remembered row the server no longer knows about
+// used to be dropped silently from the merge — the row just vanished. It is now surfaced as `expired`
+// so «истории нет» and «статус больше не хранится» stop looking identical.
+export type JobStatus = 'queued' | 'extracting' | 'processing' | 'done' | 'error' | 'expired'
 
 export type StatusTone = 'neutral' | 'info' | 'success' | 'danger'
 
@@ -15,6 +19,7 @@ export function jobStatusMeta(status: string): JobStatusMeta {
     case 'processing': return { label: 'Распознавание и запись', tone: 'info', terminal: false }
     case 'done': return { label: 'Готово', tone: 'success', terminal: true }
     case 'error': return { label: 'Ошибка', tone: 'danger', terminal: true }
+    case 'expired': return { label: 'Статус не сохранился', tone: 'neutral', terminal: true }
     default: return { label: status || 'неизвестно', tone: 'neutral', terminal: false }
   }
 }

@@ -62,3 +62,12 @@ describe('pluralRu', () => {
     expect(pluralRu(122, f)).toBe('позиции') // ends in 22 → few
   })
 })
+
+describe('статус «expired» (клиентский, #268)', () => {
+  it('терминальный и с нейтральным тоном — строка не выглядит зависшей в работе', () => {
+    const m = jobStatusMeta('expired')
+    expect(m.terminal).toBe(true)
+    expect(m.tone).toBe('neutral')
+    expect(m.label).toBe('Статус не сохранился')
+  })
+})

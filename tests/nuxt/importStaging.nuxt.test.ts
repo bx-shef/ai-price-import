@@ -51,6 +51,24 @@ describe('ImportStaging', () => {
     expect(w.text()).toContain('Отправлен') // per-row done badge
   })
 
+  it('если upload БРОСИЛ — страница не залипает: строка снова доступна, «Импортировать» разблокирована', async () => {
+    // Сегодня upload() глотает свои ошибки сам, поэтому это защита на будущее: залипший флаг
+    // importing вешает pointer-events-none на весь /app — ровно симптом из #258.
+    const upload = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    await pick(w, [file('good.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    await tick()
+    // Флаг блокировки снят — родителю ушло финальное false.
+    const busy = w.emitted('update:busy') as Array<[boolean]> | undefined
+    expect(busy?.at(-1)?.[0]).toBe(false)
+    // Строка вернулась в состояние, из которого её можно повторить или убрать.
+    expect(w.text()).toContain('Отправка прервалась')
+  })
+
   it('a failed upload marks that row «Ошибка» and the notice counts only successes', async () => {
     const upload = vi.fn(async (f: File) => f.name !== 'bad.pdf')
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })

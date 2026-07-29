@@ -333,7 +333,13 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     writeActivity: async ({ entityTypeId, entityId, companyId, supplierName, rowCount, warnings }) => {
       // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
       // Best-effort — a lookup failure just omits the button, never fails the import.
-      const sourceFileUrl = await getDiskFileUrl(memberId, jobId, jobRedis).catch(() => null)
+      // A read failure here used to be fully silent (`.catch(() => null)`), so a missing «Исходный
+      // файл» button left no trace anywhere — it had to be caught by hand (#263). Still best-effort,
+      // but now loud in the log. `null` without a throw is normal (saveFile off / not archived yet).
+      const sourceFileUrl = await getDiskFileUrl(memberId, jobId, jobRedis).catch((e: unknown) => {
+        console.warn('[crm-sync] source file link unavailable for job', jobId, '-', e instanceof Error ? e.message : String(e))
+        return null
+      })
       // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
       // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
       // stays within B24's block limit (buildConfigurableActivity slices to 10 total).
