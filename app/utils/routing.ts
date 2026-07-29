@@ -37,7 +37,7 @@ export function ruleMatches(rule: RoutingRule, signals: RoutingSignals): boolean
  *  1. manual override next to the file — always wins;
  *  2. first matching routing rule (in order);
  *  3. default target (fallback, required).
- * See docs/PROCESS.md §5.
+ * See docs/PROCESS.md §6.1 «Куда писать».
  */
 export function resolveTarget(
   signals: RoutingSignals,

@@ -249,7 +249,7 @@ async function isPdfFile(path: string): Promise<boolean> {
  * PNG's long edge in pixels (a giant MediaBox × high DPI can't OOM tesseract). Worst case is
  * bounded to MAX_OCR_PDF_PAGES pages processed one-by-one — a single document can still hold
  * a worker slot for a while (per-page tesseract is seconds; the RUN_TIMEOUT_MS cap is
- * per-process, not per-doc), acceptable on the "stable, not fast" profile (09-deploy).
+ * per-process, not per-doc), acceptable on the "stable, not fast" profile (docs/PROCESS.md §12).
  */
 async function ocrPdf(path: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-ocrpdf-'))

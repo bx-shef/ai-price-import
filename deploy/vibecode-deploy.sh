@@ -115,7 +115,7 @@ d = {
 # (the served install/index.html keeps siteUrl:"" and /install refuses to bind the B24 event
 # handlers). Bake it into the build command when known — so a (re)deploy with the appUrl set in
 # ENV_JSON produces an ABSOLUTE handler URL regardless of whether the platform passes the deploy
-# `env` into the install step. See docs/PROCESS.md §NUXT_PUBLIC_SITE_URL.
+# `env` into the install step. See docs/PROCESS.md §12.1 (NUXT_PUBLIC_SITE_URL запекается на сборке).
 site = d["env"].get("NUXT_PUBLIC_SITE_URL", "")
 if site and "pnpm build" in d["install"]:
     d["install"] = d["install"].replace("pnpm build", "NUXT_PUBLIC_SITE_URL=" + shlex.quote(site) + " pnpm build", 1)

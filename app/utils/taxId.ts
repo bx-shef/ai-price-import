@@ -1,6 +1,6 @@
 import type { TaxIdKind } from '~/types/document'
 
-/** Digits-only length expected per tax-id kind (see 06-multilingual.md §2). */
+/** Digits-only length expected per tax-id kind (see docs/PROCESS.md §9 «Языки документов»). */
 const TAX_ID_LENGTHS: Record<TaxIdKind, number[]> = {
   INN: [10, 12], // RU: юр. 10 / физ.-ИП 12
   UNP: [9], // BY: 9

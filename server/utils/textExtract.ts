@@ -1,7 +1,7 @@
 // Pure format routing for file-extract: pick an extraction strategy by file
 // extension, orchestrate the runners (pdftotext / office / OCR). The actual
 // subprocess/IO is INJECTED (ExtractRunners) → this core is unit-tested with fakes.
-// docs/PROCESS.md (file-extract) + 06 (OCR rus+bel+kaz+eng).
+// docs/PROCESS.md §4 (file-extract) + §9 (OCR rus+bel+kaz+eng).
 
 export type ExtractKind = 'text' | 'pdf' | 'office' | 'image' | 'unsupported'
 

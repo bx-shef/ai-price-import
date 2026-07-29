@@ -30,7 +30,7 @@ export interface EventJob {
 }
 export interface ExtractJob { memberId: string, jobId: string, fileId: string }
 // The extracted DOCUMENT_TEXT is stored scoped by jobId (Postgres/disk), NOT inlined
-// in the payload — queue records must not hold full document text (docs/PROCESS.md, 05).
+// in the payload — queue records must not hold full document text (docs/PROCESS.md §5).
 export interface AgentJob { memberId: string, jobId: string }
 export interface CrmSyncJob { memberId: string, jobId: string }
 
