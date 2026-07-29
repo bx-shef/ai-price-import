@@ -9,6 +9,7 @@ import { useCatalogProperties } from '~/composables/useCatalogProperties'
 import { useChatSearch } from '~/composables/useChatSearch'
 import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
+import { BUILTIN_UNIT_HINT } from '~/utils/units'
 import { rulesToRows, rowsToRules } from '~/utils/routingRulesEditor'
 import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
@@ -165,6 +166,9 @@ watch(unitRows, (rows) => {
   mapping.value.units.dictionary = rowsToDictionary(rows.map(r => ({ unit: r.unit, code: r.code })))
 }, { deep: true })
 const duplicateUnits = computed(() => hasDuplicateUnits(unitRows.value.map(r => ({ unit: r.unit, code: r.code }))))
+
+// «Что уже работает» — из самой встроенной карты, чтобы подсказка не разъехалась с поведением.
+const builtinUnitHint = BUILTIN_UNIT_HINT.join(', ')
 
 // Default measure (when no unit matches): mapping.units.defaultCode is a number; the Select
 // carries strings. Empty/invalid selection keeps the current default (never write NaN).
@@ -381,6 +385,15 @@ const ON_MISSING_ITEMS = [
                     aria-label="Единица по умолчанию"
                   />
                 </div>
+
+                <!-- Пустая таблица раньше читалась как «ничего не работает, заполняйте руками»,
+                     хотя встроенный словарь уже покрывает обычные единицы (#272). -->
+                <p class="mt-3 text-xs text-(--ui-color-base-3)">
+                  Без настройки уже распознаются обычные единицы: {{ builtinUnitHint }} — вместе с
+                  вариантами написания: «шт.», «ШТ», «штук», «м2» и «м²». Если такой единицы нет в
+                  вашем Битрикс24, приложение её не подставит. Ниже добавляйте исключения: свои
+                  единицы и те, что нужно сопоставить по-другому.
+                </p>
 
                 <p class="mt-3 mb-1 text-xs text-(--ui-color-base-3)">
                   Как называется единица в документе и какой единице Битрикс24 она соответствует:

@@ -248,7 +248,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ writeActivity, findCompanyByTaxId: vi.fn(async () => null) })
     await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(writeActivity).toHaveBeenCalledWith(expect.objectContaining({
-      warnings: expect.arrayContaining([expect.stringMatching(/Поставщик из документа не найден/)])
+      warnings: expect.arrayContaining([expect.stringMatching(/Поставщик не найден в CRM по /)])
     }))
   })
 
@@ -453,8 +453,27 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(r.created).toBe(true)
-    expect(r.warnings.some(w => /Поставщик из документа не найден/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /Поставщик не найден в CRM по /.test(w))).toBe(true)
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyId: expect.anything() }))
+  })
+
+  it('#264: номер есть, компании нет → в предупреждении печатается сам номер с его меткой', async () => {
+    const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
+    const d: ExtractedDocument = { ...doc, supplier: { name: 'ООО Ромашка', taxId: '191234567', taxIdKind: 'UNP' } }
+    const r = await runCrmSync('job1', d, mapping(), {}, deps)
+    const w = r.warnings.find(x => /Поставщик не найден/.test(x))!
+    expect(w).toContain('по УНП 191234567')
+    expect(w).not.toContain('УНП/ИНН') // перечисление аббревиатур ушло
+  })
+
+  it('#264: номера в документе нет → другое сообщение, без совета заводить компанию', async () => {
+    const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
+    const d: ExtractedDocument = { ...doc, supplier: { name: 'ООО Ромашка' } }
+    const r = await runCrmSync('job1', d, mapping(), {}, deps)
+    const w = r.warnings.find(x => /налоговый номер/.test(x))!
+    expect(w).toContain('не распознан налоговый номер')
+    expect(w).not.toContain('Заведите компанию')
+    expect(deps.findCompanyByTaxId).not.toHaveBeenCalled() // искать было не по чему
   })
 
   it('no supplier.taxId → no lookup; priceIncludesVat false → taxIncluded N', async () => {
@@ -535,7 +554,7 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     const d: ExtractedDocument = {
       ...doc,
       items: [
-        { name: 'a', price: 1, quantity: 1, unit: 'рулон', vatRate: 22 }, // valid, would create a measure
+        { name: 'a', price: 1, quantity: 1, unit: 'бухта', vatRate: 22 }, // valid, would create a measure
         { name: 'b', price: 2, quantity: 1, unit: 'шт', vatRate: 25 } // unknown rate → hard error
       ]
     }
@@ -576,11 +595,59 @@ describe('runCrmSync — products / units / routing', () => {
 
   it('unit not mapped → WARNING (not error), still creates with default measure', async () => {
     const deps = baseDeps()
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
     const r = await runCrmSync('j', d, mapping(), {}, deps)
     expect(r.created).toBe(true)
-    expect(r.warnings.some(w => /рулон/.test(w))).toBe(true)
+    expect(r.warnings.some(w => /бухта/.test(w))).toBe(true)
     expect(r.errors).toHaveLength(0)
+  })
+
+  it('#272: встроенный код НЕ пишется, если такой меры нет в каталоге портала', async () => {
+    // Свежий портал везёт всего несколько мер. Раньше сюда уходил бы 736 («Рулон»), которого в
+    // каталоге нет, — в карточке молча оказалась бы неверная единица.
+    const measureCatalog = vi.fn(async () => ({ hasCode: (c: number) => c === 796, byName: () => null }))
+    const deps = baseDeps({ measureCatalog })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 796 })
+    expect(r.warnings.some(w => /рулон/.test(w) && /не распознана/.test(w))).toBe(true)
+  })
+
+  it('#272: встроенный код пишется, когда мера в каталоге портала есть, и без предупреждения', async () => {
+    const measureCatalog = vi.fn(async () => ({ hasCode: () => true, byName: () => null }))
+    const deps = baseDeps({ measureCatalog })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'кг', vatRate: null }] }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 166 })
+    expect(r.warnings.some(w => /кг/.test(w))).toBe(false)
+    expect(deps.createMeasure).toBeUndefined() // сопоставленная единица не идёт в авто-создание
+  })
+
+  it('#272: собственная мера портала выигрывает у встроенной', async () => {
+    const measureCatalog = vi.fn(async () => ({ hasCode: () => true, byName: () => 1005 }))
+    const deps = baseDeps({ measureCatalog })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    await runCrmSync('j', d, mapping(), {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 1005 })
+  })
+
+  it('#272: каталог не прочитался → пишем встроенный код, это ближе к правде, чем «шт»', async () => {
+    const measureCatalog = vi.fn(async () => null)
+    const deps = baseDeps({ measureCatalog })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'кг', vatRate: null }] }
+    await runCrmSync('j', d, mapping(), {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 166 })
+  })
+
+  it('#272: единица из словаря портала не проверяется по каталогу — это решение администратора', async () => {
+    const measureCatalog = vi.fn(async () => ({ hasCode: () => false, byName: () => null }))
+    const m = mapping()
+    m.units.dictionary = { бухта: 2001 }
+    const deps = baseDeps({ measureCatalog })
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
+    await runCrmSync('j', d, m, {}, deps)
+    expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 2001 })
+    expect(measureCatalog).not.toHaveBeenCalled()
   })
 
   it('autoCreate: unmatched unit created → code used on the row + "создана" warning', async () => {
@@ -588,9 +655,9 @@ describe('runCrmSync — products / units / routing', () => {
     m.units.autoCreate = true
     const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
     const deps = baseDeps({ createMeasure })
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
     const r = await runCrmSync('j', d, m, {}, deps)
-    expect(createMeasure).toHaveBeenCalledWith('рулон')
+    expect(createMeasure).toHaveBeenCalledWith('бухта')
     expect((deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]).toMatchObject({ measureCode: 1001 })
     expect(r.warnings.some(w => /добавлена в каталог/.test(w))).toBe(true)
   })
@@ -628,7 +695,7 @@ describe('runCrmSync — products / units / routing', () => {
   it('autoCreate OFF: createMeasure dep NOT called even if present', async () => {
     const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
     const deps = baseDeps({ createMeasure })
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
     await runCrmSync('j', d, mapping(), {}, deps) // mapping() has autoCreate false by default
     expect(createMeasure).not.toHaveBeenCalled()
   })
@@ -639,7 +706,7 @@ describe('runCrmSync — products / units / routing', () => {
     m.product.onMissing = 'skip-warn'
     const createMeasure = vi.fn(async () => ({ code: 1001, created: true }))
     const deps = baseDeps({ createMeasure }) // findProduct default returns null → row skipped
-    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'рулон', vatRate: null }] }
+    const d: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'бухта', vatRate: null }] }
     await runCrmSync('j', d, m, {}, deps)
     expect(createMeasure).not.toHaveBeenCalled()
   })
