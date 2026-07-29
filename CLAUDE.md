@@ -1,17 +1,21 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-28
+> Last reviewed: 2026-07-29
 
 AI-импорт прайсов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
 (накладная/счёт/КП/прайс), суть — найти контрагента и внести товары в целевую CRM-сущность.
 
-> **Идёт редизайн.** Полное описание проекта, процесса, архитектуры, стека и решений —
-> в [`docs/redesign/`](docs/redesign/README.md) (00 старая арх. → 01 карта → 02 целевая арх. →
-> 03 стек → 04 маркетинг → 05 политика данных → 06 мультиязычность → 07 план тестирования →
-> 08 демо на лендинге → 09 деплой → 10 чек-лист проверок → 11 тарифы/self-hosted →
-> 12 попап оценки в Маркете → 13 релиз в Маркете/go-to-market → 14 описание интерфейса
-> для дизайнера). Держим их синхронно.
+> **Документация — три файла в `docs/`** (переработана 2026-07-29, было 40 файлов в двух папках):
+> - [`docs/PROCESS.md`](docs/PROCESS.md) — как работает продукт от установки до записи в Битрикс24;
+> - [`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md) — из чего состоит проект и что в каком состоянии
+>   (сделано / проверено / отложено / блокеры);
+> - [`docs/BACKLOG.md`](docs/BACKLOG.md) — фичи на будущее.
+>
+> Рядом два документа **для передачи наружу**, не внутренняя документация:
+> [`docs/ui-spec.md`](docs/ui-spec.md) (дизайнеру) и [`docs/privacy-policy.md`](docs/privacy-policy.md)
+> (юристу и на публикацию). Этот `CLAUDE.md` — технические инварианты для работы с кодом; держим
+> синхронно с тремя файлами выше.
 
 ## Раскладка
 
@@ -181,7 +185,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     суточный крон рефрешит **только** порталы у истечения (`selectTokensNearExpiry` по `updated_at`,
     порог ~3 д, батч-кап 50) — иначе простаивающий портал теряет refresh_token на 180-й день. Гейт на
     `B24_CLIENT_ID/SECRET`, каденция `TOKEN_KEEPALIVE_HOURS` (дефолт 24, кламп [1h,168h]).
-  - **Попап «оцените приложение»** ([`docs/redesign/12-app-rating.md`](docs/redesign/12-app-rating.md)):
+  - **Попап «оцените приложение»** ([`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md)):
     переиспользуемый `AppRatingModal.vue` (на `B24Modal`) на `/app` всплывает **после успешного импорта**
     и по кнопке открывает детальную страницу Маркета через `frame.slider.openPath('/marketplace/detail/<code>/')`
     (`marketDetailPath`; код по умолчанию — реальный слаг `shef.priceimport` из `LANDING_MARKET_CODE`,
@@ -194,7 +198,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     `GET/POST /api/ops/app-rating` (сессия оператора, чистые `appRatingStatus`/`appRatingOpsHandler` →
     `markReviewed`/`clearOpened`), SQL — запасной путь. Гифка-подсказка `public/app-rating-demo.gif`
     (сжата Pillow, ленивая загрузка).
-  - **Глубокая телеметрия — OpenTelemetry** ([`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md), вектор
+  - **Глубокая телеметрия — OpenTelemetry** ([`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md), вектор
     Bitrix `b24-ai-starter-otel`; порт из client-bank PR #317/#318). **Слайс 1 (app-side) — DEFAULT OFF:**
     бутстрап `otel.instrument.mjs` грузится через `NODE_OPTIONS=--import` **до** приложения (иначе
     авто-инструментирование не перехватит http/pg/ioredis; Nitro-бандлер ломает require-хуки OTel → deps
@@ -234,9 +238,11 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     **Демо (`/api/demo/*`) на свой `demoJobStore`** — `import_job`/`jobStore` не трогает.
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
-- `docs/redesign/` — документация редизайна; `docs/*` — старые доки (справочно).
+- `docs/` — вся документация: `PROCESS.md` / `PROJECT_MAP.md` / `BACKLOG.md` + два документа
+  для передачи наружу (`ui-spec.md`, `privacy-policy.md`). Старая россыпь из 40 файлов свёрнута
+  2026-07-29; удалённое доступно в истории git.
 - **Альтернативный таргет деплоя — Битрикс24 Вайбкод Black Hole** (закрытый Bitrix-Cloud VM по REST,
-  без SSH, приложение **одним Nitro-процессом на :3000**): [`docs/DEPLOY_VIBECODE.md`](docs/DEPLOY_VIBECODE.md).
+  без SSH, приложение **одним Nitro-процессом на :3000**): [`docs/PROCESS.md`](docs/PROCESS.md).
   `deploy/vibecode-deploy.sh` (идемпотентный: найти сервер по имени / создать / ждать `CONNECTED` /
   `access-policy=PUBLIC` / deploy) + `.github/workflows/deploy-vibecode.yml` (**opt-in**: джоба идёт только
   при repo-переменной `VIBECODE_DEPLOY==true`, основной GHCR/Watchtower-путь не трогает; в Docker-образ не
@@ -321,9 +327,9 @@ pnpm loadtest:queue # очередь под нагрузкой (локальны
 настроены, сотрудник создал реальные отзывы **через приложение** — issue завелись в приёмнике (метки
 `user-feedback`+`feedback:down`, контекст jobId/файл отрендерен инертно).
 
-- [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — **ingestion**: три канала #182 (сотрудник 👍/👎, агент
+- [`docs/BACKLOG.md`](docs/BACKLOG.md) — **ingestion**: три канала #182 (сотрудник 👍/👎, агент
   `feedback[]`, MCP-матчинг) → issue в репо-приёмнике (`GITHUB_FEEDBACK_REPO`).
-- [`docs/FEEDBACK_TRIAGE_AGENT.md`](docs/FEEDBACK_TRIAGE_AGENT.md) — **роль ИИ-агента триажа**:
+- [`docs/BACKLOG.md`](docs/BACKLOG.md) — **роль ИИ-агента триажа**:
   группирует по корню, заводит **обезличенные** issue в `bx-shef/ai-price-import`, закрывает
   разобранное со связкой. **Privacy-guard нагружен:** код-репо **публичный** (`private:false`) →
   клиентский контекст (jobId/файл/№ сделки/УНП) в issue не переносится, только ссылка на приватный отзыв.

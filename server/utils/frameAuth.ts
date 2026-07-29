@@ -2,7 +2,7 @@ import { isSafeB24Domain } from './b24Rest'
 
 // Frame-token auth for in-portal settings routes: the client sends the frame's
 // access token + portal domain; B24 scopes that token to the caller's portal, so
-// member_id is not trusted. Pure extraction/validation. docs/redesign 02 §8.
+// member_id is not trusted. Pure extraction/validation. docs/PROCESS.md
 
 export interface FrameAuth { accessToken: string, domain: string }
 

@@ -1,7 +1,7 @@
 // System prompt for the extraction model (OpenAI-compatible chat: DeepSeek / BitrixGPT). It is a
 // PURE extractor: it reads the document text and returns ONE JSON object matching
 // ExtractedDocument — no Bitrix24 access, no prose. Encodes the multilingual tax-id
-// and VAT rules from docs/redesign 06 + 02. Pure string builder (tested).
+// and VAT rules from docs/PROCESS.md + 02. Pure string builder (tested).
 //
 // NB: the instruction text is Russian on purpose — documents are ru/be/kk and the
 // model reasons about them in Russian; only this comment/JSDoc is English.

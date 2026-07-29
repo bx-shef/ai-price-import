@@ -7,7 +7,7 @@ import { foldHomoglyphs } from './homoglyph'
  *  - kind 'text'   → each article on its own line;
  *  - kind 'string' → articles joined by an admin-chosen delimiter.
  * Values are trimmed, empties dropped, deduped by homoglyph-folded form.
- * See docs/redesign/02-target-architecture.md §5.
+ * See docs/PROCESS.md §5.
  */
 export function parseSupplierArticles(value: string, cfg: ArticleFieldConfig): string[] {
   if (!value) return []

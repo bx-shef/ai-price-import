@@ -12,7 +12,7 @@ export interface MeasureResolution {
  * Resolve a document unit string (e.g. "шт", "кг", "дана") to a Bitrix24
  * catalog.measure code via the portal dictionary. Case-insensitive, trimmed.
  * No match → default code with matched=false (caller auto-creates + reports error).
- * See docs/redesign/02-target-architecture.md (Q11) and 06-multilingual.md §4.
+ * See docs/PROCESS.md (Q11) and 06-multilingual.md §4.
  */
 export function resolveMeasure(unit: string | undefined, cfg: UnitsConfig): MeasureResolution {
   // Canonical key (case-insensitive, trailing dot folded) so "ШТ"/"шт"/"Шт"/"шт." all hit the same

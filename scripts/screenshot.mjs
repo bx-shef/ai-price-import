@@ -1,5 +1,5 @@
 // Headless screenshots of the built SSG site — gives the agent "eyes" for visual
-// verification (see docs/redesign/VISUAL_VERIFICATION.md). Serves .output/public on an
+// verification (see docs/PROJECT_MAP.md). Serves .output/public on an
 // ephemeral port and captures each route × viewport × theme to screenshots/.
 //
 // Usage:

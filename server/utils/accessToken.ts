@@ -1,5 +1,5 @@
 // Pure access-token lifetime logic + proactive keep-alive selection.
-// access_token lives ~1h; refresh_token lives 180 days (docs/redesign 02 §4).
+// access_token lives ~1h; refresh_token lives 180 days (docs/PROCESS.md).
 
 const HOUR_MS = 3600_000
 const DAY_MS = 86_400_000

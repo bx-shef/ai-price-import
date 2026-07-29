@@ -3,7 +3,7 @@
 // security headers / HSTS that nginx.conf normally provides, and the login `limit_req`, are absent.
 // These are gated behind APP_EDGE_SECURITY so they are a NO-OP behind nginx (default), avoiding a
 // double CSP header (multiple CSP headers intersect restrictively) or a login throttle that would
-// bucket every client under the shared proxy IP. Pure + DI on env → unit-tested. See docs/DEPLOY_VIBECODE.md.
+// bucket every client under the shared proxy IP. Pure + DI on env → unit-tested. See docs/PROCESS.md.
 
 import { clientKey } from './demoRateLimit'
 

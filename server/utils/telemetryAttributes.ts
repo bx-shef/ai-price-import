@@ -1,4 +1,4 @@
-// Privacy policy for OpenTelemetry span attributes (телеметрия, docs/OBSERVABILITY.md).
+// Privacy policy for OpenTelemetry span attributes (телеметрия, docs/PROJECT_MAP.md).
 // Telemetry must NEVER carry business PII — supplier name/УНП, product article/name, price,
 // or document content. Mirror of the whitelist approach: our OWN manual spans emit ONLY an
 // allowlisted set of safe keys, and AUTO-instrumentation attributes (which can leak SQL text /

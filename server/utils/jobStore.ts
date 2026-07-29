@@ -10,7 +10,7 @@ import { parseManualTarget } from '~/utils/manualTarget'
 // manualOverride/diskFile/notified/createdAt). There is NO server-side per-portal list: the employee's
 // browser keeps its own job list in localStorage (app/utils/importHistory.ts) and polls status BY ID
 // (getJob) — the status list is only useful to the person who ran the import. The raw bytes / extracted
-// text live elsewhere and are deleted at their own stages (docs/redesign 05); this is only the
+// text live elsewhere and are deleted at their own stages (docs/PROCESS.md); this is only the
 // lightweight per-job status the client polls.
 
 export type JobStatus = 'queued' | 'extracting' | 'processing' | 'done' | 'error'

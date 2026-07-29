@@ -9,7 +9,7 @@
 #     B24_CLIENT_ID/SECRET, ANTHROPIC_*, DATABASE_URL, REDIS_URL … (B24_APPLICATION_TOKEN
 #     оставляем ПУСТЫМ — токен приходит в ONAPPINSTALL и запоминается по порталу).
 # Свой Watchtower здесь НЕ поднимаем: второй экземпляр конфликтует по имени и плодит
-# двойные перезапуски (см. docs/redesign/09-deploy.md).
+# двойные перезапуски (см. docs/PROCESS.md).
 #
 # Один домен, две роли: nginx `app` отдаёт пререндер-страницы и проксирует /api/* в
 # `backend` (Nitro) — вебхук B24 живёт на https://<DOMAIN>/api/b24/events без CORS.

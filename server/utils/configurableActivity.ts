@@ -3,7 +3,7 @@ import { neutralizeBb } from './chatNotify'
 
 // Build a configurable activity («настраиваемое дело») for crm.activity.configurable.add.
 // The app owns the layout (icon/header/body/footer + «открыть» button). Admin only
-// toggles whether the source file is saved (docs/redesign/02 §«Исходный файл и дело»).
+// toggles whether the source file is saved (docs/PROCESS.md §«Исходный файл и дело»).
 //
 // OWNER MODEL (owner ask): a дело has ONE owner (ownerTypeId/ownerId — the card it physically lives in);
 // every other entity is an ADDITIONAL binding (crm.activity.binding.add), NOT a second activity. crm-sync

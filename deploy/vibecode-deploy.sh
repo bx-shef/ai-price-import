@@ -24,7 +24,7 @@
 #   ACCESS_POLICY  default PUBLIC — REQUIRED for self-OAuth B24 apps (webhook + cross-portal iframe)
 #
 # NOTE: written against the documented Deploy API (docs: /docs/infra, /docs/infra/deploy).
-# Verify the FIRST run interactively (see docs/DEPLOY_VIBECODE.md) before trusting it in CI.
+# Verify the FIRST run interactively (see docs/PROCESS.md) before trusting it in CI.
 
 set -euo pipefail
 
@@ -93,7 +93,7 @@ done
 echo "==> Setting accessPolicy=$ACCESS_POLICY"
 # PUBLIC is REQUIRED for this app (webhook + cross-portal iframe), but this call is SOFT on
 # purpose: the exact access-policy endpoint/shape must be confirmed on the first live run
-# (docs/DEPLOY_VIBECODE.md). A failure here does NOT abort the deploy — VERIFY the policy is
+# (docs/PROCESS.md). A failure here does NOT abort the deploy — VERIFY the policy is
 # actually PUBLIC in the cabinet after the first deploy; otherwise the webhook/iframe break.
 api -X PATCH "$BASE/infra/servers/$sid/access-policy" -H 'Content-Type: application/json' \
   -d "{\"accessPolicy\":\"$ACCESS_POLICY\"}" >/dev/null || \
@@ -115,7 +115,7 @@ d = {
 # (the served install/index.html keeps siteUrl:"" and /install refuses to bind the B24 event
 # handlers). Bake it into the build command when known — so a (re)deploy with the appUrl set in
 # ENV_JSON produces an ABSOLUTE handler URL regardless of whether the platform passes the deploy
-# `env` into the install step. See docs/DEPLOY_VIBECODE.md §NUXT_PUBLIC_SITE_URL.
+# `env` into the install step. See docs/PROCESS.md §NUXT_PUBLIC_SITE_URL.
 site = d["env"].get("NUXT_PUBLIC_SITE_URL", "")
 if site and "pnpm build" in d["install"]:
     d["install"] = d["install"].replace("pnpm build", "NUXT_PUBLIC_SITE_URL=" + shlex.quote(site) + " pnpm build", 1)

@@ -3,7 +3,7 @@ import type { DocumentItem, DocumentParty, ExtractedDocument, TaxIdKind } from '
 // Normalise the agent's RAW JSON output into a safe ExtractedDocument. The LLM
 // output is untrusted (shape and types can drift or be adversarial via the source
 // document) → coerce/clamp everything, drop unusable rows, bound sizes (DoS).
-// Pure, no I/O. docs/redesign 02 §«Решения по проводке crm-sync».
+// Pure, no I/O. docs/PROCESS.md по проводке crm-sync».
 
 /** Hard ceiling on product rows from one document. A DoS guard against a
  * runaway/hostile table — NOT a silent truncation point: the caller (runAgent)

@@ -6,7 +6,7 @@
 // folded — in lower case they are not truly identical and folding them would
 // corrupt common words. ALL Kazakh-distinctive letters (ә ғ қ ң ө ұ ү һ і) are
 // preserved as-is — including і (U+0456) and һ (U+04BB) — so that Kazakh words /
-// articles / keywords are not corrupted (docs/redesign/06-multilingual.md §5).
+// articles / keywords are not corrupted (docs/PROCESS.md §5).
 
 /** Russian Cyrillic letter → canonical Latin look-alike (lower-case domain). */
 const CYRILLIC_TO_LATIN: Record<string, string> = {

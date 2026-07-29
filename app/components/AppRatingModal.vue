@@ -6,7 +6,7 @@ import { useAppRating } from '~/composables/useAppRating'
 // Reusable in-portal «оцените приложение» modal. Drop it on any in-portal page and drive it with a
 // `trigger` that flips true at a moment the user has clearly seen the app's value (e.g. after a
 // successful import). The SHOW decision, throttle and manual-verification logic all live server-side
-// (portal_app_rating) — this component only reacts to it. See docs/redesign/12-app-rating.md.
+// (portal_app_rating) — this component only reacts to it. See docs/PROJECT_MAP.md.
 //
 // Flow: trigger → check() (GET /api/app-rating) → if show, render + stamp prompted_at (throttles the
 // next prompt for RATING_REPROMPT_DAYS) → «Оценить» opens the Market detail page (stamps opened_at)

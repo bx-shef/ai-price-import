@@ -1,7 +1,7 @@
 {
   "name": "otel-preload",
   "private": true,
-  "description": "OTel bootstrap deps for the backend image, installed OUTSIDE the Nitro bundle (loaded via NODE_OPTIONS=--import ./otel.instrument.mjs). EXACT versions, kept equal to the resolved @opentelemetry/* versions the root pnpm-lock.yaml tests against — so the image ships exactly what CI validated (no caret float, reproducible layer). See docs/OBSERVABILITY.md.",
+  "description": "OTel bootstrap deps for the backend image, installed OUTSIDE the Nitro bundle (loaded via NODE_OPTIONS=--import ./otel.instrument.mjs). EXACT versions, kept equal to the resolved @opentelemetry/* versions the root pnpm-lock.yaml tests against — so the image ships exactly what CI validated (no caret float, reproducible layer). See docs/PROJECT_MAP.md.",
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/auto-instrumentations-node": "0.78.0",

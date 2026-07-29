@@ -3,7 +3,7 @@ import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 
 // Shared chrome for the two slider-opened pages (/settings and /metrics) so they look identical:
 // a STICKY bar with a close control on the left and the page title next to it, on the muted surface
-// (approved design, docs/redesign/14-ui-spec §3–4). Extracted instead of duplicating the markup in
+// (approved design, docs/ui-spec.md §3–4). Extracted instead of duplicating the markup in
 // both pages — the two screens drifted apart before (one had a back-button above an h1, the other a
 // text link on the right).
 //

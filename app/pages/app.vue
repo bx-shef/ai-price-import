@@ -107,7 +107,7 @@ const stats = computed(() => {
 // (both would arm on mere page-open for a returning user, and the modal would pop with no new result to
 // read). `seenActive` remembers jobIds observed non-terminal; a done job that was in it = a fresh
 // completion. The show/throttle/verification decision is server-side (portal_app_rating); the modal
-// delays ~10s after this flips so the result is seen first. See docs/redesign/12.
+// delays ~10s after this flips so the result is seen first. See docs/PROJECT_MAP.md.
 const TERMINAL_STATUSES = new Set(['done', 'error'])
 const seenActive = new Set<string>()
 const freshImportSuccess = ref(false)

@@ -1,5 +1,5 @@
 // Pure queue contracts: names, job payloads, deterministic idempotent job ids.
-// Transport (BullMQ/Redis) lives in connection/producers/worker. See docs/redesign 02 §4.
+// Transport (BullMQ/Redis) lives in connection/producers/worker. See docs/PROCESS.md
 
 import type { SaveTokenInput } from '../utils/tokenStore'
 
@@ -30,7 +30,7 @@ export interface EventJob {
 }
 export interface ExtractJob { memberId: string, jobId: string, fileId: string }
 // The extracted DOCUMENT_TEXT is stored scoped by jobId (Postgres/disk), NOT inlined
-// in the payload — queue records must not hold full document text (docs/redesign 02 §7.3, 05).
+// in the payload — queue records must not hold full document text (docs/PROCESS.md, 05).
 export interface AgentJob { memberId: string, jobId: string }
 export interface CrmSyncJob { memberId: string, jobId: string }
 

@@ -6,7 +6,7 @@
 # ⚠️ На ЭТОМ сервере он УЖЕ запущен (контейнеры `server` + `letsencrypt` из стека
 #    currency-converter). НЕ поднимайте второй экземпляр — конфликт по портам 80/443 и
 #    именам контейнеров. Этот файл нужен только для развёртывания ЧИСТОГО хоста.
-#    Подробности и порядок — docs/redesign/09-deploy.md.
+#    Подробности и порядок — docs/PROCESS.md.
 #
 # Bootstrap чистого хоста:
 #   1) docker compose -f docker-compose.server.yml up -d      # прокси + TLS + сеть proxy-net

@@ -6,7 +6,7 @@ import type { ExtractRunners } from './textExtract'
 
 // Live file→text runners (subprocess). Binaries expected in the backend image:
 // pdftotext (poppler-utils), libreoffice (office→txt), tesseract-ocr with
-// rus+bel+kaz+eng language packs (docs/redesign 06 §6). Glue — validated by
+// rus+bel+kaz+eng language packs (docs/PROCESS.md §6). Glue — validated by
 // typecheck; behaviour needs the binaries at runtime.
 //
 // DEPLOY NOTE: the timeout bounds CPU-time but NOT peak memory. A crafted upload

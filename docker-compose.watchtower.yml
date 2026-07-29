@@ -5,7 +5,7 @@
 # ⚠️ На ЭТОМ сервере он УЖЕ запущен (контейнер `…-watchtower-1` из стека currency-converter,
 #    образ containrrr/watchtower). НЕ поднимайте второй — два Watchtower плодят двойные
 #    перезапуски и гонки. Этот файл нужен только для развёртывания ЧИСТОГО хоста.
-#    Подробности — docs/redesign/09-deploy.md.
+#    Подробности — docs/PROCESS.md.
 
 services:
   watchtower:

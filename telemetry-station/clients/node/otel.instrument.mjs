@@ -1,4 +1,4 @@
-// Portable OpenTelemetry bootstrap for a Node/Nitro app (#, docs/OBSERVABILITY.md).
+// Portable OpenTelemetry bootstrap for a Node/Nitro app (#, docs/PROJECT_MAP.md).
 // Drop this file into an app, install the deps from package.json here, and run the app with
 // `NODE_OPTIONS=--import /abs/path/otel.instrument.mjs`. Set two env vars and the app shows up
 // in the shared station's Grafana (distinguished by OTEL_SERVICE_NAME). See README.md.

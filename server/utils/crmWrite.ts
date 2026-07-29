@@ -5,7 +5,7 @@ import { lineGross } from '~/utils/pricing'
 
 // Pure builders + thin callers for creating the target CRM entity and its rows.
 // VAT model validated live: crm.item.productrow.set computes НДС 1-в-1 (no kernel patch).
-// NOTE: intended consumer is the isolated MCP `create_target` tool (docs/redesign 02 §1.4),
+// NOTE: intended consumer is the isolated MCP `create_target` tool (docs/PROCESS.md),
 // not direct calls from crm-sync — MCP is the only door to Bitrix24.
 
 /**

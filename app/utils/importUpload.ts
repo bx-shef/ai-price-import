@@ -1,4 +1,4 @@
-// Pure upload validation core (P5). No DOM/I/O. See docs/redesign 02 §4.
+// Pure upload validation core (P5). No DOM/I/O. See docs/PROCESS.md
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024 // 20 MB
 export const MAX_UPLOAD_FILES = 10

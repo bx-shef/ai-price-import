@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import type { ParsedB24Event } from '~/utils/b24Events'
 
 // Pure read-only verdict for an incoming B24 event. Does NOT write — the queue
-// consumer / endpoint is the single writer. See docs/redesign 02 §4.
+// consumer / endpoint is the single writer. See docs/PROCESS.md
 //
 // Trust model (Bitrix24 «Безопасность в обработчиках»,
 // https://apidocs.bitrix24.ru/api-reference/events/safe-event-handlers.html):

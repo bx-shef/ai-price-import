@@ -44,7 +44,7 @@ import type { PortalMapping } from '~/types/mapping'
 // Live wiring: bind the pure handlers' DI to real stores / portal REST / extractor / queues.
 // The chat extractor transport, file-extract runners and the OAuth refresh HTTP are INJECTED
 // via LiveInfra so this module stays free of untestable globals and typecheck validates every
-// binding. See docs/redesign 02 §4.
+// binding. See docs/PROCESS.md
 
 export interface LiveInfra {
   query: QueryFn

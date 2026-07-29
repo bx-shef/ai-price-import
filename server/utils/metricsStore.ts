@@ -2,7 +2,7 @@ import type { QueryFn } from './tokenStore'
 
 // Per-portal metric counters over an injected QueryFn (testable without a DB).
 // Monotonic increments written by crm-sync; read for the operator dashboard and
-// the always-visible motivating metrics (docs/redesign 02 §7.2, etap 8).
+// the always-visible motivating metrics (docs/PROCESS.md, etap 8).
 
 /** Canonical counter names — worker (writer) and UI (reader) share this vocabulary. */
 export const METRICS = {

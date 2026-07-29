@@ -63,7 +63,7 @@ OTEL_EXPORTER_OTLP_HEADERS  = Authorization=Bearer <OTEL_COLLECTOR_AUTH_TOKEN>
 
 Финансовых ПДн в телеметрии нет: приложения чистят на источнике (allowlist + redaction +
 `portal.hash`), а коллектор **повторно** срезает чувствительные атрибуты (`transform`-процессор:
-`db.statement`/URL/…). ClickHouse-ретеншн 72ч. См. `docs/OBSERVABILITY.md` в основном репо.
+`db.statement`/URL/…). ClickHouse-ретеншн 72ч. См. `docs/PROJECT_MAP.md` в основном репо.
 
 ## ⚠ Безопасность (прод)
 

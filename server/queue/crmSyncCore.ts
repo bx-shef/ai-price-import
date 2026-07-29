@@ -11,7 +11,7 @@ import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
 
 // Pure crm-sync orchestration with injected dependencies (no I/O here).
 // Deps are abstract async fns → wired to the isolated MCP tools (not direct REST):
-// docs/redesign 02 §1.4 «MCP — единственная дверь в Bitrix24».
+// docs/PROCESS.md «MCP — единственная дверь в Bitrix24».
 
 export interface CrmSyncDeps {
   /** Find a prior create of this job by its idempotency marker (originId/xmlId) via a

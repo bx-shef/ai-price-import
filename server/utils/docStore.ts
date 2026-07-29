@@ -4,7 +4,7 @@ import type { RoutingSignals } from '~/utils/routing'
 
 // Store the agent's extracted document between agent-run and crm-sync, keyed by
 // job (per-portal). This keeps full document text/data OUT of the queue payload
-// (docs/redesign 02 §7.3, 05). DI over QueryFn.
+// (docs/PROCESS.md, 05). DI over QueryFn.
 
 export interface StoredDoc { doc: ExtractedDocument, signals: RoutingSignals }
 
