@@ -4,6 +4,16 @@
 // /app, /settings, /import) and the standalone operator pages (/login, /queues), so they theme
 // (light/dark) with the portal / OS instead of being locked to a white surface.
 import { ru } from '@bitrix24/b24ui-nuxt/locale'
+
+// B24DashboardGroup/B24DashboardPanel из официального шаблона здесь СОЗНАТЕЛЬНО не используются (#259).
+// Их база — `fixed inset-0 flex overflow-hidden`, то есть полноэкранная оболочка со своей прокруткой
+// внутри. Для нас это две проблемы, обе неприемлемые:
+//   • layout общий — его делят /queues, /install, /import, /login, у которых обычный поток документа;
+//     `fixed` обнуляет прокрутку страницы, и высокий контент (график очередей, диагностика установки)
+//     становится недостижим;
+//   • мы живём в iframe портала, высоту которого Битрикс24 подбирает ПО КОНТЕНТУ. У `fixed inset-0`
+//     высота потока нулевая — приложение схлопнулось бы. Проверить это можно только в живом портале.
+// Из шаблона взято то, что работает в обычном потоке: навбар как шапка страницы и карточки-плитки.
 </script>
 
 <template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 import { navigateTo } from '#app'
+import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import type { AccordionItem } from '@bitrix24/b24ui-nuxt'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
@@ -249,16 +250,28 @@ const ON_MISSING_ITEMS = [
 <template>
   <!-- CLIENT-ONLY: depends on the B24 frame handshake; prerender+hydrate framed mismatched (see /app). -->
   <ClientOnly>
-    <div class="mx-auto max-w-2xl pb-6">
-      <!-- Same chrome as /metrics (SliderPageHeader): close control + title on the muted bar. The close
-           control routes through `cancel` so an in-frame fallback still lands back on /app. -->
-      <SliderPageHeader
+    <div>
+      <!-- Same chrome as /metrics: навбар каркаса (#259) с кнопкой закрытия. Механика закрытия не
+           тронута — по-прежнему `cancel`, чтобы in-frame фолбэк возвращал на /app. -->
+      <B24DashboardNavbar
+        :toggle="false"
         title="Настройки импорта"
-        subtitle="Здесь вы задаёте, куда приложение вносит товары из документов и как ищет их в вашем каталоге."
-        :is-slider="isSlider"
-        @close="cancel"
-      />
-      <div class="p-4 sm:p-6">
+      >
+        <template #leading>
+          <B24Button
+            :icon="CrossMIcon"
+            color="air-tertiary-no-accent"
+            size="xs"
+            :aria-label="isSlider ? 'Закрыть' : 'Вернуться к обзору'"
+            @click="cancel"
+          />
+        </template>
+      </B24DashboardNavbar>
+
+      <div class="mx-auto max-w-2xl p-4 pb-6 sm:p-6">
+        <p class="mb-4 text-sm text-(--ui-color-base-3)">
+          Здесь вы задаёте, куда приложение вносит товары из документов и как ищет их в вашем каталоге.
+        </p>
         <B24Alert
           v-if="error"
           class="mb-4"
