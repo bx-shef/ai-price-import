@@ -9,6 +9,9 @@ import type { SmartProcessOption } from '~/utils/targetOptions'
 // change within a session. Empty until loaded / outside a portal.
 
 const types = ref<SmartProcessOption[]>([])
+// Whether the portal actually has smart invoices (#269). Default TRUE — fail-open: outside a portal
+// or on a failed load we keep offering the option, exactly as before the probe existed.
+const smartInvoiceEnabled = ref(true)
 let loaded = false
 let inFlight: Promise<void> | null = null
 
@@ -24,8 +27,9 @@ export function useCrmTypes() {
       const headers = buildFrameHeaders(auth())
       if (!headers) return // standalone / no auth → keep [] (no SPA options)
       try {
-        const res = await $fetch<{ types?: SmartProcessOption[] }>('/api/crm-types', { headers })
+        const res = await $fetch<{ types?: SmartProcessOption[], smartInvoice?: boolean }>('/api/crm-types', { headers })
         types.value = Array.isArray(res?.types) ? res.types : []
+        smartInvoiceEnabled.value = res?.smartInvoice !== false
         loaded = true
       } catch {
         /* keep [] — no SPA options on a transient failure */
@@ -38,5 +42,5 @@ export function useCrmTypes() {
     }
   }
 
-  return { types, load }
+  return { types, smartInvoiceEnabled, load }
 }

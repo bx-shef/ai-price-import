@@ -5,8 +5,9 @@ import { QUEUES } from './topology'
 import type { AgentJob, CrmSyncJob, EventJob, ExtractJob } from './topology'
 import { handleAgentRunJob, handleCrmSyncJob, handleEventJob, handleFileExtractJob } from './handlers'
 import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveEventDeps, liveFileExtractDeps, type LiveInfra } from './liveDeps'
-import { setJobStatus } from '../utils/jobStore'
+import { getManualOverride, setJobStatus } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
+import { describeImportFailure } from '~/utils/importFailure'
 import { query } from '../db/client'
 import { resolveLlmConfig } from '../agent/llmConfig'
 import { makeChatFn } from '../agent/openaiChat'
@@ -190,22 +191,40 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
 
   // On PERMANENT failure (retries exhausted), guarantee a terminal status the /status
   // view can show, and drop the uploaded bytes (an unhandled throw skipped cleanup).
+  // `writesToCrm` only for crm-sync: the «не удалось внести документ в …, выберите другую цель»
+  // wording presumes the document reached the portal. A failure in extract/agent (OCR, LLM, storage)
+  // never got there, so naming a target — let alone advising to change it — would be a wrong lead.
   onExhausted(extract, infra, job => cleanupUpload(job as ExtractJob))
   onExhausted(agent, infra)
-  onExhausted(crm, infra)
+  onExhausted(crm, infra, undefined, true)
 
   return [extract, agent, crm]
 }
 
 /** Attach a permanent-failure handler that finalises the job status + optional cleanup. */
-function onExhausted(worker: Worker, infra: LiveInfra, cleanup?: (data: { memberId: string, jobId: string }) => Promise<void>): void {
+function onExhausted(
+  worker: Worker,
+  infra: LiveInfra,
+  cleanup?: (data: { memberId: string, jobId: string }) => Promise<void>,
+  writesToCrm = false
+): void {
   worker.on('failed', async (job, err) => {
     if (!job) return
     const attempts = job.opts?.attempts ?? 1
     if ((job.attemptsMade ?? 0) < attempts) return // more retries pending
     const data = job.data as { memberId?: string, jobId?: string }
     if (!data?.memberId || !data?.jobId) return
-    const reason = `сбой обработки: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`
+    const raw = (err instanceof Error ? err.message : String(err)).slice(0, 200)
+    // Only the CRM-writing stage gets the target-aware explanation (#269). Earlier stages keep the
+    // generic wording — the document never reached the portal there.
+    let reason: string
+    if (writesToCrm) {
+      // Reading the override is best-effort — without it the message says «выбранную запись».
+      const target = await getManualOverride(data.memberId, data.jobId, jobRedis).catch(() => undefined)
+      reason = describeImportFailure(raw, target ? { entityTypeId: target.entityTypeId } : null)
+    } else {
+      reason = `Не удалось обработать документ. Попробуйте загрузить файл снова; если повторится — покажите это сообщение администратору. Подробности: ${raw}`
+    }
     await setJobStatus(data.memberId, data.jobId, 'error', reason, jobRedis).catch(() => {})
     if (cleanup) await cleanup({ memberId: data.memberId, jobId: data.jobId }).catch(() => {})
   })

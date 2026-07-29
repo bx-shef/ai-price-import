@@ -42,7 +42,14 @@ export default defineEventHandler(async (event) => {
       const resolved = await Promise.all(ids.map(jobId => getJob(memberId, jobId, jobRedis)))
       const jobs = resolved
         .filter((j): j is NonNullable<typeof j> => j !== null)
-        .map(j => ({ jobId: j.jobId, status: j.status, fileName: j.fileName, result: j.result, ...(j.diskUrl ? { diskUrl: j.diskUrl } : {}) }))
+        .map(j => ({
+          jobId: j.jobId,
+          status: j.status,
+          fileName: j.fileName,
+          result: j.result,
+          ...(j.diskUrl ? { diskUrl: j.diskUrl } : {}),
+          ...(j.targetEntityTypeId ? { targetEntityTypeId: j.targetEntityTypeId } : {})
+        }))
       return { jobs }
     }
   )

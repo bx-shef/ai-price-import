@@ -13,8 +13,14 @@ const SP = (over: Partial<SmartProcessOption> = {}): SmartProcessOption => ({
 })
 
 describe('buildEntityChoices', () => {
+  it('#269: на портале без смарт-счетов вариант не предлагается — иначе выбор упадёт при импорте', () => {
+    expect(buildEntityChoices([], { smartInvoiceEnabled: false }).some(c => c.id === 31)).toBe(false)
+    // По умолчанию (метаданные ещё не загружены) вариант виден — прятать рабочую цель хуже.
+    expect(buildEntityChoices([]).some(c => c.id === 31)).toBe(true)
+  })
+
   it('Авто → Лид → Сделка → Смарт-счёт → smart processes BY NAME', () => {
-    const choices = buildEntityChoices(true, [SP({ entityTypeId: 1044, title: 'Договоры' }), SP({ entityTypeId: 1050, title: 'Заявки' })])
+    const choices = buildEntityChoices([SP({ entityTypeId: 1044, title: 'Договоры' }), SP({ entityTypeId: 1050, title: 'Заявки' })])
     expect(choices).toEqual([
       { id: null, label: 'Авто (по правилам)' },
       { id: 1, label: 'Лид' },
@@ -25,10 +31,10 @@ describe('buildEntityChoices', () => {
     ])
   })
   it('hides «Лид» when leads are disabled (no-leads CRM)', () => {
-    expect(buildEntityChoices(false, []).some(c => c.id === 1)).toBe(false)
+    expect(buildEntityChoices([], { leadsEnabled: false }).some(c => c.id === 1)).toBe(false)
   })
   it('omits «Авто» when includeAuto is false (settings targets are always concrete)', () => {
-    expect(buildEntityChoices(true, [], false)[0]).toEqual({ id: 1, label: 'Лид' })
+    expect(buildEntityChoices([], { includeAuto: false })[0]).toEqual({ id: 1, label: 'Лид' })
   })
 })
 

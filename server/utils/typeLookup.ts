@@ -47,3 +47,28 @@ export async function fetchSmartProcessTypes(call: RestCall): Promise<SmartProce
     .map(({ entityTypeId, title, hasCategories, hasStages }) => ({ entityTypeId, title, hasCategories, hasStages }))
     .sort((a, b) => a.title.localeCompare(b.title, 'ru'))
 }
+
+/**
+ * Whether the portal actually supports SMART INVOICES (entityTypeId 31). Unlike smart processes, the
+ * invoice is a fixed preset that the picker offered unconditionally — on a portal where invoices are
+ * off the employee picked it and got the portal's raw «Сущность CRM не поддерживается» at import
+ * time (#269). `crm.item.fields` is the cheapest read-only probe: it succeeds when the type exists.
+ *
+ * Returns `null` when the answer is inconclusive (network/auth blip) — the caller keeps offering the
+ * option (fail-open), because hiding a working target is worse than the old behaviour.
+ */
+export async function probeSmartInvoiceEnabled(call: RestCall): Promise<boolean | null> {
+  try {
+    const res = await call('crm.item.fields', { entityTypeId: SMART_INVOICE_ENTITY_TYPE_ID })
+    return !!(res as { fields?: unknown } | undefined)?.fields
+  } catch (e) {
+    // Only an explicit «this type is not supported» is a definitive NO. A bare NOT_FOUND is NOT
+    // enough: B24 returns it for many reasons, and treating it as «нет смарт-счетов» would HIDE a
+    // working target — the opposite of the fail-open policy this probe is built on.
+    const msg = e instanceof Error ? e.message : String(e)
+    return /не\s+поддерживается|not\s+supported/i.test(msg) ? false : null
+  }
+}
+
+/** Smart invoice — a fixed system type, not a dynamic smart process. */
+export const SMART_INVOICE_ENTITY_TYPE_ID = 31

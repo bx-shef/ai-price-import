@@ -1,7 +1,7 @@
 import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { makePortalSdkCall, sdkPortalDeps } from '../utils/b24Sdk'
-import { fetchSmartProcessTypes } from '../utils/typeLookup'
+import { fetchSmartProcessTypes, probeSmartInvoiceEnabled } from '../utils/typeLookup'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import { query } from '../db/client'
 
@@ -41,8 +41,13 @@ export default defineEventHandler(async (event) => {
         setResponseStatus(event, 409)
         return { error: 'portal not authorised (no token)' }
       }
-      // fetchSmartProcessTypes never throws (→ [] on any issue).
-      return { types: await fetchSmartProcessTypes(transport.call) }
+      // fetchSmartProcessTypes never throws (→ [] on any issue). The smart-invoice probe answers
+      // «is this fixed type available here» — null (inconclusive) keeps the option visible (#269).
+      const [types, smartInvoice] = await Promise.all([
+        fetchSmartProcessTypes(transport.call),
+        probeSmartInvoiceEnabled(transport.call)
+      ])
+      return { types, smartInvoice: smartInvoice !== false }
     }
   )
 })
