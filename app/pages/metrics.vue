@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { navigateTo } from '#app'
 import { useMetrics } from '~/composables/useMetrics'
@@ -53,14 +54,28 @@ async function doReset(): Promise<void> {
 <template>
   <!-- CLIENT-ONLY: depends on the B24 frame handshake; prerender+hydrate framed mismatched (see /app). -->
   <ClientOnly>
-    <div class="mx-auto max-w-2xl pb-6">
-      <SliderPageHeader
+    <div>
+      <!-- Шапка — навбар каркаса (#259). Кнопка закрытия слайдера осталась той же: механику закрытия
+           страница по-прежнему решает сама (closeOrBack), навбар несёт только хром. -->
+      <B24DashboardNavbar
+        :toggle="false"
         title="Метрики импорта"
-        subtitle="Сколько документов приложение обработало и сколько времени вам сэкономило."
-        :is-slider="isSlider"
-        @close="closeOrBack"
-      />
-      <div class="p-4 sm:p-6">
+      >
+        <template #leading>
+          <B24Button
+            :icon="CrossMIcon"
+            color="air-tertiary-no-accent"
+            size="xs"
+            :aria-label="isSlider ? 'Закрыть' : 'Вернуться к обзору'"
+            @click="closeOrBack"
+          />
+        </template>
+      </B24DashboardNavbar>
+
+      <div class="mx-auto max-w-2xl p-4 pb-6 sm:p-6">
+        <p class="mb-4 text-sm text-(--ui-color-base-3)">
+          Сколько документов приложение обработало и сколько времени вам сэкономило.
+        </p>
         <B24Alert
           v-if="error"
           class="mb-4"
@@ -69,19 +84,27 @@ async function doReset(): Promise<void> {
           :title="error"
         />
 
-        <!-- Экономия — тот же MetricStat, что на /app: два экрана одной фичи читаются одинаково. -->
-        <div class="flex flex-wrap gap-3">
-          <MetricStat
-            variant="page"
-            label="Сэкономлено времени"
-            :value="savings ? formatMinutes(savings.minutesSaved) : '—'"
-          />
-          <MetricStat
-            variant="page"
-            label="Сэкономлено денег (примерно)"
-            :value="savings ? `${savings.moneySaved} ${savings.currency}` : '—'"
-          />
-        </div>
+        <!-- Экономия — те же плитки B24PageCard, что на /app: два экрана одной фичи читаются одинаково. -->
+        <B24PageGrid class="sm:grid-cols-2 lg:grid-cols-2">
+          <B24PageCard
+            variant="tinted-no-accent"
+            title="Сэкономлено времени"
+            :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+          >
+            <p class="text-[22px] leading-tight font-semibold">
+              {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+            </p>
+          </B24PageCard>
+          <B24PageCard
+            variant="tinted-no-accent"
+            title="Сэкономлено денег (примерно)"
+            :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+          >
+            <p class="text-[22px] leading-tight font-semibold">
+              {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
+            </p>
+          </B24PageCard>
+        </B24PageGrid>
 
         <!-- Успешность -->
         <div class="mt-3 rounded-lg border border-(--ui-color-base-5) p-4">
