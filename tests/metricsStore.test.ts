@@ -136,14 +136,33 @@ describe('метрики двух порталов не пересекаются
 
 // #271-C: накопительный итог по всем порталам для консоли оператора.
 describe('readTotals', () => {
-  it('суммирует по имени счётчика и не разглашает, какой портал что сделал', async () => {
+  it('суммирует по имени счётчика', async () => {
     const { q, calls } = fakeQuery([{ name: 'docs', value: '12' }, { name: 'created', value: 11 }])
     expect(await readTotals(q)).toEqual({ docs: 12, created: 11 })
     expect(calls[0]!.sql).toContain('GROUP BY name')
-    // В ответе нет member_id — это единственное место, где счётчики агрегируются между порталами,
-    // и оно не должно давать разбивку.
+  })
+
+  it('разбивка по порталам не доходит до ответа', async () => {
+    // Проверяем ВЫХОД, а не текст запроса: сверка строки ловит «кто-то добавил member_id в SELECT»,
+    // но не ловит «id просочился в ключи ответа другим путём».
+    const { q, calls } = fakeQuery([
+      { name: 'docs', value: 5, member_id: 'портал-A' },
+      { name: 'docs', value: 7, member_id: 'портал-B' }
+    ])
+    expect(Object.keys(await readTotals(q))).toEqual(['docs'])
     expect(calls[0]!.sql).not.toMatch(/SELECT[^]*member_id/i)
   })
+
+  it('отдаёт только то, что консоль показывает', async () => {
+    const { q } = fakeQuery([
+      { name: 'docs', value: 1 },
+      { name: 'feedback_up', value: 9 },
+      { name: 'unmatched', value: 4 }
+    ])
+    // Отзывы и «поставщик не найден» на этот экран не выводятся — незачем и слать.
+    expect(await readTotals(q)).toEqual({ docs: 1 })
+  })
+
   it('пусто, когда счётчиков ещё нет', async () => {
     expect(await readTotals(fakeQuery([]).q)).toEqual({})
   })

@@ -1,3 +1,5 @@
+import { pluralRu } from './jobStatus'
+
 // Чистая обвязка операторской консоли (#271). Логика мелкая, но именно её отсутствие делало экран
 // бесполезным: данные грузились один раз на монтировании, и оператор смотрел на замороженный снимок,
 // не понимая, что тот устарел.
@@ -50,6 +52,17 @@ export function filterPortals<T extends OpsPortalRow>(rows: T[], query: string):
   return rows.filter(r => r.domain.toLowerCase().includes(q) || r.memberId.toLowerCase().includes(q))
 }
 
+/** Что показывать: всё или только требующее внимания. */
+export type PortalHealthFilter = 'all' | 'problem'
+
+/**
+ * Отбор по состоянию авторизации. Сортировки «сломанные наверх» мало, когда порталов много: список
+ * всё равно нужно проглядывать. Текстовый поиск сюда не годится — состояние не пишется в домене.
+ */
+export function filterByHealth<T extends OpsPortalRow>(rows: T[], mode: PortalHealthFilter): T[] {
+  return mode === 'problem' ? rows.filter(r => r.health !== 'ok') : rows
+}
+
 /**
  * Проблемные — наверх, дальше по домену. Сортировка стабильна и не зависит от порядка сервера:
  * список перестраивается каждые 12 секунд, и «прыгающие» строки под курсором ловили бы клик мимо.
@@ -60,9 +73,13 @@ export function sortPortalsByHealth<T extends OpsPortalRow>(rows: T[]): T[] {
   )
 }
 
-/** Готовый список для экрана: сперва отбор, затем порядок. */
-export function visiblePortals<T extends OpsPortalRow>(rows: T[], query: string): T[] {
-  return sortPortalsByHealth(filterPortals(rows, query))
+/** Готовый список для экрана: сперва отбор (текст + состояние), затем порядок. */
+export function visiblePortals<T extends OpsPortalRow>(
+  rows: T[],
+  query: string,
+  mode: PortalHealthFilter = 'all'
+): T[] {
+  return sortPortalsByHealth(filterByHealth(filterPortals(rows, query), mode))
 }
 
 /**
@@ -73,15 +90,27 @@ export function visiblePortals<T extends OpsPortalRow>(rows: T[], query: string)
  */
 export interface LifetimeTotals { docs: number, created: number, lines: number, errors: number }
 
-/** «12 документов · 11 в CRM · 340 позиций · 1 ошибка». Пусто, когда ничего ещё не обработано. */
+const ru = (n: number) => n.toLocaleString('ru-RU')
+
+/**
+ * «12 документов · создано в CRM: 11 · 340 позиций · с ошибкой: 1».
+ *
+ * Пусто, только когда пусто ВСЁ. Гард по одному `docs` прятал бы строку у портала, который успел
+ * получить ошибки, но ни одного документа: счётчики растут в разных местах (`errors` — внутри записи
+ * в CRM, `docs` — только после её успешного завершения), да и падения на извлечении текста и разборе
+ * `docs` не трогают вовсе.
+ *
+ * «Создано в CRM» подписано словами, а не «11 в CRM»: счётчик считает СУЩНОСТИ, и совпадение с
+ * числом документов — частный случай (один документ → одна сделка), а не правило.
+ */
 export function lifetimeSummary(t: LifetimeTotals | null | undefined): string {
-  if (!t || t.docs <= 0) return ''
+  if (!t || (t.docs <= 0 && t.created <= 0 && t.lines <= 0 && t.errors <= 0)) return ''
   const parts = [
-    `${t.docs.toLocaleString('ru-RU')} документов`,
-    `${t.created.toLocaleString('ru-RU')} в CRM`,
-    `${t.lines.toLocaleString('ru-RU')} позиций`
+    `${ru(t.docs)} ${pluralRu(t.docs, ['документ', 'документа', 'документов'])}`,
+    `создано в CRM: ${ru(t.created)}`,
+    `${ru(t.lines)} ${pluralRu(t.lines, ['позиция', 'позиции', 'позиций'])}`
   ]
-  if (t.errors > 0) parts.push(`${t.errors.toLocaleString('ru-RU')} с ошибкой`)
+  if (t.errors > 0) parts.push(`с ошибкой: ${ru(t.errors)}`)
   return parts.join(' · ')
 }
 
