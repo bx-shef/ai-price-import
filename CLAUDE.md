@@ -230,7 +230,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     + parity-тест против inline-списка бутстрапа. **Слайс 2 — общая станция** (`telemetry-station/`:
     otel-collector-contrib + ClickHouse 72ч + Grafana, отдельный деплой, вне build-context/CI).
   - **Трекинг задания импорта — Redis+TTL, НЕ Postgres** (`utils/jobStore.ts` + `utils/jobStoreRedis.ts`):
-    статус/мета каждого задания (`status`/`fileName`/`result`/`manualOverride`/`diskFile`/`notified`)
+    статус/мета каждого задания (`status`/`fileName`/`result`/`manualOverride`/`diskFile`/`notified`/`failNotified`/`uploaderId` — последний это id сотрудника из `profile` фрейм-токена, адрес личного чата для сообщения о неудаче; **в браузер не отдаётся**, `mapJob` его не читает)
     живёт в Redis-хеше `import:job:{member}:{jobId}` с native PX-expiry (TTL `IMPORT_JOB_TTL_HOURS`, дефолт
     48ч). **Серверного списка заданий НЕТ** (#D): браузер сотрудника держит свою историю в **localStorage**
     (`app/utils/importHistory.ts`, ключ `jobId`) и опрашивает статус **по id** (`POST /api/import/status {ids:[…]}` → `getJob`;

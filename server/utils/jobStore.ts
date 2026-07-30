@@ -30,6 +30,14 @@ export interface ImportJob {
   targetEntityTypeId?: number
 }
 
+/** Portal id of the person who uploaded the document — so a failure can be told to THEM, not just
+ *  left in a list they may never reopen. Never sent to the browser: it is only a chat address. */
+export async function getUploaderId(memberId: string, jobId: string, redis: JobRedis): Promise<string | null> {
+  const h = await redis.getAll(jobKey(memberId, jobId))
+  const raw = h?.uploaderId
+  return raw && /^[1-9][0-9]*$/.test(raw) ? raw : null
+}
+
 /**
  * Minimal Redis surface the job store needs — injected so the store stays pure/testable with a fake
  * (no ioredis import here; the live adapter lives in jobStoreRedis.ts). All methods are job-oriented
@@ -60,14 +68,16 @@ export async function createJob(
   jobId: string,
   fileName: string,
   redis: JobRedis,
-  manualOverride?: TargetRef | null
+  manualOverride?: TargetRef | null,
+  uploaderId?: string | null
 ): Promise<void> {
   await redis.put(jobKey(memberId, jobId), {
     status: 'queued',
     fileName,
     result: '',
     createdAt: String(Date.now()),
-    ...(manualOverride ? { manualOverride: JSON.stringify(manualOverride) } : {})
+    ...(manualOverride ? { manualOverride: JSON.stringify(manualOverride) } : {}),
+    ...(uploaderId ? { uploaderId } : {})
   }, JOB_TTL_MS)
 }
 
@@ -168,6 +178,31 @@ export async function setJobStatus(memberId: string, jobId: string, status: JobS
  */
 export async function claimJobNotify(memberId: string, jobId: string, redis: JobRedis): Promise<boolean> {
   return redis.claim(jobKey(memberId, jobId), 'notified', JOB_TTL_MS)
+}
+
+/** Same once-only claim, for the FAILURE notification. A separate field from `notified`: success
+ *  and failure are different events, and a job that failed was never notified as a success. */
+export async function claimJobFailNotify(memberId: string, jobId: string, redis: JobRedis): Promise<boolean> {
+  return redis.claim(jobKey(memberId, jobId), 'failNotified', JOB_TTL_MS)
+}
+
+/** How long one portal's error chat stays quiet after a failure message. */
+export const FAILURE_CHAT_WINDOW_MS = 5 * 60 * 1000
+
+/**
+ * Claim the RIGHT TO WRITE to a portal's error chat, once per window.
+ *
+ * Failures arrive correlated, not one at a time: a missing currency or a dead extractor fails every
+ * document in a batch identically. Without this, ten photos meant ten identical messages in the
+ * admin's chat — and any portal user could aim that at the admin by uploading junk, since there is
+ * no rate limit on upload. The employee still hears about EVERY one of their own documents; it is
+ * the shared chat that gets a quiet period.
+ *
+ * Keyed per portal per time bucket, so the claim expires by itself — no cleanup, no stored state.
+ */
+export async function claimErrorChatWindow(memberId: string, nowMs: number, redis: JobRedis): Promise<boolean> {
+  const bucket = Math.floor(nowMs / FAILURE_CHAT_WINDOW_MS)
+  return redis.claim(`import:failchat:${memberId}:${bucket}`, 'sent', FAILURE_CHAT_WINDOW_MS)
 }
 
 function mapJob(memberId: string, jobId: string, h: Record<string, string>): ImportJob {
