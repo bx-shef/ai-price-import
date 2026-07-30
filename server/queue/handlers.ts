@@ -137,7 +137,9 @@ export interface FileExtractDeps {
   markExtracting?: (memberId: string, jobId: string) => Promise<void>
   /** Optional best-effort: archive the SOURCE file to the portal's common Disk when the
    *  portal's `saveFile` toggle is on (the impl reads the setting). Runs at this stage (the raw
-   *  file only exists here — the worker deletes it after) but AFTER enqueue — never fails the job. */
+   *  file only exists here — the worker deletes it once the handler returns) and BEFORE the enqueue,
+   *  so the link is stored before anything downstream looks for it (#263). Never fails the job.
+   *  MUST stay awaited: detached, it would race the worker's cleanup of those very bytes. */
   saveSourceFile?: (memberId: string, jobId: string, fileId: string) => Promise<void>
 }
 
@@ -161,18 +163,31 @@ export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDep
     return { ok: false }
   }
   await deps.saveText(job.memberId, job.jobId, text)
-  await deps.enqueueAgentRun(job.memberId, job.jobId)
-  // Archive the source file to the portal's Disk LAST — after enqueue, before returning (the
-  // worker deletes the raw bytes only once this handler returns, so the file is still present).
-  // Ordering matters: a throw from enqueueAgentRun retries the whole job; if the archive ran
-  // BEFORE enqueue, that retry would re-upload a duplicate client document. Running it after a
-  // successful enqueue means the only throw-after-archive path is gone. Best-effort + gated on
-  // `saveFile` inside; a Disk failure must NOT fail the import (text is extracted, pipeline runs).
+  // Archive the source file to the portal's Disk BEFORE handing the job on (#263). It used to run
+  // after `enqueueAgentRun`, to avoid re-uploading the document if a throw from the enqueue retried
+  // the whole job — but that upload has been idempotent for a while (find-by-name in the month
+  // folder + a per-portal advisory lock), so the retry finds the file instead of duplicating it.
+  //
+  // The old order was a RACE: agent-run started immediately, and on a small document the chain
+  // agent-run → crm-sync → writeActivity could reach the timeline дело before this upload finished.
+  // Then the «Исходный файл» link simply wasn't there yet, the button was silently omitted, and the
+  // same import showed the file in the operations list (read later) but not in CRM. Nothing failed —
+  // it just looked like the archive was off. Cost of the new order: the pipeline waits out the
+  // upload. The handler waited for it anyway before returning, so the extract job takes the same
+  // time; only the start of the next stage moves.
+  //
+  // One residual hole in that idempotency, pre-existing and left as is: the month folder is chosen
+  // at upload time, so a retry that crosses a month boundary looks in the NEW month, misses, and
+  // uploads a second copy. The retry backoff is seconds, so this needs a job retried across
+  // midnight of the 1st — narrow enough not to pay a REST call per import to close.
+  //
+  // Best-effort + gated on `saveFile` inside; a Disk failure must NOT fail the import.
   if (deps.saveSourceFile) {
     try {
       await deps.saveSourceFile(job.memberId, job.jobId, job.fileId)
     } catch { /* best-effort archive — the import proceeds without it */ }
   }
+  await deps.enqueueAgentRun(job.memberId, job.jobId)
   return { ok: true }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claimJobNotify, createJob, getDiskFileId, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus } from '../server/utils/jobStore'
+import { claimJobNotify, createJob, getDiskFileId, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../server/utils/jobStore'
 import { createMemoryJobRedis } from '../server/utils/jobStoreRedis'
 
 // The store logic is exercised over the in-memory JobRedis (same interface as the live ioredis
@@ -77,5 +77,20 @@ describe('jobStore (Redis-backed)', () => {
     expect(await getJob('m', 'j1', r)).not.toBeNull()
     t += 49 * 60 * 60 * 1000 // past the 48h default TTL
     expect(await getJob('m', 'j1', r)).toBeNull()
+  })
+})
+
+// #263: пропажа кнопки «Исходный файл» была полностью немой — ни в журнале, ни где-либо ещё.
+describe('shouldWarnMissingArchive', () => {
+  it('архивация включена, ссылки нет — предупреждаем', () => {
+    expect(shouldWarnMissingArchive(true, null)).toBe(true)
+    expect(shouldWarnMissingArchive(true, undefined)).toBe(true)
+    expect(shouldWarnMissingArchive(true, '')).toBe(true)
+  })
+  it('архивация выключена — терять нечего, молчим', () => {
+    expect(shouldWarnMissingArchive(false, null)).toBe(false)
+  })
+  it('ссылка есть — молчим', () => {
+    expect(shouldWarnMissingArchive(true, '/docs/file/x')).toBe(false)
   })
 })

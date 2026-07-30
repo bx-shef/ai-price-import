@@ -95,6 +95,21 @@ export async function setDiskFile(memberId: string, jobId: string, ref: DiskFile
  *  branch returns it verbatim, KEEPING its query (the query is our own static IFRAME flags, no token).
  *  A legacy ABSOLUTE URL is reduced to its path (host+query discarded) — still SSRF-safe. Returns null
  *  for anything that can't be reduced to a clean leading-slash path. */
+/**
+ * Should the operator be told that the timeline дело is going out without the «Исходный файл»
+ * button? Only when the admin actually asked for the file to be kept — otherwise there is nothing
+ * to miss (#263).
+ *
+ * Since the extract stage archives BEFORE handing the job on, a missing link here means something
+ * genuinely went wrong. Deliberately says «нет ссылки на копию», NOT «загрузка не удалась»: the
+ * link can also be absent when the upload succeeded but the reference didn't persist, when the job
+ * store is unreachable, or when `saveFile` was switched on between the two stages. Naming a cause
+ * we haven't established would send the operator looking in the wrong place.
+ */
+export function shouldWarnMissingArchive(saveFile: boolean, sourceFileUrl: string | null | undefined): boolean {
+  return saveFile === true && !sourceFileUrl
+}
+
 export function detailUrlToRelative(url: unknown): string | null {
   if (typeof url !== 'string' || !url) return null
   if (isRelativePath(url)) return url // safe relative path (shared guard) — query preserved
