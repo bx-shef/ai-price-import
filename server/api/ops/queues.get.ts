@@ -4,6 +4,7 @@ import type { QueueName } from '../../queue/topology'
 import { OP_COOKIE, operatorAllowed } from '../../utils/operatorSession'
 import { readTotals } from '../../utils/metricsStore'
 import { query } from '../../db/client'
+import { queueAlertState } from '../../utils/queueAlertState'
 
 // GET /api/ops/queues — pipeline queue depths for the operator /queues page.
 // Authenticated by the OPERATOR SESSION cookie (the browser path; the app-token
@@ -31,5 +32,10 @@ export default defineEventHandler(async (event) => {
   } catch {
     totalsFailed = true
   }
-  return { queues: counts, totals, totalsFailed }
+  // Здоровье очередей (BACKLOG.md §1). Снимок глубины не отличает «навалило работы» от «встало» —
+  // это решает периодическая проверка на крон-инстансе (она же и есть этот процесс). `checkedAtMs`
+  // отдаём отдельно: до первой проверки пустой список тревог означает «ещё не смотрели», а не
+  // «всё хорошо», и экран не должен выдавать одно за другое.
+  const health = queueAlertState()
+  return { queues: counts, totals, totalsFailed, alerts: health.alerts, alertsCheckedAt: health.checkedAtMs }
 })

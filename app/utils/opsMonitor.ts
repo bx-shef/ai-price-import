@@ -22,6 +22,15 @@ export function formatClock(ms: number | null | undefined, locale = 'ru-RU'): st
  * поставили на паузу или запросы молча перестали доходить, цифры на экране продолжают выглядеть
  * свежими — а это ровно тот случай, ради которого консоль и открывают.
  */
+/**
+ * После этого возраста проверка здоровья очередей считается устаревшей.
+ *
+ * Сама проверка ходит раз в 5 минут; берём с большим запасом, чтобы одна пропущенная итерация
+ * (медленный Redis, занятый цикл событий) не пугала оператора. А вот полчаса тишины уже значат,
+ * что проверять некому — и молчание тревог перестаёт быть новостью «всё хорошо».
+ */
+export const QUEUE_HEALTH_STALE_MS = 30 * 60 * 1000
+
 export function staleAfter(updatedAt: number | null | undefined, now: number = Date.now(), limit = STALE_AFTER_MS): boolean {
   if (!updatedAt || !Number.isFinite(updatedAt)) return false // обновления ещё не было — это не «устарело»
   return now - updatedAt > limit
