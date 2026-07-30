@@ -137,7 +137,9 @@ export interface FileExtractDeps {
   markExtracting?: (memberId: string, jobId: string) => Promise<void>
   /** Optional best-effort: archive the SOURCE file to the portal's common Disk when the
    *  portal's `saveFile` toggle is on (the impl reads the setting). Runs at this stage (the raw
-   *  file only exists here — the worker deletes it after) but AFTER enqueue — never fails the job. */
+   *  file only exists here — the worker deletes it once the handler returns) and BEFORE the enqueue,
+   *  so the link is stored before anything downstream looks for it (#263). Never fails the job.
+   *  MUST stay awaited: detached, it would race the worker's cleanup of those very bytes. */
   saveSourceFile?: (memberId: string, jobId: string, fileId: string) => Promise<void>
 }
 
@@ -173,6 +175,11 @@ export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDep
   // it just looked like the archive was off. Cost of the new order: the pipeline waits out the
   // upload. The handler waited for it anyway before returning, so the extract job takes the same
   // time; only the start of the next stage moves.
+  //
+  // One residual hole in that idempotency, pre-existing and left as is: the month folder is chosen
+  // at upload time, so a retry that crosses a month boundary looks in the NEW month, misses, and
+  // uploads a second copy. The retry backoff is seconds, so this needs a job retried across
+  // midnight of the 1st — narrow enough not to pay a REST call per import to close.
   //
   // Best-effort + gated on `saveFile` inside; a Disk failure must NOT fail the import.
   if (deps.saveSourceFile) {

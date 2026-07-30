@@ -24,9 +24,14 @@ describe('handleFileExtractJob', () => {
     expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
     expect(d.failJob).not.toHaveBeenCalled()
   })
-  it('архивирует ДО постановки в очередь — иначе дело успевало записаться без ссылки на файл (#263)', async () => {
+  it('архивация ЗАВЕРШАЕТСЯ до постановки в очередь — иначе дело пишется без ссылки на файл (#263)', async () => {
     const order: string[] = []
+    // Отметка ставится ПОСЛЕ паузы: важно не «архивация началась раньше», а «успела закончиться».
+    // С синхронным моком тест проходил бы и для незаваршённого вызова (`void save(...)`), а это
+    // ровно тот дефект, который чинится — плюс отсоединённый вызов гонялся бы ещё и с удалением
+    // самих байтов, которые воркер стирает сразу после возврата обработчика.
     const saveSourceFile = vi.fn(async () => {
+      await new Promise(r => setTimeout(r, 5))
       order.push('archive')
     })
     const d = deps({
@@ -37,8 +42,6 @@ describe('handleFileExtractJob', () => {
     })
     await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'накладная.pdf' }, d)
     expect(saveSourceFile).toHaveBeenCalledWith('m', 'j', 'накладная.pdf')
-    // Порядок — суть правки: следующая стадия не должна стартовать, пока копии на Диске нет.
-    // Дубль при ретрае ловит идемпотентность самой загрузки (поиск файла по имени в папке месяца).
     expect(order).toEqual(['archive', 'enqueue'])
   })
   it('сбой архивации не мешает поставить задание в очередь — импорт важнее копии файла', async () => {
@@ -47,13 +50,6 @@ describe('handleFileExtractJob', () => {
     const r = await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'f' }, d)
     expect(r.ok).toBe(true)
     expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
-  })
-  it('a failing saveSourceFile does NOT fail the job (Disk archive is best-effort)', async () => {
-    const saveSourceFile = vi.fn(() => Promise.reject(new Error('disk down')))
-    const d = deps({ saveSourceFile })
-    const r = await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'f' }, d)
-    expect(r.ok).toBe(true)
-    expect(d.enqueueAgentRun).toHaveBeenCalled()
   })
   it('oversized text → failJob, no save/enqueue (loud, not silent truncation)', async () => {
     const big = 'x'.repeat(MAX_DOCUMENT_TEXT + 1)

@@ -8,7 +8,7 @@ import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
-import { claimJobNotify, getDiskFileUrl, getManualOverride, setDiskFile, setJobStatus } from '../utils/jobStore'
+import { claimJobNotify, getDiskFileUrl, getManualOverride, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
@@ -33,6 +33,7 @@ import { extractText } from '../utils/textExtract'
 import { readFile } from 'node:fs/promises'
 import { uploadPath } from '../utils/fileStore'
 import { makeSaveSourceFile } from '../utils/disk'
+import { portalHash } from '../utils/telemetryAttributes'
 import { runChatExtract, type ChatFn } from '../agent/chatExtract'
 import { buildExtractionPrompt } from '../../prompts/extract'
 import { enqueueAgent, enqueueCrmSync } from './producers'
@@ -358,13 +359,11 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         console.warn('[crm-sync] source file link unavailable for job', jobId, '-', e instanceof Error ? e.message : String(e))
         return null
       })
-      // Archiving is ON but there is no link: the admin asked for the file to be kept, and the дело
-      // is about to be written without the button. Since the extract stage now archives BEFORE
-      // handing the job on (#263), this should not happen — so when it does, it means the upload
-      // failed (Disk quota, revoked scope, storage off) and the operator would otherwise never learn
-      // why the button vanished. Not an error: the import is fine without the archive.
-      if (mapping.saveFile && !sourceFileUrl) {
-        console.warn('[crm-sync] «Сохранять исходный файл» включено, но копии на Диске нет — дело без кнопки «Исходный файл»; job', jobId)
+      // Archiving is ON but no link: the дело is about to be written without the «Исходный файл»
+      // button, and until now that vanished without a trace anywhere (#263). Decision is a pure,
+      // tested predicate — see shouldWarnMissingArchive for why the wording names no cause.
+      if (shouldWarnMissingArchive(mapping.saveFile, sourceFileUrl)) {
+        console.warn('[crm-sync] saveFile is on but no archive link — дело written without the «Исходный файл» button; job', jobId, 'portal', portalHash(memberId))
       }
       // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
       // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
