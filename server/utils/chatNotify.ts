@@ -78,37 +78,3 @@ export async function sendChatMessage(dialogId: string, message: string, call: R
   const id = Number(res)
   return Number.isFinite(id) && id > 0 ? id : null
 }
-
-/** Cap on the failure text sent to a person. The reason can carry a portal response; a wall of
- *  text in a personal chat is worse than a short one plus the app screen. */
-export const MAX_FAILURE_REASON = 300
-
-/**
- * Personal message to the employee whose document failed (бэклог §1 «связь с сотрудником»).
- *
- * Until now a failure was only visible in that person's own list of operations — which they see
- * only if they happen to reopen the app. The person who did the work is told directly instead.
- *
- * The file name comes from the upload and the reason can quote the portal, so BOTH are external
- * text: neutralised, and the reason is capped. Addressed by DIALOG_ID = the portal user id.
- */
-export function buildUploaderFailureMessage(fileName: string, reason: string): string {
-  const name = neutralizeBb(String(fileName ?? '').trim()) || 'документ'
-  const why = neutralizeBb(String(reason ?? '').trim()).slice(0, MAX_FAILURE_REASON)
-  const lines = [`Не удалось внести в CRM ваш документ «${name}».`]
-  if (why) lines.push(why)
-  lines.push('Файл можно загрузить снова в приложении «AI-импорт прайсов».')
-  return lines.join('\n')
-}
-
-/**
- * Same failure, for the ERROR CHAT the admin configured — an operator reading it needs the file
- * name, since one chat carries every import of the portal. No user id: the chat is for «что
- * сломалось», and naming the employee there would put a person under a spotlight for a document
- * the app failed to read.
- */
-export function buildFailureChatMessage(fileName: string, reason: string): string {
-  const name = neutralizeBb(String(fileName ?? '').trim()) || 'документ'
-  const why = neutralizeBb(String(reason ?? '').trim()).slice(0, MAX_FAILURE_REASON)
-  return [`Импорт не удался: «${name}».`, ...(why ? [why] : [])].join('\n')
-}

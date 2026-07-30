@@ -51,6 +51,10 @@ export interface HandlerDeps {
   crmSyncDeps: (memberId: string, jobId: string, mapping: PortalMapping) => CrmSyncDeps
   /** Persist the job outcome. */
   setJobStatus: (memberId: string, jobId: string, status: 'done' | 'error', result: string) => Promise<void>
+  /** Record a terminal failure AND announce it (uploader + error chat). Separate from setJobStatus:
+   *  this stage can end 'error' without ever throwing, so BullMQ's exhausted-retries hook never
+   *  runs and the failure would otherwise be announced nowhere (BACKLOG.md §1). */
+  failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
   /**
    * Best-effort cleanup of the stored raw client document once the job is
    * terminal (data minimisation — docs/PROCESS.md). Optional: a failed sweep
@@ -71,7 +75,7 @@ export interface HandlerDeps {
 export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Promise<CrmSyncResult | null> {
   const loaded = await deps.getDocument(job.memberId, job.jobId)
   if (!loaded) {
-    await deps.setJobStatus(job.memberId, job.jobId, 'error', 'документ не найден')
+    await deps.failJob(job.memberId, job.jobId, 'документ не найден')
     return null
   }
   const mapping = await deps.getMapping(job.memberId)

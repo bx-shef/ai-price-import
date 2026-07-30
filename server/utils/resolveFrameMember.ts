@@ -54,12 +54,18 @@ export async function verifyFrameToken(auth: FrameAuth, deps: FrameVerifyDeps = 
   }
 }
 
-/** Portal user id from `profile.ID` — a positive integer as a string, or undefined. B24 returns it
- *  as a string on some portals and a number on others, so both are accepted; anything else is
- *  dropped rather than guessed (the id is used as a chat DIALOG_ID). */
+/**
+ * Portal user id from `profile.ID` — a positive integer as a string, or undefined.
+ *
+ * B24 returns it as a string on some portals and a number on others, so both are accepted. Anything
+ * else is DROPPED, not coerced: a plain `Number()` quietly turns `'0x10'` into 16, `'1e3'` into
+ * 1000 and `true` into 1 — every one of those is a valid id of a DIFFERENT person, so the failure
+ * notice would land in an uninvolved employee's personal chat. Matches the storage-side check in
+ * `jobStore.getUploaderId` exactly.
+ */
 export function profileUserId(raw: unknown): string | undefined {
-  const n = Number(raw)
-  return Number.isInteger(n) && n > 0 ? String(n) : undefined
+  if (typeof raw === 'number') return Number.isInteger(raw) && raw > 0 ? String(raw) : undefined
+  return typeof raw === 'string' && /^[1-9][0-9]*$/.test(raw.trim()) ? raw.trim() : undefined
 }
 
 export interface FrameMemberResult {

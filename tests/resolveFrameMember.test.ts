@@ -104,6 +104,17 @@ describe('profileUserId', () => {
       expect(profileUserId(bad)).toBeUndefined()
     }
   })
+
+  it('не превращаем мусор в ЧУЖОЙ идентификатор', () => {
+    // Обычный Number() тихо делает из '0x10' → 16, из '1e3' → 1000, из true → 1. Каждое из них —
+    // действительный идентификатор ДРУГОГО человека, то есть отказ по чужому документу улетел бы
+    // в личный чат постороннего сотрудника. Отбрасываем.
+    expect(profileUserId('0x10')).toBeUndefined()
+    expect(profileUserId('1e3')).toBeUndefined()
+    expect(profileUserId(true)).toBeUndefined()
+    expect(profileUserId('12.0')).toBeUndefined()
+    expect(profileUserId('007')).toBeUndefined()
+  })
 })
 
 describe('кого записываем как загрузившего', () => {

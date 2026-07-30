@@ -186,6 +186,25 @@ export async function claimJobFailNotify(memberId: string, jobId: string, redis:
   return redis.claim(jobKey(memberId, jobId), 'failNotified', JOB_TTL_MS)
 }
 
+/** How long one portal's error chat stays quiet after a failure message. */
+export const FAILURE_CHAT_WINDOW_MS = 5 * 60 * 1000
+
+/**
+ * Claim the RIGHT TO WRITE to a portal's error chat, once per window.
+ *
+ * Failures arrive correlated, not one at a time: a missing currency or a dead extractor fails every
+ * document in a batch identically. Without this, ten photos meant ten identical messages in the
+ * admin's chat — and any portal user could aim that at the admin by uploading junk, since there is
+ * no rate limit on upload. The employee still hears about EVERY one of their own documents; it is
+ * the shared chat that gets a quiet period.
+ *
+ * Keyed per portal per time bucket, so the claim expires by itself — no cleanup, no stored state.
+ */
+export async function claimErrorChatWindow(memberId: string, nowMs: number, redis: JobRedis): Promise<boolean> {
+  const bucket = Math.floor(nowMs / FAILURE_CHAT_WINDOW_MS)
+  return redis.claim(`import:failchat:${memberId}:${bucket}`, 'sent', FAILURE_CHAT_WINDOW_MS)
+}
+
 function mapJob(memberId: string, jobId: string, h: Record<string, string>): ImportJob {
   // Surface the archived Disk file as a same-portal RELATIVE path (never off-portal) so the UI can
   // link the file name to the original document. Bad/absent → omitted.

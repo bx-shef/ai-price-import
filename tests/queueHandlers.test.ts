@@ -32,6 +32,7 @@ function deps(over = {}) {
     getDocument: vi.fn(async () => ({ doc, signals: {} })),
     crmSyncDeps: vi.fn(() => crmDeps()),
     setJobStatus: vi.fn(async () => {}),
+    failJob: vi.fn(async () => {}),
     ...over
   }
 }
@@ -43,10 +44,13 @@ describe('handleCrmSyncJob', () => {
     expect(r?.created).toBe(true)
     expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'done', expect.stringContaining('"entityId":555'))
   })
-  it('missing document → error status, no run', async () => {
+  it('пропавший документ идёт через failJob — иначе об отказе никто не узнает', async () => {
+    // Эта ветка НЕ бросает исключение, значит хук «повторы исчерпаны» не сработает: если писать
+    // статус напрямую, отказ останется только в списке, который сотрудник может не открыть.
     const d = deps({ getDocument: vi.fn(async () => null) })
     expect(await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)).toBeNull()
-    expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'error', expect.stringContaining('не найден'))
+    expect(d.failJob).toHaveBeenCalledWith('m', 'j', expect.stringContaining('не найден'))
+    expect(d.setJobStatus).not.toHaveBeenCalled()
   })
 
   it('bumps dashboard counters on success (docs/created/lines/unmatched; errors handled upstream)', async () => {

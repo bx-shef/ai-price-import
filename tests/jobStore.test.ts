@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claimJobFailNotify, claimJobNotify, getUploaderId, createJob, getDiskFileId, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../server/utils/jobStore'
+import { FAILURE_CHAT_WINDOW_MS, claimErrorChatWindow, claimJobFailNotify, claimJobNotify, getUploaderId, createJob, getDiskFileId, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../server/utils/jobStore'
 import { createMemoryJobRedis } from '../server/utils/jobStoreRedis'
 
 // The store logic is exercised over the in-memory JobRedis (same interface as the live ioredis
@@ -126,5 +126,25 @@ describe('getUploaderId', () => {
     await createJob('m', 'j', 'f', r)
     expect(await claimJobNotify('m', 'j', r)).toBe(true)
     expect(await claimJobFailNotify('m', 'j', r)).toBe(true)
+  })
+})
+
+// Тихий период чата ошибок: отказы приходят пачкой (нет валюты в портале — падают все документы),
+// и без этого администратор получал по сообщению на каждый.
+describe('claimErrorChatWindow', () => {
+  it('первый раз в окне — можно, второй — нет', async () => {
+    const r = createMemoryJobRedis()
+    expect(await claimErrorChatWindow('m', 1_000_000, r)).toBe(true)
+    expect(await claimErrorChatWindow('m', 1_000_000, r)).toBe(false)
+  })
+  it('следующее окно открывается заново', async () => {
+    const r = createMemoryJobRedis()
+    expect(await claimErrorChatWindow('m', 0, r)).toBe(true)
+    expect(await claimErrorChatWindow('m', FAILURE_CHAT_WINDOW_MS, r)).toBe(true)
+  })
+  it('тишина у одного портала не глушит другой', async () => {
+    const r = createMemoryJobRedis()
+    expect(await claimErrorChatWindow('A', 0, r)).toBe(true)
+    expect(await claimErrorChatWindow('B', 0, r)).toBe(true)
   })
 })
