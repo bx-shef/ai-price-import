@@ -26,6 +26,66 @@ export function staleAfter(updatedAt: number | null | undefined, now: number = D
 }
 
 /**
+ * Порталы в списке оператора (#271-J/K). Плоский список без поиска и сортировки перестаёт работать
+ * ровно тогда, когда консоль нужнее всего: приложение мультитенантное, и портал со сломанной
+ * авторизацией — то, ради чего экран и открывают, — тонет среди здоровых.
+ */
+export interface OpsPortalRow {
+  memberId: string
+  domain: string
+  health: 'ok' | 'near-expiry' | 'stale'
+}
+
+/** Порядок здоровья: сломанные наверх. Число — только для сортировки, наружу не показывается. */
+const HEALTH_ORDER: Record<OpsPortalRow['health'], number> = { 'stale': 0, 'near-expiry': 1, 'ok': 2 }
+
+/**
+ * Отбор по подстроке. Ищем и по домену, и по `member_id`: у оператора на руках бывает именно id —
+ * из логов, из SQL, из обращения клиента, — а домена он может не знать. Пустой запрос ничего не
+ * отсеивает (а не отдаёт пусто).
+ */
+export function filterPortals<T extends OpsPortalRow>(rows: T[], query: string): T[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return rows
+  return rows.filter(r => r.domain.toLowerCase().includes(q) || r.memberId.toLowerCase().includes(q))
+}
+
+/**
+ * Проблемные — наверх, дальше по домену. Сортировка стабильна и не зависит от порядка сервера:
+ * список перестраивается каждые 12 секунд, и «прыгающие» строки под курсором ловили бы клик мимо.
+ */
+export function sortPortalsByHealth<T extends OpsPortalRow>(rows: T[]): T[] {
+  return [...rows].sort((a, b) =>
+    HEALTH_ORDER[a.health] - HEALTH_ORDER[b.health] || a.domain.localeCompare(b.domain, 'ru')
+  )
+}
+
+/** Готовый список для экрана: сперва отбор, затем порядок. */
+export function visiblePortals<T extends OpsPortalRow>(rows: T[], query: string): T[] {
+  return sortPortalsByHealth(filterPortals(rows, query))
+}
+
+/**
+ * Накопительный итог для консоли (#271-C). Счётчики очереди — это НЕ «обработано за всё время»:
+ * BullMQ хранит последние `removeOnComplete`/`removeOnFail` задач, поэтому «готово: 1000» упирается
+ * в потолок хранения. Настоящий итог живёт в наших собственных счётчиках (`metrics_counter`), и
+ * подписывать его нужно отдельной строкой, чтобы одно не читалось как другое.
+ */
+export interface LifetimeTotals { docs: number, created: number, lines: number, errors: number }
+
+/** «12 документов · 11 в CRM · 340 позиций · 1 ошибка». Пусто, когда ничего ещё не обработано. */
+export function lifetimeSummary(t: LifetimeTotals | null | undefined): string {
+  if (!t || t.docs <= 0) return ''
+  const parts = [
+    `${t.docs.toLocaleString('ru-RU')} документов`,
+    `${t.created.toLocaleString('ru-RU')} в CRM`,
+    `${t.lines.toLocaleString('ru-RU')} позиций`
+  ]
+  if (t.errors > 0) parts.push(`${t.errors.toLocaleString('ru-RU')} с ошибкой`)
+  return parts.join(' · ')
+}
+
+/**
  * Реальная пропускная способность на портал — упирается в ограничитель Битрикс24 (около 2 запросов
  * в секунду при ~8 запросах на документ), а не в очередь. Подтверждено `pnpm loadtest:queue`.
  */

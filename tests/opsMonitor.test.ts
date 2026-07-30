@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QUEUES_REFRESH_MS, STALE_AFTER_MS, backlogHours, formatClock, staleAfter } from '../app/utils/opsMonitor'
+import { QUEUES_REFRESH_MS, STALE_AFTER_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals } from '../app/utils/opsMonitor'
 
 describe('formatClock', () => {
   it('показывает время последнего обновления с секундами', () => {
@@ -68,5 +68,59 @@ describe('backlogHours (#271-D)', () => {
     expect(backlogHours(900)).toBe('1.0 ч работы') // ровно час
     expect(backlogHours(8964)).toBe('10 ч работы') // 9.96 ч — округляется ДО выбора формата
     expect(backlogHours(9000)).toBe('10 ч работы')
+  })
+})
+
+// #271-J/K: поиск и порядок в списке порталов.
+describe('visiblePortals', () => {
+  const rows = [
+    { memberId: 'm-ok', domain: 'beta.bitrix24.by', health: 'ok' as const },
+    { memberId: 'm-dead', domain: 'zeta.bitrix24.ru', health: 'stale' as const },
+    { memberId: 'm-soon', domain: 'alpha.bitrix24.kz', health: 'near-expiry' as const }
+  ]
+
+  it('сломанные наверх, дальше по домену', () => {
+    expect(visiblePortals(rows, '').map(r => r.memberId)).toEqual(['m-dead', 'm-soon', 'm-ok'])
+  })
+
+  it('порядок внутри одного здоровья — по домену', () => {
+    const same = [
+      { memberId: '2', domain: 'b.bitrix24.by', health: 'ok' as const },
+      { memberId: '1', domain: 'a.bitrix24.by', health: 'ok' as const }
+    ]
+    expect(visiblePortals(same, '').map(r => r.memberId)).toEqual(['1', '2'])
+  })
+
+  it('исходный массив не мутируется — список перестраивается каждые 12 секунд', () => {
+    const copy = [...rows]
+    visiblePortals(rows, '')
+    expect(rows).toEqual(copy)
+  })
+
+  it('ищет по домену и по member_id, без учёта регистра', () => {
+    expect(visiblePortals(rows, 'ZETA').map(r => r.memberId)).toEqual(['m-dead'])
+    expect(visiblePortals(rows, 'm-soon').map(r => r.memberId)).toEqual(['m-soon'])
+  })
+
+  it('пустой запрос ничего не отсеивает, непопадание даёт пусто', () => {
+    expect(visiblePortals(rows, '   ')).toHaveLength(3)
+    expect(visiblePortals(rows, 'нет такого')).toHaveLength(0)
+  })
+})
+
+// #271-C: накопительный итог подписывается отдельно от счётчиков очереди.
+describe('lifetimeSummary', () => {
+  it('перечисляет документы, записи и позиции', () => {
+    expect(lifetimeSummary({ docs: 12, created: 11, lines: 340, errors: 0 }))
+      .toBe('12 документов · 11 в CRM · 340 позиций')
+  })
+
+  it('ошибки добавляются только когда они есть', () => {
+    expect(lifetimeSummary({ docs: 12, created: 11, lines: 340, errors: 1 })).toContain('1 с ошибкой')
+  })
+
+  it('пусто, пока ничего не обработано (нечего показывать)', () => {
+    expect(lifetimeSummary({ docs: 0, created: 0, lines: 0, errors: 0 })).toBe('')
+    expect(lifetimeSummary(null)).toBe('')
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { bumpCounter, METRICS, readCounters, resetCounters } from '../server/utils/metricsStore'
+import { bumpCounter, METRICS, readCounters, readTotals, resetCounters } from '../server/utils/metricsStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -131,5 +131,20 @@ describe('метрики двух порталов не пересекаются
     const q = memoryTable()
     await bumpCounter('A', METRICS.feedbackUp, 1, q)
     expect(await readCounters('B', q)).toEqual({})
+  })
+})
+
+// #271-C: накопительный итог по всем порталам для консоли оператора.
+describe('readTotals', () => {
+  it('суммирует по имени счётчика и не разглашает, какой портал что сделал', async () => {
+    const { q, calls } = fakeQuery([{ name: 'docs', value: '12' }, { name: 'created', value: 11 }])
+    expect(await readTotals(q)).toEqual({ docs: 12, created: 11 })
+    expect(calls[0]!.sql).toContain('GROUP BY name')
+    // В ответе нет member_id — это единственное место, где счётчики агрегируются между порталами,
+    // и оно не должно давать разбивку.
+    expect(calls[0]!.sql).not.toMatch(/SELECT[^]*member_id/i)
+  })
+  it('пусто, когда счётчиков ещё нет', async () => {
+    expect(await readTotals(fakeQuery([]).q)).toEqual({})
   })
 })

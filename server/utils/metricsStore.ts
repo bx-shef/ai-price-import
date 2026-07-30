@@ -37,6 +37,21 @@ export async function readCounters(memberId: string, query: QueryFn): Promise<Re
   return out
 }
 
+/**
+ * Sum every portal's counters into one map — the operator console's lifetime total (#271-C).
+ *
+ * Deliberately NOT member-scoped: this is the cross-tenant view behind the operator password, the
+ * one place that legitimately aggregates all portals. It returns TOTALS ONLY — no member_id, no
+ * domain — so the console can show «сколько прошло через сервис» without exposing which portal did
+ * what. Every user-facing path stays scoped by `member_id` (see readCounters).
+ */
+export async function readTotals(query: QueryFn): Promise<Record<string, number>> {
+  const { rows } = await query('SELECT name, SUM(value)::bigint AS value FROM metrics_counter GROUP BY name', [])
+  const out: Record<string, number> = {}
+  for (const r of rows) out[String(r.name)] = Number(r.value) || 0
+  return out
+}
+
 /** Reset (delete) all counters for a portal — the operator's «сбросить метрики». Scoped
  * to member_id so one portal never touches another's counters. */
 export async function resetCounters(memberId: string, query: QueryFn): Promise<void> {

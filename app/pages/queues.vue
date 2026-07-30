@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { useAuth } from '~/composables/useAuth'
-import { FLASH_MS, QUEUES_REFRESH_MS, backlogHours, formatClock, staleAfter } from '~/utils/opsMonitor'
+import { FLASH_MS, QUEUES_REFRESH_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals } from '~/utils/opsMonitor'
+import { copyToClipboard } from '~/utils/clipboard'
 
 // Operator queue monitor (service zone). Auth-gated (server 401 + client redirect).
 // Layout `clear`, noindex, prerendered (shell; data loads client-side).
@@ -21,6 +22,15 @@ const queues = ref<QueueCounts[]>([])
 const portals = ref<PortalStatus[]>([])
 const ratings = ref<RatingStatus[]>([])
 const error = ref('')
+// Накопительный итог по всем порталам (#271-C) — в отличие от счётчиков очереди, он не упирается в
+// потолок хранения. Только суммы, без разбивки по порталам.
+const totals = ref<Record<string, number> | null>(null)
+const lifetimeText = computed(() => lifetimeSummary(totals.value
+  ? { docs: totals.value.docs ?? 0, created: totals.value.created ?? 0, lines: totals.value.lines ?? 0, errors: totals.value.errors ?? 0 }
+  : null))
+// Поиск по порталам (#271-J): и по домену, и по member_id — у оператора на руках бывает именно id.
+const portalQuery = ref('')
+const shownPortals = computed(() => visiblePortals(portals.value, portalQuery.value))
 // У КАЖДОГО блока своя ошибка (#271-E). Раньше два из трёх запросов падали в `catch {}`, блок просто
 // не отрисовывался, и оператор не отличал «порталов нет» от «запрос упал». На служебном экране
 // молчание опаснее лишнего сообщения.
@@ -81,9 +91,10 @@ async function load() {
   loading.value = true
   let queuesOk = false
   try {
-    const r = await $fetch<{ queues: QueueCounts[] }>('/api/ops/queues')
+    const r = await $fetch<{ queues: QueueCounts[], totals: Record<string, number> | null }>('/api/ops/queues')
     if (my !== loadSeq) return
     queues.value = r.queues
+    totals.value = r.totals ?? null
     error.value = ''
     queuesOk = true
   } catch (e) {
@@ -229,6 +240,14 @@ function flash(target: Ref<string>, text: string): void {
   flashTimers.set(target, setTimeout(() => {
     target.value = ''
   }, FLASH_MS))
+}
+
+// Копирование member_id (#271-K). Подтверждение живёт в самой строке и гаснет само — общая строка
+// «скопировано» на весь список выглядела бы относящейся к любому порталу (та же ошибка, что #271-G).
+const copiedMember = ref('')
+async function copyMemberId(memberId: string): Promise<void> {
+  if (!(await copyToClipboard(memberId))) return
+  flash(copiedMember, memberId)
 }
 
 /** Раскрыть/свернуть список ошибок конкретной очереди и подтянуть его. */
@@ -511,6 +530,14 @@ onMounted(async () => {
       >
         Нет данных по очередям
       </p>
+      <!-- Накопительный итог (#271-C). Числа выше — «в хранилище» и упираются в потолок хранения
+           очереди; настоящий итог за всё время берём из собственных счётчиков. -->
+      <p
+        v-if="lifetimeText"
+        class="mt-3 text-xs text-(--ui-color-base-4)"
+      >
+        Всего через сервис прошло: {{ lifetimeText }} — по всем порталам, за всё время.
+      </p>
     </div>
 
     <!-- Авторизация порталов (#132) — статус токенов, без секретов -->
@@ -540,13 +567,47 @@ onMounted(async () => {
       >
         {{ reauthMsg }}
       </p>
+      <!-- Поиск + порядок «сломанные наверх» (#271-J): плоский список перестаёт работать ровно
+           тогда, когда консоль нужнее всего — портал с умершим токеном тонет среди здоровых. -->
+      <div
+        v-if="portals.length > 1"
+        class="mb-2 flex flex-wrap items-center gap-2"
+      >
+        <B24Input
+          v-model="portalQuery"
+          placeholder="Поиск по домену или member_id"
+          class="w-72"
+          aria-label="Поиск портала"
+        />
+        <span class="text-xs text-(--ui-color-base-4)">
+          показано {{ shownPortals.length }} из {{ portals.length }}; с проблемой — сверху
+        </span>
+      </div>
+      <p
+        v-if="portals.length && !shownPortals.length"
+        class="mb-2 text-sm text-(--ui-color-base-4)"
+      >
+        Ни один портал не подошёл под «{{ portalQuery }}».
+      </p>
       <div class="space-y-2">
         <div
-          v-for="p in portals"
+          v-for="p in shownPortals"
           :key="p.memberId"
           class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-(--ui-color-base-5) p-3"
         >
-          <span class="text-sm font-medium">{{ p.domain }}</span>
+          <span class="flex flex-col">
+            <span class="text-sm font-medium">{{ p.domain }}</span>
+            <!-- member_id на экране (#271-K): все действия идут по нему, и он же нужен для логов,
+                 SQL и сверки с телеметрией — а раньше показывался только домен. -->
+            <button
+              type="button"
+              class="text-left font-mono text-[11px] text-(--ui-color-base-4) hover:underline"
+              :aria-label="`Скопировать member_id портала ${p.domain}`"
+              @click="() => copyMemberId(p.memberId)"
+            >
+              {{ p.memberId }}<span v-if="copiedMember === p.memberId"> — скопировано</span>
+            </button>
+          </span>
           <span class="flex flex-wrap items-center gap-x-4 text-sm">
             <span :class="HEALTH_META[p.health].cls">{{ HEALTH_META[p.health].label }}</span>
             <span class="text-(--ui-color-base-3)">{{
