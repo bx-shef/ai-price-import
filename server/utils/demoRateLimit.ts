@@ -1,6 +1,11 @@
-// In-memory sliding-window rate limiter for the public demo endpoint.
-// Pure + DI on `now` → unit-tested. Single-process best-effort (the demo does not
-// need distributed accuracy); the real in-portal upload path is nginx `limit_req`.
+// In-memory sliding-window rate limiter. Pure + DI on `now` → unit-tested. Single-process
+// best-effort: neither caller needs distributed accuracy.
+//
+// Two users: the public demo endpoint (keyed per IP, plus nginx `limit_req` in front) and the
+// in-portal upload route (keyed per portal user — see uploadRateLimit.ts). NB the note that used to
+// stand here, «the real in-portal upload path is nginx limit_req», was simply untrue: nginx.conf has
+// zones for `login` and `demo` only, and uploads went unbounded until #289 made every failure write
+// to the admin's chat and turned that into somebody else's problem.
 
 export interface RateLimitDecision {
   allowed: boolean

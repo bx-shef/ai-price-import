@@ -71,3 +71,42 @@ export function planUploadBatch<T extends UploadFileMeta>(files: T[], maxFiles =
   }
   return { accepted, rejected, truncated }
 }
+
+/** What one upload attempt ended with, as the staging loop needs to see it. */
+export interface UploadOutcome {
+  ok: boolean
+  /**
+   * Stop the whole batch instead of trying the remaining rows.
+   *
+   * Set when the refusal is about the PERSON, not the file — hitting the upload rate limit. Without
+   * it the one-by-one loop kept going and refused every remaining row in turn, each with a wrong
+   * «проверьте связь» and each spending another portal REST call to verify the token, ending in
+   * «Отправили в CRM 0 из 9».
+   */
+  stop: boolean
+  /** Text for the row. Comes from the server when it explained itself. */
+  message?: string
+}
+
+/** Fallback text when the server said nothing usable. */
+export const UPLOAD_GENERIC_ERROR = 'Не удалось отправить файл — проверьте связь и нажмите «Импортировать» ещё раз.'
+
+/**
+ * Classify a failed upload.
+ *
+ * 429 is the one refusal the batch must not push through: the limit is per person and per window,
+ * so the next row would fail for the same reason. Everything else stays per-row and retryable — a
+ * broken file must not stop the eight good ones behind it.
+ */
+export function classifyUploadError(e: unknown, serverMessage?: string): UploadOutcome {
+  const status = (e as { statusCode?: number, status?: number })?.statusCode
+    ?? (e as { status?: number })?.status
+    ?? (e as { response?: { status?: number } })?.response?.status
+  const rateLimited = status === 429
+  return {
+    ok: false,
+    stop: rateLimited,
+    // On 429 the server's own sentence carries the wait time; never overwrite it with the generic one.
+    message: (rateLimited && serverMessage) ? serverMessage : (serverMessage || UPLOAD_GENERIC_ERROR)
+  }
+}

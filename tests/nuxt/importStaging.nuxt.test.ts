@@ -2,6 +2,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import ImportStaging from '~/components/ImportStaging.vue'
+import { UPLOAD_GENERIC_ERROR, type UploadOutcome } from '~/utils/importUpload'
+
+const OK: UploadOutcome = { ok: true, stop: false }
+const FAIL: UploadOutcome = { ok: false, stop: false }
 
 // TargetPicker pulls in the CRM cascade composables; stub it out — this suite tests the STAGING +
 // one-by-one upload flow, not the per-file target picker (covered separately). With it stubbed the
@@ -22,7 +26,7 @@ const clickText = (w: Awaited<ReturnType<typeof mountSuspended>>, label: string)
 
 describe('ImportStaging', () => {
   it('picking files STAGES them (no auto-upload) — rows appear «В очереди», upload not called', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('накладная.pdf'), file('счёт.xlsx')])
     const text = w.text()
@@ -37,7 +41,7 @@ describe('ImportStaging', () => {
     const order: string[] = []
     const upload = vi.fn(async (f: File) => {
       order.push(f.name)
-      return true
+      return OK
     })
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('a.pdf'), file('b.pdf')])
@@ -72,7 +76,7 @@ describe('ImportStaging', () => {
   })
 
   it('a failed upload marks that row «Ошибка» and the notice counts only successes', async () => {
-    const upload = vi.fn(async (f: File) => f.name !== 'bad.pdf')
+    const upload = vi.fn(async (f: File) => (f.name === 'bad.pdf' ? FAIL : OK))
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('good.pdf'), file('bad.pdf')])
     await clickText(w, 'Импортировать')
@@ -87,9 +91,9 @@ describe('ImportStaging', () => {
     const upload = vi.fn(async (f: File) => {
       if (f.name === 'flaky.pdf' && failFirst) {
         failFirst = false
-        return false
+        return FAIL
       }
-      return true
+      return OK
     })
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('ok.pdf'), file('flaky.pdf')])
@@ -104,7 +108,7 @@ describe('ImportStaging', () => {
   })
 
   it('dedups the same file staged twice (would import twice) with a notice', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     const f = file('dup.pdf')
     await pick(w, [f])
@@ -114,7 +118,7 @@ describe('ImportStaging', () => {
   })
 
   it('pre-validates on stage: a bad-extension file becomes an «Ошибка» row and is NOT uploaded', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('doc.pdf'), new File(['x'], 'virus.exe')])
     expect(w.text()).toContain('Ошибка') // the .exe row
@@ -126,7 +130,7 @@ describe('ImportStaging', () => {
   })
 
   it('caps the pending queue at 10 files, dropping the excess with a notice', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, Array.from({ length: 14 }, (_, i) => file(`f${i}.pdf`)))
     expect(w.text()).toContain('Добавлено 10 из 14')
@@ -134,7 +138,7 @@ describe('ImportStaging', () => {
   })
 
   it('#261: отправленная строка уходит из списка сразу, без ручной кнопки', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('one.pdf')])
     await clickText(w, 'Импортировать')
@@ -145,7 +149,7 @@ describe('ImportStaging', () => {
   })
 
   it('#261: ТОТ ЖЕ файл можно залить повторно — прежде дедуп считал отправленную строку', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     const again = file('one.pdf')
     await pick(w, [again])
@@ -157,7 +161,7 @@ describe('ImportStaging', () => {
   })
 
   it('#261: неуспешные строки ОСТАЮТСЯ — их ещё можно перевыслать или прочитать причину', async () => {
-    const upload = vi.fn(async (f: File) => f.name !== 'bad.pdf')
+    const upload = vi.fn(async (f: File) => (f.name === 'bad.pdf' ? FAIL : OK))
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('good.pdf'), file('bad.pdf')])
     await clickText(w, 'Импортировать')
@@ -166,8 +170,30 @@ describe('ImportStaging', () => {
     expect(w.text()).toContain('bad.pdf') // осталась
   })
 
+  // Отказ «слишком часто» — про человека, а не про файл. Раньше цикл шёл дальше и обвинял связь у
+  // каждой оставшейся строки, тратя на каждую ещё один вызов к порталу и заканчивая «0 из 9».
+  it('отказ по частоте останавливает всю пачку и показывает текст сервера', async () => {
+    const upload = vi.fn(async () => ({ ok: false, stop: true, message: 'Слишком много загрузок подряд. Попробуйте снова через 7 мин.' }))
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    await pick(w, [file('a.pdf'), file('b.pdf'), file('c.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    expect(upload).toHaveBeenCalledTimes(1) // остальные не пробовали
+    expect(w.text()).toContain('через 7 мин')
+    expect(w.text()).not.toContain(UPLOAD_GENERIC_ERROR)
+  })
+
+  it('обычная ошибка строки пачку НЕ останавливает — кривой файл не держит хорошие', async () => {
+    const upload = vi.fn(async (f: File) => (f.name === 'bad.pdf' ? FAIL : OK))
+    const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
+    await pick(w, [file('bad.pdf'), file('good.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    expect(upload).toHaveBeenCalledTimes(2)
+  })
+
   it('remove button drops a staged file before import', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('drop-me.pdf')])
     expect(w.text()).toContain('drop-me.pdf')
@@ -178,8 +204,8 @@ describe('ImportStaging', () => {
   // --- Регресс-гварды под утверждённый макет (PR #252) ---
 
   it('во время отправки дропзона блокируется и объясняет почему', async () => {
-    let release: (v: boolean) => void = () => {}
-    const upload = vi.fn(() => new Promise<boolean>((r) => {
+    let release: (v: UploadOutcome) => void = () => {}
+    const upload = vi.fn(() => new Promise<UploadOutcome>((r) => {
       release = r
     }))
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
@@ -189,13 +215,13 @@ describe('ImportStaging', () => {
     await tick()
     expect(w.text()).toContain('Заблокировано, пока идёт отправка')
     expect(w.find('input[type="file"]').attributes('disabled')).toBeDefined()
-    release(true)
+    release(OK)
     await running
     await tick()
   })
 
   it('строка списка показывает размер файла', async () => {
-    const upload = vi.fn(async () => true)
+    const upload = vi.fn(async () => OK)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     const big = new File(['x'.repeat(2048)], 'big.pdf', { type: 'application/pdf' })
     await pick(w, [big])
@@ -205,7 +231,7 @@ describe('ImportStaging', () => {
   it('подсказка живёт ВНУТРИ карточки списка (role=status), а не отдельным алертом', async () => {
     // Список должен остаться непустым, иначе итог показывает отдельный алерт (#261) — берём файл,
     // отправка которого не удалась: такая строка не уходит.
-    const upload = vi.fn(async () => false)
+    const upload = vi.fn(async () => FAIL)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('one.pdf')])
     await clickText(w, 'Импортировать')
@@ -216,7 +242,7 @@ describe('ImportStaging', () => {
   })
 
   it('удаление строки вручную сбрасывает подсказку — не показываем «письмо из прошлого»', async () => {
-    const upload = vi.fn(async () => false)
+    const upload = vi.fn(async () => FAIL)
     const w = await mountSuspended(ImportStaging, { props: { upload }, global: { stubs } })
     await pick(w, [file('one.pdf')])
     await clickText(w, 'Импортировать')
