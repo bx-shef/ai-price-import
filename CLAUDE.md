@@ -229,6 +229,39 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     member_id, `error_kind` вместо текста ошибки. Чистые ядра + тесты (`telemetryAttributes`/`telemetrySpan`)
     + parity-тест против inline-списка бутстрапа. **Слайс 2 — общая станция** (`telemetry-station/`:
     otel-collector-contrib + ClickHouse 72ч + Grafana, отдельный деплой, вне build-context/CI).
+  - **Алертинг очередей + телеграм-канал** ([`docs/BACKLOG.md`](docs/BACKLOG.md) §1): на cron-инстансе
+    раз в 5 минут `readQueueHealth` (`server/utils/queueHealthRead.ts`, DI над BullMQ `getJobs`/`getFailed`)
+    → чистая `evaluateQueueHealth` (`queueAlert.ts`) → три вида тревоги: **`stalled`** (самая старая
+    незакрытая задача старше `STALL_AGE_MS` 20 мин), **`failing`** (≥10 отказов за 15 мин, по меткам
+    времени), **`unreadable`** (очередь не читается — отдельный вид, т.к. `queue/stats.ts` отвечает на
+    мёртвый Redis нулями, и авария рисовалась бы пустой здоровой очередью). **Правила без состояния** —
+    возраст задачи не зависит ни от ретеншена, ни от трафика, ни от предыдущего замера. ⚠ **две неверные
+    версии до этой** (описаны в шапке `queueAlert.ts`, не повторять): дельта `completed`/`failed` между
+    замерами — это размеры **урезанных** множеств (`removeOnComplete:1000`/`removeOnFail:5000`), дельта
+    нулевая ровно когда всё работает; и порог по **размеру** хвоста (50+) — привязывал тревогу к объёму,
+    мёртвый воркер `b24-events` не поймался бы никогда. Доставка — `queueAlertDeliver.ts` (чистые
+    `planAlertDelivery`+`markAnnounced`: **одно сообщение на эпизод**, не на замер, + «восстановилось») →
+    `telegramAlert.ts` (`sendMessage`, DI `FetchFn`, `parse_mode` НЕ ставим, кап 4096, `AbortSignal.timeout`
+    10с, токен нигде не логируется — он в URL; `http.url`/`url.full` в OTel-redaction, спан-имя undici без
+    URL). **Три гарда, каждый закрывает сломанное в первом варианте:** (1) **мерцание** — поломка на пороге
+    срабатывает через замер = 24 сообщения в час; повтор запрещён `MIN_REANNOUNCE_MS` 1ч, а «восстановилось»
+    шлётся только для эпизода из `awaitingRecovery` (о чьей поломке успели сказать); (2) **потеря** —
+    `markAnnounced` вызывается **по факту доставки**, иначе один 429 хоронил тревогу навсегда (со следующего
+    замера она «уже идущая»); (3) **зависание** — отправка идёт **после** снятия `healthRunning` и вне
+    guarded-секции, иначе медленный Телеграм глушил бы саму проверку (зависший исходящий HTTP коррелирует с
+    аварией, о которой сообщаем). Env `TELEGRAM_ALERT_BOT_TOKEN`+`TELEGRAM_ALERT_CHAT_ID`, **fail-closed**
+    (наполовину настроенный молча терял бы тревоги). Состояние последнего вердикта для `/queues` —
+    `queueAlertState.ts` (in-process; `checkedAtMs` отдаётся наружу, экран отличает «не проверяли» и
+    «проверка отстала» от «всё хорошо»). **Разделение каналов:** телеметрия — графики/разбор, `/queues` —
+    текущее состояние, телеграм — только «разбуди меня» (не дублировать!). ⚠ вживую не проверялось.
+  - **Ограничение частоты загрузок** (`server/utils/uploadRateLimit.ts`, на `demoRateLimit.createRateLimiter`):
+    `/api/import/upload` — 40 на **сотрудника** (`member_id|userId` из проверенного фрейм-токена) за 10 мин,
+    иначе 429 + `retry-after` + `span.outcome='rate_limited'`. Нужно с тех пор, как отказ пишется админу в
+    чат **на каждый** документ (#289): пачка негодных файлов = пачка сообщений в чужом чате. Ключ по
+    сотруднику, а не по IP (портал — офис за одним адресом); портал без `userId` считается целиком
+    (fail-closed). Лимит стоит **после** `queueEnabled()` и **до** чтения тела. Клиент: `classifyUploadError`
+    → `UploadOutcome{ok,stop,message}`, `ImportStaging` на `stop` **останавливает пачку** и показывает текст
+    сервера. ⚠ счёт **in-memory** — при размножении HTTP-роли переносить в Redis, иначе лимит фикция.
   - **Трекинг задания импорта — Redis+TTL, НЕ Postgres** (`utils/jobStore.ts` + `utils/jobStoreRedis.ts`):
     статус/мета каждого задания (`status`/`fileName`/`result`/`manualOverride`/`diskFile`/`notified`/`failNotified`/`uploaderId` — последний это id сотрудника из `profile` фрейм-токена, адрес личного чата для сообщения о неудаче; **в браузер не отдаётся**, `mapJob` его не читает)
     живёт в Redis-хеше `import:job:{member}:{jobId}` с native PX-expiry (TTL `IMPORT_JOB_TTL_HOURS`, дефолт
