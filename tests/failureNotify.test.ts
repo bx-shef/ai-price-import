@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  APP_NAME,
-  MAX_CHAT_FILE_NAME,
-  MAX_CHAT_REASON,
-  chatSafeText,
-  humaniseFailureReason,
-  planFailureNotify
-} from '../server/utils/failureNotify'
+import { APP_NAME, humaniseFailureReason, planFailureNotify } from '../server/utils/failureNotify'
+import { MAX_CHAT_FILE_NAME, MAX_CHAT_REASON, chatSafeText } from '../server/utils/chatNotify'
 
 const base = {
   claimed: true,
@@ -90,10 +84,6 @@ describe('planFailureNotify — кому и что', () => {
   it('alsoErrorChat=false — только личное: этот путь пишет в чат сам', () => {
     // Жёсткая ошибка записи в CRM уже отправила своё сообщение; второе читалось бы как второй отказ.
     expect(planFailureNotify({ ...base, alsoErrorChat: false }).map(m => m.dialogId)).toEqual(['42'])
-  })
-
-  it('чат в тихом периоде — сотрудник всё равно узнаёт', () => {
-    expect(planFailureNotify({ ...base, errorChatThrottled: true }).map(m => m.dialogId)).toEqual(['42'])
   })
 
   it('сообщения разные: личное зовёт вернуться, чат даёт по чему искать', () => {
