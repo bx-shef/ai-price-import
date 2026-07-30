@@ -15,7 +15,8 @@ import { shortSha, commitUrl } from '~/utils/build'
 // Prerendered (nitro.prerender.routes) so a HEAD request returns 200 for B24's URL check.
 // Opened standalone (not in a portal) → redirects to the landing.
 definePageMeta({ layout: 'clear' })
-useHead({ title: `Установка — ${LANDING_TITLE}` })
+// noindex, but still prerendered so B24's URL check gets a 200 on HEAD (see the note above).
+useHead({ title: `Установка — ${LANDING_TITLE}`, meta: [{ name: 'robots', content: 'noindex' }] })
 
 const router = useRouter()
 const b24 = useB24()

@@ -82,6 +82,8 @@ jobs:
           fi
           {
             echo "sha=${sha}"
+            # Baked into the image as the <lastmod> of /sitemap.xml (see Dockerfile BUILD_DATE).
+            echo "build_date=$(date -u +%Y-%m-%d)"
             echo "tags<<EOF"
             echo "${tags}"
             echo "EOF"
@@ -109,6 +111,8 @@ jobs:
           push: true
           build-args: |
             COMMIT_SHA=${{ steps.meta.outputs.sha }}
+            NUXT_PUBLIC_SITE_URL=${{ vars.NUXT_PUBLIC_SITE_URL }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}

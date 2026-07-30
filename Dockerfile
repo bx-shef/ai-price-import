@@ -12,8 +12,21 @@ COPY . .
 # Bake the build commit into the footer/health (prerendered at build time).
 ARG COMMIT_SHA=dev
 ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
+# Deployment URL + build date must be baked too — the landing and /install are PRERENDERED, so their
+# canonical/OG tags and the footer stamp are frozen into static HTML here; a runtime env can no longer
+# change them. Both are optional: an unset SITE_URL falls back to the canonical landing home
+# (utils/landing.siteBaseUrl) so og:image stays absolute, and an unset BUILD_DATE just omits <lastmod>.
+ARG NUXT_PUBLIC_SITE_URL=""
+ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
+ARG BUILD_DATE=""
+ENV NUXT_PUBLIC_BUILD_DATE=$BUILD_DATE
 # nuxt build → .output: Nitro node server incl. prerendered static pages in public/.
 RUN pnpm build
+# Guard the defect this replaces: a RELATIVE og:image ships silently and is dropped by Facebook and
+# LinkedIn, so the failure only shows up as "the shared link has no picture". Assert on the frozen
+# prerendered HTML — the one place where it is too late to fix at runtime.
+RUN grep -qE '<meta property="og:image" content="https?://' .output/public/index.html \
+    || (echo 'BUILD FAILED: og:image in the prerendered landing is not an absolute URL.' >&2; exit 1)
 
 FROM node:22-slim AS backend
 WORKDIR /app

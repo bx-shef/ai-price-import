@@ -21,7 +21,21 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
 
 - `app/` — Nuxt (авто-импорт): `utils` (чистое ядро + тесты) / `composables` / `config` / `types` /
   `components` / `pages` / `layouts`.
-- `server/` — Nitro backend: `api` / `utils` (чистые с DI) / `queue` (BullMQ) / `db` / `plugins` / `agent`.
+- `server/` — Nitro backend: `api` / `routes` (не-`/api` публичные роуты) / `utils` (чистые с DI) /
+  `queue` (BullMQ) / `db` / `plugins` / `agent`.
+  - **SEO лендинга** (#292): share/SEO-мета живёт в `app/pages/index.vue`, **не** в корневом `app.vue` —
+    корневой `useSeoMeta` применял маркетинговый OG лендинга к `/app`, `/settings`, `/queues`. `og:image`
+    и `canonical` **обязаны быть абсолютными** (Facebook/LinkedIn выбрасывают относительные), а лендинг
+    пререндерится ⇒ тег впекается в статический HTML на сборке и рантайм-env его уже не исправит. Поэтому
+    база — `landing.siteBaseUrl`: `NUXT_PUBLIC_SITE_URL`, если это абсолютный URL (staging/Vibecode
+    объявляют себя сами), иначе константа `LANDING_SITE_URL`; от наличия env корректность **не зависит**.
+    Гард — `RUN grep` в `Dockerfile` после `pnpm build`: относительный `og:image` роняет сборку.
+    `/robots.txt` + `/sitemap.xml` — **роуты** (`server/routes/*.get.ts` + чистые билдеры
+    `utils/seoFiles.ts`, тесты), не статика в `public/`: обоим нужен абсолютный хост, который различается
+    по деплою. Служебные страницы (`/app`, `/settings`, `/metrics`, `/install`, `/import`, `/login`,
+    `/queues`) несут `robots:noindex` и закрыты в `robots.txt` — их тело `ClientOnly`, краулер
+    проиндексировал бы пустые страницы на домене лендинга. Списки в мете и в `DISALLOWED_PATHS` держим
+    синхронно (тест это проверяет).
   - **LLM-экстрактор — OpenAI-совместимый chat-вызов** (`server/agent/`, tool-less, чистый text→JSON,
     инъекция документа не может ничего кроме JSON; claude-code CLI удалён): `llmConfig.ts` (чистый
     резолвер `LLM_PROVIDER` → `{baseURL,apiKey,model}`: `deepseek`/`bitrixgpt`/`custom`, тесты) →

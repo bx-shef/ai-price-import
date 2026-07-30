@@ -2,6 +2,7 @@
 import {
   LANDING_CTA_BRIEF,
   LANDING_CTA_MARKET,
+  LANDING_DESCRIPTION,
   LANDING_FEATURES,
   LANDING_FORMATS,
   LANDING_HERO_NOTE,
@@ -13,19 +14,53 @@ import {
   LANDING_SOURCES,
   LANDING_STEPS,
   LANDING_SUBTITLE,
-  LANDING_WHY_SUBTITLE
+  LANDING_TITLE,
+  LANDING_WHY_SUBTITLE,
+  canonicalUrl,
+  ogImageUrl
 } from '~/utils/landing'
 import { B24_BOOKING_URL } from '~/utils/booking'
 
 // Public marketing landing. Composition + look mirror the sibling client-bank
 // landing (dark vibecode shell, mouse-glow cards, left-aligned section headers,
 // two-column hero), reusing this project's blocks and content; accent stays cyan.
+
+// Share/SEO meta lives HERE, not in app.vue: the root component also wraps the in-portal and
+// operator screens, so root-level SEO meta leaked the landing's marketing OG onto /app and
+// /settings. `siteUrl` (NUXT_PUBLIC_SITE_URL) lets a staging/Vibecode host advertise itself; when
+// it is absent both helpers fall back to the canonical landing home, so the tags are ALWAYS
+// absolute — this page is prerendered, so a relative og:image would be baked into the static HTML
+// and dropped by Facebook/LinkedIn (exactly the defect this replaces).
+const siteUrl = useRuntimeConfig().public.siteUrl as string
+const ogImage = ogImageUrl(siteUrl)
+const canonical = canonicalUrl('/', siteUrl)
+
 useHead({
-  title: 'AI-импорт прайсов в Bitrix24',
+  title: LANDING_TITLE,
   bodyAttrs: { class: 'bg-[#05010f]' },
   // The landing shell is hardcoded dark (vibecode hex) — pin dark so app.vue's theme-init keeps b24ui
   // components on dark tokens here regardless of the visitor's OS theme (in-portal pages stay auto).
-  htmlAttrs: { 'data-force-dark': 'true' }
+  htmlAttrs: { 'data-force-dark': 'true' },
+  link: [{ rel: 'canonical', href: canonical }]
+})
+
+useSeoMeta({
+  description: LANDING_DESCRIPTION,
+  ogTitle: LANDING_TITLE,
+  ogDescription: LANDING_DESCRIPTION,
+  ogType: 'website',
+  ogUrl: canonical,
+  ogSiteName: LANDING_TITLE,
+  ogLocale: 'ru_RU',
+  ogImage,
+  ogImageWidth: 1200,
+  ogImageHeight: 630,
+  ogImageType: 'image/png',
+  ogImageAlt: LANDING_TITLE,
+  twitterCard: 'summary_large_image',
+  twitterTitle: LANDING_TITLE,
+  twitterDescription: LANDING_DESCRIPTION,
+  twitterImage: ogImage
 })
 
 useCardGlow()

@@ -20,7 +20,10 @@ import { formatMinutes } from '~/utils/savings'
 // former separate /import page is merged here; recent operations + savings sit below. Layout `clear`,
 // prerendered, styled with b24ui + semantic --ui-color-* tokens (light/dark-auto).
 definePageMeta({ layout: 'clear' })
-useHead({ title: 'AI-импорт прайсов' })
+// noindex: prerendered and publicly reachable, but the body is ClientOnly — a crawler would index an
+// EMPTY page on the landing's domain. Same for /settings, /metrics, /install (and already /queues,
+// /login, /import); `robots.txt` closes the same set at the crawl level.
+useHead({ title: 'AI-импорт прайсов', meta: [{ name: 'robots', content: 'noindex' }] })
 
 const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.

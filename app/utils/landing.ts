@@ -73,13 +73,32 @@ export const LANDING_MARKET_CODE = 'shef.priceimport'
 /** Bitrix24 Marketplace listing of this app (public витрина URL). */
 export const LANDING_MARKET_URL = `https://www.bitrix24.ru/apps/app/${LANDING_MARKET_CODE}/`
 
-/**
- * Absolute URL of the OG share image for scrapers. `siteUrl` is set via
- * NUXT_PUBLIC_SITE_URL in prod; empty in dev → a relative `/og.png` (fine locally).
- */
-export function ogImageUrl(siteUrl: string): string {
-  const base = siteUrl.replace(/\/+$/, '')
-  return `${base}/og.png`
+/** Canonical public home of the LANDING. A constant, not env: the landing has exactly one public
+ *  address, and the share/canonical tags must be absolute even when `NUXT_PUBLIC_SITE_URL` was not
+ *  baked into the build. That env var stays the source of truth for the *deployment* URL (install
+ *  handler, Vibecode target) — it just isn't allowed to decide whether og:image works at all. */
+export const LANDING_SITE_URL = 'https://price-import.bx-shef.by'
+
+/** Absolute site base for canonical/OG tags: the configured deployment URL when known (a staging or
+ *  Vibecode host must advertise itself), else the canonical landing home. Trailing slashes trimmed;
+ *  a value without a scheme is rejected (a relative base would produce a relative og:image, which
+ *  Facebook/LinkedIn drop — the whole defect this guards against). */
+export function siteBaseUrl(siteUrl?: string | null): string {
+  const raw = (siteUrl ?? '').trim().replace(/\/+$/, '')
+  return /^https?:\/\/[^/]/i.test(raw) ? raw : LANDING_SITE_URL
+}
+
+/** Absolute URL of the OG share image for scrapers. Always absolute — see `siteBaseUrl`. */
+export function ogImageUrl(siteUrl?: string | null): string {
+  return `${siteBaseUrl(siteUrl)}/og.png`
+}
+
+/** Absolute canonical URL of a page path (`'/'` → the site root, no trailing-slash duplication). */
+export function canonicalUrl(path: string, siteUrl?: string | null): string {
+  const base = siteBaseUrl(siteUrl)
+  const p = (path ?? '/').trim()
+  if (!p || p === '/') return `${base}/`
+  return `${base}/${p.replace(/^\/+/, '')}`
 }
 
 /** Copyright year range string: "2026" or "2024–2026". */
