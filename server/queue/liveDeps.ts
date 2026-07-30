@@ -358,6 +358,14 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         console.warn('[crm-sync] source file link unavailable for job', jobId, '-', e instanceof Error ? e.message : String(e))
         return null
       })
+      // Archiving is ON but there is no link: the admin asked for the file to be kept, and the дело
+      // is about to be written without the button. Since the extract stage now archives BEFORE
+      // handing the job on (#263), this should not happen — so when it does, it means the upload
+      // failed (Disk quota, revoked scope, storage off) and the operator would otherwise never learn
+      // why the button vanished. Not an error: the import is fine without the archive.
+      if (mapping.saveFile && !sourceFileUrl) {
+        console.warn('[crm-sync] «Сохранять исходный файл» включено, но копии на Диске нет — дело без кнопки «Исходный файл»; job', jobId)
+      }
       // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
       // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
       // stays within B24's block limit (buildConfigurableActivity slices to 10 total).

@@ -24,7 +24,7 @@ describe('handleFileExtractJob', () => {
     expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
     expect(d.failJob).not.toHaveBeenCalled()
   })
-  it('calls saveSourceFile (best-effort) AFTER enqueue — a retry from an enqueue throw must not re-archive', async () => {
+  it('архивирует ДО постановки в очередь — иначе дело успевало записаться без ссылки на файл (#263)', async () => {
     const order: string[] = []
     const saveSourceFile = vi.fn(async () => {
       order.push('archive')
@@ -37,13 +37,16 @@ describe('handleFileExtractJob', () => {
     })
     await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'накладная.pdf' }, d)
     expect(saveSourceFile).toHaveBeenCalledWith('m', 'j', 'накладная.pdf')
-    expect(order).toEqual(['enqueue', 'archive']) // enqueue first → its throw retries before any upload
+    // Порядок — суть правки: следующая стадия не должна стартовать, пока копии на Диске нет.
+    // Дубль при ретрае ловит идемпотентность самой загрузки (поиск файла по имени в папке месяца).
+    expect(order).toEqual(['archive', 'enqueue'])
   })
-  it('an enqueue throw skips the archive entirely (so the retry, not this attempt, uploads once)', async () => {
-    const saveSourceFile = vi.fn(async () => {})
-    const d = deps({ saveSourceFile, enqueueAgentRun: vi.fn(() => Promise.reject(new Error('redis down'))) })
-    await expect(handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'f' }, d)).rejects.toThrow('redis down')
-    expect(saveSourceFile).not.toHaveBeenCalled()
+  it('сбой архивации не мешает поставить задание в очередь — импорт важнее копии файла', async () => {
+    const saveSourceFile = vi.fn(() => Promise.reject(new Error('disk down')))
+    const d = deps({ saveSourceFile })
+    const r = await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'f' }, d)
+    expect(r.ok).toBe(true)
+    expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
   })
   it('a failing saveSourceFile does NOT fail the job (Disk archive is best-effort)', async () => {
     const saveSourceFile = vi.fn(() => Promise.reject(new Error('disk down')))

@@ -161,18 +161,26 @@ export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDep
     return { ok: false }
   }
   await deps.saveText(job.memberId, job.jobId, text)
-  await deps.enqueueAgentRun(job.memberId, job.jobId)
-  // Archive the source file to the portal's Disk LAST — after enqueue, before returning (the
-  // worker deletes the raw bytes only once this handler returns, so the file is still present).
-  // Ordering matters: a throw from enqueueAgentRun retries the whole job; if the archive ran
-  // BEFORE enqueue, that retry would re-upload a duplicate client document. Running it after a
-  // successful enqueue means the only throw-after-archive path is gone. Best-effort + gated on
-  // `saveFile` inside; a Disk failure must NOT fail the import (text is extracted, pipeline runs).
+  // Archive the source file to the portal's Disk BEFORE handing the job on (#263). It used to run
+  // after `enqueueAgentRun`, to avoid re-uploading the document if a throw from the enqueue retried
+  // the whole job — but that upload has been idempotent for a while (find-by-name in the month
+  // folder + a per-portal advisory lock), so the retry finds the file instead of duplicating it.
+  //
+  // The old order was a RACE: agent-run started immediately, and on a small document the chain
+  // agent-run → crm-sync → writeActivity could reach the timeline дело before this upload finished.
+  // Then the «Исходный файл» link simply wasn't there yet, the button was silently omitted, and the
+  // same import showed the file in the operations list (read later) but not in CRM. Nothing failed —
+  // it just looked like the archive was off. Cost of the new order: the pipeline waits out the
+  // upload. The handler waited for it anyway before returning, so the extract job takes the same
+  // time; only the start of the next stage moves.
+  //
+  // Best-effort + gated on `saveFile` inside; a Disk failure must NOT fail the import.
   if (deps.saveSourceFile) {
     try {
       await deps.saveSourceFile(job.memberId, job.jobId, job.fileId)
     } catch { /* best-effort archive — the import proceeds without it */ }
   }
+  await deps.enqueueAgentRun(job.memberId, job.jobId)
   return { ok: true }
 }
 
