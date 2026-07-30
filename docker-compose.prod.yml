@@ -15,7 +15,7 @@
 # `backend` (Nitro) — вебхук B24 живёт на https://<DOMAIN>/api/b24/events без CORS.
 # Наружу (в общий nginx-proxy) смотрит только `app`; backend/db/redis — в приватных сетях.
 # Воркеры пайплайна (extract → agent → crm-sync) идут IN-PROCESS в backend (плагин queue);
-# отдельный worker-контейнер — следующий шаг масштабирования (см. CLAUDE.md / REFACTOR).
+# отдельный worker-контейнер — следующий шаг масштабирования (см. docs/PROCESS.md §12.3).
 
 services:
   # Front reverse proxy: TLS терминирует общий nginx-proxy, который маршрутизирует vhost
