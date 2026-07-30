@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QUEUES_REFRESH_MS, STALE_AFTER_MS, backlogHours, formatClock, staleAfter } from '../app/utils/opsMonitor'
+import { QUEUES_REFRESH_MS, STALE_AFTER_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals } from '../app/utils/opsMonitor'
 
 describe('formatClock', () => {
   it('показывает время последнего обновления с секундами', () => {
@@ -68,5 +68,87 @@ describe('backlogHours (#271-D)', () => {
     expect(backlogHours(900)).toBe('1.0 ч работы') // ровно час
     expect(backlogHours(8964)).toBe('10 ч работы') // 9.96 ч — округляется ДО выбора формата
     expect(backlogHours(9000)).toBe('10 ч работы')
+  })
+})
+
+// #271-J/K: поиск и порядок в списке порталов.
+describe('visiblePortals', () => {
+  // Фабрика, а не общий массив: сортировка возвращает копию, но если она когда-нибудь начнёт менять
+  // вход, общий массив уже оказался бы отсортирован предыдущим тестом — и проверка «не мутируется»
+  // прошла бы вхолостую (ровно так она и обманула первый прогон).
+  const make = () => [
+    { memberId: 'm-ok', domain: 'beta.bitrix24.by', health: 'ok' as const },
+    { memberId: 'm-dead', domain: 'zeta.bitrix24.ru', health: 'stale' as const },
+    { memberId: 'm-soon', domain: 'alpha.bitrix24.kz', health: 'near-expiry' as const }
+  ]
+
+  it('сломанные наверх, дальше по домену', () => {
+    expect(visiblePortals(make(), '').map(r => r.memberId)).toEqual(['m-dead', 'm-soon', 'm-ok'])
+  })
+
+  it('порядок внутри одного здоровья — по домену', () => {
+    const same = [
+      { memberId: '2', domain: 'b.bitrix24.by', health: 'ok' as const },
+      { memberId: '1', domain: 'a.bitrix24.by', health: 'ok' as const }
+    ]
+    expect(visiblePortals(same, '').map(r => r.memberId)).toEqual(['1', '2'])
+  })
+
+  it('исходный массив не мутируется — список перестраивается каждые 12 секунд', () => {
+    const rows = make() // порядок заведомо НЕ отсортирован, иначе проверка ничего не значит
+    const before = rows.map(r => r.memberId)
+    visiblePortals(rows, '')
+    expect(rows.map(r => r.memberId)).toEqual(before)
+  })
+
+  it('ищет по домену и по member_id, без учёта регистра', () => {
+    expect(visiblePortals(make(), 'ZETA').map(r => r.memberId)).toEqual(['m-dead'])
+    expect(visiblePortals(make(), 'm-soon').map(r => r.memberId)).toEqual(['m-soon'])
+  })
+
+  it('пустой запрос ничего не отсеивает, непопадание даёт пусто', () => {
+    expect(visiblePortals(make(), '   ')).toHaveLength(3)
+    expect(visiblePortals(make(), 'нет такого')).toHaveLength(0)
+  })
+
+  it('отбор «с проблемой» убирает здоровые порталы', () => {
+    expect(visiblePortals(make(), '', 'problem').map(r => r.memberId)).toEqual(['m-dead', 'm-soon'])
+    expect(visiblePortals(make(), '', 'all')).toHaveLength(3)
+  })
+
+  it('отбор по состоянию складывается с поиском', () => {
+    expect(visiblePortals(make(), 'beta', 'problem')).toHaveLength(0) // beta здоров
+    expect(visiblePortals(make(), 'zeta', 'problem').map(r => r.memberId)).toEqual(['m-dead'])
+  })
+})
+
+// #271-C: накопительный итог подписывается отдельно от счётчиков очереди.
+describe('lifetimeSummary', () => {
+  it('перечисляет документы, записи и позиции', () => {
+    expect(lifetimeSummary({ docs: 12, created: 11, lines: 340, errors: 0 }))
+      .toBe('12 документов · создано в CRM: 11 · 340 позиций')
+  })
+
+  it('склоняет по-русски', () => {
+    expect(lifetimeSummary({ docs: 1, created: 1, lines: 1, errors: 0 }))
+      .toBe('1 документ · создано в CRM: 1 · 1 позиция')
+    expect(lifetimeSummary({ docs: 3, created: 3, lines: 22, errors: 0 }))
+      .toBe('3 документа · создано в CRM: 3 · 22 позиции')
+  })
+
+  it('ошибки добавляются только когда они есть', () => {
+    expect(lifetimeSummary({ docs: 12, created: 11, lines: 340, errors: 1 })).toContain('с ошибкой: 1')
+    expect(lifetimeSummary({ docs: 12, created: 11, lines: 340, errors: 0 })).not.toContain('ошибк')
+  })
+
+  it('одни ошибки без документов — строка ВСЁ РАВНО показывается', () => {
+    // docs растёт только после успешной записи, а errors — раньше и на других стадиях; гард по
+    // одному docs прятал бы ровно тот случай, ради которого оператор и смотрит на экран.
+    expect(lifetimeSummary({ docs: 0, created: 0, lines: 0, errors: 3 })).toContain('с ошибкой: 3')
+  })
+
+  it('пусто, только когда пусто всё', () => {
+    expect(lifetimeSummary({ docs: 0, created: 0, lines: 0, errors: 0 })).toBe('')
+    expect(lifetimeSummary(null)).toBe('')
   })
 })

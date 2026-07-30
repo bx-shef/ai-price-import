@@ -13,7 +13,10 @@ mockNuxtImport('useAuth', () => () => ({
 }))
 
 const QUEUES = [{ name: 'crm-sync', waiting: 5, active: 1, completed: 1000, failed: 3, delayed: 0 }]
-const PORTALS = [{ memberId: 'm1', domain: 'a.bitrix24.by', ageDays: 1, expiresInDays: 100, health: 'ok' }]
+const PORTALS = [
+  { memberId: 'm1', domain: 'a.bitrix24.by', ageDays: 1, expiresInDays: 100, health: 'ok' },
+  { memberId: 'm2-dead', domain: 'zzz.bitrix24.ru', ageDays: 200, expiresInDays: 0, health: 'stale' }
+]
 const RATINGS = [{ memberId: 'm1', domain: 'a.bitrix24.by', state: 'prompted', promptedAtMs: 1, openedAtMs: null }]
 
 let fail = { tokens: false, ratings: false }
@@ -22,7 +25,12 @@ const posted: string[] = []
 
 // Перехватываем сетевой слой, а не глобальный $fetch: в Nuxt он резолвится через ofetch, и подмена
 // globalThis до страницы не доходит.
-registerEndpoint('/api/ops/queues', () => ({ queues: QUEUES }))
+let totalsMode: 'ok' | 'empty' | 'failed' = 'ok'
+registerEndpoint('/api/ops/queues', () => ({
+  queues: QUEUES,
+  totals: totalsMode === 'ok' ? { docs: 12, created: 11, lines: 340, errors: 1 } : null,
+  totalsFailed: totalsMode === 'failed'
+}))
 registerEndpoint('/api/ops/tokens', () => {
   if (fail.tokens) throw new Error('boom')
   return { portals: empty ? [] : PORTALS }
@@ -55,6 +63,7 @@ beforeEach(() => {
   posted.length = 0
   failedActions.length = 0
   unavailable = []
+  totalsMode = 'ok'
 })
 
 /** Ждём, пока страница реально дорисуется: запросы идут через сетевой слой, один тик не покрывает. */
@@ -170,5 +179,63 @@ describe('Список упавших задач (#271-B)', () => {
     await w.findAll('button').find(b => b.text().includes('ошибки (в хранилище)'))!.trigger('click')
     await flush(w, 'очередь не ответила')
     expect(w.text()).toContain('Это не значит, что ошибок нет')
+  })
+})
+
+// #271-C/J/K — то, что оператор видит: объём обработки, отбор порталов, копирование member_id.
+describe('консоль: объём обработки и список порталов', () => {
+  it('объём подписан отдельно от счётчиков очереди и не притворяется вечным', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'По всем установленным порталам')
+    expect(w.text()).toContain('12 документов')
+    expect(w.text()).toContain('создано в CRM: 11')
+    expect(w.text()).toContain('с ошибкой: 1')
+    // Ровно та подпись, ради которой пункт заводился: числа очереди — не итог.
+    expect(w.text()).toContain('только то, что ещё хранится в очереди')
+    // И честность про уменьшение при удалении портала.
+    expect(w.text()).toContain('счётчики портала стираются')
+  })
+
+  it('база недоступна — так и говорим, а не показываем пустоту', async () => {
+    totalsMode = 'failed'
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'база недоступна')
+    expect(w.text()).toContain('не удалось прочитать')
+  })
+
+  it('нечего показывать — строки объёма нет вовсе', async () => {
+    totalsMode = 'empty'
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'Авторизация порталов')
+    expect(w.text()).not.toContain('По всем установленным порталам')
+  })
+
+  it('member_id виден в строке портала — по нему идут все действия', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'a.bitrix24.by')
+    expect(w.text()).toContain('m2-dead')
+  })
+
+  it('«с проблемой» прячет здоровые порталы', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'a.bitrix24.by')
+    await w.findAll('button').find(b => b.text().startsWith('С проблемой'))!.trigger('click')
+    await flush()
+    expect(w.text()).toContain('zzz.bitrix24.ru')
+    // Сверяемся по member_id: домен здорового портала есть и в блоке оценок ниже, а `m1` печатает
+    // только список авторизации — значит его исчезновение и означает, что строка отфильтрована.
+    expect(w.text()).toContain('m2-dead')
+    expect(w.text()).not.toContain('m1')
+    expect(w.text()).toContain('показано 1 из 2')
+  })
+
+  it('из пустой выборки есть выход — «Показать все»', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'a.bitrix24.by')
+    await w.find('input[type="search"]').setValue('такого домена нет')
+    await flush(w, 'Ничего не найдено')
+    await w.findAll('button').find(b => b.text() === 'Показать все')!.trigger('click')
+    await flush(w, 'a.bitrix24.by')
+    expect(w.text()).toContain('a.bitrix24.by')
   })
 })

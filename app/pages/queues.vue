@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
+import SearchIcon from '@bitrix24/b24icons-vue/outline/SearchIcon'
 import { useAuth } from '~/composables/useAuth'
-import { FLASH_MS, QUEUES_REFRESH_MS, backlogHours, formatClock, staleAfter } from '~/utils/opsMonitor'
+import { FLASH_MS, QUEUES_REFRESH_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals, type PortalHealthFilter } from '~/utils/opsMonitor'
+import { copyToClipboard } from '~/utils/clipboard'
 
 // Operator queue monitor (service zone). Auth-gated (server 401 + client redirect).
 // Layout `clear`, noindex, prerendered (shell; data loads client-side).
 definePageMeta({ layout: 'clear' })
-useHead({ title: 'Очереди импорта', meta: [{ name: 'robots', content: 'noindex' }] })
+useHead({ title: 'Служебная консоль', meta: [{ name: 'robots', content: 'noindex' }] })
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
 interface FailedJob { queue: string, id: string, reason: string, failedAt: number | null, attempts: number }
@@ -21,6 +23,22 @@ const queues = ref<QueueCounts[]>([])
 const portals = ref<PortalStatus[]>([])
 const ratings = ref<RatingStatus[]>([])
 const error = ref('')
+// Объём обработки по всем порталам (#271-C) — в отличие от счётчиков очереди, не упирается в потолок
+// хранения. Только суммы, без разбивки. `totalsFailed` отличает «база недоступна» от «пока пусто».
+const totals = ref<Record<string, number> | null>(null)
+const totalsFailed = ref(false)
+const lifetimeText = computed(() => lifetimeSummary(totals.value
+  ? { docs: totals.value.docs ?? 0, created: totals.value.created ?? 0, lines: totals.value.lines ?? 0, errors: totals.value.errors ?? 0 }
+  : null))
+// Поиск по порталам (#271-J): и по домену, и по member_id — у оператора на руках бывает именно id.
+// Отдельно отбор по состоянию: сортировки «сломанные наверх» мало, когда порталов много, а в домен
+// состояние не впишешь, поэтому текстовым поиском его не найти.
+const portalQuery = ref('')
+const healthFilter = ref<PortalHealthFilter>('all')
+const shownPortals = computed(() => visiblePortals(portals.value, portalQuery.value, healthFilter.value))
+const problemCount = computed(() => portals.value.filter(p => p.health !== 'ok').length)
+/** Отбор активен — значит «показано N из M» несёт смысл; без него это просто «5 из 5». */
+const portalsFiltered = computed(() => !!portalQuery.value.trim() || healthFilter.value !== 'all')
 // У КАЖДОГО блока своя ошибка (#271-E). Раньше два из трёх запросов падали в `catch {}`, блок просто
 // не отрисовывался, и оператор не отличал «порталов нет» от «запрос упал». На служебном экране
 // молчание опаснее лишнего сообщения.
@@ -81,9 +99,11 @@ async function load() {
   loading.value = true
   let queuesOk = false
   try {
-    const r = await $fetch<{ queues: QueueCounts[] }>('/api/ops/queues')
+    const r = await $fetch<{ queues: QueueCounts[], totals: Record<string, number> | null, totalsFailed?: boolean }>('/api/ops/queues')
     if (my !== loadSeq) return
     queues.value = r.queues
+    totals.value = r.totals ?? null
+    totalsFailed.value = r.totalsFailed === true
     error.value = ''
     queuesOk = true
   } catch (e) {
@@ -231,6 +251,23 @@ function flash(target: Ref<string>, text: string): void {
   }, FLASH_MS))
 }
 
+// Копирование member_id (#271-K). Подтверждение живёт в самой строке и гаснет само — общая строка
+// «скопировано» на весь список выглядела бы относящейся к любому порталу (та же ошибка, что #271-G).
+const copiedMember = ref('')
+const copyFailed = ref('')
+async function copyMemberId(memberId: string): Promise<void> {
+  // Молчаливый отказ недопустим: без защищённого соединения или при запрете доступа к буферу клик
+  // просто ничего не делал, и оператор уходил с уверенностью, что id у него скопирован.
+  if (await copyToClipboard(memberId)) flash(copiedMember, memberId)
+  else flash(copyFailed, memberId)
+}
+
+/** Сбросить оба отбора — иначе из пустого списка нет выхода, кроме как стереть запрос вручную. */
+function resetPortalFilters(): void {
+  portalQuery.value = ''
+  healthFilter.value = 'all'
+}
+
 /** Раскрыть/свернуть список ошибок конкретной очереди и подтянуть его. */
 async function toggleFailed(queue: string): Promise<void> {
   if (failedOpen.value === queue) {
@@ -306,7 +343,7 @@ onMounted(async () => {
   <div class="mx-auto max-w-3xl p-4 sm:p-6">
     <div class="mb-5 flex items-center justify-between">
       <h1 class="text-xl font-semibold">
-        Очереди импорта
+        Служебная консоль
       </h1>
       <div class="flex items-center gap-2">
         <!-- Отметка времени + пауза автообновления (#271-A): без них замороженный снимок неотличим
@@ -364,7 +401,7 @@ onMounted(async () => {
           <span class="text-(--ui-color-accent-main-primary)">в работе: <b>{{ q.active }}</b></span>
           <!-- «в хранилище», а не «за всё время» (#271-C): очередь считает СОХРАНЁННЫЕ задачи, а
                держит она последнюю тысячу выполненных и пять тысяч неудачных. Оператор читал эти
-               числа как накопительный итог — это неправда. Настоящий итог — на «Метриках импорта». -->
+               числа как накопительный итог — это неправда. Сколько обработано на самом деле — строкой под очередями. -->
           <span class="text-(--ui-color-accent-main-success)">готово (в хранилище): <b>{{ q.completed }}</b></span>
           <!-- Провал в список ошибок (#271-B): раньше это число было тупиком. -->
           <button
@@ -511,6 +548,23 @@ onMounted(async () => {
       >
         Нет данных по очередям
       </p>
+      <!-- Объём обработки (#271-C). Отделён чертой и подписан отдельно: числа выше — только то, что
+           ещё хранится в очереди, и путать их с этой строкой нельзя (ради чего пункт и заводился). -->
+      <div
+        v-if="lifetimeText || totalsFailed"
+        class="mt-4 border-t border-(--ui-color-base-5) pt-3 text-xs text-(--ui-color-base-3)"
+      >
+        <span class="font-semibold">По всем установленным порталам:</span>
+        <span v-if="lifetimeText"> {{ lifetimeText }}.</span>
+        <span
+          v-else
+          class="text-(--ui-color-accent-main-warning)"
+        > не удалось прочитать — база недоступна.</span>
+        <span class="block text-(--ui-color-base-4)">
+          Числа выше — только то, что ещё хранится в очереди. Это — сколько обработано на самом деле;
+          при удалении приложения счётчики портала стираются, поэтому число может уменьшиться.
+        </span>
+      </div>
     </div>
 
     <!-- Авторизация порталов (#132) — статус токенов, без секретов -->
@@ -540,13 +594,86 @@ onMounted(async () => {
       >
         {{ reauthMsg }}
       </p>
+      <!-- Поиск + порядок «сломанные наверх» (#271-J): плоский список перестаёт работать ровно
+           тогда, когда консоль нужнее всего — портал с умершим токеном тонет среди здоровых. -->
+      <div
+        v-if="portals.length"
+        class="mb-2 flex flex-wrap items-center gap-2"
+      >
+        <B24Input
+          v-model="portalQuery"
+          :icon="SearchIcon"
+          size="sm"
+          type="search"
+          placeholder="Поиск по домену или member_id"
+          class="w-72"
+          aria-label="Поиск портала"
+        />
+        <!-- Отбор по состоянию, а не только сортировка: «покажи все сломанные» текстовым поиском не
+             выразить — состояние в домен не записано. -->
+        <B24Button
+          :color="healthFilter === 'all' ? 'air-secondary-accent' : 'air-tertiary-no-accent'"
+          size="xs"
+          label="Все"
+          @click="() => { healthFilter = 'all' }"
+        />
+        <B24Button
+          :color="healthFilter === 'problem' ? 'air-secondary-accent' : 'air-tertiary-no-accent'"
+          size="xs"
+          :label="`С проблемой (${problemCount})`"
+          @click="() => { healthFilter = 'problem' }"
+        />
+        <span
+          v-if="portalsFiltered"
+          class="text-xs text-(--ui-color-base-4)"
+          role="status"
+        >
+          показано {{ shownPortals.length }} из {{ portals.length }}
+        </span>
+      </div>
+      <p
+        v-if="portals.length && !shownPortals.length"
+        class="mb-2 text-sm break-words text-(--ui-color-base-4)"
+      >
+        Ничего не найдено{{ portalQuery.trim() ? ` по запросу «${portalQuery}»` : '' }}.
+        <button
+          type="button"
+          class="underline decoration-dotted underline-offset-2"
+          @click="resetPortalFilters"
+        >
+          Показать все
+        </button>
+      </p>
       <div class="space-y-2">
         <div
-          v-for="p in portals"
+          v-for="p in shownPortals"
           :key="p.memberId"
           class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-(--ui-color-base-5) p-3"
         >
-          <span class="text-sm font-medium">{{ p.domain }}</span>
+          <span class="flex flex-col">
+            <span class="text-sm font-medium">{{ p.domain }}</span>
+            <!-- member_id на экране (#271-K): все действия идут по нему, и он же нужен для логов,
+                 SQL и сверки с телеметрией — а раньше показывался только домен. -->
+            <button
+              type="button"
+              class="text-left font-mono text-[11px] text-(--ui-color-base-4) underline decoration-dotted underline-offset-2"
+              :aria-label="copiedMember === p.memberId
+                ? `member_id портала ${p.domain} скопирован`
+                : `Скопировать member_id портала ${p.domain}`"
+              @click="() => copyMemberId(p.memberId)"
+            >
+              {{ p.memberId }}
+            </button>
+            <!-- Подтверждение — отдельной живой областью в СВОЕЙ строке: внутри кнопки его съедал бы
+                 её же aria-label, а общая на весь список выглядела бы относящейся к любому порталу. -->
+            <span
+              v-if="copiedMember === p.memberId || copyFailed === p.memberId"
+              class="text-[11px]"
+              :class="copyFailed === p.memberId ? 'text-(--ui-color-accent-main-warning)' : 'text-(--ui-color-base-4)'"
+              role="status"
+              aria-live="polite"
+            >{{ copyFailed === p.memberId ? 'Скопировать не удалось — выделите и скопируйте вручную' : 'Скопировано' }}</span>
+          </span>
           <span class="flex flex-wrap items-center gap-x-4 text-sm">
             <span :class="HEALTH_META[p.health].cls">{{ HEALTH_META[p.health].label }}</span>
             <span class="text-(--ui-color-base-3)">{{
