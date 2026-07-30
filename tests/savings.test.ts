@@ -4,7 +4,7 @@ import { computeSavings, formatMinutes, SAVINGS_MODEL } from '../app/utils/savin
 describe('computeSavings', () => {
   it('estimates minutes from docs and lines', () => {
     const s = computeSavings({ docs: 2, lines: 10, created: 2 })
-    expect(s.minutesSaved).toBe(2 * SAVINGS_MODEL.minutesPerDoc + 10 * SAVINGS_MODEL.minutesPerLine)
+    expect(s.minutesSaved).toBe(18) // 2×4 + 10×1 — числом, а не той же формулой
     expect(s.docs).toBe(2)
     expect(s.lines).toBe(10)
     expect(s.created).toBe(2)

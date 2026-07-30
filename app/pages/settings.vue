@@ -12,6 +12,7 @@ import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { BUILTIN_UNIT_HINT } from '~/utils/units'
 import { rulesToRows, rowsToRules } from '~/utils/routingRulesEditor'
+import { MAX_SAVINGS_RATE, parsePortalSettings } from '~/utils/portalSettings'
 import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 
@@ -128,17 +129,15 @@ const errorChatId = computed<string | undefined>({
   set: (v) => { mapping.value.errorChatId = v || undefined }
 })
 
-// Hourly rate for the «Сэкономлено денег» tile (#270). Text input (a bare number), because the
-// currency is NOT chosen here — it is the portal's own base currency, read server-side. Empty /
-// non-positive clears the key entirely, and the dashboard falls back to showing time only.
-const savingsRate = computed<string>({
-  get: () => (mapping.value.savings?.ratePerHour ? String(mapping.value.savings.ratePerHour) : ''),
-  set: (v) => {
-    const n = Number(String(v).replace(',', '.').trim())
-    mapping.value.savings = Number.isFinite(n) && n > 0
-      ? { ratePerHour: Math.min(Math.round(n * 100) / 100, MAX_SAVINGS_RATE) }
-      : undefined
-  }
+// Hourly rate for the «Сэкономлено денег» tile (#270). B24InputNumber, not a text field: it gives
+// a numeric model plus min/max/step, so there is no string↔number layer to get wrong (a text field
+// normalising on every keystroke ate the decimal separator mid-typing and made sub-1 rates
+// unenterable). The CURRENCY is not chosen here — it is the portal's own base currency, resolved
+// server-side. Empty/zero ⇒ the key is dropped and the dashboard shows time only.
+const savingsRate = computed<number | undefined>({
+  get: () => mapping.value.savings?.ratePerHour,
+  // Coercion and the upper clamp stay in ONE place — the same parser the server re-applies on save.
+  set: (v) => { mapping.value.savings = parsePortalSettings({ savings: { ratePerHour: v } }).savings }
 })
 
 // Seed each picker's selected option so a SAVED id shows before the chat list is fetched
@@ -519,17 +518,17 @@ const ON_MISSING_ITEMS = [
           <template #savings>
             <div class="space-y-6 pt-2">
               <B24FormField label="Стоимость часа работы сотрудника">
-                <B24Input
+                <B24InputNumber
                   v-model="savingsRate"
-                  placeholder="например, 20"
-                  inputmode="decimal"
-                  class="w-40"
+                  :min="0"
+                  :max="MAX_SAVINGS_RATE"
+                  :step="1"
+                  class="w-48"
                 />
                 <p class="mt-1 text-xs text-(--ui-color-base-3)">
-                  Нужна только для плитки «Сэкономлено денег»: приложение умножит сэкономленное время
-                  на эту ставку. Считаем в базовой валюте вашего портала — её приложение берёт из
-                  Битрикс24, вводить не нужно. Оставьте поле пустым, если денежная оценка не нужна:
-                  тогда на экране останется только сэкономленное время.
+                  Нужна только для плитки «Сэкономлено денег»: сэкономленное время × эта ставка.
+                  Валюта — базовая валюта вашего портала, приложение берёт её из Битрикс24, вводить
+                  не нужно. Оставьте пусто — плитки не будет, останется только время.
                 </p>
               </B24FormField>
             </div>

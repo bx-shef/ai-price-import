@@ -51,31 +51,47 @@ describe('resetCounters', () => {
 })
 
 /**
- * Изоляция порталов (#270). Приложение мультитенантное, метрики видит пользователь — поэтому
- * проверяем не текст запроса, а ПОВЕДЕНИЕ на игрушечной таблице: она честно исполняет три
- * наших запроса, но применяет отбор по порталу ТОЛЬКО если он реально есть в SQL. Пропадёт
- * `WHERE member_id` — тест покраснеет, а сверка строк такое пропускала бы.
+ * Cross-portal isolation (#270). The app is multitenant and the counters are user-visible, so this
+ * checks BEHAVIOUR on a toy table rather than the text of a query.
+ *
+ * The toy table interprets the statement instead of sniffing it for a substring: the INSERT's own
+ * column list and ON CONFLICT target decide the row key, and only a WHERE that is EXACTLY
+ * `member_id=$1` scopes a SELECT/DELETE. So all three ways of losing the scope go red —
+ * dropping member_id from the INSERT key, dropping the WHERE, and weakening it to
+ * `member_id=$1 OR true` (which a substring check would happily accept).
  */
 function memoryTable() {
-  const rows: Array<{ member_id: string, name: string, value: number }> = []
-  const scoped = (sql: string) => /member_id\s*=\s*\$1/.test(sql)
+  const rows: Array<Record<string, string | number>> = []
+  const cols = (sql: string, after: RegExp) => (sql.match(after)?.[1] ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  /** `true` only for a WHERE that scopes to the caller's portal and nothing else. */
+  const scoped = (sql: string) => {
+    const where = sql.split(/\bWHERE\b/i)[1]
+    return where !== undefined && where.replace(/\s+/g, '') === 'member_id=$1'
+  }
   const q = async (sql: string, params: unknown[] = []) => {
     const member = String(params[0] ?? '')
     if (/^\s*INSERT INTO metrics_counter/i.test(sql)) {
-      const name = String(params[1])
-      const by = Number(params[2])
-      // PRIMARY KEY (member_id, name) — конфликт только при совпадении ОБОИХ полей.
-      const hit = rows.find(r => r.member_id === member && r.name === name)
-      if (hit) hit.value += by
-      else rows.push({ member_id: member, name, value: by })
+      // Build the row from the columns the statement actually names, then apply ON CONFLICT over
+      // the conflict target it actually declares — so a lost `member_id` in either place shows up.
+      const names = cols(sql, /INSERT INTO metrics_counter\s*\(([^)]*)\)/i)
+      const key = cols(sql, /ON CONFLICT\s*\(([^)]*)\)/i)
+      const row: Record<string, string | number> = {}
+      names.forEach((c, i) => {
+        row[c] = c === 'value' ? Number(params[i]) : String(params[i])
+      })
+      const hit = rows.find(r => key.every(k => r[k] === row[k]))
+      if (hit) hit.value = Number(hit.value) + Number(row.value)
+      else rows.push(row)
       return { rows: [] }
     }
     if (/^\s*SELECT/i.test(sql)) {
-      return { rows: rows.filter(r => !scoped(sql) || r.member_id === member).map(r => ({ name: r.name, value: r.value })) }
+      const visible = scoped(sql) ? rows.filter(r => r.member_id === member) : rows
+      return { rows: visible.map(r => ({ name: r.name, value: r.value })) }
     }
     if (/^\s*DELETE/i.test(sql)) {
+      const doomed = scoped(sql) ? (r: Record<string, string | number>) => r.member_id === member : () => true
       for (let i = rows.length - 1; i >= 0; i--) {
-        if (!scoped(sql) || rows[i]!.member_id === member) rows.splice(i, 1)
+        if (doomed(rows[i]!)) rows.splice(i, 1)
       }
       return { rows: [] }
     }

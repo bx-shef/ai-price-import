@@ -7,29 +7,7 @@ import { query } from '../../db/client'
 import { makeBareTokenSdkCall } from '../../utils/b24Sdk'
 import { readMapping } from '../../utils/appSettings'
 import { fetchBaseCurrency } from '../../utils/portalCurrency'
-import type { FrameAuth } from '../../utils/frameAuth'
-import type { SavingsRate } from '~/utils/savings'
-
-/**
- * Hourly rate + currency for the money estimate (#270). Both come from the portal: the rate from
- * its own settings, the currency from `crm.currency.list` (BASE) — never from a constant, because
- * one deployment serves BY/RU/KZ portals.
- *
- * Fail-open to «time only»: if settings or the currency can't be read, we return an empty rate and
- * the dashboard drops the money block. Showing time without money is a smaller lie than showing an
- * amount in a currency we guessed — and the counters themselves must not fail over a cosmetic add-on.
- * The currency call is skipped entirely when no rate is configured (the common case).
- */
-async function resolveSavingsRate(auth: FrameAuth): Promise<SavingsRate> {
-  try {
-    const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
-    const ratePerHour = (await readMapping(call)).savings?.ratePerHour ?? null
-    if (!ratePerHour) return {}
-    return { ratePerHour, currency: await fetchBaseCurrency(call) }
-  } catch {
-    return {}
-  }
-}
+import { resolveSavingsRate } from '../../utils/savingsRate'
 
 // GET /api/import/metrics — per-portal counters + a time/money-saved estimate for the
 // in-portal dashboard. Frame-token authenticated and member-scoped (a portal only sees
@@ -54,7 +32,14 @@ export default defineEventHandler(async (event) => {
         return { error: 'authorization failed', reason: member.reason }
       }
       const counters = await readCounters(member.memberId, query)
-      return { counters, savings: computeSavings(counters, await resolveSavingsRate(auth)) }
+      // Money side is optional and cosmetic (#270): compute time first, then ask the portal for a
+      // rate only if there is anything to price. Memoized per portal — see savingsRate.ts.
+      const timeOnly = computeSavings(counters)
+      const rate = await resolveSavingsRate(member.memberId, timeOnly.minutesSaved, {
+        readRate: async () => (await readMapping(makeBareTokenSdkCall(auth.domain, auth.accessToken))).savings?.ratePerHour ?? null,
+        readCurrency: () => fetchBaseCurrency(makeBareTokenSdkCall(auth.domain, auth.accessToken))
+      })
+      return { counters, savings: rate.ratePerHour ? computeSavings(counters, rate) : timeOnly }
     }
   )
 })
