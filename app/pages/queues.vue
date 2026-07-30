@@ -10,6 +10,7 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Очереди импорта', meta: [{ name: 'robots', content: 'noindex' }] })
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
+interface FailedJob { queue: string, id: string, reason: string, failedAt: number | null, attempts: number }
 interface PortalStatus { memberId: string, domain: string, ageDays: number, expiresInDays: number, health: 'ok' | 'near-expiry' | 'stale' }
 type RatingState = 'reviewed' | 'opened' | 'prompted' | 'none'
 interface RatingStatus { memberId: string, domain: string, state: RatingState, promptedAtMs: number | null, openedAtMs: number | null }
@@ -25,6 +26,21 @@ const error = ref('')
 // молчание опаснее лишнего сообщения.
 const portalsError = ref('')
 const ratingsError = ref('')
+// Список упавших задач (#271-B). Раньше число «ошибки: N» было тупиком: ни причины, ни времени, ни
+// возможности повторить — а это первое, ради чего консоль открывают. Грузим по требованию: на
+// свежем стенде ошибок нет, и лишний запрос каждые 12 секунд ни к чему.
+const failedOpen = ref('')
+const failedJobs = ref<FailedJob[]>([])
+const failedError = ref('')
+const failedLoading = ref(false)
+const failedBusy = ref('')
+const failedUnavailable = ref<string[]>([])
+const failedLimit = ref(0)
+// «Отбросить» стирает задачу из очереди насовсем — откатить нельзя вообще. Для куда более мягкого
+// «Отзыв оставлен» подтверждение уже есть; здесь оно тем более обязательно.
+const confirmDiscard = ref('')
+/** Ключ занятости — очередь + идентификатор: id уникален внутри очереди, а не глобально. */
+const busyKey = (j: FailedJob) => `${j.queue}|${j.id}`
 const loading = ref(false)
 // Когда данные последний раз обновлялись (#271-A). Без этой отметки замороженный снимок неотличим
 // от живого.
@@ -215,6 +231,61 @@ function flash(target: Ref<string>, text: string): void {
   }, FLASH_MS))
 }
 
+/** Раскрыть/свернуть список ошибок конкретной очереди и подтянуть его. */
+async function toggleFailed(queue: string): Promise<void> {
+  if (failedOpen.value === queue) {
+    failedOpen.value = ''
+    return
+  }
+  failedOpen.value = queue
+  failedLoading.value = true
+  failedError.value = ''
+  try {
+    const r = await $fetch<{ jobs: FailedJob[], unavailable?: string[], perQueueLimit?: number }>('/api/ops/failed')
+    failedJobs.value = r.jobs
+    failedUnavailable.value = r.unavailable ?? []
+    failedLimit.value = r.perQueueLimit ?? 0
+  } catch (e) {
+    if ((e as { statusCode?: number })?.statusCode === 401) {
+      await router.push('/login')
+      return
+    }
+    failedError.value = 'Не удалось получить список ошибок'
+  } finally {
+    failedLoading.value = false
+  }
+}
+
+/** «Повторить» ставит задачу обратно в очередь, «Отбросить» убирает совсем. */
+async function actOnFailed(job: FailedJob, action: 'retry' | 'discard'): Promise<void> {
+  failedBusy.value = busyKey(job)
+  confirmDiscard.value = ''
+  try {
+    const r = await $fetch<{ ok: boolean, reason?: string }>('/api/ops/failed', {
+      method: 'POST',
+      body: { queue: job.queue, id: job.id, action }
+    })
+    flash(failedMsg, r.ok
+      ? (action === 'retry' ? 'Задача снова в очереди' : 'Задача отброшена')
+      : 'Задачи уже нет — список обновлён')
+    failedJobs.value = failedJobs.value.filter(j => !(j.queue === job.queue && j.id === job.id))
+    await load() // счётчик «ошибки» на карточке должен сойтись со списком
+  } catch (e) {
+    if ((e as { statusCode?: number })?.statusCode === 401) {
+      await router.push('/login')
+      return
+    }
+    flash(failedMsg, 'Не удалось выполнить действие')
+  } finally {
+    failedBusy.value = ''
+  }
+}
+const failedMsg = ref('')
+/** Упавшие задачи только этой очереди — список приходит сразу по всем. */
+function failedFor(queue: string): FailedJob[] {
+  return failedJobs.value.filter(j => j.queue === queue)
+}
+
 async function signOut() {
   await logout()
   await router.push('/login')
@@ -295,7 +366,20 @@ onMounted(async () => {
                держит она последнюю тысячу выполненных и пять тысяч неудачных. Оператор читал эти
                числа как накопительный итог — это неправда. Настоящий итог — на «Метриках импорта». -->
           <span class="text-(--ui-color-accent-main-success)">готово (в хранилище): <b>{{ q.completed }}</b></span>
-          <span class="text-(--ui-color-accent-main-alert)">ошибки (в хранилище): <b>{{ q.failed }}</b></span>
+          <!-- Провал в список ошибок (#271-B): раньше это число было тупиком. -->
+          <button
+            v-if="q.failed"
+            type="button"
+            class="text-(--ui-color-accent-main-alert) underline decoration-dotted underline-offset-2"
+            :aria-expanded="failedOpen === q.name"
+            @click="() => toggleFailed(q.name)"
+          >
+            ошибки (в хранилище): <b>{{ q.failed }}</b>{{ failedOpen === q.name ? ' ▴' : ' ▾' }}
+          </button>
+          <span
+            v-else
+            class="text-(--ui-color-base-4)"
+          >ошибки (в хранилище): <b>0</b></span>
           <span
             v-if="q.delayed"
             class="text-(--ui-color-accent-main-warning)"
@@ -305,6 +389,111 @@ onMounted(async () => {
              единиц, 12 задач = 100%), подписи не имела, и 100% не означало ни «плохо», ни «хорошо».
              Осмысленная шкала — глубина очереди относительно реальной пропускной способности
              (≈900 документов в час на портал) — отдельная задача. -->
+        <!-- Раскрытый список упавших задач этой очереди: причина, время, действия. -->
+        <div
+          v-if="failedOpen === q.name"
+          class="mt-3 border-t border-(--ui-color-base-5) pt-3"
+        >
+          <p
+            v-if="failedMsg"
+            class="mb-2 text-xs text-(--ui-color-base-3)"
+            role="status"
+            aria-live="polite"
+          >
+            {{ failedMsg }}
+          </p>
+          <p
+            v-if="failedLoading"
+            class="text-xs text-(--ui-color-base-4)"
+          >
+            Загружаем список…
+          </p>
+          <B24Alert
+            v-else-if="failedError"
+            color="air-primary-warning"
+            size="sm"
+            :title="failedError"
+          />
+          <p
+            v-else-if="failedUnavailable.includes(q.name)"
+            class="text-xs text-(--ui-color-accent-main-warning)"
+          >
+            Список получить не удалось — очередь не ответила. Это не значит, что ошибок нет.
+          </p>
+          <p
+            v-else-if="!failedFor(q.name).length"
+            class="text-xs text-(--ui-color-base-4)"
+          >
+            Подробностей уже нет: очередь хранит ограниченное число упавших задач.
+          </p>
+          <!-- Счётчик считает все хранимые ошибки, а список показывает первые N: без этой строки
+               оператор решил бы, что остальные «сами рассосались». -->
+          <p
+            v-if="!failedLoading && !failedError && failedLimit && q.failed > failedFor(q.name).length"
+            class="mb-2 text-xs text-(--ui-color-base-4)"
+          >
+            Показаны первые {{ failedFor(q.name).length }} из {{ q.failed }}.
+          </p>
+          <ul
+            v-if="!failedLoading && !failedError && failedFor(q.name).length"
+            class="space-y-2"
+          >
+            <li
+              v-for="j in failedFor(q.name)"
+              :key="j.id"
+              class="flex flex-wrap items-start justify-between gap-2 rounded-lg bg-(--ui-color-base-7) p-2.5"
+            >
+              <span class="min-w-0 flex-1">
+                <span class="block text-xs break-words text-(--ui-color-base-2)">{{ j.reason }}</span>
+                <span class="block text-xs text-(--ui-color-base-4)">
+                  {{ j.failedAt ? formatClock(j.failedAt) : 'время неизвестно' }} · попыток: {{ j.attempts }} · id {{ j.id }}
+                </span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <B24Button
+                  color="air-tertiary-no-accent"
+                  size="xs"
+                  label="Повторить"
+                  :loading="failedBusy === busyKey(j)"
+                  :disabled="failedBusy === busyKey(j)"
+                  :aria-label="`Повторить задачу ${j.id}`"
+                  @click="() => actOnFailed(j, 'retry')"
+                />
+                <!-- «Отбросить» стирает задачу насовсем — спрашиваем, как и на «Отзыв оставлен». -->
+                <B24Button
+                  v-if="confirmDiscard !== busyKey(j)"
+                  color="air-tertiary-no-accent"
+                  size="xs"
+                  label="Отбросить"
+                  :disabled="failedBusy === busyKey(j)"
+                  :aria-label="`Отбросить задачу ${j.id}`"
+                  @click="() => { confirmDiscard = busyKey(j) }"
+                />
+                <span
+                  v-else
+                  class="flex items-center gap-2 text-xs"
+                >
+                  <span class="text-(--ui-color-base-3)">Удалить насовсем?</span>
+                  <B24Button
+                    color="air-primary-alert"
+                    size="xs"
+                    label="Да"
+                    :loading="failedBusy === busyKey(j)"
+                    :disabled="failedBusy === busyKey(j)"
+                    @click="() => actOnFailed(j, 'discard')"
+                  />
+                  <B24Button
+                    color="air-tertiary-no-accent"
+                    size="xs"
+                    label="Отмена"
+                    @click="() => { confirmDiscard = '' }"
+                  />
+                </span>
+              </span>
+            </li>
+          </ul>
+        </div>
+
         <!-- Оценка времени — ТОЛЬКО для записи в CRM: 900 документов в час это предел ограничителя
              портала, он относится к этой стадии. Для событий, извлечения текста и разбора цифра была
              бы такой же выдуманной, как прежняя полоса. -->

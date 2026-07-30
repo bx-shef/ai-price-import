@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { ref } from 'vue'
+import { readBody } from 'h3'
 import QueuesPage from '~/pages/queues.vue'
 
 // Оператор авторизован — проверяем сам экран, а не гейт входа.
@@ -26,6 +27,19 @@ registerEndpoint('/api/ops/tokens', () => {
   if (fail.tokens) throw new Error('boom')
   return { portals: empty ? [] : PORTALS }
 })
+const FAILED = [
+  { queue: 'crm-sync', id: '42', reason: 'портал отверг запись', failedAt: 1700000000000, attempts: 3 }
+]
+const failedActions: Array<{ action?: string, id?: string }> = []
+let unavailable: string[] = []
+registerEndpoint('/api/ops/failed', async (event) => {
+  if (event.method === 'POST') {
+    const body = await readBody(event)
+    failedActions.push({ action: body?.action, id: body?.id })
+    return { ok: true }
+  }
+  return { jobs: unavailable.length ? [] : FAILED, unavailable, perQueueLimit: 25 }
+})
 registerEndpoint('/api/ops/app-rating', (event) => {
   if (event.method === 'POST') {
     posted.push('app-rating')
@@ -39,6 +53,8 @@ beforeEach(() => {
   fail = { tokens: false, ratings: false }
   empty = false
   posted.length = 0
+  failedActions.length = 0
+  unavailable = []
 })
 
 /** Ждём, пока страница реально дорисуется: запросы идут через сетевой слой, один тик не покрывает. */
@@ -98,5 +114,61 @@ describe('Операторская консоль (#271)', () => {
     const w = await mountSuspended(QueuesPage)
     await flush(w, 'обновлено в')
     expect(w.text()).toMatch(/обновлено в \d{2}:\d{2}:\d{2}/)
+  })
+})
+
+describe('Список упавших задач (#271-B)', () => {
+  it('число ошибок больше не тупик: раскрывается список с причиной и временем', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'ошибки (в хранилище)')
+    const trigger = w.findAll('button').find(b => b.text().includes('ошибки (в хранилище)'))!
+    expect(trigger).toBeTruthy() // раньше это была неинтерактивная надпись
+    await trigger.trigger('click')
+    await flush(w, 'портал отверг запись')
+    expect(w.text()).toContain('портал отверг запись')
+    expect(w.text()).toContain('попыток: 3')
+  })
+
+  it('«Повторить» отправляет действие по этой задаче', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'ошибки (в хранилище)')
+    await w.findAll('button').find(b => b.text().includes('ошибки (в хранилище)'))!.trigger('click')
+    await flush(w, 'Повторить')
+    await w.findAll('button').find(b => b.text() === 'Повторить')!.trigger('click')
+    await flush(w, 'Задача снова в очереди')
+    expect(failedActions).toEqual([{ action: 'retry', id: '42' }])
+  })
+
+  it('«Отбросить» спрашивает подтверждение — задача стирается насовсем', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'ошибки (в хранилище)')
+    await w.findAll('button').find(b => b.text().includes('ошибки (в хранилище)'))!.trigger('click')
+    await flush(w, 'Отбросить')
+    await w.findAll('button').find(b => b.text() === 'Отбросить')!.trigger('click')
+    await flush(w, 'Удалить насовсем?')
+    // Первый клик ничего не отправляет.
+    expect(failedActions).toEqual([])
+    await w.findAll('button').find(b => b.text() === 'Да')!.trigger('click')
+    await flush(w, 'Задача отброшена')
+    expect(failedActions).toEqual([{ action: 'discard', id: '42' }])
+    expect(w.text()).not.toContain('портал отверг запись')
+  })
+
+  it('показывает, что список усечён — иначе оператор решит, что остальные ошибки исчезли', async () => {
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'ошибки (в хранилище)')
+    await w.findAll('button').find(b => b.text().includes('ошибки (в хранилище)'))!.trigger('click')
+    await flush(w, 'Показаны первые')
+    // На карточке 3 ошибки, в списке 1 → строка про усечение обязана быть.
+    expect(w.text()).toContain('Показаны первые 1 из 3')
+  })
+
+  it('очередь не ответила — говорим об этом, а не объясняем пустоту сроком хранения', async () => {
+    unavailable = ['crm-sync']
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'ошибки (в хранилище)')
+    await w.findAll('button').find(b => b.text().includes('ошибки (в хранилище)'))!.trigger('click')
+    await flush(w, 'очередь не ответила')
+    expect(w.text()).toContain('Это не значит, что ошибок нет')
   })
 })
