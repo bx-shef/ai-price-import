@@ -1,9 +1,16 @@
 import type { Worker } from 'bullmq'
-import { queueEnabled } from '../queue/connection'
+import { getQueue, queueEnabled } from '../queue/connection'
+import type { QueueName } from '../queue/topology'
+import { evaluateQueueHealth } from '../utils/queueAlert'
+import { MAX_FAILED_SCAN, readQueueHealth } from '../utils/queueHealthRead'
+import { recordQueueHealth } from '../utils/queueAlertState'
 import { buildLiveInfra, startEventWorker, startThroughputWorkers } from '../queue/worker'
 import { liveKeepAliveDeps } from '../queue/liveDeps'
 import { queueRuntimeConfig } from '../queue/runtime'
 import { keepAliveIntervalMs, runTokenKeepAlive } from '../utils/tokenKeepAlive'
+
+/** How often the queue health check reads counts. Also the window each alert speaks about. */
+const QUEUE_HEALTH_INTERVAL_MS = 5 * 60 * 1000
 
 // Nitro startup plugin: start the BullMQ workers in this instance, gated by the queue
 // role (QUEUE_WORKERS / QUEUE_CRON — see runtime.ts). No-op without Redis (SSG/dev).
@@ -23,6 +30,7 @@ export default defineNitroPlugin((nitroApp) => {
   const infra = (role.workers || role.cron) ? buildLiveInfra() : null
   const workers: Worker[] = []
   let keepAliveTimer: ReturnType<typeof setInterval> | undefined
+  let healthTimer: ReturnType<typeof setInterval> | undefined
 
   if (role.workers && infra) {
     workers.push(...startThroughputWorkers(infra))
@@ -64,12 +72,47 @@ export default defineNitroPlugin((nitroApp) => {
     } else {
       console.warn('[queue] token keep-alive disabled — B24_CLIENT_ID/SECRET unset (idle portals may lose auth on day 180)')
     }
+
+    // Queue health check (BACKLOG.md §1). /queues only ever showed a snapshot, which cannot tell
+    // «навалило работы» from «встало»: both look like a big number. What tells them apart is how
+    // long the OLDEST unfinished job has been sitting — see queueAlert.ts for the two wrong designs
+    // that came before. Cron instance only: one voice, not one per worker replica.
+    let healthRunning = false
+    const runHealthCheck = async () => {
+      // Ticks must not overlap: a slow Redis read would otherwise stack them up.
+      if (healthRunning) return
+      healthRunning = true
+      try {
+        const alerts = evaluateQueueHealth(await readQueueHealth({
+          pending: async (name: QueueName) => {
+            const q = getQueue(name)
+            return q ? await q.getJobs(['waiting', 'active', 'delayed']) : []
+          },
+          failed: async (name: QueueName) => {
+            const q = getQueue(name)
+            return q ? await q.getFailed(0, MAX_FAILED_SCAN - 1) : []
+          }
+        }, Date.now()), Date.now())
+        recordQueueHealth(alerts, Date.now())
+        for (const a of alerts) console.warn(`[queue-alert] ${a.text}`)
+      } catch (err) {
+        // The reader isolates per-queue failures, so only a bug reaches here. Never record a
+        // verdict we did not actually reach — a stale «всё хорошо» is worse than an old timestamp.
+        console.error('[queue] health check failed:', (err as Error)?.message)
+      } finally {
+        healthRunning = false
+      }
+    }
+    healthTimer = setInterval(() => void runHealthCheck(), QUEUE_HEALTH_INTERVAL_MS)
+    void runHealthCheck()
+    console.info('[queue] health check scheduled (every %d min)', QUEUE_HEALTH_INTERVAL_MS / 60_000)
   } else if (!role.cron) {
     console.info('[queue] QUEUE_CRON=0 — b24-events worker + keep-alive run on the primary instance, not here')
   }
 
   nitroApp.hooks.hook('close', async () => {
     if (keepAliveTimer) clearInterval(keepAliveTimer)
+    if (healthTimer) clearInterval(healthTimer)
     await Promise.all(workers.map(w => w.close()))
   })
 })

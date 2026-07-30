@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import SearchIcon from '@bitrix24/b24icons-vue/outline/SearchIcon'
 import { useAuth } from '~/composables/useAuth'
-import { FLASH_MS, QUEUES_REFRESH_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals, type PortalHealthFilter } from '~/utils/opsMonitor'
+import { FLASH_MS, QUEUES_REFRESH_MS, QUEUE_HEALTH_STALE_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals, type PortalHealthFilter } from '~/utils/opsMonitor'
 import { copyToClipboard } from '~/utils/clipboard'
 
 // Operator queue monitor (service zone). Auth-gated (server 401 + client redirect).
@@ -12,6 +12,7 @@ definePageMeta({ layout: 'clear' })
 useHead({ title: 'Служебная консоль', meta: [{ name: 'robots', content: 'noindex' }] })
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
+interface QueueAlert { kind: 'stalled' | 'failing' | 'unreadable', queue: string, text: string }
 interface FailedJob { queue: string, id: string, reason: string, failedAt: number | null, attempts: number }
 interface PortalStatus { memberId: string, domain: string, ageDays: number, expiresInDays: number, health: 'ok' | 'near-expiry' | 'stale' }
 type RatingState = 'reviewed' | 'opened' | 'prompted' | 'none'
@@ -27,6 +28,34 @@ const error = ref('')
 // хранения. Только суммы, без разбивки. `totalsFailed` отличает «база недоступна» от «пока пусто».
 const totals = ref<Record<string, number> | null>(null)
 const totalsFailed = ref(false)
+
+// Здоровье очередей (BACKLOG.md §1). Глубина — это снимок: 200 ждущих одинаково выглядят и когда
+// навалило работы, и когда всё встало. Сервер сравнивает два последовательных замера и говорит,
+// какой из двух случаев на самом деле. `alertsCheckedAt` = null означает «ещё ни разу не смотрели»,
+// и это НЕ то же самое, что «всё хорошо» — экран обязан их различать.
+const alerts = ref<QueueAlert[]>([])
+const alertsCheckedAt = ref<number | null>(null)
+
+const ALERT_TITLES: Record<QueueAlert['kind'], string> = {
+  stalled: 'Очередь не разгребается',
+  failing: 'Задачи падают',
+  unreadable: 'Состояние очереди неизвестно'
+}
+const alertTitle = (a: QueueAlert) => `${ALERT_TITLES[a.kind]} — ${a.queue}`
+
+// Возраст проверки — не украшение. Проверка, отработавшая шесть часов назад, ничего не говорит о
+// «сейчас», и рисовать её так же, как свежую, — та же ложь, что показывать непрочитанную очередь
+// здоровой. Поэтому у отсутствия тревог три разных смысла, и экран их различает.
+const healthNote = computed(() => {
+  if (loading.value || error.value) return ''
+  if (alertsCheckedAt.value === null) {
+    return 'Проверка здоровья очередей ещё не отработала — это не значит, что всё в порядке.'
+  }
+  if (staleAfter(alertsCheckedAt.value, nowMs.value, QUEUE_HEALTH_STALE_MS)) {
+    return `Последняя проверка здоровья очередей — в ${formatClock(alertsCheckedAt.value)}, данные устарели.`
+  }
+  return ''
+})
 const lifetimeText = computed(() => lifetimeSummary(totals.value
   ? { docs: totals.value.docs ?? 0, created: totals.value.created ?? 0, lines: totals.value.lines ?? 0, errors: totals.value.errors ?? 0 }
   : null))
@@ -99,11 +128,13 @@ async function load() {
   loading.value = true
   let queuesOk = false
   try {
-    const r = await $fetch<{ queues: QueueCounts[], totals: Record<string, number> | null, totalsFailed?: boolean }>('/api/ops/queues')
+    const r = await $fetch<{ queues: QueueCounts[], totals: Record<string, number> | null, totalsFailed?: boolean, alerts?: QueueAlert[], alertsCheckedAt?: number | null }>('/api/ops/queues')
     if (my !== loadSeq) return
     queues.value = r.queues
     totals.value = r.totals ?? null
     totalsFailed.value = r.totalsFailed === true
+    alerts.value = r.alerts ?? []
+    alertsCheckedAt.value = r.alertsCheckedAt ?? null
     error.value = ''
     queuesOk = true
   } catch (e) {
@@ -385,6 +416,27 @@ onMounted(async () => {
       color="air-primary-warning"
       :title="error"
     />
+
+    <div
+      class="mb-4 space-y-3"
+      role="status"
+      aria-live="polite"
+    >
+      <B24Alert
+        v-for="a in alerts"
+        :key="`${a.kind}:${a.queue}`"
+        :color="a.kind === 'stalled' ? 'air-primary-warning' : 'air-primary-alert'"
+        :title="alertTitle(a)"
+        :description="a.text"
+      />
+
+      <p
+        v-if="healthNote"
+        class="text-sm text-(--ui-color-base-6)"
+      >
+        {{ healthNote }}
+      </p>
+    </div>
 
     <div class="space-y-3">
       <div
