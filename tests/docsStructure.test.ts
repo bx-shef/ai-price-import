@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -51,4 +52,56 @@ describe('внутренние ссылки не битые', () => {
       expect(broken, `битые ссылки: ${broken.join(', ')}`).toEqual([])
     })
   }
+})
+
+// Три проверки ниже добавлены после разбора документации (2026-07-30): каждая ловит дефект, который
+// реально дожил до main незамеченным, потому что прежние гварды смотрели в другую сторону.
+
+describe('штамп ревью не отстаёт от правок', () => {
+  for (const file of markdownSet()) {
+    it(`${file}: дата в штампе не старше последнего коммита файла`, () => {
+      const text = readFileSync(abs(file), 'utf8')
+      const stamp = text.match(/^> Last reviewed: (\d{4}-\d{2}-\d{2})$/m)?.[1]
+      // Дата последнего коммита, тронувшего файл. Вне git-checkout (архив, tarball) — пропускаем.
+      let committed: string
+      try {
+        committed = execFileSync('git', ['log', '-1', '--format=%ad', '--date=short', '--', file],
+          { cwd: ROOT, encoding: 'utf8' }).trim()
+      } catch {
+        return
+      }
+      if (!committed) return // файл ещё не коммитили
+      expect(stamp, `${file}: нет штампа`).toBeTruthy()
+      // Правишь документ — бампни дату. Иначе «Last reviewed» превращается в дату создания и
+      // перестаёт отвечать на вопрос, ради которого заведён: насколько тексту можно верить.
+      expect(stamp! >= committed, `${file}: штамп ${stamp} старше последней правки ${committed}`).toBe(true)
+    })
+  }
+})
+
+describe('ссылки на документацию из конфигов', () => {
+  // Ссылки на доки живут не только в markdown: их полно в .env.example, nginx.conf и compose-файлах,
+  // и при сворачивании 40 файлов в пять там осталась россыпь ссылок на удалённое — гвард их не видел.
+  const CONFIGS = ['.env.example', 'nginx.conf', 'docker-compose.yml', 'docker-compose.prod.yml']
+  for (const file of CONFIGS) {
+    it(`${file}: упомянутые файлы документации существуют`, () => {
+      if (!existsSync(abs(file))) return
+      const text = readFileSync(abs(file), 'utf8')
+      const broken = [...text.matchAll(/docs\/[\w/-]+\.md/g)]
+        .map(m => m[0]!)
+        .filter(rel => !existsSync(abs(rel)))
+      expect([...new Set(broken)], `ссылки на удалённые документы: ${broken.join(', ')}`).toEqual([])
+    })
+  }
+})
+
+describe('живые проверки перечислены в документации', () => {
+  // Скрипт, о котором никто не знает, не будет запущен. verify:332 полгода жил вне документации.
+  it('каждая команда pnpm verify:*/loadtest:* названа в PROJECT_MAP или CLAUDE.md', () => {
+    const pkg = JSON.parse(readFileSync(abs('package.json'), 'utf8')) as { scripts: Record<string, string> }
+    const live = Object.keys(pkg.scripts).filter(n => /^(verify|loadtest|sdk):/.test(n))
+    const docs = readFileSync(abs('docs/PROJECT_MAP.md'), 'utf8') + readFileSync(abs('CLAUDE.md'), 'utf8')
+    const missing = live.filter(n => !docs.includes(`pnpm ${n}`))
+    expect(missing, `не описаны: ${missing.join(', ')}`).toEqual([])
+  })
 })

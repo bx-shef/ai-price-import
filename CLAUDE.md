@@ -1,6 +1,6 @@
 # procure-ai (редизайн)
 
-> Last reviewed: 2026-07-29
+> Last reviewed: 2026-07-30
 
 AI-импорт прайсов с табличной частью в Bitrix24. Облачное приложение Маркета
 (мультитенант, OAuth), издатель ИП Шевчик И.С. Вход — любой документ с таблицей
@@ -57,7 +57,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
       `SYSTEM_MEASURE_RU` (код ОКЕИ/UNECE → рус. подпись+символ: 796=Штука/шт, 166=Килограмм/кг, 6=Метр/м, 112=Литр/л
       и т.д.) — `enrichMeasureRow` дозаполняет `null` русских подписей системных мер (их `catalog.measure.list`
       отдаёт без локализации), кастомные меры не трогает. Коды ОКЕИ/UNECE международные (одни для РФ/РБ/РК —
-      см. `docs/PROCESS.md` §9); сопоставление единицы документа — по словарю, не по символу. **Встроенный словарь синонимов**
+      см. `docs/PROCESS.md` §6.5); сопоставление единицы документа — по словарю, не по символу. **Встроенный словарь синонимов**
       (`app/config/unitSynonyms.ts` — данные, лукап в `app/utils/units.ts`) — слой ПОД словарём портала (#272):
       порядок `словарь портала (точный ключ → свёрнутый) → каталог мер портала по имени → встроенная карта →
       defaultCode`. Встроенный код **проверяется по каталогу портала** (`deps.measureCatalog`, мемо на джобу,
@@ -265,7 +265,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   - **Трекинг задания импорта — Redis+TTL, НЕ Postgres** (`utils/jobStore.ts` + `utils/jobStoreRedis.ts`):
     статус/мета каждого задания (`status`/`fileName`/`result`/`manualOverride`/`diskFile`/`notified`/`failNotified`/`uploaderId` — последний это id сотрудника из `profile` фрейм-токена, адрес личного чата для сообщения о неудаче; **в браузер не отдаётся**, `mapJob` его не читает)
     живёт в Redis-хеше `import:job:{member}:{jobId}` с native PX-expiry (TTL `IMPORT_JOB_TTL_HOURS`, дефолт
-    48ч). **Серверного списка заданий НЕТ** (#D): браузер сотрудника держит свою историю в **localStorage**
+    48ч). **Серверного списка заданий НЕТ** (#B): браузер сотрудника держит свою историю в **localStorage**
     (`app/utils/importHistory.ts`, ключ `jobId`) и опрашивает статус **по id** (`POST /api/import/status {ids:[…]}` → `getJob`;
     **POST, не GET `?ids=`** — #260: список рос вместе с капом истории (50 UUID ≈ 1,9 КБ query) и упёрся
     бы в буфер заголовков прокси, плюс id утекали в access-логи, хотя в телеметрию мы их специально не
@@ -278,6 +278,11 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     `HSETNX` (атомарно), но память ограничена TTL (см. JSDoc). **Дедуп отзыва — тоже на клиенте** (флаг
     `feedback` в той же записи `importHistory`), серверного поиска-перед-созданием больше нет.
     **Демо (`/api/demo/*`) на свой `demoJobStore`** — `import_job`/`jobStore` не трогает.
+- `prompts/` — **промпт извлечения** (`extract.ts`, `buildExtractionPrompt`): единственное место, где
+  задаётся, что именно нейросеть должна вернуть. Используют и воркер (`queue/liveDeps.ts`), и демо
+  (`api/demo/extract.post.ts`) — правка тут меняет поведение обоих.
+- `telemetry-station/` — **отдельно деплоящаяся станция сбора телеметрии** (коллектор + ClickHouse +
+  Grafana). Своя документация внутри, вне сборки приложения и вне CI.
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
 - `docs/` — вся документация: `PROCESS.md` / `PROJECT_MAP.md` / `BACKLOG.md` + два документа
@@ -326,6 +331,7 @@ pnpm sdk:smoke    # OAuth-транспорт SDK: profile+crm.item.list+burst 30
 pnpm verify:chat  # экстрактор (openai SDK): --provider deepseek|bitrixgpt → ExtractedDocument (ru/be/kk)
 pnpm live:crm --ai# полный E2E: текст → DeepSeek → runCrmSync → сделка+позиции+уведомление+очистка
 pnpm verify:idem  # идемпотентность: 2 прогона одним jobId → повтор нашёл по маркеру, created:false
+pnpm verify:332   # копия файла на Диске: запись → чтение байт → удаление (+--commit → репо отзывов)
 pnpm loadtest:123 # доказательство rate-limiter (RestrictionManager)
 pnpm loadtest:queue # очередь под нагрузкой (локальный Redis): backlog, дедуп, обрыв воркера,
                     # scale-out, приём под нагрузкой, реальный темп лимитера Б24 (~900 док/ч на портал)
