@@ -1,23 +1,35 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useTemplateRef } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 
 // Operator sign-in (service zone). Layout `clear`, noindex, prerendered.
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Вход оператора', meta: [{ name: 'robots', content: 'noindex' }] })
 
-const { login, error, enabled, authenticated, check } = useAuth()
+const { login, error, enabled, lockedOut, authenticated, check } = useAuth()
 const router = useRouter()
 const password = ref('')
 const busy = ref(false)
+// Пока сессия не проверена, `enabled` ещё true по умолчанию — блокировать форму рано, иначе поле
+// мигало бы неактивным на каждой загрузке.
+const checked = ref(false)
+/** Форма неактивна: вход выключен администратором или сработала защита от перебора (#271-M). */
+const formDisabled = computed(() => (checked.value && !enabled.value) || lockedOut.value)
+const passwordField = useTemplateRef<{ inputRef?: HTMLInputElement }>('passwordField')
 
 onMounted(async () => {
   await check()
-  if (authenticated.value) await router.push('/queues') // already signed in
+  checked.value = true
+  if (authenticated.value) {
+    await router.push('/queues') // already signed in
+    return
+  }
+  // Курсор сразу в поле: на этой странице ровно одно действие, и заставлять целиться мышью незачем.
+  if (!formDisabled.value) passwordField.value?.inputRef?.focus()
 })
 
 async function submit() {
-  if (busy.value) return
+  if (busy.value || formDisabled.value) return
   busy.value = true
   const ok = await login(password.value)
   busy.value = false
@@ -40,19 +52,22 @@ async function submit() {
         </p>
 
         <B24Alert
-          v-if="!enabled"
+          v-if="checked && !enabled"
           class="mb-4"
           color="air-primary-warning"
           title="Вход оператора отключён администратором."
+          description="Пароль оператора не задан в настройках сервера — войти нельзя, пока его не пропишет администратор."
         />
 
         <B24FormField label="Пароль">
           <B24Input
+            ref="passwordField"
             v-model="password"
             type="password"
             autocomplete="current-password"
             placeholder="••••••••"
             class="w-full"
+            :disabled="formDisabled"
           />
         </B24FormField>
 
@@ -71,7 +86,7 @@ async function submit() {
           color="air-primary"
           block
           :loading="busy"
-          :disabled="busy || !password"
+          :disabled="busy || !password || formDisabled"
           :label="busy ? 'Вход…' : 'Войти'"
         />
       </form>
