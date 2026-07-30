@@ -4,6 +4,8 @@ import type { QueueName } from '../queue/topology'
 import { evaluateQueueHealth } from '../utils/queueAlert'
 import { MAX_FAILED_SCAN, readQueueHealth } from '../utils/queueHealthRead'
 import { recordQueueHealth } from '../utils/queueAlertState'
+import { alertMessage, emptyDeliveryState, episodeKey, markAnnounced, planAlertDelivery, recoveryMessage, type DeliveryState } from '../utils/queueAlertDeliver'
+import { resolveTelegramConfig, sendTelegramAlert } from '../utils/telegramAlert'
 import { buildLiveInfra, startEventWorker, startThroughputWorkers } from '../queue/worker'
 import { liveKeepAliveDeps } from '../queue/liveDeps'
 import { queueRuntimeConfig } from '../queue/runtime'
@@ -78,6 +80,37 @@ export default defineNitroPlugin((nitroApp) => {
     // long the OLDEST unfinished job has been sitting — see queueAlert.ts for the two wrong designs
     // that came before. Cron instance only: one voice, not one per worker replica.
     let healthRunning = false
+    // What has already been said. In memory on purpose: it lives in the same process as the check,
+    // and after a restart re-announcing an ongoing outage once is the RIGHT behaviour anyway — a
+    // backend that keeps restarting is itself worth knowing about.
+    let delivery: DeliveryState = emptyDeliveryState()
+    // Resolved once: the channel is env-driven, and an unset one is a normal deployment (dev, a
+    // build with no portal). Null → alerts stay in the log and on /queues, exactly as before.
+    const telegram = resolveTelegramConfig(process.env)
+    const queuesUrl = (() => {
+      const base = String(process.env.NUXT_PUBLIC_SITE_URL ?? '').trim().replace(/\/+$/, '')
+      return /^https:\/\//i.test(base) ? `${base}/queues` : null
+    })()
+    console.info(telegram
+      ? '[queue] alert channel: telegram'
+      : '[queue] alert channel OFF — alerts go to the log and /queues only (set TELEGRAM_ALERT_BOT_TOKEN + TELEGRAM_ALERT_CHAT_ID)')
+
+    // `true` only when the message actually reached the channel.
+    const push = async (text: string): Promise<boolean> => {
+      if (!telegram) return false
+      try {
+        const r = await sendTelegramAlert(telegram, text, fetch)
+        // Status only — the URL carries the bot token, so nothing else from the call is loggable.
+        if (!r.ok) console.error(`[queue-alert] telegram send failed: status=${r.status}`)
+        return r.ok
+      } catch {
+        return false // alerting must never take the cron instance down
+      }
+    }
+
+    // Carries this tick's plan out of the guarded section to the sending step below.
+    let pending: ReturnType<typeof planAlertDelivery> | null = null
+
     const runHealthCheck = async () => {
       // Ticks must not overlap: a slow Redis read would otherwise stack them up.
       if (healthRunning) return
@@ -95,6 +128,13 @@ export default defineNitroPlugin((nitroApp) => {
         }, Date.now()), Date.now())
         recordQueueHealth(alerts, Date.now())
         for (const a of alerts) console.warn(`[queue-alert] ${a.text}`)
+        // ONE message per episode, not per check: a real outage outlives the 5-minute interval, and
+        // a channel that repeats itself twelve times an hour stops being read — which defeats the
+        // one occasion it exists for. Recovery is announced too, so «починилось» is distinguishable
+        // from «мы перестали писать».
+        const plan = planAlertDelivery(alerts, delivery, Date.now())
+        delivery = plan.state
+        pending = plan
       } catch (err) {
         // The reader isolates per-queue failures, so only a bug reaches here. Never record a
         // verdict we did not actually reach — a stale «всё хорошо» is worse than an old timestamp.
@@ -102,6 +142,20 @@ export default defineNitroPlugin((nitroApp) => {
       } finally {
         healthRunning = false
       }
+
+      // Sending happens AFTER the flag is released and outside the guarded section. A slow Telegram
+      // must not stop the health check itself: an outgoing HTTP call hanging is correlated with the
+      // very outage being reported, and a channel that silences its own monitor during an incident
+      // is worse than no channel.
+      if (!pending) return
+      const { opened, recovered } = pending
+      pending = null
+      for (const a of opened) {
+        // Marked as told only when it actually went out — otherwise one 429 would bury the alert
+        // forever, since the episode is «ongoing» from the next check onwards.
+        if (await push(alertMessage(a, queuesUrl))) delivery = markAnnounced(delivery, episodeKey(a), Date.now())
+      }
+      for (const key of recovered) await push(recoveryMessage(key))
     }
     healthTimer = setInterval(() => void runHealthCheck(), QUEUE_HEALTH_INTERVAL_MS)
     void runHealthCheck()
