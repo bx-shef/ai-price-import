@@ -60,6 +60,14 @@ export interface UnitsConfig {
   autoCreate: boolean
 }
 
+/** Money side of the «Экономия» block (#270). Optional by design: without an admin-set rate the
+ *  dashboard shows time only — the app is multitenant across BY/RU/KZ and there is no honest
+ *  default hourly rate. The currency is NOT stored here: it is the portal's own base currency. */
+export interface SavingsConfig {
+  /** Operator cost per hour in the portal's base currency. Positive; 0/absent ⇒ no money figure. */
+  ratePerHour: number
+}
+
 /** Full per-portal mapping. */
 export interface PortalMapping {
   article: ArticleFieldConfig
@@ -74,4 +82,6 @@ export interface PortalMapping {
   routingRules: RoutingRule[]
   /** Fallback target when no rule matched (required). */
   defaultTarget: TargetRef
+  /** Hourly rate for the money estimate. Absent ⇒ the dashboard shows time only (#270). */
+  savings?: SavingsConfig
 }

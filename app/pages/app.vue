@@ -100,6 +100,12 @@ async function doReset(): Promise<void> {
   }
 }
 
+// Деньги показываем, только если админ портала задал стоимость часа (#270): валюту берём из самого
+// портала и не выдумываем. Нет ставки — плитки нет, и сетка схлопывается в одну колонку, иначе
+// одинокая плитка «Сэкономлено времени» висела бы на половине ширины с пустотой рядом.
+const hasMoneyTile = computed(() => !!savings.value && savings.value.moneySaved !== null)
+const moneySavedText = computed(() => (savings.value?.moneySaved ?? 0).toLocaleString('ru-RU'))
+
 // Compact status counts (inline in the «Последние операции» header instead of big dashboard tiles —
 // keeps the upload above the fold).
 const stats = computed(() => {
@@ -327,7 +333,7 @@ watch(jobs, (list) => {
           >
             <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
               <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
-              <B24PageGrid class="flex-1 sm:grid-cols-2 lg:grid-cols-2">
+              <B24PageGrid :class="hasMoneyTile ? 'flex-1 sm:grid-cols-2 lg:grid-cols-2' : 'flex-1 sm:grid-cols-1 lg:grid-cols-1'">
                 <B24PageCard
                   variant="tinted-no-accent"
                   title="Сэкономлено времени"
@@ -337,13 +343,16 @@ watch(jobs, (list) => {
                     {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
                   </p>
                 </B24PageCard>
+                <!-- Деньги показываем, только если админ задал стоимость часа: валюта берётся
+                     из самого портала, выдумывать её нельзя (#270). Не задана — плитки просто нет. -->
                 <B24PageCard
+                  v-if="hasMoneyTile"
                   variant="tinted-no-accent"
                   title="Сэкономлено денег (примерно)"
                   :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
                 >
                   <p class="text-[22px] leading-tight font-semibold">
-                    {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
+                    {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
                   </p>
                 </B24PageCard>
               </B24PageGrid>

@@ -4,6 +4,10 @@ import { readCounters } from '../../utils/metricsStore'
 import { computeSavings } from '~/utils/savings'
 import { withFrameRouteSpan } from '../../utils/frameRouteSpan'
 import { query } from '../../db/client'
+import { makeBareTokenSdkCall } from '../../utils/b24Sdk'
+import { readMapping } from '../../utils/appSettings'
+import { fetchBaseCurrency } from '../../utils/portalCurrency'
+import { resolveSavingsRate } from '../../utils/savingsRate'
 
 // GET /api/import/metrics — per-portal counters + a time/money-saved estimate for the
 // in-portal dashboard. Frame-token authenticated and member-scoped (a portal only sees
@@ -28,7 +32,14 @@ export default defineEventHandler(async (event) => {
         return { error: 'authorization failed', reason: member.reason }
       }
       const counters = await readCounters(member.memberId, query)
-      return { counters, savings: computeSavings(counters) }
+      // Money side is optional and cosmetic (#270): compute time first, then ask the portal for a
+      // rate only if there is anything to price. Memoized per portal — see savingsRate.ts.
+      const timeOnly = computeSavings(counters)
+      const rate = await resolveSavingsRate(member.memberId, timeOnly.minutesSaved, {
+        readRate: async () => (await readMapping(makeBareTokenSdkCall(auth.domain, auth.accessToken))).savings?.ratePerHour ?? null,
+        readCurrency: () => fetchBaseCurrency(makeBareTokenSdkCall(auth.domain, auth.accessToken))
+      })
+      return { counters, savings: rate.ratePerHour ? computeSavings(counters, rate) : timeOnly }
     }
   )
 })

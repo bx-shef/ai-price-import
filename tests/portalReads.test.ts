@@ -35,6 +35,24 @@ describe('fetchCurrencies', () => {
   })
 })
 
+describe('fetchBaseCurrency', () => {
+  it('returns the BASE:Y currency, not the first row', async () => {
+    const { fetchBaseCurrency } = await import('../server/utils/portalCurrency')
+    const call = vi.fn().mockResolvedValue([
+      { CURRENCY: 'USD', BASE: 'N' },
+      { CURRENCY: 'kzt', BASE: 'Y' },
+      { CURRENCY: 'BYN', BASE: 'N' }
+    ])
+    expect(await fetchBaseCurrency(call)).toBe('KZT')
+  })
+  it('null when nothing is marked base / the answer is junk', async () => {
+    const { fetchBaseCurrency } = await import('../server/utils/portalCurrency')
+    expect(await fetchBaseCurrency(vi.fn().mockResolvedValue([{ CURRENCY: 'RUB', BASE: 'N' }]))).toBeNull()
+    expect(await fetchBaseCurrency(vi.fn().mockResolvedValue([{ CURRENCY: 'RU', BASE: 'Y' }]))).toBeNull()
+    expect(await fetchBaseCurrency(vi.fn().mockResolvedValue(null))).toBeNull()
+  })
+})
+
 describe('findProductByName', () => {
   it('returns min ID on exact-name match, null when none', async () => {
     const { findProductByName } = await import('../server/utils/productLookup')

@@ -9,6 +9,20 @@ import type { RestCall } from './b24Rest'
 // keyset cursor). So — unlike crm.vat.list (SDK full-list) or the catalog-property picker
 // (frame-token pager) — this stays a plain single `RestCall`; a single read is complete.
 
+/** The portal's BASE currency (`BASE:'Y'`), or `null` when the portal didn't report one.
+ *  Used by the savings estimate (#270) so the money figure carries the portal's own currency
+ *  instead of a hard-coded BYN — the app serves BY/RU/KZ portals from one deployment. */
+export async function fetchBaseCurrency(call: RestCall): Promise<string | null> {
+  const rows = await call('crm.currency.list', {}) as Array<{ CURRENCY?: string, BASE?: string }> | undefined
+  if (!Array.isArray(rows)) return null
+  for (const r of rows) {
+    if (String(r?.BASE ?? '').toUpperCase() !== 'Y') continue
+    const code = String(r?.CURRENCY ?? '').toUpperCase()
+    if (/^[A-Z]{3}$/.test(code)) return code
+  }
+  return null
+}
+
 /** Fetch the portal's ISO 4217 currency codes (uppercased). */
 export async function fetchCurrencies(call: RestCall): Promise<string[]> {
   const rows = await call('crm.currency.list', {}) as Array<{ CURRENCY?: string }> | undefined

@@ -40,6 +40,12 @@ async function closeOrBack(): Promise<void> {
 
 const summary = computed(() => summarizeMetrics(counters.value))
 
+// Деньги показываем, только если админ портала задал стоимость часа (#270): валюту берём из самого
+// портала и не выдумываем. Нет ставки — плитки нет, и сетка схлопывается в одну колонку, иначе
+// одинокая плитка «Сэкономлено времени» висела бы на половине ширины с пустотой рядом.
+const hasMoneyTile = computed(() => !!savings.value && savings.value.moneySaved !== null)
+const moneySavedText = computed(() => (savings.value?.moneySaved ?? 0).toLocaleString('ru-RU'))
+
 // Two-step reset (no window.confirm), same pattern as /app.
 const confirmReset = ref(false)
 async function doReset(): Promise<void> {
@@ -85,7 +91,7 @@ async function doReset(): Promise<void> {
         />
 
         <!-- Экономия — те же плитки B24PageCard, что на /app: два экрана одной фичи читаются одинаково. -->
-        <B24PageGrid class="sm:grid-cols-2 lg:grid-cols-2">
+        <B24PageGrid :class="hasMoneyTile ? 'sm:grid-cols-2 lg:grid-cols-2' : 'sm:grid-cols-1 lg:grid-cols-1'">
           <B24PageCard
             variant="tinted-no-accent"
             title="Сэкономлено времени"
@@ -95,13 +101,15 @@ async function doReset(): Promise<void> {
               {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
             </p>
           </B24PageCard>
+          <!-- Деньги — только при заданной стоимости часа (валюта портала, не константа; #270). -->
           <B24PageCard
+            v-if="hasMoneyTile"
             variant="tinted-no-accent"
             title="Сэкономлено денег (примерно)"
             :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
           >
             <p class="text-[22px] leading-tight font-semibold">
-              {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
+              {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
             </p>
           </B24PageCard>
         </B24PageGrid>

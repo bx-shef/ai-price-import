@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultMapping, isPortalConfigured, parsePortalSettings } from '../app/utils/portalSettings'
+import { defaultMapping, isPortalConfigured, MAX_SAVINGS_RATE, parsePortalSettings } from '../app/utils/portalSettings'
 
 describe('parsePortalSettings', () => {
   it('empty/invalid → safe defaults', () => {
@@ -86,5 +86,30 @@ describe('isPortalConfigured', () => {
   })
   it('an empty article field / whitespace stays not-configured', () => {
     expect(isPortalConfigured(parsePortalSettings({ article: { field: '   ' } }))).toBe(false)
+  })
+})
+
+// #270: ставка для денежной оценки. Ключа нет ⇒ денег на экране нет (валюту не выдумываем).
+describe('parsePortalSettings — savings.ratePerHour', () => {
+  it('отсутствует по умолчанию', () => {
+    expect(defaultMapping().savings).toBeUndefined()
+    expect(parsePortalSettings({}).savings).toBeUndefined()
+  })
+  it('положительное число проходит и округляется до копеек', () => {
+    expect(parsePortalSettings({ savings: { ratePerHour: 20 } }).savings).toEqual({ ratePerHour: 20 })
+    expect(parsePortalSettings({ savings: { ratePerHour: 12.345 } }).savings).toEqual({ ratePerHour: 12.35 })
+  })
+  it('мусор и неположительное — ключа нет, а не ноль', () => {
+    for (const ratePerHour of [0, -1, 'abc', null, Number.NaN, Infinity]) {
+      expect(parsePortalSettings({ savings: { ratePerHour } }).savings).toBeUndefined()
+    }
+    expect(parsePortalSettings({ savings: 'x' }).savings).toBeUndefined()
+  })
+  it('запредельная ставка клампится', () => {
+    expect(parsePortalSettings({ savings: { ratePerHour: 1e12 } }).savings)
+      .toEqual({ ratePerHour: MAX_SAVINGS_RATE })
+  })
+  it('ставка НЕ считается «портал настроен» — это косметика, а не готовность к импорту', () => {
+    expect(isPortalConfigured(parsePortalSettings({ savings: { ratePerHour: 20 } }))).toBe(false)
   })
 })

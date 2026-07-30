@@ -12,6 +12,7 @@ import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { BUILTIN_UNIT_HINT } from '~/utils/units'
 import { rulesToRows, rowsToRules } from '~/utils/routingRulesEditor'
+import { MAX_SAVINGS_RATE, parsePortalSettings } from '~/utils/portalSettings'
 import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 
@@ -85,7 +86,8 @@ const openSections = ref(['0'])
 const sections = computed(() => [
   { label: 'Куда импортировать', slot: 'routing' },
   { label: 'Товары и единицы', slot: 'products' },
-  { label: 'Файл и уведомления', slot: 'notify' }
+  { label: 'Файл и уведомления', slot: 'notify' },
+  { label: 'Экономия', slot: 'savings' }
 ] satisfies AccordionItem[])
 
 // Supplier-article field: searchable picker over the portal's catalog product
@@ -125,6 +127,17 @@ const notifyChatId = computed<string | undefined>({
 const errorChatId = computed<string | undefined>({
   get: () => mapping.value.errorChatId || undefined,
   set: (v) => { mapping.value.errorChatId = v || undefined }
+})
+
+// Hourly rate for the «Сэкономлено денег» tile (#270). B24InputNumber, not a text field: it gives
+// a numeric model plus min/max/step, so there is no string↔number layer to get wrong (a text field
+// normalising on every keystroke ate the decimal separator mid-typing and made sub-1 rates
+// unenterable). The CURRENCY is not chosen here — it is the portal's own base currency, resolved
+// server-side. Empty/zero ⇒ the key is dropped and the dashboard shows time only.
+const savingsRate = computed<number | undefined>({
+  get: () => mapping.value.savings?.ratePerHour,
+  // Coercion and the upper clamp stay in ONE place — the same parser the server re-applies on save.
+  set: (v) => { mapping.value.savings = parsePortalSettings({ savings: { ratePerHour: v } }).savings }
 })
 
 // Seed each picker's selected option so a SAVED id shows before the chat list is fetched
@@ -497,6 +510,25 @@ const ON_MISSING_ITEMS = [
                 />
                 <p class="mt-1 text-xs text-(--ui-color-base-3)">
                   Сюда придёт сообщение, если документ внести не удалось — например, в портале нет нужной ставки НДС или валюты. Не выбирайте чат, если уведомления не нужны.
+                </p>
+              </B24FormField>
+            </div>
+          </template>
+
+          <template #savings>
+            <div class="space-y-6 pt-2">
+              <B24FormField label="Стоимость часа работы сотрудника">
+                <B24InputNumber
+                  v-model="savingsRate"
+                  :min="0"
+                  :max="MAX_SAVINGS_RATE"
+                  :step="1"
+                  class="w-48"
+                />
+                <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                  Нужна только для плитки «Сэкономлено денег»: сэкономленное время × эта ставка.
+                  Валюта — базовая валюта вашего портала, приложение берёт её из Битрикс24, вводить
+                  не нужно. Оставьте пусто — плитки не будет, останется только время.
                 </p>
               </B24FormField>
             </div>

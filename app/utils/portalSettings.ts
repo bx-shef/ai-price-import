@@ -96,8 +96,19 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     ...(typeof o.notifyChatId === 'string' ? { notifyChatId: o.notifyChatId } : {}),
     ...(typeof o.errorChatId === 'string' ? { errorChatId: o.errorChatId } : {}),
     routingRules: asRules(o.routingRules),
-    defaultTarget: asTarget(o.defaultTarget, DEFAULT_TARGET)
+    defaultTarget: asTarget(o.defaultTarget, DEFAULT_TARGET),
+    ...asSavings(o.savings)
   }
+}
+
+/** Hourly rate for the money estimate (#270). Anything not a sane positive number ⇒ the key is
+ *  omitted entirely, so the dashboard falls back to «time only» rather than printing a garbage
+ *  amount. Capped: the figure is rendered as-is, and a rate of 1e9 would produce nonsense. */
+export const MAX_SAVINGS_RATE = 1_000_000
+function asSavings(v: unknown): { savings?: { ratePerHour: number } } {
+  const rate = Number((v as Record<string, unknown> | undefined)?.ratePerHour)
+  if (!Number.isFinite(rate) || rate <= 0) return {}
+  return { savings: { ratePerHour: Math.min(Math.round(rate * 100) / 100, MAX_SAVINGS_RATE) } }
 }
 
 /** Whether the admin has configured ANYTHING beyond the pristine defaults. Returns false only when
@@ -118,5 +129,8 @@ export function isPortalConfigured(m: PortalMapping): boolean {
   // the anchor (default deal pipeline), so only a non-zero funnel or a set stage counts as configured.
   const t = m.defaultTarget
   if (t.entityTypeId !== DEFAULT_TARGET.entityTypeId || (t.categoryId ?? 0) !== 0 || t.stageId) return true
+  // `savings.ratePerHour` is deliberately NOT counted (#270): this flag gates the whole app on
+  // «can we import at all», and an hourly rate for the savings widget says nothing about that.
+  // Counting it would let a cosmetic setting unlock an unmapped portal.
   return false
 }

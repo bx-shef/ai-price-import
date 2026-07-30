@@ -1,38 +1,65 @@
 // Pure «сколько сэкономлено» estimate from the per-portal metric counters. Turns raw
-// counts (docs processed, product rows written) into a motivating time + money figure
-// for the in-portal dashboard. Constants are rough, documented defaults — the owner can
-// tune them later (design/text pass). No I/O; unit-tested.
+// counts (docs processed, product rows written) into a time figure for the in-portal
+// dashboard — and, ONLY when the portal admin configured an hourly rate, into money.
+// No I/O; unit-tested. Counter vocabulary + formulas: docs/PROCESS.md §7 «Метрики».
 
-/** Tunable estimate constants. Minutes a human would spend that the import saved. */
+/**
+ * Time constants. Country-neutral by construction: minutes of manual work the import
+ * replaced, not money. Rough defaults — changing them changes the headline figure, so they
+ * live in one place and their provenance is documented (docs/PROCESS.md §7).
+ */
 export const SAVINGS_MODEL = {
   /** Per document: opening, reading, finding the counterparty, creating the CRM entity. */
   minutesPerDoc: 4,
   /** Per product row: manual keying of one line (name, article, qty, price) into CRM. */
-  minutesPerLine: 1,
-  /** Operator cost, currency units per hour (BYN). Adjust to the portal's economics. */
-  ratePerHour: 20,
-  /** Currency label shown next to the money figure. */
-  currency: 'BYN'
+  minutesPerLine: 1
 } as const
+
+/**
+ * Money side of the estimate. Deliberately NOT a constant (#270): the app is multitenant
+ * across BY/RU/KZ, so a hard-coded «20 BYN/час» printed a Belarusian rate in a Belarusian
+ * currency to a portal whose whole CRM runs in roubles or tenge. There is no honest default —
+ * an hourly rate is the portal's own economics — so the money figure exists only when the
+ * admin set the rate, and the currency comes from the portal itself, not from us.
+ */
+export interface SavingsRate {
+  /** Operator cost per hour, in the portal's base currency. `null` — not configured. */
+  ratePerHour?: number | null
+  /** Portal base currency code (crm.currency.list `BASE:'Y'`). `null` — unknown. */
+  currency?: string | null
+}
 
 export interface Savings {
   docs: number
   lines: number
   created: number
   minutesSaved: number
-  moneySaved: number
-  currency: string
+  /** `null` when no hourly rate is configured (or the currency is unknown) — UI hides the block. */
+  moneySaved: number | null
+  /** `null` alongside `moneySaved`. */
+  currency: string | null
 }
 
-/** Estimate time + money saved from the raw counters map (missing names → 0). */
-export function computeSavings(counters: Record<string, number>): Savings {
+/** Estimate time (+ money when configured) from the raw counters map (missing names → 0). */
+export function computeSavings(counters: Record<string, number>, rate: SavingsRate = {}): Savings {
   const nn = (v: number | undefined) => (Number.isFinite(v) && (v as number) > 0 ? Math.trunc(v as number) : 0)
   const docs = nn(counters.docs)
   const lines = nn(counters.lines)
   const created = nn(counters.created)
   const minutesSaved = docs * SAVINGS_MODEL.minutesPerDoc + lines * SAVINGS_MODEL.minutesPerLine
-  const moneySaved = Math.round((minutesSaved / 60) * SAVINGS_MODEL.ratePerHour)
-  return { docs, lines, created, minutesSaved, moneySaved, currency: SAVINGS_MODEL.currency }
+  // Both halves required: a rate without a currency prints a bare number whose unit the reader
+  // has to guess — the same failure we are fixing, one step milder.
+  const perHour = Number(rate.ratePerHour)
+  const currency = typeof rate.currency === 'string' && /^[A-Z]{3}$/.test(rate.currency) ? rate.currency : null
+  const priced = Number.isFinite(perHour) && perHour > 0 && currency !== null
+  return {
+    docs,
+    lines,
+    created,
+    minutesSaved,
+    moneySaved: priced ? Math.round((minutesSaved / 60) * perHour) : null,
+    currency: priced ? currency : null
+  }
 }
 
 /** Format minutes as a compact RU duration: «2 ч 15 мин», «45 мин», «0 мин». */

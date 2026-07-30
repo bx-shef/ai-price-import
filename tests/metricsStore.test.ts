@@ -49,3 +49,87 @@ describe('resetCounters', () => {
     expect(calls[0]!.params).toEqual(['m42'])
   })
 })
+
+/**
+ * Cross-portal isolation (#270). The app is multitenant and the counters are user-visible, so this
+ * checks BEHAVIOUR on a toy table rather than the text of a query.
+ *
+ * The toy table interprets the statement instead of sniffing it for a substring: the INSERT's own
+ * column list and ON CONFLICT target decide the row key, and only a WHERE that is EXACTLY
+ * `member_id=$1` scopes a SELECT/DELETE. So all three ways of losing the scope go red —
+ * dropping member_id from the INSERT key, dropping the WHERE, and weakening it to
+ * `member_id=$1 OR true` (which a substring check would happily accept).
+ */
+function memoryTable() {
+  const rows: Array<Record<string, string | number>> = []
+  const cols = (sql: string, after: RegExp) => (sql.match(after)?.[1] ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  /** `true` only for a WHERE that scopes to the caller's portal and nothing else. */
+  const scoped = (sql: string) => {
+    const where = sql.split(/\bWHERE\b/i)[1]
+    return where !== undefined && where.replace(/\s+/g, '') === 'member_id=$1'
+  }
+  const q = async (sql: string, params: unknown[] = []) => {
+    const member = String(params[0] ?? '')
+    if (/^\s*INSERT INTO metrics_counter/i.test(sql)) {
+      // Build the row from the columns the statement actually names, then apply ON CONFLICT over
+      // the conflict target it actually declares — so a lost `member_id` in either place shows up.
+      const names = cols(sql, /INSERT INTO metrics_counter\s*\(([^)]*)\)/i)
+      const key = cols(sql, /ON CONFLICT\s*\(([^)]*)\)/i)
+      const row: Record<string, string | number> = {}
+      names.forEach((c, i) => {
+        row[c] = c === 'value' ? Number(params[i]) : String(params[i])
+      })
+      const hit = rows.find(r => key.every(k => r[k] === row[k]))
+      if (hit) hit.value = Number(hit.value) + Number(row.value)
+      else rows.push(row)
+      return { rows: [] }
+    }
+    if (/^\s*SELECT/i.test(sql)) {
+      const visible = scoped(sql) ? rows.filter(r => r.member_id === member) : rows
+      return { rows: visible.map(r => ({ name: r.name, value: r.value })) }
+    }
+    if (/^\s*DELETE/i.test(sql)) {
+      const doomed = scoped(sql) ? (r: Record<string, string | number>) => r.member_id === member : () => true
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (doomed(rows[i]!)) rows.splice(i, 1)
+      }
+      return { rows: [] }
+    }
+    throw new Error(`unexpected sql: ${sql}`)
+  }
+  return q
+}
+
+describe('метрики двух порталов не пересекаются', () => {
+  it('запись на портале A не меняет счётчики портала B', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.docs, 3, q)
+    await bumpCounter('B', METRICS.docs, 1, q)
+    await bumpCounter('A', METRICS.docs, 2, q)
+    expect(await readCounters('A', q)).toEqual({ docs: 5 })
+    expect(await readCounters('B', q)).toEqual({ docs: 1 })
+  })
+
+  it('чтение отдаёт только свои счётчики', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.created, 7, q)
+    await bumpCounter('B', METRICS.errors, 9, q)
+    expect(await readCounters('A', q)).toEqual({ created: 7 })
+    expect(await readCounters('B', q)).toEqual({ errors: 9 })
+  })
+
+  it('сброс на портале A не задевает соседа', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.lines, 4, q)
+    await bumpCounter('B', METRICS.lines, 4, q)
+    await resetCounters('A', q)
+    expect(await readCounters('A', q)).toEqual({})
+    expect(await readCounters('B', q)).toEqual({ lines: 4 })
+  })
+
+  it('отзыв 👍 с портала A не попадает в счётчики B', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.feedbackUp, 1, q)
+    expect(await readCounters('B', q)).toEqual({})
+  })
+})
