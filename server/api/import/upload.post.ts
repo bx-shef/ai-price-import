@@ -91,7 +91,10 @@ export default defineEventHandler(async (event) => {
       // key is member-scoped, so it can only touch the caller's own portal namespace.
       const clientJobId = form?.find(p => p.name === 'jobId')?.data?.toString('utf8').trim()
       const jobId = clientJobId && UUID_RE.test(clientJobId) ? clientJobId : randomUUID()
-      await createJob(member.memberId, jobId, file.filename, jobRedis, manualOverride)
+      // Who uploaded it — so a failure can be told to THEM personally, not just left in a list they
+      // may never reopen (бэклог §1). Comes from the verified frame token's own `profile`, never
+      // from the request body. Never returned to the browser: it is only a chat address.
+      await createJob(member.memberId, jobId, file.filename, jobRedis, manualOverride, member.userId)
       await saveUpload(member.memberId, jobId, file.data, nodeFileIO)
       await enqueueExtract({ memberId: member.memberId, jobId, fileId: file.filename })
       return { jobId, status: 'queued' }

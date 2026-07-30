@@ -4,7 +4,7 @@ import { connectionOptions } from './connection'
 import { QUEUES } from './topology'
 import type { AgentJob, CrmSyncJob, EventJob, ExtractJob } from './topology'
 import { handleAgentRunJob, handleCrmSyncJob, handleEventJob, handleFileExtractJob } from './handlers'
-import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveEventDeps, liveFileExtractDeps, type LiveInfra } from './liveDeps'
+import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveEventDeps, liveFileExtractDeps, notifyImportFailure, type LiveInfra } from './liveDeps'
 import { getManualOverride, setJobStatus } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
 import { describeImportFailure } from '~/utils/importFailure'
@@ -226,6 +226,9 @@ function onExhausted(
       reason = `Не удалось обработать документ. Попробуйте загрузить файл снова; если повторится — покажите это сообщение администратору. Подробности: ${raw}`
     }
     await setJobStatus(data.memberId, data.jobId, 'error', reason, jobRedis).catch(() => {})
+    // Tell the person who uploaded it + the error chat (бэклог §1). Retries are spent; nothing else
+    // will run for this job, so if we stay quiet the failure lives only in that person's own list.
+    await notifyImportFailure(infra, data.memberId, data.jobId, reason)
     if (cleanup) await cleanup({ memberId: data.memberId, jobId: data.jobId }).catch(() => {})
   })
 }

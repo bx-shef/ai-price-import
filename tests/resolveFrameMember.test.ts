@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { resolveFrameMember, verifyFrameToken } from '../server/utils/resolveFrameMember'
+import { profileUserId, resolveFrameMember, verifyFrameToken } from '../server/utils/resolveFrameMember'
 import type { RestCall } from '../server/utils/b24Rest'
 
 const auth = { accessToken: 'tok', domain: 'p.bitrix24.by' }
@@ -15,11 +15,11 @@ function query(rows: Array<Record<string, unknown>>) {
 
 describe('verifyFrameToken (token-only; no member_id / install dependency)', () => {
   it('ok + admin:false for a valid non-admin token', async () => {
-    expect(await verifyFrameToken(auth, { makeCall: makeCall(okProfile) })).toEqual({ ok: true, admin: false })
+    expect(await verifyFrameToken(auth, { makeCall: makeCall(okProfile) })).toEqual({ ok: true, admin: false, userId: '1' })
   })
   it('ok + admin:true when profile.ADMIN is true', async () => {
     const admin: RestCall = async () => ({ ID: '1', ADMIN: true })
-    expect(await verifyFrameToken(auth, { makeCall: makeCall(admin) })).toEqual({ ok: true, admin: true })
+    expect(await verifyFrameToken(auth, { makeCall: makeCall(admin) })).toEqual({ ok: true, admin: true, userId: '1' })
   })
   it('does NOT require an installed portal (no token store) — a valid admin passes with no query', async () => {
     const admin: RestCall = async () => ({ ADMIN: true })
@@ -37,13 +37,13 @@ describe('verifyFrameToken (token-only; no member_id / install dependency)', () 
 describe('resolveFrameMember', () => {
   it('verifies token then resolves member_id by domain (non-admin caller ⇒ admin:false)', async () => {
     const r = await resolveFrameMember(auth, { makeCall: makeCall(okProfile), query: query([{ member_id: 'm42' }]) })
-    expect(r).toEqual({ ok: true, memberId: 'm42', admin: false })
+    expect(r).toEqual({ ok: true, memberId: 'm42', admin: false, userId: '1' })
   })
 
   it('exposes admin:true when profile.ADMIN is true (drives the server-side admin gate)', async () => {
     const admin: RestCall = async () => ({ ID: '1', ADMIN: true })
     const r = await resolveFrameMember(auth, { makeCall: makeCall(admin), query: query([{ member_id: 'm42' }]) })
-    expect(r).toEqual({ ok: true, memberId: 'm42', admin: true })
+    expect(r).toEqual({ ok: true, memberId: 'm42', admin: true, userId: '1' })
   })
 
   it('401 when the token is rejected (auth error)', async () => {
@@ -72,7 +72,7 @@ describe('resolveFrameMember', () => {
     // domain is bare lower-case. Normalisation must let them still match.
     const variant = { accessToken: 'tok', domain: 'BEL.Bitrix24.by/' }
     const r = await resolveFrameMember(variant, { makeCall: makeCall(okProfile), query: q })
-    expect(r).toEqual({ ok: true, memberId: 'm42', admin: false })
+    expect(r).toEqual({ ok: true, memberId: 'm42', admin: false, userId: '1' })
     // getMemberIdByDomain must be queried with the bare lower-case host.
     expect(q).toHaveBeenCalledWith(expect.any(String), ['bel.bitrix24.by'])
   })
@@ -89,5 +89,33 @@ describe('resolveFrameMember', () => {
     const blip: RestCall = () => Promise.reject(new Error('QUERY_LIMIT_EXCEEDED'))
     const r = await resolveFrameMember(auth, { makeCall: makeCall(blip), query: query([{ member_id: 'm' }]) })
     expect(r.status).toBe(502)
+  })
+})
+
+// Кто загрузил документ — чтобы об отказе сказать ему лично (бэклог §1). Значение уходит в
+// DIALOG_ID личного чата, поэтому берём только то, что заведомо является идентификатором.
+describe('profileUserId', () => {
+  it('строка и число одинаково дают идентификатор — порталы отвечают по-разному', () => {
+    expect(profileUserId('42')).toBe('42')
+    expect(profileUserId(42)).toBe('42')
+  })
+  it('всё, что не положительное целое, отбрасываем, а не угадываем', () => {
+    for (const bad of [undefined, null, '', '0', 0, -1, 1.5, 'abc', 'chat7', {}, []]) {
+      expect(profileUserId(bad)).toBeUndefined()
+    }
+  })
+})
+
+describe('кого записываем как загрузившего', () => {
+  it('идентификатор берётся из profile проверенного токена, а не из запроса', async () => {
+    const profile: RestCall = async () => ({ ID: 77, ADMIN: false })
+    const r = await resolveFrameMember(auth, { makeCall: makeCall(profile), query: query([{ member_id: 'm42' }]) })
+    expect(r.userId).toBe('77')
+  })
+  it('портал не отдал ID — просто некому писать, отказа нет', async () => {
+    const profile: RestCall = async () => ({ ADMIN: false })
+    const r = await resolveFrameMember(auth, { makeCall: makeCall(profile), query: query([{ member_id: 'm42' }]) })
+    expect(r.ok).toBe(true)
+    expect(r.userId).toBeUndefined()
   })
 })

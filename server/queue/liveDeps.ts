@@ -8,7 +8,7 @@ import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
-import { claimJobNotify, getDiskFileUrl, getManualOverride, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
+import { claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
@@ -28,7 +28,7 @@ import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
 import { buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
-import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
+import { buildErrorMessage, buildFailureChatMessage, buildSuccessMessage, buildUploaderFailureMessage, sendChatMessage } from '../utils/chatNotify'
 import { extractText } from '../utils/textExtract'
 import { readFile } from 'node:fs/promises'
 import { uploadPath } from '../utils/fileStore'
@@ -157,6 +157,54 @@ export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
 }
 
 /** file-extract deps: real extract runners + text store + queue + status. */
+/**
+ * Tell the person whose document failed — and the admin's error chat (бэклог §1 «связь с
+ * сотрудником»). Until now a failure outside crm-sync was visible ONLY in that person's own list of
+ * operations, which they see only if they happen to reopen the app.
+ *
+ * Two addressees, on purpose:
+ *  • the uploader, personally (DIALOG_ID = their portal user id — confirmed by the REST docs);
+ *  • the configured error chat, so the admin sees it without opening the console.
+ *
+ * `alsoErrorChat` is false for the ONE path that already reported itself — a crm-sync hard error
+ * (wrong VAT/currency) posts through `reportErrors` before returning, and a second message would
+ * say the same thing twice.
+ *
+ * Once-only per job: extract/agent can fail immediately AND a redelivery can exhaust retries, and
+ * nobody wants the same failure twice. Best-effort throughout — a chat hiccup must not turn a
+ * recorded failure into an unrecorded one.
+ */
+export async function notifyImportFailure(
+  infra: LiveInfra,
+  memberId: string,
+  jobId: string,
+  reason: string,
+  opts: { alsoErrorChat?: boolean } = {}
+): Promise<void> {
+  try {
+    if (!(await claimJobFailNotify(memberId, jobId, jobRedis))) return
+    const [job, uploaderId] = await Promise.all([
+      getJob(memberId, jobId, jobRedis),
+      getUploaderId(memberId, jobId, jobRedis)
+    ])
+    const fileName = job?.fileName ?? ''
+    const rest = restResolver(infra)
+    const t = await rest(memberId)
+    if (!t) return // portal uninstalled / no token — nothing to send with
+    if (uploaderId) {
+      await sendChatMessage(uploaderId, buildUploaderFailureMessage(fileName, reason), t.call)
+    }
+    if (opts.alsoErrorChat !== false) {
+      const mapping = await readMapping(t.call).catch(() => defaultMapping())
+      if (mapping.errorChatId) {
+        await sendChatMessage(mapping.errorChatId, buildFailureChatMessage(fileName, reason), t.call)
+      }
+    }
+  } catch {
+    // Best-effort: the job status is already recorded, and the person still sees it in the app.
+  }
+}
+
 export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
   return {
     // Bytes live at uploadPath(member, job); fileId is the original filename, used
@@ -164,7 +212,10 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
     extractText: (m, j, fileId) => extractText(uploadPath(m, j), fileId, infra.runners),
     saveText: (m, j, text) => saveText(m, j, text, infra.query),
     enqueueAgentRun: (m, j) => enqueueAgent({ memberId: m, jobId: j }),
-    failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, jobRedis),
+    failJob: async (m, j, reason) => {
+      await setJobStatus(m, j, 'error', reason, jobRedis)
+      await notifyImportFailure(infra, m, j, reason)
+    },
     markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', jobRedis),
     // Archive the source file to the portal's common Disk when `saveFile` is on. One transport
     // is resolved and shared by the mapping read and the Disk upload (no double token-load); the
@@ -200,7 +251,10 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
     },
     saveDocument: (m, j, stored) => saveDocument(m, j, stored, infra.query),
     enqueueCrmSync: (m, j) => enqueueCrmSync({ memberId: m, jobId: j }),
-    failJob: (m, j, reason) => setJobStatus(m, j, 'error', reason, jobRedis),
+    failJob: async (m, j, reason) => {
+      await setJobStatus(m, j, 'error', reason, jobRedis)
+      await notifyImportFailure(infra, m, j, reason)
+    },
     // Operator's manual import target (set at upload) → RoutingSignals.manualOverride, which
     // resolveTarget applies with top priority over the routing rules (#135 routing slice 2).
     getManualOverride: (m, j) => getManualOverride(m, j, jobRedis),
@@ -325,6 +379,9 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     reportErrors: async (messages, supplierName) => {
       if (!messages.length) return
       await bumpCounter(memberId, METRICS.errors, 1, infra.query)
+      // The uploader hears about it too — but NOT a second error-chat message: this branch posts
+      // its own below, and the same failure twice in one chat reads as two failures.
+      await notifyImportFailure(infra, memberId, jobId, messages[0] ?? 'документ не удалось внести в CRM', { alsoErrorChat: false })
       // Deliver to the error chat (im.message.add, BB-neutralised). Best-effort:
       // a chat failure must not mask the underlying import error.
       if (mapping.errorChatId) {

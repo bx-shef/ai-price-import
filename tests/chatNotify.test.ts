@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  MAX_FAILURE_REASON,
   buildErrorMessage,
+  buildFailureChatMessage,
   buildSuccessMessage,
+  buildUploaderFailureMessage,
   entityChatLink,
   entityLink,
   neutralizeBb,
@@ -107,5 +110,44 @@ describe('sendChatMessage', () => {
   it('returns null on a non-numeric result', async () => {
     const call = vi.fn(async () => ({} as unknown))
     expect(await sendChatMessage('chat1', 'hi', call)).toBeNull()
+  })
+})
+
+// Бэклог §1 «связь с сотрудником»: раньше об отказе знал только тот, кто откроет своё окно списка.
+describe('buildUploaderFailureMessage', () => {
+  it('называет файл, причину и что делать', () => {
+    const m = buildUploaderFailureMessage('накладная.pdf', 'В портале нет ставки НДС 20%')
+    expect(m).toContain('«накладная.pdf»')
+    expect(m).toContain('В портале нет ставки НДС 20%')
+    expect(m).toContain('загрузить снова')
+  })
+
+  it('разметка из имени файла и причины обезврежена', () => {
+    // Имя приходит из загрузки, причина может цитировать портал — оба внешние.
+    const m = buildUploaderFailureMessage('[URL=http://evil]клик[/URL].pdf', '[B]жирный[/B]')
+    expect(m).not.toContain('[URL=')
+    expect(m).not.toContain('[B]')
+  })
+
+  it('длинную причину режем — это личный чат, а не журнал', () => {
+    const m = buildUploaderFailureMessage('x.pdf', 'я'.repeat(MAX_FAILURE_REASON + 100))
+    expect(m.length).toBeLessThan(MAX_FAILURE_REASON + 200)
+  })
+
+  it('без имени и причины сообщение остаётся осмысленным', () => {
+    const m = buildUploaderFailureMessage('', '')
+    expect(m).toContain('документ')
+    expect(m).toContain('загрузить снова')
+  })
+})
+
+describe('buildFailureChatMessage', () => {
+  it('в чат ошибок — файл и причина, без имени сотрудника', () => {
+    const m = buildFailureChatMessage('счёт.pdf', 'портал отверг запись')
+    expect(m).toContain('«счёт.pdf»')
+    expect(m).toContain('портал отверг запись')
+  })
+  it('разметка обезврежена и здесь', () => {
+    expect(buildFailureChatMessage('[B]x[/B]', '[I]y[/I]')).not.toContain('[B]')
   })
 })
