@@ -337,13 +337,16 @@ watch(jobs, (list) => {
                     {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
                   </p>
                 </B24PageCard>
+                <!-- Деньги показываем, только если админ задал стоимость часа: валюта берётся
+                     из самого портала, выдумывать её нельзя (#270). Не задана — плитки просто нет. -->
                 <B24PageCard
+                  v-if="savings && savings.moneySaved !== null"
                   variant="tinted-no-accent"
                   title="Сэкономлено денег (примерно)"
                   :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
                 >
                   <p class="text-[22px] leading-tight font-semibold">
-                    {{ savings ? `${savings.moneySaved} ${savings.currency}` : '—' }}
+                    {{ savings.moneySaved }} {{ savings.currency }}
                   </p>
                 </B24PageCard>
               </B24PageGrid>

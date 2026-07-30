@@ -49,3 +49,71 @@ describe('resetCounters', () => {
     expect(calls[0]!.params).toEqual(['m42'])
   })
 })
+
+/**
+ * Изоляция порталов (#270). Приложение мультитенантное, метрики видит пользователь — поэтому
+ * проверяем не текст запроса, а ПОВЕДЕНИЕ на игрушечной таблице: она честно исполняет три
+ * наших запроса, но применяет отбор по порталу ТОЛЬКО если он реально есть в SQL. Пропадёт
+ * `WHERE member_id` — тест покраснеет, а сверка строк такое пропускала бы.
+ */
+function memoryTable() {
+  const rows: Array<{ member_id: string, name: string, value: number }> = []
+  const scoped = (sql: string) => /member_id\s*=\s*\$1/.test(sql)
+  const q = async (sql: string, params: unknown[] = []) => {
+    const member = String(params[0] ?? '')
+    if (/^\s*INSERT INTO metrics_counter/i.test(sql)) {
+      const name = String(params[1])
+      const by = Number(params[2])
+      // PRIMARY KEY (member_id, name) — конфликт только при совпадении ОБОИХ полей.
+      const hit = rows.find(r => r.member_id === member && r.name === name)
+      if (hit) hit.value += by
+      else rows.push({ member_id: member, name, value: by })
+      return { rows: [] }
+    }
+    if (/^\s*SELECT/i.test(sql)) {
+      return { rows: rows.filter(r => !scoped(sql) || r.member_id === member).map(r => ({ name: r.name, value: r.value })) }
+    }
+    if (/^\s*DELETE/i.test(sql)) {
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (!scoped(sql) || rows[i]!.member_id === member) rows.splice(i, 1)
+      }
+      return { rows: [] }
+    }
+    throw new Error(`unexpected sql: ${sql}`)
+  }
+  return q
+}
+
+describe('метрики двух порталов не пересекаются', () => {
+  it('запись на портале A не меняет счётчики портала B', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.docs, 3, q)
+    await bumpCounter('B', METRICS.docs, 1, q)
+    await bumpCounter('A', METRICS.docs, 2, q)
+    expect(await readCounters('A', q)).toEqual({ docs: 5 })
+    expect(await readCounters('B', q)).toEqual({ docs: 1 })
+  })
+
+  it('чтение отдаёт только свои счётчики', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.created, 7, q)
+    await bumpCounter('B', METRICS.errors, 9, q)
+    expect(await readCounters('A', q)).toEqual({ created: 7 })
+    expect(await readCounters('B', q)).toEqual({ errors: 9 })
+  })
+
+  it('сброс на портале A не задевает соседа', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.lines, 4, q)
+    await bumpCounter('B', METRICS.lines, 4, q)
+    await resetCounters('A', q)
+    expect(await readCounters('A', q)).toEqual({})
+    expect(await readCounters('B', q)).toEqual({ lines: 4 })
+  })
+
+  it('отзыв 👍 с портала A не попадает в счётчики B', async () => {
+    const q = memoryTable()
+    await bumpCounter('A', METRICS.feedbackUp, 1, q)
+    expect(await readCounters('B', q)).toEqual({})
+  })
+})

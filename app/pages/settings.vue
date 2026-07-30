@@ -85,7 +85,8 @@ const openSections = ref(['0'])
 const sections = computed(() => [
   { label: 'Куда импортировать', slot: 'routing' },
   { label: 'Товары и единицы', slot: 'products' },
-  { label: 'Файл и уведомления', slot: 'notify' }
+  { label: 'Файл и уведомления', slot: 'notify' },
+  { label: 'Экономия', slot: 'savings' }
 ] satisfies AccordionItem[])
 
 // Supplier-article field: searchable picker over the portal's catalog product
@@ -125,6 +126,19 @@ const notifyChatId = computed<string | undefined>({
 const errorChatId = computed<string | undefined>({
   get: () => mapping.value.errorChatId || undefined,
   set: (v) => { mapping.value.errorChatId = v || undefined }
+})
+
+// Hourly rate for the «Сэкономлено денег» tile (#270). Text input (a bare number), because the
+// currency is NOT chosen here — it is the portal's own base currency, read server-side. Empty /
+// non-positive clears the key entirely, and the dashboard falls back to showing time only.
+const savingsRate = computed<string>({
+  get: () => (mapping.value.savings?.ratePerHour ? String(mapping.value.savings.ratePerHour) : ''),
+  set: (v) => {
+    const n = Number(String(v).replace(',', '.').trim())
+    mapping.value.savings = Number.isFinite(n) && n > 0
+      ? { ratePerHour: Math.min(Math.round(n * 100) / 100, MAX_SAVINGS_RATE) }
+      : undefined
+  }
 })
 
 // Seed each picker's selected option so a SAVED id shows before the chat list is fetched
@@ -497,6 +511,25 @@ const ON_MISSING_ITEMS = [
                 />
                 <p class="mt-1 text-xs text-(--ui-color-base-3)">
                   Сюда придёт сообщение, если документ внести не удалось — например, в портале нет нужной ставки НДС или валюты. Не выбирайте чат, если уведомления не нужны.
+                </p>
+              </B24FormField>
+            </div>
+          </template>
+
+          <template #savings>
+            <div class="space-y-6 pt-2">
+              <B24FormField label="Стоимость часа работы сотрудника">
+                <B24Input
+                  v-model="savingsRate"
+                  placeholder="например, 20"
+                  inputmode="decimal"
+                  class="w-40"
+                />
+                <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                  Нужна только для плитки «Сэкономлено денег»: приложение умножит сэкономленное время
+                  на эту ставку. Считаем в базовой валюте вашего портала — её приложение берёт из
+                  Битрикс24, вводить не нужно. Оставьте поле пустым, если денежная оценка не нужна:
+                  тогда на экране останется только сэкономленное время.
                 </p>
               </B24FormField>
             </div>
