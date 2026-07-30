@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import AttachIcon from '@bitrix24/b24icons-vue/outline/AttachIcon'
-import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, formatBytes, validateUploadFile } from '~/utils/importUpload'
+import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_GENERIC_ERROR, formatBytes, validateUploadFile, type UploadOutcome } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
 
 // Manual, one-by-one import staging (owner rework): picking files STAGES them into a list (no auto
@@ -29,7 +29,7 @@ interface StagedFile {
   invalid?: boolean
 }
 
-const props = defineProps<{ upload: (file: File, target?: TargetRef | null, jobId?: string) => Promise<boolean> }>()
+const props = defineProps<{ upload: (file: File, target?: TargetRef | null, jobId?: string) => Promise<UploadOutcome> }>()
 // Surface the «идёт импорт» state to the parent so it can BLOCK the rest of the UI (recent-operations
 // list, metrics) while files upload — the operator shouldn't touch those mid-run (owner ask).
 const emit = defineEmits<{ 'update:busy': [boolean] }>()
@@ -140,6 +140,7 @@ async function startImport(): Promise<void> {
   // (via update:busy) on the rest of /app. If anything below ever threw, the flag would stay `true` and
   // the page would look alive but ignore every click — the exact symptom reported in #258. `upload()`
   // swallows its own errors today, so this is a backstop, not a fix for a known throw.
+  let stopped = false
   try {
   // ONE BY ONE — sequential, no parallel load (owner ask: «мне нагрузка не нужна»).
     for (const s of queue) {
@@ -153,8 +154,8 @@ async function startImport(): Promise<void> {
       notice.value = `Импортируем «${s.file.name}»…`
       // Pass the row's stable key as the desired jobId → a retry of THIS row reuses it and can't create
       // a duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
-      const success = await props.upload(s.file, s.target, s.key)
-      if (success) {
+      const outcome = await props.upload(s.file, s.target, s.key)
+      if (outcome.ok) {
         ok++
         // Отправленная строка уходит из списка СРАЗУ (#261). Пока она в нём висела, дедуп по имени
         // считал её «уже добавленной», и тот же файл нельзя было залить повторно, не убрав строку
@@ -165,10 +166,18 @@ async function startImport(): Promise<void> {
         staged.value = staged.value.filter(x => x !== s)
       } else {
         s.status = 'error'
-        s.error = 'Не удалось отправить файл — проверьте связь и нажмите «Импортировать» ещё раз.'
+        s.error = outcome.message || UPLOAD_GENERIC_ERROR
+        // Отказ «слишком часто» — про человека, а не про файл: следующая строка упрётся в то же
+        // самое. Останавливаем пачку, иначе цикл перебирал бы её всю, обвиняя связь.
+        if (outcome.stop) {
+          stopped = true
+          break
+        }
       }
     }
-    notice.value = `Отправили в CRM ${ok} из ${attempted}. Что с ними дальше — смотрите ниже, в блоке «Последние операции».`
+    notice.value = stopped
+      ? `Отправили в CRM ${ok} из ${attempted}, остальные ждут. ${staged.value.find(x => x.error)?.error ?? ''}`.trim()
+      : `Отправили в CRM ${ok} из ${attempted}. Что с ними дальше — смотрите ниже, в блоке «Последние операции».`
   } catch {
     // `upload()` handles its own errors today, so reaching here means something unexpected broke.
     // Swallow it into a visible notice instead of letting it escape the click handler as an

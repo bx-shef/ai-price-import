@@ -12,6 +12,7 @@ import { parseManualTarget } from '~/utils/manualTarget'
 import { bodySizeStatus, edgeSecurityEnabled } from '../../utils/edgeSecurity'
 import { withFrameRouteSpan } from '../../utils/frameRouteSpan'
 import { query } from '../../db/client'
+import { checkUploadRate, uploadRateMessage } from '../../utils/uploadRateLimit'
 
 /** A plain UUID (v1–v5) — the only shape accepted for a client-supplied jobId (Redis key safety). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -41,12 +42,28 @@ export default defineEventHandler(async (event) => {
       }
 
       // Refuse early if the pipeline can't run — otherwise we'd store bytes + a job that
-      // never processes (orphaned file, job stuck 'queued').
+      // never processes (orphaned file, job stuck 'queued'). Checked BEFORE the rate limit so a
+      // refusal we caused ourselves does not spend the caller's quota.
       if (!queueEnabled()) {
         span.outcome = 'unavailable'
         setResponseStatus(event, 503)
         return { error: 'сервис обработки временно недоступен' }
       }
+
+      // Bound how fast one person can submit (PROCESS.md §6.8). Checked right after the identity is
+      // proven and BEFORE the body is buffered — refusing after reading 25 МБ would do the work the
+      // limit exists to avoid. Keyed per portal user, so one colleague's batch cannot throttle another.
+      const rate = checkUploadRate(member.memberId, member.userId, Date.now())
+      if (!rate.allowed) {
+        // Its OWN outcome, not 'forbidden': lumping it with the admin gate would make «нас душит
+        // лимит» indistinguishable from «этот сотрудник не админ» in telemetry — and the rate of
+        // this refusal is exactly what tells us whether the threshold is set right.
+        span.outcome = 'rate_limited'
+        setResponseStatus(event, 429)
+        setResponseHeader(event, 'retry-after', Math.ceil(rate.retryAfterMs / 1000))
+        return { error: uploadRateMessage(rate.retryAfterMs) }
+      }
+
       // Pre-check the declared size before buffering the whole multipart body (DoS). On the no-nginx
       // target (edge security on) also require a Content-Length — a chunked body with none would buffer
       // unbounded (nginx's client_max_body_size backstop is absent). Behind nginx nginx handles it.

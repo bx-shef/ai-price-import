@@ -220,7 +220,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     `crm-stages`, `feedback`, `import/metrics`, `import/metrics-reset`, `import/status`, `import/upload`) — через
     общий хелпер `withFrameRouteSpan` (`server/utils/frameRouteSpan.ts`: мутабельный `span.outcome` в хендлере,
     `portal.hash` считается в finalize → zero-cost при выкле): латентность + `http.outcome` (`ok`/`no_auth`/
-    `auth_failed`/`forbidden`/`bad_request`/`conflict`/`unavailable`/`upstream_error`/`no_db`) + `portal.hash` (по
+    `auth_failed`/`forbidden`/`rate_limited`/`bad_request`/`conflict`/`unavailable`/`upstream_error`/`no_db`) + `portal.hash` (по
     домену) — тело запроса/ответа (маппинг/комментарий/файл/id заданий/названия чатов) в спан **не** кладётся.
     (Публичный вебхук `/api/b24/events` покрыт job-спаном очереди `b24-events`; **клиентские** pull/слайдер спанами
     не покрыты — серверная OTel, браузерного RUM нет.) **PII-защита тройная:** allowlist

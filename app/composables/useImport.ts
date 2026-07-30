@@ -6,6 +6,7 @@ import { nextPollDelay } from '~/utils/pollBackoff'
 import { addImportJob, clearImportHistory, importJobIds, readHistory, removeImportJob } from '~/utils/importHistory'
 import { mergeJobRows } from '~/utils/importMerge'
 import { truncationWarning } from '~~/server/utils/importStatusIds'
+import { classifyUploadError, type UploadOutcome } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
 
 // In-portal import client: upload a document and poll job status via the frame-token
@@ -123,11 +124,13 @@ export function useImport() {
     }
   }
 
-  async function upload(file: File, target?: TargetRef | null, jobId?: string): Promise<boolean> {
+  async function upload(file: File, target?: TargetRef | null, jobId?: string): Promise<UploadOutcome> {
     const h = await headers()
     if (!h) {
-      error.value = 'Импорт доступен только внутри портала Bitrix24'
-      return false
+      const msg = 'Импорт доступен только внутри портала Bitrix24'
+      error.value = msg
+      // Не про файл, а про то, где мы открыты: остальные строки упрутся в то же самое.
+      return { ok: false, stop: true, message: msg }
     }
     uploading.value = true
     // A client-supplied jobId (stable per staged file) makes a retry idempotent AND lets us record the
@@ -147,10 +150,13 @@ export function useImport() {
       if (!clientJob && typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name, Date.now(), auth()?.domain)
       await refresh()
       scheduleNext() // the new job is queued → start following its progress
-      return true
+      return { ok: true, stop: false }
     } catch (e) {
-      error.value = fetchErrorMessage(e, 'Загрузка не удалась — проверьте формат и размер файла')
-      return false
+      const msg = fetchErrorMessage(e, 'Загрузка не удалась — проверьте формат и размер файла')
+      error.value = msg
+      // The staging loop needs more than «не вышло»: on a rate-limit refusal it must stop the batch
+      // and show the server's own wording (it says how long to wait), not «проверьте связь».
+      return classifyUploadError(e, msg)
     } finally {
       uploading.value = false
     }
