@@ -8,7 +8,7 @@ import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
-import { claimErrorChatWindow, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
+import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
@@ -187,10 +187,10 @@ export async function notifyImportFailure(
     const uploaderId = await getUploaderId(memberId, jobId, jobRedis)
     const mapping = opts.mapping ?? await readMapping(t.call).catch(() => defaultMapping())
     const errorChatId = mapping.errorChatId ?? null
-    // The shared chat gets a quiet period; the person still hears about their own document. See
-    // claimErrorChatWindow — correlated failures used to mean one message per document.
-    const errorChatThrottled = !!errorChatId
-      && !(await claimErrorChatWindow(memberId, infra.now(), jobRedis))
+    // No quiet period on the error chat (owner's call): the admin is told about EVERY failed
+    // document. Repetition is the signal — ten identical messages mean a systemic break, and a
+    // throttle that hid nine of them would hide exactly that. Duplicates for the SAME job are still
+    // impossible (claimJobFailNotify above); what repeats is distinct documents.
     const planned = planFailureNotify({
       claimed: true,
       uploaderId,
@@ -198,7 +198,6 @@ export async function notifyImportFailure(
       reason,
       errorChatId,
       alsoErrorChat: opts.alsoErrorChat !== false,
-      errorChatThrottled,
       jobId,
       appUrl: appImportUrl()
     })
@@ -404,10 +403,14 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       await notifyImportFailure(infra, memberId, jobId, messages.join('; ') || 'документ не удалось внести в CRM', { alsoErrorChat: false, rest, mapping })
       // Deliver to the error chat (im.message.add, BB-neutralised). Best-effort:
       // a chat failure must not mask the underlying import error.
+      // Claimed once per job, and only AFTER a transport exists — a redelivered job must not post
+      // the same failure twice, and a missing token must not burn the right to post it at all.
       if (mapping.errorChatId) {
         try {
           const t = await rest(memberId)
-          if (t) await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call)
+          if (t && await claimJobErrorChat(memberId, jobId, jobRedis)) {
+            await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call)
+          }
         } catch { /* swallow — dashboard counter already bumped */ }
       }
     },

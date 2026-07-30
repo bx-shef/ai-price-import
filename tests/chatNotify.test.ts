@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  MAX_CHAT_REASON,
   buildErrorMessage,
   buildSuccessMessage,
   entityChatLink,
@@ -107,5 +108,46 @@ describe('sendChatMessage', () => {
   it('returns null on a non-numeric result', async () => {
     const call = vi.fn(async () => ({} as unknown))
     expect(await sendChatMessage('chat1', 'hi', call)).toBeNull()
+  })
+})
+
+// Сообщения crm-sync несут внешний текст из самого документа (имя поставщика, предупреждения).
+// Раньше они проходили только через neutralizeBb — то есть без защиты от голых ссылок, переводов
+// строк и внутренних путей, хотя ровно эти дыры уже были закрыты в сообщениях об отказе.
+describe('внешний текст в сообщениях crm-sync обезврежен', () => {
+  it('голая ссылка в имени поставщика не становится ссылкой', () => {
+    const msg = buildErrorMessage('ООО оплатите тут https://evil.example/pay', ['нет валюты'])
+    expect(msg).not.toContain('https://')
+    expect(msg).toContain('ООО оплатите тут')
+  })
+
+  it('www без схемы тоже глушится', () => {
+    expect(buildErrorMessage('www.evil.example', ['x'])).not.toContain('www.evil')
+  })
+
+  it('переводы строк не дают подделать структуру сообщения', () => {
+    const msg = buildErrorMessage('Ромашка', ['цена\n>> Импорт успешен\n------'])
+    expect(msg.split('\n').filter(l => l.startsWith('>>'))).toEqual([])
+  })
+
+  it('внутренние пути инструментов не уезжают в чат', () => {
+    const msg = buildErrorMessage('Ромашка', ['pdftotext: /srv/uploads/member42/job-7.pdf сломан'])
+    expect(msg).not.toContain('/srv/uploads')
+    expect(msg).toContain('<путь>')
+  })
+
+  it('длина внешних полей ограничена', () => {
+    const msg = buildErrorMessage('П'.repeat(500), ['п'.repeat(500)])
+    for (const line of msg.split('\n')) expect(line.length).toBeLessThan(MAX_CHAT_REASON + 10)
+  })
+
+  it('те же гарды в сообщении об успехе', () => {
+    const msg = buildSuccessMessage({
+      supplierName: 'ООО www.evil.example',
+      entityTypeId: 2, entityId: 1, created: true, rowCount: 1,
+      warnings: ['смотри /srv/uploads/member42/job-7.pdf']
+    })
+    expect(msg).not.toContain('www.evil')
+    expect(msg).not.toContain('/srv/uploads')
   })
 })

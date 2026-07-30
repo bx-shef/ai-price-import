@@ -186,24 +186,21 @@ export async function claimJobFailNotify(memberId: string, jobId: string, redis:
   return redis.claim(jobKey(memberId, jobId), 'failNotified', JOB_TTL_MS)
 }
 
-/** How long one portal's error chat stays quiet after a failure message. */
-export const FAILURE_CHAT_WINDOW_MS = 5 * 60 * 1000
-
 /**
- * Claim the RIGHT TO WRITE to a portal's error chat, once per window.
+ * Same once-only claim for the error-chat message that the crm-sync branch posts ITSELF.
  *
- * Failures arrive correlated, not one at a time: a missing currency or a dead extractor fails every
- * document in a batch identically. Without this, ten photos meant ten identical messages in the
- * admin's chat — and any portal user could aim that at the admin by uploading junk, since there is
- * no rate limit on upload. The employee still hears about EVERY one of their own documents; it is
- * the shared chat that gets a quiet period.
- *
- * Keyed per portal per time bucket, so the claim expires by itself — no cleanup, no stored state.
+ * That message is built and sent outside `notifyImportFailure`, so the `failNotified` claim never
+ * covered it: a stalled crm-sync job redelivered by BullMQ re-ran the same deterministic pre-pass
+ * («нет ставки НДС») and posted a second identical message, while the employee's DM was correctly
+ * suppressed — the two channels disagreed about how many times the document had failed.
  */
-export async function claimErrorChatWindow(memberId: string, nowMs: number, redis: JobRedis): Promise<boolean> {
-  const bucket = Math.floor(nowMs / FAILURE_CHAT_WINDOW_MS)
-  return redis.claim(`import:failchat:${memberId}:${bucket}`, 'sent', FAILURE_CHAT_WINDOW_MS)
+export async function claimJobErrorChat(memberId: string, jobId: string, redis: JobRedis): Promise<boolean> {
+  return redis.claim(jobKey(memberId, jobId), 'errorChatSent', JOB_TTL_MS)
 }
+
+// There is deliberately NO per-portal quiet period on the error chat (owner's decision): the admin
+// hears about every failed document, because a run of identical messages is itself the diagnosis.
+// Per-JOB duplicates are prevented by `claimJobFailNotify` above.
 
 function mapJob(memberId: string, jobId: string, h: Record<string, string>): ImportJob {
   // Surface the archived Disk file as a same-portal RELATIVE path (never off-portal) so the UI can

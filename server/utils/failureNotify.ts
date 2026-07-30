@@ -5,38 +5,9 @@
 // this logic inline in the wiring, where a review found five silent mutations — including one that
 // double-posted the crm-sync failure into the error chat.
 
-import { neutralizeBb } from './chatNotify'
-
-/** Cap on the file name inside a chat message. Names come from the upload and are unbounded. */
-export const MAX_CHAT_FILE_NAME = 80
-/** Cap on the reason. It can quote the portal; a wall of text in a personal chat helps nobody. */
-export const MAX_CHAT_REASON = 200
-
-/**
- * Make external text safe for a Bitrix24 chat message.
- *
- * Three separate hazards, all from strings a portal user controls (a file name is whatever they
- * saved the file as; a reason can quote the portal or a tool):
- *
- *  1. **BB-разметка** — `neutralizeBb` folds the brackets, which kills `[URL=]`, `[USER=]`,
- *     `[SEND=]` and the rest of the bracketed set.
- *  2. **Голая ссылка** — messengers linkify `https://…` and `www.` with no markup at all. A file
- *     named «Счёт №77 оплатите тут https://…» turned the app itself into the sender of a phishing
- *     link in the admin's chat, which is worse than the same text from a colleague. The scheme's
- *     colon and the `www` dot are replaced with look-alike characters: still readable, no longer a
- *     link.
- *  3. **Переводы строк** — Bitrix24 treats a line starting with `>>` as a quote and a line of
- *     dashes as a divider, so injected newlines let external text fake message structure. Collapsed
- *     to spaces; we control the line breaks in these messages ourselves.
- */
-export function chatSafeText(raw: unknown, max: number): string {
-  return neutralizeBb(String(raw ?? ''))
-    .replace(/\s+/g, ' ')
-    .replace(/\bhttps?:\/\//gi, m => m.replace(':', '：'))
-    .replace(/\bwww\./gi, 'www․')
-    .trim()
-    .slice(0, max)
-}
+// `chatSafeText` and the caps live in chatNotify.ts — the same guard has to cover the crm-sync
+// success/error messages too, and two copies of a sanitiser drift.
+import { MAX_CHAT_FILE_NAME, MAX_CHAT_REASON, chatSafeText } from './chatNotify'
 
 /** Prefixes of reasons that carry tool output rather than an explanation for a human. */
 const TECHNICAL_PREFIX = 'извлечение текста:'
@@ -76,8 +47,6 @@ export interface FailureNotifyInput {
   errorChatId: string | null
   /** False on the one path that posts its own error-chat message (crm-sync hard errors). */
   alsoErrorChat: boolean
-  /** True when the error chat already had a message recently — see the throttle in liveDeps. */
-  errorChatThrottled?: boolean
   /** Job id — the admin's only handle for correlating a failure; there is no server-side job list. */
   jobId: string
   /** Absolute app URL, when known, so the person can get back without hunting for the app. */
@@ -109,7 +78,7 @@ export function planFailureNotify(input: FailureNotifyInput): PlannedMessage[] {
     out.push({ dialogId: input.uploaderId, message: lines.join('\n') })
   }
 
-  if (input.alsoErrorChat && input.errorChatId && !input.errorChatThrottled) {
+  if (input.alsoErrorChat && input.errorChatId) {
     const lines = [`⛔ Импорт не удался: «${name}».`]
     if (why) lines.push(why)
     // The id is anonymous — it identifies the import, not the person, and without it the admin has
