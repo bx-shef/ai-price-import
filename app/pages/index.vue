@@ -31,7 +31,7 @@ import { B24_BOOKING_URL } from '~/utils/booking'
 // it is absent both helpers fall back to the canonical landing home, so the tags are ALWAYS
 // absolute — this page is prerendered, so a relative og:image would be baked into the static HTML
 // and dropped by Facebook/LinkedIn (exactly the defect this replaces).
-const siteUrl = useRuntimeConfig().public.siteUrl as string
+const siteUrl = useRuntimeConfig().public.siteUrl
 const ogImage = ogImageUrl(siteUrl)
 const canonical = canonicalUrl('/', siteUrl)
 

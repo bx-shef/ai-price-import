@@ -79,13 +79,31 @@ export const LANDING_MARKET_URL = `https://www.bitrix24.ru/apps/app/${LANDING_MA
  *  handler, Vibecode target) — it just isn't allowed to decide whether og:image works at all. */
 export const LANDING_SITE_URL = 'https://price-import.bx-shef.by'
 
-/** Absolute site base for canonical/OG tags: the configured deployment URL when known (a staging or
- *  Vibecode host must advertise itself), else the canonical landing home. Trailing slashes trimmed;
- *  a value without a scheme is rejected (a relative base would produce a relative og:image, which
- *  Facebook/LinkedIn drop — the whole defect this guards against). */
+/** Absolute site base (scheme + host + port) for canonical/OG/robots/sitemap: the configured
+ *  deployment URL when it is a usable absolute http(s) address (a staging or Vibecode host must
+ *  advertise itself), else the canonical landing home.
+ *
+ *  PARSED, not pattern-matched. A prefix regex (`^https?://…`) constrains only the first bytes, and
+ *  the value it lets through is then interpolated into a LINE-oriented file (robots.txt) and into
+ *  MARKUP (sitemap `<loc>`) — so `https://host\nAllow: /` injected robots directives and
+ *  `https://host@evil.test` silently pointed canonical/og:image at another domain. `new URL` rejects
+ *  both, and `.origin` normalises scheme/host case and drops path, query and fragment (a base with a
+ *  query made og:image resolve to the HTML page, not the picture). Same bar as `isSafeB24Domain`.
+ *
+ *  NB: a deployment served under a sub-path is not supported — `.origin` drops it. We serve at the
+ *  root on every target (nginx `location /`, Vibecode single process). */
 export function siteBaseUrl(siteUrl?: string | null): string {
-  const raw = (siteUrl ?? '').trim().replace(/\/+$/, '')
-  return /^https?:\/\/[^/]/i.test(raw) ? raw : LANDING_SITE_URL
+  const raw = (siteUrl ?? '').trim()
+  if (!raw) return LANDING_SITE_URL
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return LANDING_SITE_URL // relative, protocol-relative, whitespace/newline, garbage
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return LANDING_SITE_URL
+  if (!u.hostname || u.username || u.password) return LANDING_SITE_URL // userinfo confusion
+  return u.origin
 }
 
 /** Absolute URL of the OG share image for scrapers. Always absolute — see `siteBaseUrl`. */
@@ -93,11 +111,13 @@ export function ogImageUrl(siteUrl?: string | null): string {
   return `${siteBaseUrl(siteUrl)}/og.png`
 }
 
-/** Absolute canonical URL of a page path (`'/'` → the site root, no trailing-slash duplication). */
+/** Absolute canonical URL of a ROOT-RELATIVE page path (`'/'` → the site root, no trailing-slash
+ *  duplication). An absolute URL passed as `path` would otherwise be appended to the base
+ *  (`…/https://evil.tld/x`), so anything with a scheme falls back to the root. */
 export function canonicalUrl(path: string, siteUrl?: string | null): string {
   const base = siteBaseUrl(siteUrl)
-  const p = (path ?? '/').trim()
-  if (!p || p === '/') return `${base}/`
+  const p = typeof path === 'string' ? path.trim() : ''
+  if (!p || p === '/' || /^[a-z][a-z0-9+.-]*:/i.test(p)) return `${base}/`
   return `${base}/${p.replace(/^\/+/, '')}`
 }
 

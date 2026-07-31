@@ -25,7 +25,14 @@ RUN pnpm build
 # Guard the defect this replaces: a RELATIVE og:image ships silently and is dropped by Facebook and
 # LinkedIn, so the failure only shows up as "the shared link has no picture". Assert on the frozen
 # prerendered HTML — the one place where it is too late to fix at runtime.
-RUN grep -qE '<meta property="og:image" content="https?://' .output/public/index.html \
+# Two separate assertions, and the tag is matched ATTRIBUTE-ORDER-INDEPENDENTLY: unhead serialises
+# attributes in insertion order with no sort, and it already emits `data-hid` on keyed tags in this
+# project — a single pattern pinning `property="og:image" content="` would start failing on an
+# unrelated unhead change, with a message blaming the wrong thing. Missing file is reported as such
+# instead of being misdiagnosed as "not absolute".
+RUN test -f .output/public/index.html \
+    || (echo 'BUILD FAILED: .output/public/index.html missing — is "/" still in nitro.prerender.routes?' >&2; exit 1); \
+    grep -oE '<meta[^>]*property="og:image"[^>]*>' .output/public/index.html | grep -q 'content="https\?://' \
     || (echo 'BUILD FAILED: og:image in the prerendered landing is not an absolute URL.' >&2; exit 1)
 
 FROM node:22-slim AS backend
@@ -51,6 +58,16 @@ ENV HOME=/root
 # deploy passes COMMIT_SHA as a build-arg to every matrix target (see .github/workflows/deploy.yml).
 ARG COMMIT_SHA=dev
 ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
+# Same reason, same trap, two more values. `/robots.txt` and `/sitemap.xml` are RUNTIME routes (they
+# must resolve the host per deploy, so they are not prerendered) — they read `siteUrl`/`buildDate` at
+# REQUEST time. Set only in the build stage, both would stay at the nuxt.config defaults here and
+# `<lastmod>` would never ship. Keeping SITE_URL in both stages also means the baked canonical/og:url
+# and the runtime Sitemap:/<loc> cannot advertise different hosts. A runtime `env_file` still wins
+# over image ENV, so an existing deploy that sets it in .env is unaffected.
+ARG NUXT_PUBLIC_SITE_URL=""
+ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
+ARG BUILD_DATE=""
+ENV NUXT_PUBLIC_BUILD_DATE=$BUILD_DATE
 RUN mkdir -p /data/uploads
 # Fail the build FAST if the extraction toolchain is broken. A package rename / partial install
 # would otherwise pass `docker build` and only surface at RUNTIME («fragile binary env» risk from the
