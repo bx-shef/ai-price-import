@@ -7,9 +7,11 @@
 // Состояний на самом деле три, и «неизвестно» — полноценное первое: пока исход загрузки настроек не
 // известен, нельзя показывать ни работу, ни баннер.
 
-export type AppScreenState = 'loading' | 'setup' | 'work'
+export type AppScreenState = 'loading' | 'launcher' | 'setup' | 'work'
 
 export interface ScreenInput {
+  /** Как открыто приложение (#262); `undefined` — ещё не определили. */
+  launch?: 'launcher' | 'work'
   /** Загрузка настроек завершилась — неважно, успешно или нет. */
   settingsResolved: boolean
   /** Настройки прочитаны и остались дефолтными → приложение ещё не настроено. */
@@ -17,7 +19,11 @@ export interface ScreenInput {
 }
 
 /** Единственное правило показа. Инвариант: до `settingsResolved` — всегда `loading`. */
-export function appScreenState({ settingsResolved, needsSetup }: ScreenInput): AppScreenState {
+export function appScreenState({ launch, settingsResolved, needsSetup }: ScreenInput): AppScreenState {
+  // Режим открытия решается раньше всего: в базовом фрейме рабочий экран вообще не поднимается,
+  // поэтому ждать загрузки настроек там нечего и незачем (#262).
+  if (!launch) return 'loading'
+  if (launch === 'launcher') return 'launcher'
   if (!settingsResolved) return 'loading'
   return needsSetup ? 'setup' : 'work'
 }

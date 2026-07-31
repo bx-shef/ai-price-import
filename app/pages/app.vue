@@ -9,10 +9,11 @@ import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
-import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS } from '~/config/b24'
+import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS, APP_SLIDER_PLACE_MAIN } from '~/config/b24'
 import { isPortalConfigured } from '~/utils/portalSettings'
 import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
+import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMode } from '~/utils/appLaunchMode'
 import { formatMinutes } from '~/utils/savings'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
@@ -29,7 +30,7 @@ function doClearHistory(): void {
   clearHistory()
   confirmClear.value = false
 }
-const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
+const { counters, savings, moneyBlocker, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
 // (article field, target, chats). On load we read the portal settings; if nothing has been touched
@@ -43,14 +44,17 @@ const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(ma
 // Вне портала settingsLoaded так и останется false, поэтому ждём ЛЮБОГО исхода загрузки настроек.
 const settingsResolved = ref(false)
 // Одно правило на три состояния экрана — чистое и покрыто тестом (appScreenState).
-const screen = computed(() => appScreenState({ settingsResolved: settingsResolved.value, needsSetup: needsSetup.value }))
+const screen = computed(() => appScreenState({ launch: launch.value, settingsResolved: settingsResolved.value, needsSetup: needsSetup.value }))
 
 // Open settings in a B24 SLIDER (native overlay), like the official b24-ai-starter reference:
 // `openSliderAppPage({ place })` re-opens THIS app in a slider carrying `place='app-options'`, and the
 // global middleware routes that slider frame to /settings. We do NOT use `slider.openPath` — that opens
 // a PORTAL-relative path (it resolved to `<portal>/settings` → 404). Fallback to in-frame navigation
 // when not framed (standalone) or if the SDK call fails, so settings always opens.
-const { openAppSlider } = useB24()
+const { init: initB24, placementPlace, isSliderMode, openAppSlider } = useB24()
+// Как открыто приложение (#262). `undefined` — ещё не знаем: до ответа рисуем скелетон, иначе
+// базовый фрейм успел бы поднять рабочий экран со всем его опросом.
+const launch = ref<AppLaunchMode | undefined>()
 // While files are uploading, LOCK the rest of the UI (recent-operations list + savings/metrics) so the
 // operator can't clear history / remove rows / reset metrics mid-run (owner ask «при загрузке блокируй
 // списки»). `stagingBusy` comes from ImportStaging's one-by-one loop; `uploading` is a single POST in
@@ -77,9 +81,59 @@ async function openMetrics(): Promise<void> {
 // the composable) would no-op, leaking the pull client. init() runs async inside; this is inert
 // outside a portal.
 const { subscribeReload } = useSettingsSync()
-subscribeReload(() => void loadSettings())
+// Подписку заводим синхронно (после await теряется scope эффекта), но в пусковой странице она
+// должна молчать: иначе базовый фрейм читал бы настройки параллельно со слайдером — ровно то
+// удвоение, ради которого лаунчер и появился.
+subscribeReload(() => {
+  if (launch.value === 'launcher') return
+  void loadSettings()
+})
+
+// Слайдер не открылся (портал отказал / SDK бросил). Тогда пусковая страница — тупик: единственная
+// кнопка молча ничего не делает. Показываем это словами, а сам экран уводим в рабочий режим.
+const sliderFailed = ref(false)
+
+/** Открыть главный экран слайдером (#262). Пусковая страница делает это сама при открытии, и та же
+ *  кнопка остаётся на экране — после закрытия слайдера должен быть путь обратно.
+ *
+ *  `closeAppSlider` тут намеренно НЕ зовём (в референсе он есть): открыть себя слайдером может
+ *  только лаунчер, а лаунчер по определению не слайдер — закрывать нечего. */
+async function openMain(): Promise<boolean> {
+  try {
+    window.sessionStorage?.setItem(MAIN_SLIDER_MARK_KEY, String(Date.now()))
+  } catch { /* приватный режим — без отметки, страховка от цикла просто не сработает */ }
+  const opened = await openAppSlider(APP_SLIDER_PLACE_MAIN, { width: 1200, title: 'AI-импорт прайсов' })
+  sliderFailed.value = !opened
+  return opened
+}
+
+/** Отметка предыдущего автооткрытия в этой вкладке — страховка от бесконечного открытия. */
+function lastMainSliderAt(): number | null {
+  try {
+    const raw = window.sessionStorage?.getItem(MAIN_SLIDER_MARK_KEY)
+    return raw ? Number(raw) : null
+  } catch {
+    return null
+  }
+}
 
 onMounted(async () => {
+  const frame = await initB24()
+  launch.value = appLaunchMode({
+    inFrame: !!frame,
+    place: placementPlace(),
+    sliderMode: isSliderMode(),
+    isMobile: isBitrixMobile.value
+  })
+  if (launch.value === 'launcher') {
+    // Базовый фрейм — только пусковая страница. Опрос статусов, метрики и настройки здесь НЕ
+    // поднимаем: иначе они крутились бы одновременно и тут, и в открытом слайдере.
+    // Автооткрытие — не чаще раза в окно (страховка от цикла); человек всегда может нажать кнопку.
+    if (!canAutoOpenMain(lastMainSliderAt(), Date.now())) return
+    if (await openMain()) return
+    // Слайдер не открылся — не оставляем человека на мёртвой странице, работаем как раньше.
+    launch.value = 'work'
+  }
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
   await loadSettings()
@@ -104,6 +158,14 @@ async function doReset(): Promise<void> {
 // портала и не выдумываем. Нет ставки — плитки нет, и сетка схлопывается в одну колонку, иначе
 // одинокая плитка «Сэкономлено времени» висела бы на половине ширины с пустотой рядом.
 const hasMoneyTile = computed(() => !!savings.value && savings.value.moneySaved !== null)
+// Plain-Russian reason the money tile is absent. Silence here was the reported bug: an admin who
+// had entered the hourly rate saw nothing and could not tell «не сработало» from «не хватает ещё
+// одной настройки». `null` — nothing to explain (the tile is there, or nothing imported yet).
+const moneyHint = computed(() => {
+  if (moneyBlocker.value === 'no-rate') return 'Чтобы видеть экономию в деньгах, укажите стоимость часа работы сотрудника в настройках приложения.'
+  if (moneyBlocker.value === 'no-currency') return 'Стоимость часа задана, но в портале нет базовой валюты — сумму не в чем считать. Задайте базовую валюту в настройках валют Битрикс24.'
+  return ''
+})
 const moneySavedText = computed(() => (savings.value?.moneySaved ?? 0).toLocaleString('ru-RU'))
 
 // Compact status counts (inline in the «Последние операции» header instead of big dashboard tiles —
@@ -147,7 +209,7 @@ watch(jobs, (list) => {
       <!-- Шапка страницы — навбар каркаса (#259) вместо самодельного flex-заголовка. В мобильном
            приложении Б24 нативная шапка УЖЕ показывает название, поэтому навбар там не рисуем. -->
       <B24DashboardNavbar
-        v-if="!isBitrixMobile"
+        v-if="!isBitrixMobile && screen !== 'launcher'"
         :toggle="false"
         title="AI-импорт прайсов"
       >
@@ -172,6 +234,31 @@ watch(jobs, (list) => {
 
         <!-- Пока исход загрузки настроек неизвестен — только скелетон раскладки (#256). -->
         <AppLoader v-if="screen === 'loading'" />
+
+        <!-- Пусковая страница (#262): приложение открыли прямой ссылкой / пунктом меню. Рабочий
+             экран здесь НЕ поднимаем — он уже открыт слайдером поверх. Кнопка нужна, чтобы был
+             путь обратно после закрытия слайдера. -->
+        <div
+          v-else-if="screen === 'launcher'"
+          class="py-6 text-center"
+          role="status"
+        >
+          <p class="mb-4 text-base text-(--ui-color-base-3)">
+            Импорт открывается отдельным окном поверх портала. Не открылось или вы его
+            закрыли — нажмите «Открыть импорт».
+          </p>
+          <p
+            v-if="sliderFailed"
+            class="mb-4 text-sm text-(--ui-color-accent-main-alert)"
+          >
+            Окно открыть не удалось. Попробуйте ещё раз или обновите страницу.
+          </p>
+          <B24Button
+            color="air-primary"
+            label="Открыть импорт"
+            @click="() => { void openMain() }"
+          />
+        </div>
 
         <!-- Setup nudge: shown until the admin configures the app (pristine defaults). Admin gets a
          call-to-action to /settings; a non-admin is told to ask their portal admin.
@@ -355,6 +442,13 @@ watch(jobs, (list) => {
                     {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
                   </p>
                 </B24PageCard>
+                <!-- Плитки нет — говорим, чего не хватает, вместо пустого места. -->
+                <p
+                  v-else-if="moneyHint"
+                  class="self-center text-xs text-(--ui-color-base-3)"
+                >
+                  {{ moneyHint }}
+                </p>
               </B24PageGrid>
               <div class="ml-auto flex flex-col items-end gap-2 text-xs">
                 <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->

@@ -54,6 +54,20 @@ export function useB24() {
     return typeof p === 'string' && p ? p : undefined
   }
 
+  /** Are we ourselves rendered inside a B24 slider? Reads PLACEMENT_OPTIONS `IFRAME` (SDK
+   *  `placement.isSliderMode`), NOT the URL. Used by the launcher (#262) so a slider never tries to
+   *  open another slider of itself. */
+  function isSliderMode(): boolean {
+    // Спрашиваем сам SDK, а не повторяем его чтение `options.IFRAME` — иначе логика разъедется
+    // при её изменении в SDK. Второй признак к нашему `place`; до init() — false, вызывающий
+    // (app.vue) дожидается init.
+    try {
+      return frame?.placement?.isSliderMode === true
+    } catch {
+      return false
+    }
+  }
+
   /** Open THIS app in a B24 slider at the given `place` (self-routed by the global middleware).
    *  Pattern from the official bitrix24/app-template-automation-rules (index.client → openSliderAppPage
    *  with place/width/label/title). Returns false when not framed / on SDK error so the caller can
@@ -86,5 +100,5 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, inFrame, placementPlace, openAppSlider, closeSlider }
+  return { init, get, auth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
 }

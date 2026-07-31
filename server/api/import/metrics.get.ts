@@ -1,7 +1,7 @@
 import { extractFrameAuth } from '../../utils/frameAuth'
 import { resolveFrameMember } from '../../utils/resolveFrameMember'
 import { readCounters } from '../../utils/metricsStore'
-import { computeSavings } from '~/utils/savings'
+import { computeSavings, moneyBlocker } from '~/utils/savings'
 import { withFrameRouteSpan } from '../../utils/frameRouteSpan'
 import { query } from '../../db/client'
 import { makeBareTokenSdkCall } from '../../utils/b24Sdk'
@@ -39,7 +39,10 @@ export default defineEventHandler(async (event) => {
         readRate: async () => (await readMapping(makeBareTokenSdkCall(auth.domain, auth.accessToken))).savings?.ratePerHour ?? null,
         readCurrency: () => fetchBaseCurrency(makeBareTokenSdkCall(auth.domain, auth.accessToken))
       })
-      return { counters, savings: rate.ratePerHour ? computeSavings(counters, rate) : timeOnly }
+      const savings = rate.ratePerHour ? computeSavings(counters, rate) : timeOnly
+      // Tell the dashboard WHY there is no money figure. Without it, «ставку задал, плитки нет» is
+      // indistinguishable from «в портале нет базовой валюты» — the dashboard just shows nothing.
+      return { counters, savings, moneyBlocker: moneyBlocker(savings, rate) }
     }
   )
 })
