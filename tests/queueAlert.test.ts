@@ -212,6 +212,59 @@ describe('countRecentFailures: чей отказ', () => {
   })
 })
 
+// Отказ, за который отвечает клиент, — не наша тревога. Он детерминирован (повторится на всех трёх
+// попытках и на каждом документе этого портала), и если его считать, то один портал с неверной
+// настройкой будет будить нас ежечасно и бесконечно о том, что чинить не нам. Сам клиент уже
+// извещён — ему пишут в чат.
+describe('isServiceFailure', () => {
+  it('отказы портала не считаются нашей поломкой', () => {
+    for (const r of [
+      'ACCESS_DENIED',
+      'Ошибка: access denied',
+      'нет прав на создание сущности',
+      'Сущность CRM не поддерживается',
+      'Entity type not supported',
+      'Смарт-процесс не найден',
+      'портал не авторизован (нет токена)'
+    ]) {
+      expect(isServiceFailure(r), r).toBe(false)
+    }
+  })
+
+  it('всё остальное считается нашим — незнакомая поломка скорее наша', () => {
+    for (const r of [
+      'connect ECONNREFUSED 127.0.0.1:6379',
+      'job stalled more than allowable limit',
+      'timeout of 30000ms exceeded',
+      'QUERY_LIMIT_EXCEEDED',
+      ''
+    ]) {
+      expect(isServiceFailure(r), r).toBe(true)
+    }
+  })
+
+  it('пустая причина не проваливается молча', () => {
+    expect(isServiceFailure(null)).toBe(true)
+    expect(isServiceFailure(undefined)).toBe(true)
+  })
+
+  it('один криво настроенный портал не поднимает тревогу', () => {
+    const jobs = Array.from({ length: 50 }, () => ({
+      finishedOn: NOW - 60_000,
+      failedReason: 'ACCESS_DENIED: нет прав'
+    }))
+    expect(countRecentFailures(jobs, NOW)).toBe(0)
+  })
+
+  it('но наши отказы среди чужих всё равно видны', () => {
+    const jobs = [
+      ...Array.from({ length: 50 }, () => ({ finishedOn: NOW - 60_000, failedReason: 'ACCESS_DENIED' })),
+      ...Array.from({ length: 3 }, () => ({ finishedOn: NOW - 60_000, failedReason: 'ECONNREFUSED' }))
+    ]
+    expect(countRecentFailures(jobs, NOW)).toBe(3)
+  })
+})
+
 describe('readQueueHealth', () => {
   const okReader = {
     pending: async () => [{ timestamp: NOW - 90_000 }],
