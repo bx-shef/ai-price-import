@@ -30,10 +30,33 @@
  *  can legitimately take minutes (extraction + LLM + the portal's ~2 req/s limiter), and a burst
  *  queues behind that. What it must never be is «зависит от размера портала». */
 export const STALL_AGE_MS = 20 * 60 * 1000
-/** Failures within the look-back window that mean «падает системно», not «один кривой документ». */
-export const FAILURE_ALERT_THRESHOLD = 10
-/** How far back failures are counted. */
-export const FAILURE_WINDOW_MS = 15 * 60 * 1000
+/**
+ * Failures within the look-back window that mean «падает системно».
+ *
+ * Low because of what actually lands in BullMQ's `failed` set, and what `countRecentFailures` then
+ * keeps of it.
+ *
+ * A rejection the app works out ITSELF — unreadable file, empty text, unrecognised document, no VAT
+ * rate in the portal, no such currency — never reaches `failed`: the handler records the reason and
+ * RETURNS normally (`failJob` in queue/handlers.ts), and the uploader is told directly (#289).
+ *
+ * A rejection that arrives as a REST ERROR from the portal — no rights, entity type unavailable,
+ * portal no longer authorised — DOES throw and does exhaust its attempts. Those are excluded a
+ * layer below, by `isServiceFailure` in queueHealthRead.ts: they are deterministic per portal, so
+ * counting them would tie this alert to the number of misconfigured tenants rather than to our
+ * health. What is left is our own breakage: Redis gone, the transport failing, a worker dying.
+ *
+ * The first version used 10 per 15 minutes, borrowed from «один кривой документ — не повод будить».
+ * That intuition was about a population this rule never sees, and the threshold it produced made
+ * the rule near-unreachable for a small service: at a few documents an hour, everything could be
+ * broken and the count would stay at one or two. Three of OUR failures in an hour is a fault.
+ */
+export const FAILURE_ALERT_THRESHOLD = 3
+/**
+ * How far back failures are counted. An hour rather than fifteen minutes for the same reason: at a
+ * few documents an hour, a fifteen-minute window can be empty even while everything is broken.
+ */
+export const FAILURE_WINDOW_MS = 60 * 60 * 1000
 
 export type QueueAlertKind = 'stalled' | 'failing' | 'unreadable'
 
@@ -75,9 +98,10 @@ const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000))
  *    with no data every other verdict would be invented.
  *  - **stalled** — the oldest unfinished job has been sitting longer than `STALL_AGE_MS`.
  *    `delayed` counts as unfinished: a job bouncing in retry-backoff is not progress.
- *  - **failing** — too many jobs failed within the look-back window. Jobs ending in failure are
- *    deliberately NOT counted as a stall (the queue is moving), because reporting one breakage
- *    under two names teaches people to read neither.
+ *  - **failing** — jobs are exhausting their retries. Not counted as a stall (the queue IS moving),
+ *    because reporting one breakage under two names teaches people to read neither. See
+ *    `FAILURE_ALERT_THRESHOLD` for why the number is small: rejected documents never reach this
+ *    population, so anything here is already abnormal.
  */
 export function evaluateQueueHealth(queues: QueueHealthInput[], _nowMs?: number): QueueAlert[] {
   const out: QueueAlert[] = []
@@ -104,7 +128,7 @@ export function evaluateQueueHealth(queues: QueueHealthInput[], _nowMs?: number)
       out.push({
         kind: 'failing',
         queue: q.queue,
-        text: `очередь «${q.queue}»: ${q.recentFailures} задач упало за последние ${minutes(FAILURE_WINDOW_MS)} мин`
+        text: `очередь «${q.queue}»: ${q.recentFailures} задач исчерпали все попытки за последний час`
       })
     }
   }
