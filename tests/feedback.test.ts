@@ -62,7 +62,9 @@ describe('feedback — buildFeedbackIssue', () => {
   it('builds title/body/labels; comment rendered inert inside <pre><code>', () => {
     const p = buildFeedbackIssue('down', 'сделка <script> не создалась')
     expect(p.labels).toEqual(['user-feedback', 'feedback:down'])
-    expect(p.title).toContain('отрицательный')
+    // #299: заголовок ОДИН на обе оценки, различает их только метка; словами оценка идёт в теле.
+    expect(p.title).toBe('[🔴] Отзыв сотрудника')
+    expect(p.body).toContain('отрицательный')
     expect(p.body).toContain('<pre><code>')
     // HTML in the comment is escaped, not live.
     expect(p.body).toContain('&lt;script&gt;')
@@ -71,7 +73,7 @@ describe('feedback — buildFeedbackIssue', () => {
   it('empty comment → «(без текста)» and a generic title', () => {
     const p = buildFeedbackIssue('up', '   ')
     expect(p.body).toContain('(без текста)')
-    expect(p.title).toContain('Отзыв сотрудника')
+    expect(p.title).toBe('[🟢] Отзыв сотрудника')
   })
   it('strips hostile chars from the comment before building', () => {
     const p = buildFeedbackIssue('up', `хоро${ZWSP}шо`)
@@ -131,5 +133,18 @@ describe('feedback — buildFeedbackIssue', () => {
   it('omits the Контекст section entirely when no context is given', () => {
     expect(buildFeedbackIssue('up', 'ok').body).not.toContain('**Контекст:**')
     expect(buildFeedbackIssue('up', 'ok', {}).body).not.toContain('**Контекст:**')
+  })
+})
+
+describe('заголовок отзыва — один на обе оценки (#299)', () => {
+  it('различает оценки только меткой, текст комментария в заголовок не выносит', () => {
+    const up = buildFeedbackIssue('up', 'товар не тот')
+    const down = buildFeedbackIssue('down', 'товар не тот')
+    expect(up.title).toBe('[🟢] Отзыв сотрудника')
+    expect(down.title).toBe('[🔴] Отзыв сотрудника')
+    expect(up.title).not.toContain('товар не тот')
+    // Оценка машинно-читаема по метке задачи — на неё опирается разбор.
+    expect(up.labels).toContain('feedback:up')
+    expect(down.labels).toContain('feedback:down')
   })
 })

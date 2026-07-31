@@ -26,12 +26,7 @@ export interface SavingsRateSource {
   readCurrency: () => Promise<string | null>
 }
 
-interface Entry { at: number, value: SavingsRate }
-
-/** Complete answers keep the long TTL; anything the admin still has to fix expires fast. */
-function ttlFor(value: SavingsRate): number {
-  return value.ratePerHour && value.currency ? SAVINGS_RATE_TTL_MS : SAVINGS_RATE_MISS_TTL_MS
-}
+interface Entry { at: number, ttl: number, value: SavingsRate }
 const cache = new Map<string, Entry>()
 
 /** Drop a portal's cached rate (uninstall / settings write). Also used by tests. */
@@ -59,17 +54,34 @@ export async function resolveSavingsRate(
 ): Promise<SavingsRate> {
   if (!(minutesSaved > 0)) return {}
   const hit = cache.get(memberId)
-  if (hit && now - hit.at < ttlFor(hit.value)) return hit.value
+  if (hit && now - hit.at < hit.ttl) return hit.value
   let value: SavingsRate = {}
+  // The two reads are kept APART on purpose. Sharing one `try` meant a failed currency call threw
+  // away a rate that had already been read successfully — and the dashboard then told the admin
+  // «укажите стоимость часа», i.e. instructed them to fix something that was not broken.
+  let ratePerHour: number | null = null
+  let failed = false
   try {
-    const ratePerHour = await source.readRate()
-    // A rate of 0/null means «no money figure» — do not pay for the currency lookup.
-    if (ratePerHour && ratePerHour > 0) value = { ratePerHour, currency: await source.readCurrency() }
+    ratePerHour = await source.readRate()
   } catch {
-    // Cache the miss too: a portal whose settings read keeps failing must not turn every
-    // dashboard open into another doomed pair of REST calls.
-    value = {}
+    failed = true
   }
-  cache.set(memberId, { at: now, value })
+  if (ratePerHour && ratePerHour > 0) {
+    let currency: string | null = null
+    try {
+      currency = await source.readCurrency()
+    } catch {
+      failed = true
+    }
+    value = { ratePerHour, currency }
+  }
+  // TTL by case, not by «полнота ответа»:
+  //  - «ставка не задана» — обычное устойчивое состояние большинства порталов, и его исправление
+  //    ПРОХОДИТ ЧЕРЕЗ НАС (сохранение настроек сбрасывает кэш), поэтому держим долго: короткий TTL
+  //    здесь означал бы вдесятеро больше вызовов к порталу навсегда и ни на что не влиял;
+  //  - нет базовой валюты или чтение упало — исправляют СНАРУЖИ (валюта заводится в CRM), к нам
+  //    запрос при этом не приходит, поэтому перечитываем через минуту.
+  const ttl = failed || (value.ratePerHour && !value.currency) ? SAVINGS_RATE_MISS_TTL_MS : SAVINGS_RATE_TTL_MS
+  cache.set(memberId, { at: now, ttl, value })
   return value
 }

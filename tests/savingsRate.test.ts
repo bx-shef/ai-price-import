@@ -103,3 +103,24 @@ describe('resolveSavingsRate — TTL неполного ответа', () => {
     expect(s.readRate).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('сбой чтения валюты не выглядит как «ставка не задана»', () => {
+  it('ставка прочиталась, валюта упала → ставка сохраняется, валюта пустая', async () => {
+    const s = {
+      readRate: vi.fn(async () => 30),
+      readCurrency: vi.fn(async () => { throw new Error('портал недоступен') })
+    }
+    // Раньше общий try обнулял ВЕСЬ ответ, и главная советовала «укажите стоимость часа» тому,
+    // кто её уже указал.
+    expect(await resolveSavingsRate('A', 10, s, 1000)).toEqual({ ratePerHour: 30, currency: null })
+  })
+
+  it('«ставка не задана» держится долго — это исправляется через нас, кэш сбрасывается на сохранении', async () => {
+    const s = source(null)
+    await resolveSavingsRate('A', 10, s, 1000)
+    await resolveSavingsRate('A', 10, s, 1000 + SAVINGS_RATE_MISS_TTL_MS + 1)
+    expect(s.readRate).toHaveBeenCalledTimes(1) // короткий TTL тут дал бы 10× вызовов навсегда
+    await resolveSavingsRate('A', 10, s, 1000 + SAVINGS_RATE_TTL_MS)
+    expect(s.readRate).toHaveBeenCalledTimes(2)
+  })
+})
