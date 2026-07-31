@@ -8,7 +8,46 @@ import { FAILURE_WINDOW_MS, type QueueHealthInput } from './queueAlert'
 
 /** Raw shapes we need. Only the fields used — BullMQ's Job carries far more. */
 export interface RawPendingJob { timestamp?: number | null }
-export interface RawFailedAt { finishedOn?: number | null, processedOn?: number | null }
+export interface RawFailedAt {
+  finishedOn?: number | null
+  processedOn?: number | null
+  /** Why it died. Used only to tell OUR breakage from one portal's misconfiguration. */
+  failedReason?: string | null
+}
+
+/**
+ * Portal answers that mean «этот клиент настроил у себя не то», not «сервис сломан».
+ *
+ * They matter because they are DETERMINISTIC: a deleted smart process or revoked rights produce the
+ * same refusal on all three attempts and on every document that portal sends. Counting them would
+ * tie the alert to the number of misconfigured tenants — one client with a wrong setting would page
+ * us hourly, forever, about something only that client can fix. The person who needs to know
+ * already does: they get the failure in their own chat (PROCESS.md §6.8).
+ *
+ * This is the same principle as the stall rule refusing to depend on portal size: an alert must
+ * describe the health of the service, not the shape of its clients.
+ */
+const PORTAL_SIDE_PATTERNS = [
+  // `[\s_]` — Битрикс отдаёт и `ACCESS_DENIED`, и «Access denied».
+  /access[\s_]*denied/i,
+  /нет\s+прав/i,
+  /сущность\s+crm\s+не\s+поддерживается/i,
+  /entity\s+.*not\s+supported/i,
+  /смарт-процесс\s+не\s+найден/i,
+  /портал\s+не\s+авторизован/i
+]
+
+/**
+ * Does this failure say something about OUR service?
+ *
+ * Unknown wording counts as ours — fail-open. A refusal we have not seen before is more likely a
+ * new way for the service to break than a new way for a client to misconfigure theirs, and a
+ * missing alert costs more than an extra one.
+ */
+export function isServiceFailure(reason: unknown): boolean {
+  const r = String(reason ?? '')
+  return !PORTAL_SIDE_PATTERNS.some(re => re.test(r))
+}
 
 export interface QueueHealthReader {
   /** Unfinished jobs (waiting + active + delayed). Throws when the queue is unreachable. */
@@ -17,8 +56,18 @@ export interface QueueHealthReader {
   failed: (name: QueueName) => Promise<RawFailedAt[]>
 }
 
-/** Cap on how many failed rows we look at. Past the alert threshold the exact number stops
- *  mattering — «упало 40» and «упало 400» call for the same action. */
+/**
+ * Cap on how many failed rows we look at.
+ *
+ * Safe only because BullMQ's `getFailed(start, end)` returns rows **newest first**
+ * (`getJobs(['failed'], …, asc = false)`), so the cap trims the OLD tail — the rows that are outside
+ * the look-back window anyway. Were it ascending, a big outage would fill the cap with ancient
+ * failures, the recent ones would never be read, and the count would drop to zero exactly when it
+ * matters most.
+ *
+ * Past the alert threshold the exact number stops mattering: «упало 40» and «упало 400» call for
+ * the same action.
+ */
 export const MAX_FAILED_SCAN = 200
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
@@ -37,14 +86,17 @@ export function summarisePending(jobs: RawPendingJob[], nowMs: number): { pendin
   return { pending: jobs.length, oldestPendingAgeMs: oldest }
 }
 
-/** How many of these failed inside the window. Rows with no timestamp are not counted — an
- *  undated failure could be from any time, and guessing «сейчас» would raise false alarms. */
+/** How many of these failed inside the window AND say something about our service. Rows with no
+ *  timestamp are not counted — an undated failure could be from any time, and guessing «сейчас»
+ *  would raise false alarms. Portal-side refusals are excluded, see `isServiceFailure`. */
 export function countRecentFailures(jobs: RawFailedAt[], nowMs: number, windowMs = FAILURE_WINDOW_MS): number {
   let n = 0
   for (const j of jobs) {
     const t = num(j?.finishedOn) ?? num(j?.processedOn)
     if (t === null) continue
-    if (nowMs - t <= windowMs && t <= nowMs) n++
+    if (!(nowMs - t <= windowMs && t <= nowMs)) continue
+    if (!isServiceFailure(j?.failedReason)) continue
+    n++
   }
   return n
 }
