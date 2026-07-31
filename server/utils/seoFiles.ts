@@ -1,4 +1,4 @@
-import { siteBaseUrl } from '~/utils/landing'
+import { isCanonicalHost, siteBaseUrl } from '~/utils/landing'
 
 // Pure builders for the two crawler files (/robots.txt, /sitemap.xml). Served by thin Nitro routes
 // rather than shipped as static `public/` files, because both must carry an ABSOLUTE base URL and the
@@ -29,14 +29,16 @@ export const DISALLOWED_PATHS = ['/api/'] as const
 /** `robots.txt` body. No `Allow:` line — an unlisted path is allowed by default, and its position
  *  relative to the `Disallow` group changes matching under first-match-wins parsers.
  *
- *  NB a NON-CANONICAL host (staging, Vibecode) currently advertises itself the same way production
- *  does — an indexable duplicate of the landing. Deliberately deferred, see the tracker. */
-export function buildRobotsTxt(baseUrl: string): string {
+ *  A NON-CANONICAL host (#304: staging, Vibecode, a client's isolated server) omits the `Sitemap:`
+ *  line — a duplicate must not invite crawlers. It is NOT `Disallow: /` on purpose: a blocked page
+ *  is never fetched, so its canonical tag (which now always points at production) would never be
+ *  read, and the bare staging URL could linger in the index — the same «Disallow и noindex —
+ *  альтернативы» reasoning as DISALLOWED_PATHS above, applied host-wide. */
+export function buildRobotsTxt(baseUrl: string, canonicalHost = true): string {
   return [
     'User-agent: *',
     ...DISALLOWED_PATHS.map(p => `Disallow: ${p}`),
-    '',
-    `Sitemap: ${baseUrl}/sitemap.xml`,
+    ...(canonicalHost ? ['', `Sitemap: ${baseUrl}/sitemap.xml`] : []),
     ''
   ].join('\n')
 }
@@ -62,8 +64,18 @@ function isCalendarDate(d: string): boolean {
 /** `sitemap.xml` body. One entry — the landing is the only indexable page (see `DISALLOWED_PATHS`).
  *  `lastmod` is injected (build date) so the file stays deterministic and testable; an absent or
  *  malformed date omits the element rather than emitting an invalid one. */
-export function buildSitemapXml(baseUrl: string, lastmod?: string): string {
+export function buildSitemapXml(baseUrl: string, lastmod?: string, canonicalHost = true): string {
   const iso = lastmod && isCalendarDate(lastmod) ? lastmod : undefined
+  // A duplicate host serves a VALID but EMPTY sitemap (#304): well-formed (crawlers that fetched it
+  // anyway don't error), advertising nothing.
+  if (!canonicalHost) {
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+      '</urlset>',
+      ''
+    ].join('\n')
+  }
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -82,5 +94,6 @@ export function buildSitemapXml(baseUrl: string, lastmod?: string): string {
  *  validation (`siteBaseUrl`) and the rendering are joined here, once, instead of in each route. */
 export function crawlerFiles(siteUrl: string | undefined | null, buildDate?: string): { robots: string, sitemap: string } {
   const base = siteBaseUrl(siteUrl)
-  return { robots: buildRobotsTxt(base), sitemap: buildSitemapXml(base, buildDate) }
+  const canonical = isCanonicalHost(siteUrl)
+  return { robots: buildRobotsTxt(base, canonical), sitemap: buildSitemapXml(base, buildDate, canonical) }
 }
