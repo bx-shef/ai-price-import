@@ -19,6 +19,9 @@ export const B24_EVENT_HANDLER_PATH = '/api/b24/events'
  *  `bitrix-tools/b24-ai-starter` + `bitrix24/app-template-automation-rules` references. */
 export const APP_SLIDER_PLACE_SETTINGS = 'app-options'
 export const APP_SLIDER_PLACE_METRICS = 'metrics'
+/** Главный экран, открытый НАМИ в слайдере (#262). Нужен отдельным `place`, а не признаком
+ *  `IFRAME=Y`: по нему открытый слайдер опознаётся однозначно и не пытается открыть себя снова. */
+export const APP_SLIDER_PLACE_MAIN = 'app-main'
 
 /** place → in-app route the global middleware redirects a freshly-opened slider frame to.
  *  NB: the app's normal left-menu entry (standard universal «app URL») must NOT carry these `place`
@@ -26,7 +29,8 @@ export const APP_SLIDER_PLACE_METRICS = 'metrics'
  *  and only ever set by our own `openSliderAppPage` calls, so this coupling holds by construction. */
 export const APP_SLIDER_ROUTES: Record<string, string> = {
   [APP_SLIDER_PLACE_SETTINGS]: '/settings',
-  [APP_SLIDER_PLACE_METRICS]: '/metrics'
+  [APP_SLIDER_PLACE_METRICS]: '/metrics',
+  [APP_SLIDER_PLACE_MAIN]: '/app'
 }
 
 /** Pure: the in-app route a slider frame opened with `place` should redirect to (undefined = none). */

@@ -54,6 +54,23 @@ export function useB24() {
     return typeof p === 'string' && p ? p : undefined
   }
 
+  /** Are we ourselves rendered inside a B24 slider? Reads PLACEMENT_OPTIONS `IFRAME` (SDK
+   *  `placement.isSliderMode`), NOT the URL. Used by the launcher (#262) so a slider never tries to
+   *  open another slider of itself. */
+  function isSliderMode(): boolean {
+    const opts = frame?.placement?.options as Record<string, unknown> | undefined
+    return String(opts?.IFRAME ?? '').toUpperCase() === 'Y'
+  }
+
+  /** Close THIS app's slider page (`slider.closeSliderAppPage`). Differs from `closeSlider`
+   *  (`parent.closeApplication`): used when we are about to re-open ourselves as a slider. */
+  async function closeAppSlider(): Promise<void> {
+    const f = await init()
+    try {
+      await f?.slider.closeSliderAppPage()
+    } catch { /* not in a slider → nothing to close */ }
+  }
+
   /** Open THIS app in a B24 slider at the given `place` (self-routed by the global middleware).
    *  Pattern from the official bitrix24/app-template-automation-rules (index.client → openSliderAppPage
    *  with place/width/label/title). Returns false when not framed / on SDK error so the caller can
@@ -86,5 +103,5 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, inFrame, placementPlace, openAppSlider, closeSlider }
+  return { init, get, auth, inFrame, placementPlace, isSliderMode, openAppSlider, closeAppSlider, closeSlider }
 }

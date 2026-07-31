@@ -9,10 +9,11 @@ import { useMetrics } from '~/composables/useMetrics'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
-import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS } from '~/config/b24'
+import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS, APP_SLIDER_PLACE_MAIN } from '~/config/b24'
 import { isPortalConfigured } from '~/utils/portalSettings'
 import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
+import { appLaunchMode, type AppLaunchMode } from '~/utils/appLaunchMode'
 import { formatMinutes } from '~/utils/savings'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
@@ -43,14 +44,17 @@ const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(ma
 // Вне портала settingsLoaded так и останется false, поэтому ждём ЛЮБОГО исхода загрузки настроек.
 const settingsResolved = ref(false)
 // Одно правило на три состояния экрана — чистое и покрыто тестом (appScreenState).
-const screen = computed(() => appScreenState({ settingsResolved: settingsResolved.value, needsSetup: needsSetup.value }))
+const screen = computed(() => appScreenState({ launch: launch.value, settingsResolved: settingsResolved.value, needsSetup: needsSetup.value }))
 
 // Open settings in a B24 SLIDER (native overlay), like the official b24-ai-starter reference:
 // `openSliderAppPage({ place })` re-opens THIS app in a slider carrying `place='app-options'`, and the
 // global middleware routes that slider frame to /settings. We do NOT use `slider.openPath` — that opens
 // a PORTAL-relative path (it resolved to `<portal>/settings` → 404). Fallback to in-frame navigation
 // when not framed (standalone) or if the SDK call fails, so settings always opens.
-const { openAppSlider } = useB24()
+const { init: initB24, placementPlace, isSliderMode, openAppSlider } = useB24()
+// Как открыто приложение (#262). `undefined` — ещё не знаем: до ответа рисуем скелетон, иначе
+// базовый фрейм успел бы поднять рабочий экран со всем его опросом.
+const launch = ref<AppLaunchMode | undefined>()
 // While files are uploading, LOCK the rest of the UI (recent-operations list + savings/metrics) so the
 // operator can't clear history / remove rows / reset metrics mid-run (owner ask «при загрузке блокируй
 // списки»). `stagingBusy` comes from ImportStaging's one-by-one loop; `uploading` is a single POST in
@@ -79,7 +83,26 @@ async function openMetrics(): Promise<void> {
 const { subscribeReload } = useSettingsSync()
 subscribeReload(() => void loadSettings())
 
+/** Открыть главный экран слайдером (#262). Пусковая страница делает это сама при открытии, и та же
+ *  кнопка остаётся на экране — после закрытия слайдера должен быть путь обратно. */
+async function openMain(): Promise<void> {
+  await openAppSlider(APP_SLIDER_PLACE_MAIN, { width: 1200, title: 'AI-импорт прайсов' })
+}
+
 onMounted(async () => {
+  const frame = await initB24()
+  launch.value = appLaunchMode({
+    inFrame: !!frame,
+    place: placementPlace(),
+    sliderMode: isSliderMode(),
+    isMobile: isBitrixMobile.value
+  })
+  if (launch.value === 'launcher') {
+    // Базовый фрейм — только пусковая страница. Опрос статусов, метрики и настройки здесь НЕ
+    // поднимаем: иначе они крутились бы одновременно и тут, и в открытом слайдере.
+    await openMain()
+    return
+  }
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
   await loadSettings()
@@ -180,6 +203,23 @@ watch(jobs, (list) => {
 
         <!-- Пока исход загрузки настроек неизвестен — только скелетон раскладки (#256). -->
         <AppLoader v-if="screen === 'loading'" />
+
+        <!-- Пусковая страница (#262): приложение открыли прямой ссылкой / пунктом меню. Рабочий
+             экран здесь НЕ поднимаем — он уже открыт слайдером поверх. Кнопка нужна, чтобы был
+             путь обратно после закрытия слайдера. -->
+        <div
+          v-else-if="screen === 'launcher'"
+          class="py-6 text-center"
+        >
+          <p class="mb-4 text-base text-(--ui-color-base-3)">
+            Импорт открывается отдельным окном поверх портала. Если окно закрылось — откройте снова.
+          </p>
+          <B24Button
+            color="air-primary"
+            label="Открыть импорт"
+            @click="openMain"
+          />
+        </div>
 
         <!-- Setup nudge: shown until the admin configures the app (pristine defaults). Admin gets a
          call-to-action to /settings; a non-admin is told to ask their portal admin.
