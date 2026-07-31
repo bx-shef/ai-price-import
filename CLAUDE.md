@@ -388,6 +388,8 @@ pnpm verify:chat  # экстрактор (openai SDK): --provider deepseek|bitri
 pnpm live:crm --ai# полный E2E: текст → DeepSeek → runCrmSync → сделка+позиции+уведомление+очистка
 pnpm verify:idem  # идемпотентность: 2 прогона одним jobId → повтор нашёл по маркеру, created:false
 pnpm verify:332   # копия файла на Диске: запись → чтение байт → удаление (+--commit → репо отзывов)
+pnpm verify:fail  # сообщения об отказе (planFailureNotify→im.message.add): доставка в [TEST]-чат,
+                  # обезвреживание, удаление; личный диалог не проверить — self-диалог запрещён
 pnpm loadtest:123 # доказательство rate-limiter (RestrictionManager)
 pnpm loadtest:queue # очередь под нагрузкой (локальный Redis): backlog, дедуп, обрыв воркера,
                     # scale-out, приём под нагрузкой, реальный темп лимитера Б24 (~900 док/ч на портал)
