@@ -9,6 +9,7 @@ import {
 import {
   MAX_FAILED_SCAN,
   countRecentFailures,
+  isServiceFailure,
   readQueueHealth,
   summarisePending
 } from '../server/utils/queueHealthRead'
@@ -56,6 +57,15 @@ describe('evaluateQueueHealth', () => {
   })
 
   describe('задачи падают', () => {
+    // Порог намеренно НИЗКИЙ: в множество упавших BullMQ попадают только задачи, исчерпавшие все
+    // попытки, — отвергнутые документы туда не идут вовсе (о них сотруднику пишут напрямую).
+    // Прежние 10 за 15 минут были скопированы из логики «один кривой документ — не повод»,
+    // но кривых документов в этой выборке нет, и правило оставалось недостижимым.
+    it('порог и окно закреплены: 3 за час', () => {
+      expect(FAILURE_ALERT_THRESHOLD).toBe(3)
+      expect(FAILURE_WINDOW_MS).toBe(3_600_000)
+    })
+
     it('прирост выше порога — тревога с числом', () => {
       const [a] = evaluateQueueHealth([q({ recentFailures: FAILURE_ALERT_THRESHOLD })], NOW)
       expect(a?.kind).toBe('failing')
@@ -64,6 +74,13 @@ describe('evaluateQueueHealth', () => {
 
     it('на единицу ниже порога — молчим', () => {
       expect(evaluateQueueHealth([q({ recentFailures: FAILURE_ALERT_THRESHOLD - 1 })], NOW)).toEqual([])
+    })
+
+    // Ради этого порог и снижали: при трёх-пяти документах в час прежние «10 за 15 минут»
+    // не набирались никогда, даже когда падало всё подряд.
+    it('тихий портал: всё падает, но документов мало — тревога всё равно звучит', () => {
+      const alerts = evaluateQueueHealth([q({ queue: 'crm-sync', recentFailures: 4 })], NOW)
+      expect(alerts.map(a => a.kind)).toEqual(['failing'])
     })
 
     it('называет свою очередь, а не первую попавшуюся', () => {
@@ -143,6 +160,58 @@ describe('countRecentFailures', () => {
   })
 })
 
+// Отказ, за который отвечает клиент, — не наша тревога. Он детерминированный: удалённый смарт-процесс
+// или отозванные права дают один и тот же отказ на каждом документе этого портала. Считая их, мы
+// привязали бы тревогу к числу неверно настроенных клиентов — один такой портал будил бы нас
+// ежечасно и бесконечно из-за того, что чинить должен не дежурный. Сотрудник об этом узнаёт сам.
+describe('isServiceFailure', () => {
+  it('отказ портала по правам и типу сущности — не наша тревога', () => {
+    for (const r of [
+      'ACCESS_DENIED',
+      'Access denied',
+      'нет прав на этот раздел',
+      'Сущность CRM не поддерживается',
+      'Смарт-процесс не найден',
+      'портал не авторизован (нет токена)'
+    ]) expect(isServiceFailure(r), r).toBe(false)
+  })
+
+  it('всё остальное считаем нашим — незнакомая поломка важнее лишней тревоги', () => {
+    for (const r of [
+      'connect ECONNREFUSED 127.0.0.1:6379',
+      'job stalled more than allowable limit',
+      'QUERY_LIMIT_EXCEEDED',
+      'socket hang up',
+      ''
+    ]) expect(isServiceFailure(r), r).toBe(true)
+  })
+
+  it('отсутствующая причина не прячет отказ', () => {
+    expect(isServiceFailure(undefined)).toBe(true)
+    expect(isServiceFailure(null)).toBe(true)
+  })
+})
+
+describe('countRecentFailures: чей отказ', () => {
+  it('отказы одного криво настроенного портала не набирают порог', () => {
+    const jobs = Array.from({ length: 20 }, () => ({
+      finishedOn: NOW - 60_000,
+      failedReason: 'Ошибка Битрикс24: ACCESS_DENIED'
+    }))
+    expect(countRecentFailures(jobs, NOW)).toBe(0)
+  })
+
+  it('наши отказы среди чужих считаются', () => {
+    const jobs = [
+      { finishedOn: NOW - 60_000, failedReason: 'ACCESS_DENIED' },
+      { finishedOn: NOW - 60_000, failedReason: 'connect ECONNREFUSED' },
+      { finishedOn: NOW - 60_000, failedReason: 'Смарт-процесс не найден' },
+      { finishedOn: NOW - 60_000, failedReason: 'socket hang up' }
+    ]
+    expect(countRecentFailures(jobs, NOW)).toBe(2)
+  })
+})
+
 describe('readQueueHealth', () => {
   const okReader = {
     pending: async () => [{ timestamp: NOW - 90_000 }],
@@ -176,6 +245,21 @@ describe('readQueueHealth', () => {
 
   it('чтение упавших ограничено — консоль не архив', () => {
     expect(MAX_FAILED_SCAN).toBeGreaterThan(FAILURE_ALERT_THRESHOLD)
+  })
+
+  // Кап безопасен только потому, что BullMQ отдаёт упавшие СВЕЖИМИ ВПЕРЁД: он срезает старый
+  // хвост, который и так вне окна. Здесь закрепляем, что мы считаем именно свежие: если бы
+  // читались старые, при крупной аварии счёт падал бы до нуля ровно тогда, когда он нужен.
+  it('при переполнении капа считаются свежие отказы, а не древние', async () => {
+    const old = Array.from({ length: 300 }, () => ({ finishedOn: NOW - 10 * 60 * 60 * 1000 }))
+    const fresh = Array.from({ length: 5 }, () => ({ finishedOn: NOW - 60_000 }))
+    const rows = await readQueueHealth({
+      pending: async () => [],
+      // Как BullMQ: свежие первыми, обрезано капом.
+      failed: async () => [...fresh, ...old].slice(0, MAX_FAILED_SCAN)
+    }, NOW)
+    expect(rows[0]?.recentFailures).toBe(5)
+    expect(evaluateQueueHealth(rows, NOW).some(a => a.kind === 'failing')).toBe(true)
   })
 })
 
