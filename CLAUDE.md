@@ -22,7 +22,45 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
 
 - `app/` — Nuxt (авто-импорт): `utils` (чистое ядро + тесты) / `composables` / `config` / `types` /
   `components` / `pages` / `layouts`.
-- `server/` — Nitro backend: `api` / `utils` (чистые с DI) / `queue` (BullMQ) / `db` / `plugins` / `agent`.
+- `server/` — Nitro backend: `api` / `routes` (не-`/api` публичные роуты) / `utils` (чистые с DI) /
+  `queue` (BullMQ) / `db` / `plugins` / `agent`.
+  - **SEO лендинга** (#292): share/SEO-мета живёт в `app/pages/index.vue`, **не** в корневом `app.vue` —
+    корневой `useSeoMeta` применял маркетинговый OG лендинга к `/app`, `/settings`, `/queues`. `og:image`
+    и `canonical` **обязаны быть абсолютными** (Facebook/LinkedIn выбрасывают относительные), а лендинг
+    пререндерится ⇒ тег впекается в статический HTML на сборке и рантайм-env его уже не исправит. Поэтому
+    база — `landing.siteBaseUrl`: `NUXT_PUBLIC_SITE_URL`, если это абсолютный URL (staging/Vibecode
+    объявляют себя сами), иначе константа `LANDING_SITE_URL`; от наличия env корректность **не зависит**.
+    База **разбирается `new URL`, а не проверяется регуляркой** — она попадает в строчный формат
+    (robots.txt) и в разметку (`<loc>`), а префиксная проверка пропускала перевод строки (инъекция
+    директив), `@` (userinfo-подмена → чужой домен в `canonical`) и query (og:image вёл на HTML-страницу);
+    `.origin` заодно нормализует регистр. Планка — как у `isSafeB24Domain`. Гард — `RUN` в `Dockerfile`
+    после `pnpm build`: относительный `og:image` роняет сборку (тег матчится **независимо от порядка
+    атрибутов** — unhead их не сортирует).
+    `/robots.txt` + `/sitemap.xml` — **роуты** (`server/routes/*.ts`), не статика в `public/`: обоим нужен
+    абсолютный хост, который различается по деплою. Вся композиция «сырой env → проверенная база → тело»
+    живёт в одной функции `seoFiles.crawlerFiles` — роуты без логики; иначе тесты хелпера и билдеров
+    зелены, а шов между ними не покрыт (роут, передающий сырой `siteUrl` в билдер, возвращал инъекцию).
+    **Без суффикса `.get`** — h3 не подменяет HEAD на GET, а краулерные инструменты ходят HEAD; плата за
+    это — файл без суффикса отвечает на **любой** метод, поэтому `crawlerRoute.crawlerMethodGate`
+    возвращает 405 с обязательным `Allow` (RFC 9110 §15.5.6) и 204 на OPTIONS.
+    `siteUrl`/`buildDate` читаются в рантайме ⇒ обе переменные обязаны стоять и на **рантайм-стадии**
+    образа (`ENV` не переходит через `FROM` — тот же капкан, что с `COMMIT_SHA`). ⚠ пустое присваивание
+    в `env_file` перебивает `ENV` образа, поэтому запекаемые переменные в `.env.example` закомментированы.
+    Служебные страницы (`/app`, `/settings`, `/metrics`, `/install`, `/import`, `/login`, `/queues`)
+    несут `robots:noindex`, но в `robots.txt` **НЕ закрыты**: `Disallow` и `noindex` — альтернативы, а не
+    слои. Заблокированную страницу краулер не читает ⇒ `noindex` не видит ⇒ URL может остаться в выдаче.
+    Страницы пререндерятся и отдают 200 (`/app`, `/settings`, `/metrics` — пустое `ClientOnly`-тело,
+    остальные — тонкий статический каркас), краулить дёшево, а `noindex` работает. В `DISALLOWED_PATHS`
+    только `/api/` — там нет HTML, который нёс бы мету; `Disallow` матчит **по префиксу**, поэтому
+    инертная статика под теми же префиксами краулима (закрывать — заголовком `X-Robots-Tag`).
+    **Инвариант заявлен над страницами, а не над конфигом**: «индексируется только лендинг» — тест
+    рекурсивно обходит `app/pages`, потому что пререндер в Nuxt включается четырьмя способами, а на
+    `node-server` публична вообще каждая страница. Комментарии и `definePageMeta` вырезаются перед
+    сопоставлением (закомментированный `useHead` тег не отдаёт), `property:` не принимается (краулеры
+    читают `name=`), `robots:'none'` принимается. Гард утечки меты покрывает **все обёртки** — `app.vue`,
+    `app/layouts/*`, `app.head` в `nuxt.config`. Дублирующая проверка — в `Dockerfile` **по готовому
+    HTML**: там вопросы написания и механизма исчезают по построению. Статика вне `app/pages`
+    (`public/b24-form.html`) гардом не видна — у неё свой `noindex` в самом файле.
   - **LLM-экстрактор — OpenAI-совместимый chat-вызов** (`server/agent/`, tool-less, чистый text→JSON,
     инъекция документа не может ничего кроме JSON; claude-code CLI удалён): `llmConfig.ts` (чистый
     резолвер `LLM_PROVIDER` → `{baseURL,apiKey,model}`: `deepseek`/`bitrixgpt`/`custom`, тесты) →
@@ -322,7 +360,8 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   запросы не трогает. Буферящие всё тело роуты (`/api/demo/extract`, `/api/import/upload`) кап-чекают свой
   предел (`bodySizeStatus`). Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
   `/api/demo/*` держит собственный пер-IP лимитер (`demoRateLimit`) плюс глобальный `AI_MAX_CONCURRENCY`. ⚠
-  `NUXT_PUBLIC_SITE_URL` пекётся на **build** (пререндер `/install`) — скрипт запекает его в `pnpm build` из
+  `NUXT_PUBLIC_SITE_URL` нужен **и на build** (пререндер `/install` + canonical/og лендинга), **и в рантайме**
+  (`/robots.txt`, `/sitemap.xml` читают его на запрос) — скрипт запекает его в `pnpm build` из
   `ENV_JSON`. Env под PUBLIC: `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль),
   `LLM_PROVIDER`+`DEEPSEEK_API_KEY`/`VIBE_API_KEY`, `B24_TOKEN_ENC_KEY` (32 байта),
   `NUXT_PUBLIC_SITE_URL=<appUrl>`, **`APP_EDGE_SECURITY=1`**.

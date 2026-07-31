@@ -21,7 +21,7 @@ import { portalCurrencySettingsUrl } from '~/utils/entityLink'
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
 // UI on native b24ui controls (B24Button/B24Input/B24Select/B24Switch/B24RadioGroup).
 definePageMeta({ layout: 'clear' })
-useHead({ title: 'Настройки импорта' })
+useHead({ title: 'Настройки импорта', meta: [{ name: 'robots', content: 'noindex' }] }) // in-portal shell, see /app
 
 const { mapping, loading, saving, saved, error, isAdmin, baseCurrency, currencyUnknown, loaded, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()

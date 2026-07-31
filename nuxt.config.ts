@@ -37,6 +37,9 @@ export default defineNuxtConfig({
       // Client-exposed; correctly overridden by NUXT_PUBLIC_-prefixed env at runtime.
       siteUrl: '',
       commitSha: 'dev',
+      // Build date (YYYY-MM-DD) baked by the image build — the `<lastmod>` of /sitemap.xml. Empty
+      // (local/dev build) → the element is omitted rather than filled with a wrong `now`.
+      buildDate: '',
       // Bitrix24 Market listing code override for the «оцените приложение» modal. Empty → the
       // composable falls back to the app's real slug (LANDING_MARKET_CODE in landing.ts). Set
       // NUXT_PUBLIC_B24_MARKET_CODE only to point at a different listing (e.g. a re-publish).

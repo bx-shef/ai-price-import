@@ -14,7 +14,7 @@ import { formatRate, summarizeMetrics } from '~/utils/metricsView'
 // Frame-token data via the SAME useMetrics composable (/api/import/metrics) — no extra endpoint.
 // Presentation is the pure summarizeMetrics (successRate/labels/empty). Layout `clear`, prerendered.
 definePageMeta({ layout: 'clear' })
-useHead({ title: 'Метрики импорта' })
+useHead({ title: 'Метрики импорта', meta: [{ name: 'robots', content: 'noindex' }] }) // in-portal shell, see /app
 
 const { counters, savings, resetting, error, load, reset } = useMetrics()
 

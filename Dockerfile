@@ -12,8 +12,37 @@ COPY . .
 # Bake the build commit into the footer/health (prerendered at build time).
 ARG COMMIT_SHA=dev
 ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
+# Deployment URL + build date must be baked too — the landing and /install are PRERENDERED, so their
+# canonical/OG tags and the footer stamp are frozen into static HTML here; a runtime env can no longer
+# change them. Both are optional: an unset SITE_URL falls back to the canonical landing home
+# (utils/landing.siteBaseUrl) so og:image stays absolute, and an unset BUILD_DATE just omits <lastmod>.
+ARG NUXT_PUBLIC_SITE_URL=""
+ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
+ARG BUILD_DATE=""
+ENV NUXT_PUBLIC_BUILD_DATE=$BUILD_DATE
 # nuxt build → .output: Nitro node server incl. prerendered static pages in public/.
 RUN pnpm build
+# Guard the defect this replaces: a RELATIVE og:image ships silently and is dropped by Facebook and
+# LinkedIn, so the failure only shows up as "the shared link has no picture". Assert on the frozen
+# prerendered HTML — the one place where it is too late to fix at runtime.
+# Two separate assertions, and the tag is matched ATTRIBUTE-ORDER-INDEPENDENTLY: unhead serialises
+# attributes in insertion order with no sort, and it already emits `data-hid` on keyed tags in this
+# project — a single pattern pinning `property="og:image" content="` would start failing on an
+# unrelated unhead change, with a message blaming the wrong thing.
+# Braces, NOT parentheses: `exit 1` inside `( … )` leaves only the subshell, so the first assertion's
+# status would be discarded and a missing file would print BOTH messages — the misleading one last.
+RUN test -f .output/public/index.html \
+    || { echo 'BUILD FAILED: .output/public/index.html missing — is "/" still in nitro.prerender.routes?' >&2; exit 1; }; \
+    grep -oE '<meta[^>]*property="og:image"[^>]*>' .output/public/index.html | grep -q 'content="https\?://' \
+    || { echo 'BUILD FAILED: og:image in the prerendered landing is not an absolute URL.' >&2; exit 1; }
+# The same assertion for the OTHER half of the policy, on the RENDERED output rather than on source.
+# The unit guard reads `app/pages/*.vue`, so it cannot see how a tag actually serialises, nor a page
+# reaching the crawler through a mechanism other than a page file. Here every spelling question and
+# every prerender mechanism collapses into one check: the shipped HTML either carries the tag or not.
+RUN for p in app settings metrics install import login queues; do \
+      grep -q '<meta name="robots"[^>]*content="[^"]*noindex' ".output/public/$p/index.html" \
+      || { echo "BUILD FAILED: /$p is prerendered without robots:noindex — it would be indexed on the landing's domain." >&2; exit 1; }; \
+    done
 
 FROM node:22-slim AS backend
 WORKDIR /app
@@ -38,6 +67,17 @@ ENV HOME=/root
 # deploy passes COMMIT_SHA as a build-arg to every matrix target (see .github/workflows/deploy.yml).
 ARG COMMIT_SHA=dev
 ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
+# Same reason, same trap, two more values. `/robots.txt` and `/sitemap.xml` are RUNTIME routes (they
+# must resolve the host per deploy, so they are not prerendered) — they read `siteUrl`/`buildDate` at
+# REQUEST time. Set only in the build stage, both would stay at the nuxt.config defaults here and
+# `<lastmod>` would never ship. Keeping SITE_URL in both stages narrows the window in which the baked
+# canonical/og:url and the runtime Sitemap:/<loc> advertise DIFFERENT hosts — it cannot close it: the
+# baked side comes from the build-arg, the runtime side from `env_file`, which outranks image ENV.
+# That override is also why an existing deploy setting these in .env is unaffected.
+ARG NUXT_PUBLIC_SITE_URL=""
+ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
+ARG BUILD_DATE=""
+ENV NUXT_PUBLIC_BUILD_DATE=$BUILD_DATE
 RUN mkdir -p /data/uploads
 # Fail the build FAST if the extraction toolchain is broken. A package rename / partial install
 # would otherwise pass `docker build` and only surface at RUNTIME («fragile binary env» risk from the
