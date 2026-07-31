@@ -29,3 +29,17 @@ export function entityDetailPath(entityTypeId: number | undefined | null, entity
   if (etid === 7) return `/crm/quote/show/${id}/`
   return `/crm/type/${etid}/details/${id}/`
 }
+
+/**
+ * Absolute link to the portal's currency settings (Настройки CRM → Валюты).
+ *
+ * Needed because the money tile silently cannot exist on a portal with no BASE currency, and the
+ * only fix is on the portal side. Built from the portal's OWN domain — never a hard-coded host —
+ * and the domain is validated as a bare hostname (no scheme, no slash, no credentials/port), so a
+ * spoofed frame domain cannot turn a settings hint into a link to somebody else's site.
+ */
+export function portalCurrencySettingsUrl(domain: string | undefined | null): string | null {
+  const d = String(domain ?? '').trim().toLowerCase()
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) return null
+  return `https://${d}/crm/configs/currency/`
+}

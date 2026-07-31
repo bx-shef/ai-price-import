@@ -2,6 +2,7 @@ import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { extractFrameAuth } from '../utils/frameAuth'
 import { verifyFrameToken } from '../utils/resolveFrameMember'
 import { readMapping } from '../utils/appSettings'
+import { fetchBaseCurrency } from '../utils/portalCurrency'
 import { withSpan } from '../utils/telemetrySpan'
 import { portalHash } from '../utils/telemetryAttributes'
 
@@ -33,7 +34,19 @@ export default defineEventHandler(async (event) => {
       }
       const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
       try {
-        return { mapping: await readMapping(call), admin: verified.admin === true }
+        const mapping = await readMapping(call)
+        // Base currency is shown NEXT TO the hourly rate, and its absence is the whole reason the
+        // «Сэкономлено денег» tile can silently never appear (computeSavings drops the money figure
+        // without a currency). Fail-open: a failed currency read must not turn a settings page into
+        // a 502 — `null` renders the same warning as «портал не завёл базовую валюту», which is the
+        // action the admin needs either way.
+        let baseCurrency: string | null = null
+        try {
+          baseCurrency = await fetchBaseCurrency(call)
+        } catch {
+          baseCurrency = null
+        }
+        return { mapping, admin: verified.admin === true, baseCurrency }
       } catch {
         outcome = 'upstream_error'
         setResponseStatus(event, 502)

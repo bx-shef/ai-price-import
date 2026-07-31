@@ -20,6 +20,9 @@ export function useSettings() {
   // Whether the CALLING portal user is an admin (from GET /api/settings, verified server-side).
   // Non-admins may view settings but not save — writes are also enforced admin-only on the server.
   const isAdmin = ref(false)
+  // Portal base currency (crm.currency.list BASE:'Y'), or `null` when the portal has none.
+  // It labels the hourly rate — and its absence is exactly why the money tile can never appear.
+  const baseCurrency = ref<string | null>(null)
   const snapshot = (): string => JSON.stringify(mapping.value)
 
   async function headers(): Promise<Record<string, string> | null> {
@@ -35,9 +38,10 @@ export function useSettings() {
     }
     loading.value = true
     try {
-      const res = await $fetch<{ mapping: PortalMapping, admin?: boolean }>('/api/settings', { headers: h })
+      const res = await $fetch<{ mapping: PortalMapping, admin?: boolean, baseCurrency?: string | null }>('/api/settings', { headers: h })
       mapping.value = res.mapping
       isAdmin.value = res.admin === true
+      baseCurrency.value = typeof res.baseCurrency === 'string' ? res.baseCurrency : null
       saved.value = false
       error.value = ''
     } catch (e) {
@@ -82,5 +86,5 @@ export function useSettings() {
     }
   }
 
-  return { mapping, loading, saving, saved, error, isAdmin, load, save }
+  return { mapping, loading, saving, saved, error, isAdmin, baseCurrency, load, save }
 }

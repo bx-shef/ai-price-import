@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { entityDetailPath } from '../app/utils/entityLink'
+import { entityDetailPath, portalCurrencySettingsUrl } from '../app/utils/entityLink'
 
 describe('entityDetailPath', () => {
   it('deal (2) → named deal route', () => {
@@ -22,5 +22,19 @@ describe('entityDetailPath', () => {
     expect(entityDetailPath(2, undefined)).toBeNull()
     expect(entityDetailPath(2, -1)).toBeNull()
     expect(entityDetailPath(2.5, 5)).toBeNull()
+  })
+})
+
+describe('portalCurrencySettingsUrl', () => {
+  it('строит ссылку на настройки валют портала', () => {
+    expect(portalCurrencySettingsUrl('b24-hrbvzq.bitrix24.by')).toBe('https://b24-hrbvzq.bitrix24.by/crm/configs/currency/')
+  })
+  it('нормализует регистр и пробелы', () => {
+    expect(portalCurrencySettingsUrl('  Portal.Bitrix24.RU ')).toBe('https://portal.bitrix24.ru/crm/configs/currency/')
+  })
+  it('отвергает всё, что не голый хост', () => {
+    for (const bad of ['', '   ', 'localhost', 'https://x.bitrix24.by', 'x.bitrix24.by/evil', 'x.bitrix24.by:8080', 'u@evil.com', 'x.bitrix24.by?a=1', undefined, null]) {
+      expect(portalCurrencySettingsUrl(bad as string)).toBeNull()
+    }
   })
 })

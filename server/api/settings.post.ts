@@ -1,7 +1,9 @@
 import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { extractFrameAuth } from '../utils/frameAuth'
-import { verifyFrameToken } from '../utils/resolveFrameMember'
+import { resolveFrameMember, verifyFrameToken } from '../utils/resolveFrameMember'
 import { writeMapping } from '../utils/appSettings'
+import { evictSavingsRate } from '../utils/savingsRate'
+import { query } from '../db/client'
 import { withSpan } from '../utils/telemetrySpan'
 import { portalHash } from '../utils/telemetryAttributes'
 
@@ -47,7 +49,18 @@ export default defineEventHandler(async (event) => {
       }
       const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
       try {
-        return { mapping: await writeMapping(call, mapping) }
+        const saved = await writeMapping(call, mapping)
+        // The hourly rate behind the «Сэкономлено денег» tile is memoized per portal for
+        // SAVINGS_RATE_TTL_MS (10 min). Nothing evicted it on save, so an admin who had just
+        // entered a rate reopened the dashboard and saw no tile — for up to ten minutes, with no
+        // way to tell «не сработало» from «ещё не видно». Evicting here makes the tile appear on
+        // the next open. Best-effort: member_id needs the install row, and a failure here only
+        // means the old behaviour (the TTL still expires), so it must not fail the save.
+        try {
+          const member = await resolveFrameMember(auth, { query })
+          if (member.ok && member.memberId) evictSavingsRate(member.memberId)
+        } catch { /* cache eviction is cosmetic — never break a successful save over it */ }
+        return { mapping: saved }
       } catch {
         outcome = 'upstream_error'
         setResponseStatus(event, 502)
