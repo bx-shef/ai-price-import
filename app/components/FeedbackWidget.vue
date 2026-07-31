@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import LikeIcon from '@bitrix24/b24icons-vue/outline/LikeIcon'
 import DislikeIcon from '@bitrix24/b24icons-vue/outline/DislikeIcon'
 import { useFeedback } from '~/composables/useFeedback'
@@ -17,8 +17,10 @@ import { importFeedbackKind, markImportFeedback } from '~/utils/importHistory'
 const props = defineProps<{ jobId?: string, fileName?: string }>()
 const { enabled, ensureEnabled, submit } = useFeedback()
 
-const open = ref(false) // comment box shown
-const pending = ref<'up' | 'down' | null>(null) // какую оценку подтверждаем в форме
+// Какую оценку подтверждаем в форме. `null` — форма ещё не открыта: отдельного флага «форма видна»
+// нет намеренно, два состояния об одном и том же могли бы разойтись.
+const pending = ref<'up' | 'down' | null>(null)
+const open = computed(() => pending.value !== null)
 const comment = ref('')
 const attachFile = ref(false) // consent to attach the source-file link (#192 п.3)
 const sending = ref(false)
@@ -36,8 +38,7 @@ onMounted(() => {
 /** Нажатие на оценку: всегда сначала форма (комментарий + согласие на файл), потом отправка. */
 function pick(kind: 'up' | 'down'): void {
   pending.value = kind
-  open.value = true
-  error.value = ''
+  error.value = '' // прошлая неудача не должна висеть над новой попыткой
 }
 
 async function send(): Promise<void> {
@@ -90,6 +91,7 @@ async function send(): Promise<void> {
           size="xs"
           :color="pending === 'up' ? 'air-primary-success' : 'air-tertiary-no-accent'"
           :disabled="sending"
+          :aria-pressed="pending === 'up'"
           aria-label="Хорошо"
           @click="pick('up')"
         />
@@ -98,18 +100,11 @@ async function send(): Promise<void> {
           size="xs"
           :color="pending === 'down' ? 'air-primary-alert' : 'air-tertiary-no-accent'"
           :disabled="sending"
+          :aria-pressed="pending === 'down'"
           aria-label="Плохо"
           @click="pick('down')"
         />
       </div>
-      <!-- Ошибка отправки до открытия формы (например, вне портала). -->
-      <p
-        v-if="error && !open"
-        class="mt-1 text-(--ui-color-accent-main-alert)"
-        role="alert"
-      >
-        {{ error }}
-      </p>
       <div
         v-if="open"
         class="mt-1 flex flex-col gap-1"
@@ -126,7 +121,7 @@ async function send(): Promise<void> {
           v-model="attachFile"
           size="xs"
           label="Приложить исходный файл"
-          description="Ссылка на файл в задаче (если он был сохранён на Диск портала)"
+          description="Копия документа уйдёт разработчику вместе с отзывом — она нужна, чтобы воспроизвести разбор. Если файл уже удалён по сроку хранения, отзыв уйдёт без него"
         />
         <div class="flex items-center gap-2">
           <B24Button

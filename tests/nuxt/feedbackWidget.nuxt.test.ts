@@ -65,6 +65,20 @@ describe('FeedbackWidget', () => {
     expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-8', fileName: undefined }, true)
   })
 
+  it('оценку можно передумать: 👍 → 👎 → «Отправить» уходит как отрицательная', async () => {
+    const w = await mountSuspended(FeedbackWidget)
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await w.find('textarea').setValue('передумал')
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    // Выбор виден не только цветом — иначе о нём не узнает скринридер.
+    expect(w.find('button[aria-label="Плохо"]').attributes('aria-pressed')).toBe('true')
+    expect(w.find('button[aria-label="Хорошо"]').attributes('aria-pressed')).toBe('false')
+    await clickText(w, 'Отправить')
+    await tick()
+    // Текст не потерян при смене оценки.
+    expect(h.submit).toHaveBeenCalledWith('down', 'передумал', expect.any(Object), false)
+  })
+
   it('👎 opens the comment box; the «Отправить» button sends with the comment', async () => {
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Плохо"]').trigger('click') // opens, no send yet

@@ -8,12 +8,20 @@ import { useB24 } from '~/composables/useB24'
 // slider. A normally-opened app page has no `place` → no redirect. Pattern from the official
 // bitrix-tools/b24-ai-starter reference (middleware 01.app.page.or.slider.global). Client-only: the B24
 // frame handshake is browser-side.
+// Routed ONCE per frame. The `place` sticks to the frame for its whole life, so re-evaluating on
+// every navigation turned it into a cage: the main screen now lives in a slider with `place=app-main`,
+// and any deliberate in-frame navigation away from `/app` (the settings/metrics fallback when the
+// portal refuses a nested slider) was bounced straight back — the gear silently did nothing.
+let routed = false
+
 export default defineNuxtRouteMiddleware(async (to) => {
   if (import.meta.server) return
+  if (routed) return
   const { init, placementPlace } = useB24()
   // Idempotent; no-op (returns null) outside a portal frame → the guard below never fires standalone.
   await init()
   const target = sliderRouteForPlace(placementPlace())
+  routed = true // решение принято один раз: дальше фрейм принадлежит пользователю
   if (target && to.path !== target) {
     return navigateTo(target)
   }

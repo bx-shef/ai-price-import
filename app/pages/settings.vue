@@ -538,11 +538,11 @@ const ON_MISSING_ITEMS = [
               >
                 <!-- v-if на самом template: слот actions рендерит свою обёртку по факту наличия
                      слота, а не содержимого — иначе без ссылки остаётся пустой отступ. -->
-                <template
-                  v-if="currencyLink"
-                  #actions
-                >
+                <!-- Ссылку строим только для облачных адресов Битрикс24. У портала на своём домене
+                     её не будет — тогда вместо тупика показываем сам путь словами. -->
+                <template #actions>
                   <a
+                    v-if="currencyLink"
                     :href="currencyLink"
                     target="_blank"
                     rel="noopener noreferrer"
@@ -550,6 +550,10 @@ const ON_MISSING_ITEMS = [
                   >
                     Открыть настройки валют
                   </a>
+                  <span
+                    v-else
+                    class="text-sm"
+                  >CRM → Настройки → Валюты</span>
                 </template>
               </B24Alert>
 
