@@ -44,7 +44,10 @@ describe('crmWrite', () => {
     expect(ownerTypeCode(2)).toBe('D')
     expect(ownerTypeCode(7)).toBe('Q')
     expect(ownerTypeCode(31)).toBe('SI')
-    expect(ownerTypeCode(1030)).toBe('T1030') // dynamic smart-process
+    // Dynamic smart process: 'T' + HEX id (live-verified: 'T460' OK, decimal 'T1120' →
+    // ENTITY_TYPE_NOT_SUPPORTED — the decimal form silently broke every SP product write).
+    expect(ownerTypeCode(1120)).toBe('T460')
+    expect(ownerTypeCode(1030)).toBe('T406')
   })
   it('buildProductRow: taxIncluded + clamp + productId omitted when absent', () => {
     const row = buildProductRow({ productName: 'x', price: 4.355, quantity: 2, taxRate: 22, priceIncludesVat: true, measureCode: 796 }, 10)

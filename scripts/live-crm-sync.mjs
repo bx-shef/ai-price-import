@@ -5,6 +5,7 @@
 //
 //   pnpm live:crm             # crafted накладная → deal (entityTypeId 2) → verify → delete
 //   pnpm live:crm --type счёт  # crafted счёт → smart-invoice (entityTypeId 31, xmlId marker)
+//   pnpm live:crm --type акт   # crafted акт → dynamic smart process (LIVE_SP_ETID, default 1032)
 //   pnpm live:crm --ai        # document TEXT → chat extractor → runCrmSync → verify → delete
 //   pnpm live:crm --keep      # do not delete the created entity
 //
@@ -111,7 +112,10 @@ const mapping = {
   saveFile: false,
   routingRules: [
     { match: { type: 'накладная' }, target: { entityTypeId: 2, categoryId: 1 } },
-    { match: { type: 'счёт' }, target: { entityTypeId: 31 } }
+    { match: { type: 'счёт' }, target: { entityTypeId: 31 } },
+    // Dynamic smart process (BACKLOG §1 «Живой проход в смарт-процесс»): xmlId marker path on a
+    // portal-specific entityTypeId — override with --etid <id> (default: the seeded [TEST] SP).
+    { match: { type: 'акт' }, target: { entityTypeId: Number(process.env.LIVE_SP_ETID || 1032) } }
     // КП/7 removed — not a supported target (no idempotency marker field), #135.
   ],
   defaultTarget: { entityTypeId: 2, categoryId: 0 }
