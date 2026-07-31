@@ -28,12 +28,13 @@ RUN pnpm build
 # Two separate assertions, and the tag is matched ATTRIBUTE-ORDER-INDEPENDENTLY: unhead serialises
 # attributes in insertion order with no sort, and it already emits `data-hid` on keyed tags in this
 # project — a single pattern pinning `property="og:image" content="` would start failing on an
-# unrelated unhead change, with a message blaming the wrong thing. Missing file is reported as such
-# instead of being misdiagnosed as "not absolute".
+# unrelated unhead change, with a message blaming the wrong thing.
+# Braces, NOT parentheses: `exit 1` inside `( … )` leaves only the subshell, so the first assertion's
+# status would be discarded and a missing file would print BOTH messages — the misleading one last.
 RUN test -f .output/public/index.html \
-    || (echo 'BUILD FAILED: .output/public/index.html missing — is "/" still in nitro.prerender.routes?' >&2; exit 1); \
+    || { echo 'BUILD FAILED: .output/public/index.html missing — is "/" still in nitro.prerender.routes?' >&2; exit 1; }; \
     grep -oE '<meta[^>]*property="og:image"[^>]*>' .output/public/index.html | grep -q 'content="https\?://' \
-    || (echo 'BUILD FAILED: og:image in the prerendered landing is not an absolute URL.' >&2; exit 1)
+    || { echo 'BUILD FAILED: og:image in the prerendered landing is not an absolute URL.' >&2; exit 1; }
 
 FROM node:22-slim AS backend
 WORKDIR /app
@@ -61,9 +62,10 @@ ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
 # Same reason, same trap, two more values. `/robots.txt` and `/sitemap.xml` are RUNTIME routes (they
 # must resolve the host per deploy, so they are not prerendered) — they read `siteUrl`/`buildDate` at
 # REQUEST time. Set only in the build stage, both would stay at the nuxt.config defaults here and
-# `<lastmod>` would never ship. Keeping SITE_URL in both stages also means the baked canonical/og:url
-# and the runtime Sitemap:/<loc> cannot advertise different hosts. A runtime `env_file` still wins
-# over image ENV, so an existing deploy that sets it in .env is unaffected.
+# `<lastmod>` would never ship. Keeping SITE_URL in both stages narrows the window in which the baked
+# canonical/og:url and the runtime Sitemap:/<loc> advertise DIFFERENT hosts — it cannot close it: the
+# baked side comes from the build-arg, the runtime side from `env_file`, which outranks image ENV.
+# That override is also why an existing deploy setting these in .env is unaffected.
 ARG NUXT_PUBLIC_SITE_URL=""
 ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
 ARG BUILD_DATE=""

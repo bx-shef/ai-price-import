@@ -1,5 +1,6 @@
 import { siteBaseUrl } from '~/utils/landing'
 import { buildSitemapXml } from '../utils/seoFiles'
+import { assertReadOnlyMethod } from '../utils/crawlerRoute'
 
 // /sitemap.xml — one entry, the landing (the only indexable page; see seoFiles). `lastmod` is the
 // deploy date, taken from the build stamp rather than `now` so repeated fetches of an unchanged
@@ -11,6 +12,7 @@ import { buildSitemapXml } from '../utils/seoFiles'
 // Filename carries no `.get` suffix so HEAD is answered too (see robots.txt.ts).
 
 export default defineEventHandler((event) => {
+  assertReadOnlyMethod(event)
   const config = useRuntimeConfig(event)
   const base = siteBaseUrl(config.public.siteUrl)
   setResponseHeader(event, 'content-type', 'application/xml; charset=utf-8')

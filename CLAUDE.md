@@ -43,9 +43,13 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     Служебные страницы (`/app`, `/settings`, `/metrics`, `/install`, `/import`, `/login`, `/queues`)
     несут `robots:noindex`, но в `robots.txt` **НЕ закрыты**: `Disallow` и `noindex` — альтернативы, а не
     слои. Заблокированную страницу краулер не читает ⇒ `noindex` не видит ⇒ URL может остаться в выдаче.
-    Страницы пререндерятся, отдают 200 и пустое (`ClientOnly`) тело — краулить их дёшево, а `noindex`
-    работает. В `DISALLOWED_PATHS` только `/api/` (там нет HTML, который нёс бы мету). Тест выводит
-    список noindex-страниц **из исходников** и сверяет с `nitro.prerender.routes`.
+    Страницы пререндерятся и отдают 200 (`/app`, `/settings`, `/metrics` — пустое `ClientOnly`-тело,
+    остальные — тонкий статический каркас), краулить дёшево, а `noindex` работает. В `DISALLOWED_PATHS`
+    только `/api/` — там нет HTML, который нёс бы мету. ⚠ `Disallow` матчит **по префиксу**: снятие
+    `Disallow: /app` открыло `/app-rating-demo.gif` и `/app/_payload.json` (инертны; закрывать — заголовком
+    `X-Robots-Tag`, не `Disallow`). Гард **односторонний**: для каждого маршрута из `nitro.prerender.routes`
+    (кроме `/`) ищется файл страницы и проверяется `noindex` — `noindex` на непререндеренной странице
+    корректен и не запрещён. Обе формы (`useSeoMeta({robots})` и `useHead({meta})`) распознаются.
   - **LLM-экстрактор — OpenAI-совместимый chat-вызов** (`server/agent/`, tool-less, чистый text→JSON,
     инъекция документа не может ничего кроме JSON; claude-code CLI удалён): `llmConfig.ts` (чистый
     резолвер `LLM_PROVIDER` → `{baseURL,apiKey,model}`: `deepseek`/`bitrixgpt`/`custom`, тесты) →
@@ -334,7 +338,8 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   запросы не трогает. Буферящие всё тело роуты (`/api/demo/extract`, `/api/import/upload`) кап-чекают свой
   предел (`bodySizeStatus`). Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
   `/api/demo/*` держит собственный пер-IP лимитер (`demoRateLimit`) плюс глобальный `AI_MAX_CONCURRENCY`. ⚠
-  `NUXT_PUBLIC_SITE_URL` пекётся на **build** (пререндер `/install`) — скрипт запекает его в `pnpm build` из
+  `NUXT_PUBLIC_SITE_URL` нужен **и на build** (пререндер `/install` + canonical/og лендинга), **и в рантайме**
+  (`/robots.txt`, `/sitemap.xml` читают его на запрос) — скрипт запекает его в `pnpm build` из
   `ENV_JSON`. Env под PUBLIC: `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль),
   `LLM_PROVIDER`+`DEEPSEEK_API_KEY`/`VIBE_API_KEY`, `B24_TOKEN_ENC_KEY` (32 байта),
   `NUXT_PUBLIC_SITE_URL=<appUrl>`, **`APP_EDGE_SECURITY=1`**.

@@ -9,8 +9,13 @@
  * the page, so it never sees the `noindex` and may still list the bare URL. Since `/app`, `/settings`,
  * `/metrics`, `/install`, `/import`, `/login` and `/queues` are prerendered, return 200 and carry
  * `<meta name="robots" content="noindex">`, letting crawlers READ them is what actually keeps them out
- * of the index — their bodies are `ClientOnly`, so crawling costs nothing. `/api/` is the opposite
- * case: no HTML, nothing that could carry a meta tag, so the crawl-level block is the only mechanism.
+ * of the index. Cheap either way: `/app`, `/settings` and `/metrics` render an empty body (`ClientOnly`),
+ * the rest a thin static shell. `/api/` is the opposite case — no HTML, nothing that could carry a meta
+ * tag — so there the crawl-level block is the only available mechanism.
+ *
+ * NB `Disallow` matches by PREFIX. `Disallow: /app` also covered `/app-rating-demo.gif` and the
+ * prerendered `/app/_payload.json`; those are crawlable now. They are inert (a 508 KB hint GIF and
+ * 68-byte payload stubs) — closing that properly needs an `X-Robots-Tag` header, not a `Disallow`.
  */
 export const DISALLOWED_PATHS = ['/api/'] as const
 
@@ -40,7 +45,8 @@ function xmlEscape(s: string): string {
 function isCalendarDate(d: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false
   const parsed = new Date(`${d}T00:00:00Z`)
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === d
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== d) return false
+  return parsed.getUTCFullYear() > 0 // `Date` accepts year 0000; XSD 1.0 `xsd:date` does not
 }
 
 /** `sitemap.xml` body. One entry — the landing is the only indexable page (see `DISALLOWED_PATHS`).

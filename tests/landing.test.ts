@@ -27,11 +27,19 @@ describe('siteBaseUrl', () => {
 
   // The base is interpolated into a LINE-oriented file (robots.txt) and into MARKUP (sitemap <loc>).
   // A prefix-only check let all of these through; each produced a silently wrong artefact.
-  it('rejects userinfo confusion and embedded whitespace', () => {
+  it('rejects userinfo confusion', () => {
     expect(siteBaseUrl('https://price-import.bx-shef.by@attacker.example')).toBe(LANDING_SITE_URL)
     expect(siteBaseUrl('https://user:pass@host.test')).toBe(LANDING_SITE_URL)
-    expect(siteBaseUrl('https://x.test\nDisallow: /')).toBe(LANDING_SITE_URL)
-    expect(siteBaseUrl('https://x.test Allow: /')).toBe(LANDING_SITE_URL)
+    expect(siteBaseUrl('https://x.test Allow: /')).toBe(LANDING_SITE_URL) // space is a forbidden host char
+  })
+
+  // `new URL` does NOT reject CR/LF/TAB — WHATWG STRIPS them before parsing, so some of these parse
+  // fine. What guarantees no directive can be injected into the line-oriented robots.txt is returning
+  // `.origin`, nothing else. Assert that invariant rather than the rejection it isn't.
+  it('never yields a base carrying CR/LF/TAB', () => {
+    for (const v of ['https://x.test\nDisallow: /', 'https://x.test\nAllow', 'https://x.test\r\n', 'https://x.test\tx']) {
+      expect(siteBaseUrl(v)).not.toMatch(/[\n\r\t]/)
+    }
   })
 
   // A base carrying a path/query/fragment made og:image resolve to the HTML page, not the picture.

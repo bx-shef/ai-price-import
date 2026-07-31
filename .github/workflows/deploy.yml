@@ -82,8 +82,6 @@ jobs:
           fi
           {
             echo "sha=${sha}"
-            # Baked into the image as the <lastmod> of /sitemap.xml (see Dockerfile BUILD_DATE).
-            echo "build_date=$(date -u +%Y-%m-%d)"
             echo "tags<<EOF"
             echo "${tags}"
             echo "EOF"
@@ -92,6 +90,15 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ steps.meta.outputs.sha }}
+
+      # Baked into the image as the <lastmod> of /sitemap.xml (Dockerfile BUILD_DATE). Taken from the
+      # COMMIT date, not `date -u`: lastmod must track when the content changed, and a wall-clock date
+      # would re-advertise "today" on every re-deploy of an unchanged commit — which search engines
+      # devalue, and which is worse than the omission the sitemap builder carefully protects against.
+      # Needs the checkout, hence a separate step after it (the `meta` step runs before).
+      - name: Resolve build date from the commit
+        id: builddate
+        run: echo "value=$(git show -s --format=%cs "${{ steps.meta.outputs.sha }}")" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
@@ -112,7 +119,7 @@ jobs:
           build-args: |
             COMMIT_SHA=${{ steps.meta.outputs.sha }}
             NUXT_PUBLIC_SITE_URL=${{ vars.NUXT_PUBLIC_SITE_URL }}
-            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            BUILD_DATE=${{ steps.builddate.outputs.value }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
