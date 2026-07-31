@@ -19,11 +19,13 @@ export function ownerTypeCode(entityTypeId: number): string {
   if (entityTypeId === 2) return 'D'
   if (entityTypeId === 7) return 'Q'
   if (entityTypeId === 31) return 'SI'
-  // Dynamic smart process: 'T' + entityTypeId in HEX, lowercase — NOT decimal. Live-verified on the
-  // test portal (etid 1120): 'T460' → OK, while 'T1120' / 'Tb24' / 'DYNAMIC_1120' all answer
+  // Dynamic smart process: 'T' + entityTypeId in HEX — NOT decimal. Live-verified on the test
+  // portal (etid 1120): 'T460' → OK, while 'T1120' / 'Tb24' / 'DYNAMIC_1120' all answer
   // ENTITY_TYPE_NOT_SUPPORTED. The decimal form silently broke EVERY smart-process product write —
   // and the error is the same one a products-disabled type returns, so it masqueraded as a portal
-  // configuration problem rather than our bug.
+  // configuration problem rather than our bug. Hex LETTERS + case checked live too (etid 1054 =
+  // 0x41E): 'T41e', 'T41E' and 't41e' are all accepted — the portal is case-insensitive here, so
+  // toString(16)'s lowercase is safe.
   return `T${entityTypeId.toString(16)}`
 }
 
