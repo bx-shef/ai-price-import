@@ -27,7 +27,8 @@
     "loadtest:123": "node scripts/load-test-123.mjs",
     "loadtest:queue": "node scripts/load-test-queue.mjs",
     "og": "node scripts/make-og.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test"
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
     "@bitrix24/b24icons-vue": "^2.0.8",

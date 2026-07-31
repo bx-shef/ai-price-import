@@ -13,7 +13,6 @@ const COLOR_MODE_STORAGE_KEY = 'vueuse-color-scheme'
 
 useHead({
   htmlAttrs: { lang: 'ru' },
-  link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
   script: [{
     // FOUC guard for SSG: b24ui colorMode sets the class only on the client (after hydration), so we
     // apply the stored / OS theme before first paint. `auto` (nothing stored) → OS preference. The
@@ -39,7 +38,8 @@ useSeoMeta({
   twitterCard: 'summary_large_image',
   twitterTitle: LANDING_TITLE,
   twitterDescription: LANDING_DESCRIPTION,
-  twitterImage: ogImage
+  twitterImage: ogImage,
+  twitterImageAlt: LANDING_TITLE
 })
 </script>
 
