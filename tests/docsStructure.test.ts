@@ -57,16 +57,33 @@ describe('внутренние ссылки не битые', () => {
 // Три проверки ниже добавлены после разбора документации (2026-07-30): каждая ловит дефект, который
 // реально дожил до main незамеченным, потому что прежние гварды смотрели в другую сторону.
 
+/**
+ * Мелкий клон (`git clone --depth 1`, как делает `actions/checkout` по умолчанию) историю не несёт:
+ * там ровно один коммит, и `git log` по ЛЮБОМУ файлу вернёт его — то есть «файл изменён сегодня».
+ * Проверять свежесть штампа в таких условиях бессмысленно: тест падал бы на каждом PR, где доки не
+ * переставлены на сегодняшнюю дату, и ловил бы не дрейф, а факт выкачки репозитория.
+ */
+function historyAvailable(): boolean {
+  try {
+    return execFileSync('git', ['rev-parse', '--is-shallow-repository'],
+      { cwd: ROOT, encoding: 'utf8' }).trim() === 'false'
+  } catch {
+    return false // не git-checkout вовсе (архив, tarball)
+  }
+}
+
 describe('штамп ревью не отстаёт от правок', () => {
   for (const file of markdownSet()) {
     it(`${file}: дата в штампе не старше последнего коммита файла`, () => {
+      if (!historyAvailable()) return
       const text = readFileSync(abs(file), 'utf8')
       const stamp = text.match(/^> Last reviewed: (\d{4}-\d{2}-\d{2})$/m)?.[1]
-      // Дата последнего коммита, тронувшего файл. Вне git-checkout (архив, tarball) — пропускаем.
+      // Дата последнего коммита, тронувшего файл. `short-local` + TZ=UTC — чтобы вердикт не зависел
+      // от часового пояса машины: иначе вечерний коммит читался бы как «завтрашний» в UTC-раннере.
       let committed: string
       try {
-        committed = execFileSync('git', ['log', '-1', '--format=%ad', '--date=short', '--', file],
-          { cwd: ROOT, encoding: 'utf8' }).trim()
+        committed = execFileSync('git', ['log', '-1', '--format=%ad', '--date=short-local', '--', file],
+          { cwd: ROOT, encoding: 'utf8', env: { ...process.env, TZ: 'UTC' } }).trim()
       } catch {
         return
       }
