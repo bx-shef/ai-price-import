@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { evictSavingsRate, resolveSavingsRate, SAVINGS_RATE_TTL_MS } from '../server/utils/savingsRate'
+import { evictSavingsRate, resolveSavingsRate, SAVINGS_RATE_MISS_TTL_MS, SAVINGS_RATE_TTL_MS } from '../server/utils/savingsRate'
 
 // The glue between «what the portal charges per hour» and «what currency it counts in» (#270).
 // Tested here because both halves are cheap to get wrong in ways the pure functions can't see:
@@ -80,5 +80,26 @@ describe('resolveSavingsRate — memo', () => {
     evictSavingsRate('A')
     await resolveSavingsRate('A', 10, a, 1000)
     expect(a.readRate).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('resolveSavingsRate — TTL неполного ответа', () => {
+  it('неполный ответ (ставка есть, валюты нет) живёт минуту, а не десять', async () => {
+    const s = source(30, null)
+    await resolveSavingsRate('A', 10, s, 1000)
+    // Внутри короткого окна — из кэша.
+    await resolveSavingsRate('A', 10, s, 1000 + SAVINGS_RATE_MISS_TTL_MS - 1)
+    expect(s.readCurrency).toHaveBeenCalledTimes(1)
+    // Сразу после — перечитываем: админ мог завести валюту в CRM, к нам запрос при этом не приходит.
+    await resolveSavingsRate('A', 10, s, 1000 + SAVINGS_RATE_MISS_TTL_MS)
+    expect(s.readCurrency).toHaveBeenCalledTimes(2)
+  })
+  it('полный ответ держится все десять минут', async () => {
+    const s = source(30, 'BYN')
+    await resolveSavingsRate('A', 10, s, 1000)
+    await resolveSavingsRate('A', 10, s, 1000 + SAVINGS_RATE_MISS_TTL_MS + 1)
+    expect(s.readRate).toHaveBeenCalledTimes(1)
+    await resolveSavingsRate('A', 10, s, 1000 + SAVINGS_RATE_TTL_MS)
+    expect(s.readRate).toHaveBeenCalledTimes(2)
   })
 })

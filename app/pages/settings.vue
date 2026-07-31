@@ -15,6 +15,7 @@ import { rulesToRows, rowsToRules } from '~/utils/routingRulesEditor'
 import { MAX_SAVINGS_RATE, parsePortalSettings } from '~/utils/portalSettings'
 import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
+import { portalCurrencySettingsUrl } from '~/utils/entityLink'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -22,9 +23,9 @@ import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта', meta: [{ name: 'robots', content: 'noindex' }] }) // in-portal shell, see /app
 
-const { mapping, loading, saving, saved, error, isAdmin, load, save } = useSettings()
+const { mapping, loading, saving, saved, error, isAdmin, baseCurrency, currencyUnknown, loaded, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()
-const { init: initB24, get: getFrame, placementPlace, closeSlider } = useB24()
+const { init: initB24, get: getFrame, auth: frameAuth, placementPlace, closeSlider } = useB24()
 // How settings was reached, so Save/Cancel do the right «close»:
 //  • isSlider — opened as a B24 slider (openSliderAppPage({place:'app-options'})) → close the slider
 //    overlay (parent.closeApplication); the /app frame behind it live-reloads via the pull.
@@ -41,6 +42,8 @@ onMounted(async () => {
     await initB24()
     inPortal.value = !!getFrame()
     isSlider.value = placementPlace() === APP_SLIDER_PLACE_SETTINGS
+    // Portal domain for the «завести валюту» link. Standalone → stays empty → no link rendered.
+    portalDomain.value = frameAuth()?.domain ?? ''
   } catch { /* standalone → stay put on Save/Cancel */ }
   await load()
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
@@ -139,6 +142,13 @@ const savingsRate = computed<number | undefined>({
   // Coercion and the upper clamp stay in ONE place — the same parser the server re-applies on save.
   set: (v) => { mapping.value.savings = parsePortalSettings({ savings: { ratePerHour: v } }).savings }
 })
+
+// The rate is entered in the portal's BASE currency, and there is no field for it — so the code is
+// shown next to the input. When the portal has none, the money tile can never appear no matter what
+// is typed here (computeSavings drops the amount without a currency), so that case gets a red alert
+// with a link to the portal's own currency settings instead of a silently missing tile.
+const portalDomain = ref('')
+const currencyLink = computed(() => portalCurrencySettingsUrl(portalDomain.value))
 
 // Seed each picker's selected option so a SAVED id shows before the chat list is fetched
 // (the mapping stores only the id, not the title → the raw `chat<id>` is the fallback label
@@ -517,14 +527,46 @@ const ON_MISSING_ITEMS = [
 
           <template #savings>
             <div class="space-y-6 pt-2">
+              <!-- Показываем ТОЛЬКО когда точно знаем, что валюты нет: в портале, после успешной
+                   загрузки и когда чтение валюты не падало. Иначе страница утверждала бы «валюты
+                   нет» на таймауте или до первой загрузки. -->
+              <B24Alert
+                v-if="inPortal && loaded && !error && !currencyUnknown && !baseCurrency"
+                color="air-primary-alert"
+                title="В портале нет базовой валюты"
+                description="Приложение не знает, в какой валюте считать сумму, поэтому плитка «Сэкономлено денег» не появится. Откройте настройки валют Битрикс24 и отметьте одну валюту базовой. Сэкономленное время показывается и без этого."
+              >
+                <!-- v-if на самом template: слот actions рендерит свою обёртку по факту наличия
+                     слота, а не содержимого — иначе без ссылки остаётся пустой отступ. -->
+                <template
+                  v-if="currencyLink"
+                  #actions
+                >
+                  <a
+                    :href="currencyLink"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-sm underline"
+                  >
+                    Открыть настройки валют
+                  </a>
+                </template>
+              </B24Alert>
+
               <B24FormField label="Стоимость часа работы сотрудника">
-                <B24InputNumber
-                  v-model="savingsRate"
-                  :min="0"
-                  :max="MAX_SAVINGS_RATE"
-                  :step="1"
-                  class="w-48"
-                />
+                <div class="flex items-center gap-2">
+                  <B24InputNumber
+                    v-model="savingsRate"
+                    :min="0"
+                    :max="MAX_SAVINGS_RATE"
+                    :step="1"
+                    class="w-48"
+                  />
+                  <span
+                    v-if="baseCurrency"
+                    class="text-sm text-(--ui-color-base-2)"
+                  >{{ baseCurrency }} в час</span>
+                </div>
                 <p class="mt-1 text-xs text-(--ui-color-base-3)">
                   Нужна только для плитки «Сэкономлено денег»: сэкономленное время × эта ставка.
                   Валюта — базовая валюта вашего портала, приложение берёт её из Битрикс24, вводить
