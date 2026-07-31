@@ -52,6 +52,8 @@ describe('siteBaseUrl', () => {
 
 describe('ogImageUrl', () => {
   it('is always absolute', () => {
+    // Хелпер по-прежнему принимает базу (его зовут краулерные файлы); сам лендинг с #304
+    // вызывает его БЕЗ аргумента — canonical/OG всегда прод.
     expect(ogImageUrl('https://staging.example.com')).toBe('https://staging.example.com/og.png')
     expect(ogImageUrl('')).toBe(`${LANDING_SITE_URL}/og.png`)
     expect(ogImageUrl(undefined)).toMatch(/^https:\/\/.+\/og\.png$/)

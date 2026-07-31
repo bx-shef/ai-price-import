@@ -66,8 +66,10 @@ function isCalendarDate(d: string): boolean {
  *  malformed date omits the element rather than emitting an invalid one. */
 export function buildSitemapXml(baseUrl: string, lastmod?: string, canonicalHost = true): string {
   const iso = lastmod && isCalendarDate(lastmod) ? lastmod : undefined
-  // A duplicate host serves a VALID but EMPTY sitemap (#304): well-formed (crawlers that fetched it
-  // anyway don't error), advertising nothing.
+  // A duplicate host serves an EMPTY urlset (#304): well-formed XML that advertises nothing. NB it
+  // is NOT schema-valid (sitemaps.org XSD requires >=1 <url>), which is why the ROUTE answers 404 on
+  // a non-canonical host instead of serving this body — this branch remains only as defence in depth
+  // for any future caller that forgets the route-level gate.
   if (!canonicalHost) {
     return [
       '<?xml version="1.0" encoding="UTF-8"?>',
