@@ -21,7 +21,11 @@ import { formatMinutes } from '~/utils/savings'
 // former separate /import page is merged here; recent operations + savings sit below. Layout `clear`,
 // prerendered, styled with b24ui + semantic --ui-color-* tokens (light/dark-auto).
 definePageMeta({ layout: 'clear' })
-useHead({ title: 'AI-импорт прайсов' })
+// noindex: prerendered and publicly reachable, but the body is ClientOnly — a crawler would index an
+// EMPTY page on the landing's domain. Same for /settings and /metrics; /install, /import, /login and
+// /queues render a thin static shell and carry it too. `robots.txt` deliberately does NOT block them:
+// a blocked page is never fetched, so its noindex is never read (see server/utils/seoFiles.ts).
+useHead({ title: 'AI-импорт прайсов', meta: [{ name: 'robots', content: 'noindex' }] })
 
 const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
