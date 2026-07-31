@@ -13,7 +13,13 @@
 //    be exercised at all; both planned messages go to the [TEST] chat instead. Delivery to a real
 //    employee's personal dialog needs a portal with a second user — noted in PROJECT_MAP §12.1.
 //  - the [TEST] chat is created once (im.chat.add) and reused by title — chats have no delete in
-//    scope `im`, so we don't leak one per run.
+//    scope `im`. Reuse is best-effort: the lookup reads the first 200 recent dialogs; on a portal
+//    where the chat has been quiet longer than that, a duplicate appears (visible, harmless).
+//
+// Scope note: this verifies the PLAN and the SEND (im.message.add semantics). The production
+// orchestration around them (claim, job store, mapping read, SDK transport) is unit-tested and
+// NOT exercised here; the personal-dialog delivery to another employee needs a two-user portal —
+// both limitations are recorded in PROJECT_MAP (§2 row + §7).
 //
 // Node >= 22.18 (or --experimental-strip-types): imports the app TS directly via the alias hook.
 import { readFileSync } from 'node:fs'
@@ -65,9 +71,15 @@ const myId = String(me.ID)
 // Find-or-create the [TEST] chat (see header — self-dialog is refused, chats are undeletable).
 const CHAT_TITLE = '[TEST] verify:fail — чат ошибок'
 async function testChatDialogId() {
-  const recent = await call('im.recent.list', {})
-  const hit = (recent?.items ?? []).find(i => i?.title === CHAT_TITLE && String(i?.id ?? '').startsWith('chat'))
-  if (hit) return String(hit.id)
+  // LIMIT 200 (the max) — the default 50 evicted a long-quiet chat from the first page and every
+  // run would then create a duplicate. `chat_id ?? id` mirrors how the app parses im.recent.list
+  // (server/utils/chatSearch.ts) — some portal versions return a numeric id.
+  const recent = await call('im.recent.list', { LIMIT: 200 })
+  const hit = (recent?.items ?? []).find(i => i?.title === CHAT_TITLE)
+  if (hit) {
+    const raw = hit.chat_id ?? hit.id
+    return String(raw).startsWith('chat') ? String(raw) : `chat${raw}`
+  }
   const chatId = await call('im.chat.add', { TYPE: 'CHAT', TITLE: CHAT_TITLE, USERS: [Number(myId)] })
   return `chat${chatId}`
 }
