@@ -393,6 +393,11 @@ pnpm verify:332   # копия файла на Диске: запись → чт
 pnpm verify:fail  # сообщения об отказе (planFailureNotify→im.message.add): доставка в [TEST]-чат,
                   # обезвреживание, удаление; личный диалог не проверить — self-диалог запрещён
 pnpm loadtest:123 # доказательство rate-limiter (RestrictionManager)
+# ⚠ Мажоры зависимостей: bullmq 6 и openai 7 взяты (2026-07-31, прогон нагрузочного теста +
+#   офлайн-проба SDK). TypeScript 7 ВЗЯТЬ НЕЛЬЗЯ: это нативный порт с другой раскладкой пакета
+#   (нет `typescript/lib/*` в exports) — vue-tsc падает `ERR_PACKAGE_PATH_NOT_EXPORTED`. Ждём
+#   поддержки в vue-tsc/typescript-eslint. @nuxt/test-utils держим на 4.0.x: 4.1 тянет h3 v2-rc,
+#   а Nuxt 4.5 живёт на h3 v1 — два несовместимых типа H3Event в одном дереве.
 pnpm loadtest:queue # очередь под нагрузкой (локальный Redis): backlog, дедуп, обрыв воркера,
                     # scale-out, приём под нагрузкой, реальный темп лимитера Б24 (~900 док/ч на портал)
                     # + ретраи (#267): падающий обработчик → ровно N попыток, растущая пауза,
