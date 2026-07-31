@@ -10,8 +10,10 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { resolveChromium } from './lib/chromium.mjs'
 // Card copy comes FROM the landing content module (#298) — the previous inline copy drifted from
-// the real title the moment someone edited landing.ts. Node strips the TS types on the fly (same
-// trick as the recon scripts in client-bank); landing.ts has no imports, so no loader is needed.
+// the real title the moment someone edited landing.ts. The `og` script passes
+// --experimental-strip-types explicitly (same as client-bank's recon scripts): default stripping
+// only arrived in Node 22.18, while our `engines` allows any >=22 — without the flag the script
+// would crash on 22.0–22.17. landing.ts has no imports, so no loader is needed.
 import { LANDING_TITLE, LANDING_SUBTITLE } from '../app/utils/landing.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))

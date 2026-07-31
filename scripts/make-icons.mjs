@@ -11,7 +11,10 @@
 //   favicon-16.png/-32.png explicit small sizes for browsers that prefer PNG links
 //   apple-touch-icon.png   180×180, opaque (iOS composites transparency onto black)
 //   icon-192.png/-512.png  PWA/manifest sizes
-//   icon-maskable-512.png  512 with the safe-zone margin (icon content in the inner 80%)
+//   icon-maskable-512.png  512, glyph scaled to 80% — NB the spec-safe zone is the inscribed
+//                          CIRCLE of that square (radius 0.4·size), not the square itself; safe
+//                          for the current glyph (content well inside the circle) and the plate
+//                          corners match the background, so a mask clips nothing visible
 //   site.webmanifest       names + icon list (theme colours match the logo backdrop)
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
