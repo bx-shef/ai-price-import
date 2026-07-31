@@ -1,11 +1,12 @@
 // Live end-to-end check of the document→CRM happy path against a real test portal.
 // Dev-only (like seed:b24). Runs the REAL crm-sync (server/queue/crmSyncCore) with a
 // webhook-backed RestCall, routing by document type: накладная→deal / счёт→smart-invoice /
-// КП→quote. Optionally runs the DeepSeek extraction first.
+// акт→dynamic smart process (КП/quote removed — no idempotency marker field, #135). Optionally
+// runs the DeepSeek extraction first.
 //
 //   pnpm live:crm             # crafted накладная → deal (entityTypeId 2) → verify → delete
 //   pnpm live:crm --type счёт  # crafted счёт → smart-invoice (entityTypeId 31, xmlId marker)
-//   pnpm live:crm --type акт   # crafted акт → dynamic smart process (LIVE_SP_ETID, default 1032)
+//   pnpm live:crm --type акт   # crafted акт → dynamic smart process (env LIVE_SP_ETID, default 1120)
 //   pnpm live:crm --ai        # document TEXT → chat extractor → runCrmSync → verify → delete
 //   pnpm live:crm --keep      # do not delete the created entity
 //
@@ -114,8 +115,11 @@ const mapping = {
     { match: { type: 'накладная' }, target: { entityTypeId: 2, categoryId: 1 } },
     { match: { type: 'счёт' }, target: { entityTypeId: 31 } },
     // Dynamic smart process (BACKLOG §1 «Живой проход в смарт-процесс»): xmlId marker path on a
-    // portal-specific entityTypeId — override with --etid <id> (default: the seeded [TEST] SP).
-    { match: { type: 'акт' }, target: { entityTypeId: Number(process.env.LIVE_SP_ETID || 1032) } }
+    // portal-specific entityTypeId — override with env LIVE_SP_ETID (there is no --etid flag).
+    // Default 1120 = «[TEST] СП с товарами (live)», created manually (crm.type.add,
+    // isLinkWithProductsEnabled) and deliberately left on the test portal so the bare command works
+    // out of the box; a type WITHOUT products answers ENTITY_TYPE_NOT_SUPPORTED on productrow.set.
+    { match: { type: 'акт' }, target: { entityTypeId: Number(process.env.LIVE_SP_ETID || 1120) } }
     // КП/7 removed — not a supported target (no idempotency marker field), #135.
   ],
   defaultTarget: { entityTypeId: 2, categoryId: 0 }

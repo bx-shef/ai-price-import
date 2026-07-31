@@ -10,9 +10,10 @@ import { lineGross } from '~/utils/pricing'
 
 /**
  * Short owner-type code for crm.item.productrow.set `ownerType`.
- * Static entities have letter codes (D=deal, Q=quote, SI=smart-invoice);
- * dynamic smart-processes (entityTypeId >= 1000) use the `T<entityTypeId>` token,
- * NOT the bare numeric id (which B24 rejects). ⚠ verify `SI`/`T<id>` live per portal.
+ * Static entities have letter codes (L=lead, D=deal, Q=quote, SI=smart-invoice); dynamic
+ * smart-processes use `T` + entityTypeId in HEX, lowercase (the documented PREFIX rule —
+ * apidocs «Типы данных и структура объектов»: 128 → T80). Both SI and the hex form are
+ * live-verified; details in the inline comment below.
  */
 export function ownerTypeCode(entityTypeId: number): string {
   if (entityTypeId === 1) return 'L' // lead — live-verified ('T1' → ACCESS_DENIED), #135
