@@ -297,9 +297,9 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   Grafana). Своя документация внутри, вне сборки приложения и вне CI.
 - `legacy/` — **старый проект** (backend/mcp/mcp-overlay/ui/b24-controller/prompts/scripts). Держим
   для порта удачных кусков; **новым тулингом не линтуется/не типизируется** (исключён в eslint/tsconfig).
-- `docs/` — вся документация: `PROCESS.md` / `PROJECT_MAP.md` / `BACKLOG.md` + два документа
-  для передачи наружу (`ui-spec.md`, `privacy-policy.md`). Старая россыпь из 40 файлов свёрнута
-  2026-07-29; удалённое доступно в истории git.
+- `docs/` — вся документация: `PROCESS.md` / `PROJECT_MAP.md` / `BACKLOG.md` + три документа
+  для передачи наружу (`ui-spec.md`, `privacy-policy.md`, `PRICING.md`). Старая россыпь из 40 файлов
+  свёрнута 2026-07-29; удалённое доступно в истории git.
 - **Альтернативный таргет деплоя — Битрикс24 Вайбкод Black Hole** (закрытый Bitrix-Cloud VM по REST,
   без SSH, приложение **одним Nitro-процессом на :3000**): [`docs/PROCESS.md`](docs/PROCESS.md).
   `deploy/vibecode-deploy.sh` (идемпотентный: найти сервер по имени / создать / ждать `CONNECTED` /
