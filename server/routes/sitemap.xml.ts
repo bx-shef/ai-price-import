@@ -1,3 +1,4 @@
+import { isCanonicalHost } from '~/utils/landing'
 import { crawlerFiles } from '../utils/seoFiles'
 import { crawlerMethodGate } from '../utils/crawlerRoute'
 
@@ -12,6 +13,13 @@ import { crawlerMethodGate } from '../utils/crawlerRoute'
 export default defineEventHandler((event) => {
   if (crawlerMethodGate(event) === 'no-content') return null
   const config = useRuntimeConfig(event)
+  // #304: a non-canonical host (staging/Vibecode/client server) has no sitemap AT ALL — its robots
+  // omits the `Sitemap:` line, and an empty urlset would be schema-invalid (sitemaps.org XSD wants
+  // at least one <url>), which Search Console reports as an error. 404 is the honest answer.
+  if (!isCanonicalHost(config.public.siteUrl)) {
+    setResponseStatus(event, 404)
+    return 'not found'
+  }
   setResponseHeader(event, 'content-type', 'application/xml; charset=utf-8')
   setResponseHeader(event, 'cache-control', 'public, max-age=86400')
   return crawlerFiles(config.public.siteUrl, config.public.buildDate).sitemap

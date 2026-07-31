@@ -27,9 +27,10 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   - **SEO лендинга** (#292): share/SEO-мета живёт в `app/pages/index.vue`, **не** в корневом `app.vue` —
     корневой `useSeoMeta` применял маркетинговый OG лендинга к `/app`, `/settings`, `/queues`. `og:image`
     и `canonical` **обязаны быть абсолютными** (Facebook/LinkedIn выбрасывают относительные), а лендинг
-    пререндерится ⇒ тег впекается в статический HTML на сборке и рантайм-env его уже не исправит. Поэтому
-    база — `landing.siteBaseUrl`: `NUXT_PUBLIC_SITE_URL`, если это абсолютный URL (staging/Vibecode
-    объявляют себя сами), иначе константа `LANDING_SITE_URL`; от наличия env корректность **не зависит**.
+    пререндерится ⇒ тег впекается в статический HTML на сборке. **Canonical/OG лендинга всегда указывают
+    на прод (`LANDING_SITE_URL`) и env игнорируют** (#304): канонический дом ровно один, staging/Vibecode/
+    клиентский сервер — дубли и себя не объявляют. `landing.siteBaseUrl` (env, если абсолютный URL, иначе
+    константа) остаётся базой краулерных файлов; от наличия env корректность **не зависит**.
     База **разбирается `new URL`, а не проверяется регуляркой** — она попадает в строчный формат
     (robots.txt) и в разметку (`<loc>`), а префиксная проверка пропускала перевод строки (инъекция
     директив), `@` (userinfo-подмена → чужой домен в `canonical`) и query (og:image вёл на HTML-страницу);
@@ -365,7 +366,8 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   запросы не трогает. Буферящие всё тело роуты (`/api/demo/extract`, `/api/import/upload`) кап-чекают свой
   предел (`bodySizeStatus`). Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
   `/api/demo/*` держит собственный пер-IP лимитер (`demoRateLimit`) плюс глобальный `AI_MAX_CONCURRENCY`. ⚠
-  `NUXT_PUBLIC_SITE_URL` нужен **и на build** (пререндер `/install` + canonical/og лендинга), **и в рантайме**
+  `NUXT_PUBLIC_SITE_URL` нужен **и на build** (пререндер `/install`; canonical/og лендинга с #304 от него
+  НЕ зависят — всегда прод), **и в рантайме**
   (`/robots.txt`, `/sitemap.xml` читают его на запрос) — скрипт запекает его в `pnpm build` из
   `ENV_JSON`. Env под PUBLIC: `OPERATOR_PASSWORD`+`OPERATOR_SESSION_SECRET` (включают консоль),
   `LLM_PROVIDER`+`DEEPSEEK_API_KEY`/`VIBE_API_KEY`, `B24_TOKEN_ENC_KEY` (32 байта),
