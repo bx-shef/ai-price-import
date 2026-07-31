@@ -129,3 +129,18 @@ describe('planFailureNotify — кому и что', () => {
     expect(dm!.message).toContain('«документ»')
   })
 })
+
+// Проводка фолбэка — по исходнику (liveDeps — I/O-край, юнитами не гоняется; конвенция —
+// tests/importStatusRoute.test.ts). Стережёт откат двух правок: без фолбэка личное сообщение на
+// одноадминном портале молча терялось (портал запрещает self-диалог, а клейм одноразовый), без
+// warn потерянное сообщение не оставляло следа вообще.
+describe('проводка: отказ личного диалога не теряет сообщение', () => {
+  it('liveDeps шлёт отвергнутое личное сообщение в центр уведомлений и логирует потерю', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
+    expect(src).toContain('im.notify.system.add')
+    expect(src).toContain('console.warn')
+    // Фолбэк — только для личного адресата (голый числовой id), чат ошибок им не подменяется.
+    expect(src.indexOf('im.notify.system.add')).toBeGreaterThan(src.indexOf('sendChatMessage(m.dialogId'))
+  })
+})

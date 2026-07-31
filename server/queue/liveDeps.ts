@@ -204,7 +204,26 @@ export async function notifyImportFailure(
     for (const m of planned) {
       try {
         await sendChatMessage(m.dialogId, m.message, t.call)
-      } catch { /* one failed address must not swallow the other */ }
+      } catch (e) {
+        // A bare user id can be REFUSED: im.message.add rejects a self-dialog («Вы не можете
+        // отправлять сообщения указанному получателю»), and the app's OAuth token sends AS the
+        // installing admin — so on the most common portal (one admin, uploads documents himself)
+        // the personal failure message was refused on EVERY failure and, with the claim already
+        // burnt, lost silently. Fall back to the notification center: im.notify.system.add
+        // (scope `im`, already ours) delivers to the token's own user too. Try-then-fallback, not
+        // self-detection — it also covers other refusals (fired employee, messaging restrictions).
+        const isPersonal = /^\d+$/.test(m.dialogId)
+        let recovered = false
+        if (isPersonal) {
+          try {
+            await t.call('im.notify.system.add', { USER_ID: Number(m.dialogId), MESSAGE: m.message })
+            recovered = true
+          } catch { /* fall through to the warn below */ }
+        }
+        // One failed address must not swallow the other — but a lost message may not be lost
+        // SILENTLY: the claim is once-only, nothing will retry this.
+        if (!recovered) console.warn(`[notify] message to ${isPersonal ? 'user' : 'chat'} ${m.dialogId} failed: ${(e as Error)?.message ?? e}`)
+      }
     }
   } catch {
     // Best-effort: the person still sees the failure on the app's own screen.
