@@ -1,6 +1,13 @@
+import { siteBaseUrl } from '~/utils/landing'
+
 // Pure builders for the two crawler files (/robots.txt, /sitemap.xml). Served by thin Nitro routes
 // rather than shipped as static `public/` files, because both must carry an ABSOLUTE base URL and the
 // deployment host varies (prod landing vs a Vibecode target) — a static file would hardcode one host.
+//
+// `crawlerFiles` below owns the WHOLE composition (raw env → validated base → both bodies) so the
+// routes have no logic to get wrong and the tests exercise the shipped seam. Testing `siteBaseUrl` and
+// the builders separately left the join untested: a route passing the raw `siteUrl` straight to a
+// builder kept every test green while robots.txt became injectable again.
 
 /**
  * Paths closed to crawlers. **Only `/api/`** — deliberately NOT the in-portal pages.
@@ -13,14 +20,17 @@
  * the rest a thin static shell. `/api/` is the opposite case — no HTML, nothing that could carry a meta
  * tag — so there the crawl-level block is the only available mechanism.
  *
- * NB `Disallow` matches by PREFIX. `Disallow: /app` also covered `/app-rating-demo.gif` and the
- * prerendered `/app/_payload.json`; those are crawlable now. They are inert (a 508 KB hint GIF and
- * 68-byte payload stubs) — closing that properly needs an `X-Robots-Tag` header, not a `Disallow`.
+ * NB `Disallow` matches by PREFIX, so `/api/` is narrower than the old `/app` entry — inert static
+ * assets under those prefixes (the hint GIF, the prerendered `_payload.json` stubs) are crawlable.
+ * Closing those properly needs an `X-Robots-Tag` header, not a `Disallow`.
  */
 export const DISALLOWED_PATHS = ['/api/'] as const
 
 /** `robots.txt` body. No `Allow:` line — an unlisted path is allowed by default, and its position
- *  relative to the `Disallow` group changes matching under first-match-wins parsers. */
+ *  relative to the `Disallow` group changes matching under first-match-wins parsers.
+ *
+ *  NB a NON-CANONICAL host (staging, Vibecode) currently advertises itself the same way production
+ *  does — an indexable duplicate of the landing. Deliberately deferred, see the tracker. */
 export function buildRobotsTxt(baseUrl: string): string {
   return [
     'User-agent: *',
@@ -66,4 +76,11 @@ export function buildSitemapXml(baseUrl: string, lastmod?: string): string {
     '</urlset>',
     ''
   ].join('\n')
+}
+
+/** Both crawler files from the RAW configured site URL. The single entry point the routes use — the
+ *  validation (`siteBaseUrl`) and the rendering are joined here, once, instead of in each route. */
+export function crawlerFiles(siteUrl: string | undefined | null, buildDate?: string): { robots: string, sitemap: string } {
+  const base = siteBaseUrl(siteUrl)
+  return { robots: buildRobotsTxt(base), sitemap: buildSitemapXml(base, buildDate) }
 }

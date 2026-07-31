@@ -50,7 +50,9 @@ useSeoMeta({
   ogDescription: LANDING_DESCRIPTION,
   ogType: 'website',
   ogUrl: canonical,
-  ogSiteName: LANDING_TITLE,
+  // Site/brand name, NOT the page title — Facebook and LinkedIn render it next to og:title, so
+  // repeating the title there printed the same sentence twice on the share card.
+  ogSiteName: LANDING_PUBLISHER,
   ogLocale: 'ru_RU',
   ogImage,
   ogImageWidth: 1200,
@@ -60,7 +62,8 @@ useSeoMeta({
   twitterCard: 'summary_large_image',
   twitterTitle: LANDING_TITLE,
   twitterDescription: LANDING_DESCRIPTION,
-  twitterImage: ogImage
+  twitterImage: ogImage,
+  twitterImageAlt: LANDING_TITLE
 })
 
 useCardGlow()

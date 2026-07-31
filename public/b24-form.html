@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- noindex: served publicly but only ever meant to be embedded in an iframe. It is a static file, so
+     the page-level guard in tests/seoFiles.test.ts (which walks app/pages) cannot see it, and
+     robots.txt no longer blocks it — this tag is the only thing keeping it out of the index. -->
+<meta name="robots" content="noindex">
 <title>Форма заявки</title>
 <style>*{box-sizing:border-box}html,body{margin:0;padding:0;background-color:#0a0f1a}</style>
 </head>

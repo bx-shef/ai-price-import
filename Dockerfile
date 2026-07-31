@@ -35,6 +35,14 @@ RUN test -f .output/public/index.html \
     || { echo 'BUILD FAILED: .output/public/index.html missing — is "/" still in nitro.prerender.routes?' >&2; exit 1; }; \
     grep -oE '<meta[^>]*property="og:image"[^>]*>' .output/public/index.html | grep -q 'content="https\?://' \
     || { echo 'BUILD FAILED: og:image in the prerendered landing is not an absolute URL.' >&2; exit 1; }
+# The same assertion for the OTHER half of the policy, on the RENDERED output rather than on source.
+# The unit guard reads `app/pages/*.vue`, so it cannot see how a tag actually serialises, nor a page
+# reaching the crawler through a mechanism other than a page file. Here every spelling question and
+# every prerender mechanism collapses into one check: the shipped HTML either carries the tag or not.
+RUN for p in app settings metrics install import login queues; do \
+      grep -q '<meta name="robots"[^>]*content="[^"]*noindex' ".output/public/$p/index.html" \
+      || { echo "BUILD FAILED: /$p is prerendered without robots:noindex — it would be indexed on the landing's domain." >&2; exit 1; }; \
+    done
 
 FROM node:22-slim AS backend
 WORKDIR /app

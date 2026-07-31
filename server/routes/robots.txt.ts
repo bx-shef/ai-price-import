@@ -1,22 +1,20 @@
-import { siteBaseUrl } from '~/utils/landing'
-import { buildRobotsTxt } from '../utils/seoFiles'
-import { assertReadOnlyMethod } from '../utils/crawlerRoute'
+import { crawlerFiles } from '../utils/seoFiles'
+import { crawlerMethodGate } from '../utils/crawlerRoute'
 
-// /robots.txt — crawl policy for the public landing. Body is the pure `buildRobotsTxt`; the only I/O
-// here is resolving the absolute base (configured deployment URL → canonical landing home).
-// Deliberately NOT a static public/ file: the Sitemap: line needs an absolute host, which varies.
+// /robots.txt — crawl policy for the public landing. Deliberately NOT a static public/ file: the
+// `Sitemap:` line needs an absolute host, which differs per deploy.
 //
-// No `.get` suffix in the filename ON PURPOSE: that registers the handler for GET only, and h3 does
-// not fall back HEAD→GET, so `HEAD /robots.txt` would 404. Crawler tooling probes this file with HEAD.
-// The trade-off is that an unsuffixed file answers EVERY method, so the guard below restores 405 —
-// without it `PUT`/`DELETE`/`TRACE` returned 200 (a stock scanner finding on a public domain), and a
-// 2xx to an unsafe method makes shared caches invalidate the stored entry (RFC 9111 §4.4).
+// No `.get` suffix in the filename ON PURPOSE — that registers the handler for GET only, and h3 does
+// not fall back HEAD→GET, so `HEAD /robots.txt` would 404 while crawler tooling probes with HEAD.
+// `crawlerMethodGate` restores the method restriction that the suffix would have given.
+//
+// All logic lives in `crawlerFiles` (raw env → validated base → body): keeping the composition in one
+// tested place is what stops a route from passing the raw `siteUrl` to a builder.
 
 export default defineEventHandler((event) => {
-  assertReadOnlyMethod(event)
-  const base = siteBaseUrl(useRuntimeConfig(event).public.siteUrl)
+  if (crawlerMethodGate(event) === 'no-content') return null
   setResponseHeader(event, 'content-type', 'text/plain; charset=utf-8')
   // Crawl policy changes rarely; let intermediaries hold it for a day.
   setResponseHeader(event, 'cache-control', 'public, max-age=86400')
-  return buildRobotsTxt(base)
+  return crawlerFiles(useRuntimeConfig(event).public.siteUrl).robots
 })
