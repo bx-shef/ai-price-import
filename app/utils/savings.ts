@@ -71,3 +71,23 @@ export function formatMinutes(minutes: number): string {
   if (h > 0) return `${h} ч`
   return `${rem} мин`
 }
+
+/** Why the «Сэкономлено денег» tile is not shown. `null` — it is shown. */
+export type MoneyBlocker = 'no-rate' | 'no-currency'
+
+/**
+ * Explain a MISSING money tile.
+ *
+ * The tile has two independent preconditions — an hourly rate set by the admin and a base currency
+ * on the portal — and until now failing either one produced the same thing: nothing. An admin who
+ * had just entered a rate saw no tile and no reason, which is exactly how this was reported. The
+ * dashboard shows the answer instead.
+ *
+ * `minutesSaved === 0` is NOT a blocker: nothing has been imported yet, so there is no figure to
+ * explain and a hint would only be noise on a fresh portal.
+ */
+export function moneyBlocker(savings: Savings, rate: SavingsRate = {}): MoneyBlocker | null {
+  if (savings.moneySaved !== null) return null
+  if (savings.minutesSaved <= 0) return null
+  return Number(rate.ratePerHour) > 0 ? 'no-currency' : 'no-rate'
+}

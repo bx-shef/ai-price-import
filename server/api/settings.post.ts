@@ -1,8 +1,10 @@
 import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { extractFrameAuth } from '../utils/frameAuth'
-import { resolveFrameMember, verifyFrameToken } from '../utils/resolveFrameMember'
+import { verifyFrameToken } from '../utils/resolveFrameMember'
 import { writeMapping } from '../utils/appSettings'
 import { evictSavingsRate } from '../utils/savingsRate'
+import { getMemberIdByDomain } from '../utils/tokenStore'
+import { normaliseHost } from '../utils/b24Rest'
 import { query } from '../db/client'
 import { withSpan } from '../utils/telemetrySpan'
 import { portalHash } from '../utils/telemetryAttributes'
@@ -53,12 +55,22 @@ export default defineEventHandler(async (event) => {
         // The hourly rate behind the «Сэкономлено денег» tile is memoized per portal for
         // SAVINGS_RATE_TTL_MS (10 min). Nothing evicted it on save, so an admin who had just
         // entered a rate reopened the dashboard and saw no tile — for up to ten minutes, with no
-        // way to tell «не сработало» from «ещё не видно». Evicting here makes the tile appear on
-        // the next open. Best-effort: member_id needs the install row, and a failure here only
-        // means the old behaviour (the TTL still expires), so it must not fail the save.
+        // way to tell «не сработало» from «ещё не видно».
+        //
+        // Looked up directly rather than through resolveFrameMember: the token was already verified
+        // above, and resolveFrameMember would re-verify it — a second `profile` round-trip per save
+        // against the portal's rate budget, for a cosmetic cache drop.
+        //
+        // Two limits, both deliberate. The memo is an in-process Map, so this only evicts in the
+        // process that served the save — correct while HTTP runs as one instance (the current
+        // deployment), NOT once the HTTP role is replicated; then the dashboard GET can land on a
+        // replica still holding the stale entry and the TTL is again the only bound. And member_id
+        // needs the install row, so in an install-race/purge window (the very case these routes
+        // avoid depending on) the eviction is skipped and the TTL takes over. Both degrade to the
+        // old behaviour, never to a failed save.
         try {
-          const member = await resolveFrameMember(auth, { query })
-          if (member.ok && member.memberId) evictSavingsRate(member.memberId)
+          const memberId = await getMemberIdByDomain(normaliseHost(auth.domain), query)
+          if (memberId) evictSavingsRate(memberId)
         } catch { /* cache eviction is cosmetic — never break a successful save over it */ }
         return { mapping: saved }
       } catch {

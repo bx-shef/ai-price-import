@@ -23,7 +23,7 @@ import { portalCurrencySettingsUrl } from '~/utils/entityLink'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта' })
 
-const { mapping, loading, saving, saved, error, isAdmin, baseCurrency, load, save } = useSettings()
+const { mapping, loading, saving, saved, error, isAdmin, baseCurrency, currencyUnknown, loaded, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()
 const { init: initB24, get: getFrame, auth: frameAuth, placementPlace, closeSlider } = useB24()
 // How settings was reached, so Save/Cancel do the right «close»:
@@ -527,21 +527,28 @@ const ON_MISSING_ITEMS = [
 
           <template #savings>
             <div class="space-y-6 pt-2">
+              <!-- Показываем ТОЛЬКО когда точно знаем, что валюты нет: в портале, после успешной
+                   загрузки и когда чтение валюты не падало. Иначе страница утверждала бы «валюты
+                   нет» на таймауте или до первой загрузки. -->
               <B24Alert
-                v-if="!loading && !baseCurrency"
+                v-if="inPortal && loaded && !error && !currencyUnknown && !baseCurrency"
                 color="air-primary-alert"
                 title="В портале нет базовой валюты"
-                description="Пока базовая валюта не задана, плитка «Сэкономлено денег» не появится — приложению не в чем показывать сумму. Задайте валюту по умолчанию в настройках CRM."
+                description="Приложение не знает, в какой валюте считать сумму, поэтому плитка «Сэкономлено денег» не появится. Откройте настройки валют Битрикс24 и отметьте одну валюту базовой. Сэкономленное время показывается и без этого."
               >
-                <template #actions>
+                <!-- v-if на самом template: слот actions рендерит свою обёртку по факту наличия
+                     слота, а не содержимого — иначе без ссылки остаётся пустой отступ. -->
+                <template
+                  v-if="currencyLink"
+                  #actions
+                >
                   <a
-                    v-if="currencyLink"
                     :href="currencyLink"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="text-sm underline"
                   >
-                    Открыть список валют
+                    Открыть настройки валют
                   </a>
                 </template>
               </B24Alert>
@@ -555,7 +562,10 @@ const ON_MISSING_ITEMS = [
                     :step="1"
                     class="w-48"
                   />
-                  <span class="text-sm text-(--ui-color-base-2)">{{ baseCurrency || '—' }} в час</span>
+                  <span
+                    v-if="baseCurrency"
+                    class="text-sm text-(--ui-color-base-2)"
+                  >{{ baseCurrency }} в час</span>
                 </div>
                 <p class="mt-1 text-xs text-(--ui-color-base-3)">
                   Нужна только для плитки «Сэкономлено денег»: сэкономленное время × эта ставка.

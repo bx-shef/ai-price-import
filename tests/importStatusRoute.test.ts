@@ -26,3 +26,22 @@ describe('опрос статусов — только POST (#260)', () => {
     expect(read('server/api/import/status.post.ts')).toContain('bodySizeStatus')
   })
 })
+
+// Проводка «сохранили настройки → сбросили кэш ставки». Сами `resolveSavingsRate`/`evictSavingsRate`
+// покрыты в savingsRate.test.ts; здесь сторожим ровно то, чего те тесты увидеть не могут — что роут
+// действительно зовёт сброс. Без него введённая ставка была невидима до 10 минут (живой дефект).
+describe('сохранение настроек сбрасывает кэш ставки', () => {
+  it('роут зовёт evictSavingsRate по member_id портала', () => {
+    const src = read('server/api/settings.post.ts')
+    expect(src).toContain('evictSavingsRate(')
+    expect(src).toContain('getMemberIdByDomain(')
+    // Сброс — ПОСЛЕ успешной записи: иначе кэш чистился бы и на упавшем сохранении.
+    expect(src.indexOf('writeMapping(')).toBeLessThan(src.indexOf('evictSavingsRate('))
+  })
+
+  it('чтение настроек отдаёт базовую валюту и отдельно — признак неудачного чтения', () => {
+    const src = read('server/api/settings.get.ts')
+    expect(src).toContain('baseCurrency:')
+    expect(src).toContain('currencyUnknown:')
+  })
+})

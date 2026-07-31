@@ -29,7 +29,7 @@ function doClearHistory(): void {
   clearHistory()
   confirmClear.value = false
 }
-const { counters, savings, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
+const { counters, savings, moneyBlocker, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
 // (article field, target, chats). On load we read the portal settings; if nothing has been touched
@@ -104,6 +104,14 @@ async function doReset(): Promise<void> {
 // портала и не выдумываем. Нет ставки — плитки нет, и сетка схлопывается в одну колонку, иначе
 // одинокая плитка «Сэкономлено времени» висела бы на половине ширины с пустотой рядом.
 const hasMoneyTile = computed(() => !!savings.value && savings.value.moneySaved !== null)
+// Plain-Russian reason the money tile is absent. Silence here was the reported bug: an admin who
+// had entered the hourly rate saw nothing and could not tell «не сработало» from «не хватает ещё
+// одной настройки». `null` — nothing to explain (the tile is there, or nothing imported yet).
+const moneyHint = computed(() => {
+  if (moneyBlocker.value === 'no-rate') return 'Чтобы видеть экономию в деньгах, укажите стоимость часа работы сотрудника в настройках приложения.'
+  if (moneyBlocker.value === 'no-currency') return 'Стоимость часа задана, но в портале нет базовой валюты — сумму не в чем считать. Задайте базовую валюту в настройках валют Битрикс24.'
+  return ''
+})
 const moneySavedText = computed(() => (savings.value?.moneySaved ?? 0).toLocaleString('ru-RU'))
 
 // Compact status counts (inline in the «Последние операции» header instead of big dashboard tiles —
@@ -355,6 +363,13 @@ watch(jobs, (list) => {
                     {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
                   </p>
                 </B24PageCard>
+                <!-- Плитки нет — говорим, чего не хватает, вместо пустого места. -->
+                <p
+                  v-else-if="moneyHint"
+                  class="self-center text-xs text-(--ui-color-base-3)"
+                >
+                  {{ moneyHint }}
+                </p>
               </B24PageGrid>
               <div class="ml-auto flex flex-col items-end gap-2 text-xs">
                 <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->

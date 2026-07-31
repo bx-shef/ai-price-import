@@ -27,13 +27,15 @@ describe('entityDetailPath', () => {
 
 describe('portalCurrencySettingsUrl', () => {
   it('строит ссылку на настройки валют портала', () => {
-    expect(portalCurrencySettingsUrl('b24-hrbvzq.bitrix24.by')).toBe('https://b24-hrbvzq.bitrix24.by/crm/configs/currency/')
+    expect(portalCurrencySettingsUrl('portal-a.bitrix24.by')).toBe('https://portal-a.bitrix24.by/crm/configs/currency/')
+    expect(portalCurrencySettingsUrl('portal-b.bitrix24.kz')).toBe('https://portal-b.bitrix24.kz/crm/configs/currency/')
   })
   it('нормализует регистр и пробелы', () => {
     expect(portalCurrencySettingsUrl('  Portal.Bitrix24.RU ')).toBe('https://portal.bitrix24.ru/crm/configs/currency/')
   })
-  it('отвергает всё, что не голый хост', () => {
-    for (const bad of ['', '   ', 'localhost', 'https://x.bitrix24.by', 'x.bitrix24.by/evil', 'x.bitrix24.by:8080', 'u@evil.com', 'x.bitrix24.by?a=1', undefined, null]) {
+  // Чужой хост — главный случай: подпись ссылки фиксированная, подменённый домен читателю не виден.
+  it('отвергает не-Bitrix24 хосты и всё, что не голый хост', () => {
+    for (const bad of ['', 'localhost', 'evil.com', 'attacker.co.uk', 'bitrix24.by.evil.com', 'xn--bitrix24-hostile.com', 'https://x.bitrix24.by', 'x.bitrix24.by/evil', 'x.bitrix24.by:8080', 'u@evil.com', 'x.bitrix24.by?a=1', undefined, null]) {
       expect(portalCurrencySettingsUrl(bad as string)).toBeNull()
     }
   })
