@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   APP_SLIDER_PLACE_SETTINGS,
@@ -31,5 +32,16 @@ describe('APP_SLIDER_ROUTES / sliderRouteForPlace', () => {
     expect(sliderRouteForPlace('')).toBeUndefined()
     expect(sliderRouteForPlace(null)).toBeUndefined()
     expect(sliderRouteForPlace(undefined)).toBeUndefined()
+  })
+})
+
+// Композиция, которую чистая карта не покрывает: слайдер главной открывается на том же маршруте
+// `/app`, поэтому единственное, что удерживает его от повторного редиректа (и от бесконечного
+// открытия) — сравнение `to.path !== target` в middleware. Проверяем по исходнику: поведение
+// глобального middleware иначе видно только в живом портале.
+describe('middleware не редиректит на текущий маршрут (страховка от цикла #262)', () => {
+  it('сравнение пути присутствует', () => {
+    const src = readFileSync(new URL('../app/middleware/01.appSlider.global.ts', import.meta.url), 'utf8')
+    expect(src).toContain('to.path !== target')
   })
 })

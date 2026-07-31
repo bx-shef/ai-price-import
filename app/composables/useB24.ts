@@ -58,17 +58,14 @@ export function useB24() {
    *  `placement.isSliderMode`), NOT the URL. Used by the launcher (#262) so a slider never tries to
    *  open another slider of itself. */
   function isSliderMode(): boolean {
-    const opts = frame?.placement?.options as Record<string, unknown> | undefined
-    return String(opts?.IFRAME ?? '').toUpperCase() === 'Y'
-  }
-
-  /** Close THIS app's slider page (`slider.closeSliderAppPage`). Differs from `closeSlider`
-   *  (`parent.closeApplication`): used when we are about to re-open ourselves as a slider. */
-  async function closeAppSlider(): Promise<void> {
-    const f = await init()
+    // Спрашиваем сам SDK, а не повторяем его чтение `options.IFRAME` — иначе логика разъедется
+    // при её изменении в SDK. Второй признак к нашему `place`; до init() — false, вызывающий
+    // (app.vue) дожидается init.
     try {
-      await f?.slider.closeSliderAppPage()
-    } catch { /* not in a slider → nothing to close */ }
+      return frame?.placement?.isSliderMode === true
+    } catch {
+      return false
+    }
   }
 
   /** Open THIS app in a B24 slider at the given `place` (self-routed by the global middleware).
@@ -103,5 +100,5 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, inFrame, placementPlace, isSliderMode, openAppSlider, closeAppSlider, closeSlider }
+  return { init, get, auth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
 }

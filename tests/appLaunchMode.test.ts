@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appLaunchMode } from '../app/utils/appLaunchMode'
+import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_COOLDOWN_MS } from '../app/utils/appLaunchMode'
 
 // Ровно одно сочетание даёт пусковую страницу — базовый фрейм портала. Тест перебирает остальные,
 // потому что ошибка здесь стоит дорого в обе стороны: лишний лаунчер = приложением не пользуются,
@@ -21,5 +21,19 @@ describe('appLaunchMode', () => {
   })
   it('вне портала → рабочий экран (слайдер открыть нечем)', () => {
     expect(appLaunchMode({ inFrame: false })).toBe('work')
+  })
+})
+
+describe('canAutoOpenMain — страховка от цикла', () => {
+  it('первое открытие разрешено', () => {
+    expect(canAutoOpenMain(null, 1000)).toBe(true)
+  })
+  it('повтор внутри окна запрещён, за окном — снова можно', () => {
+    expect(canAutoOpenMain(1000, 1000 + MAIN_SLIDER_COOLDOWN_MS - 1)).toBe(false)
+    expect(canAutoOpenMain(1000, 1000 + MAIN_SLIDER_COOLDOWN_MS)).toBe(true)
+  })
+  it('битая метка не блокирует открытие навсегда', () => {
+    expect(canAutoOpenMain(Number.NaN, 1000)).toBe(true)
+    expect(canAutoOpenMain(9_000_000, 1000)).toBe(true)
   })
 })

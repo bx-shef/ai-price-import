@@ -13,7 +13,7 @@ import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS, APP_SLIDER_PLACE_M
 import { isPortalConfigured } from '~/utils/portalSettings'
 import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
-import { appLaunchMode, type AppLaunchMode } from '~/utils/appLaunchMode'
+import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMode } from '~/utils/appLaunchMode'
 import { formatMinutes } from '~/utils/savings'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
@@ -81,12 +81,40 @@ async function openMetrics(): Promise<void> {
 // the composable) would no-op, leaking the pull client. init() runs async inside; this is inert
 // outside a portal.
 const { subscribeReload } = useSettingsSync()
-subscribeReload(() => void loadSettings())
+// Подписку заводим синхронно (после await теряется scope эффекта), но в пусковой странице она
+// должна молчать: иначе базовый фрейм читал бы настройки параллельно со слайдером — ровно то
+// удвоение, ради которого лаунчер и появился.
+subscribeReload(() => {
+  if (launch.value === 'launcher') return
+  void loadSettings()
+})
+
+// Слайдер не открылся (портал отказал / SDK бросил). Тогда пусковая страница — тупик: единственная
+// кнопка молча ничего не делает. Показываем это словами, а сам экран уводим в рабочий режим.
+const sliderFailed = ref(false)
 
 /** Открыть главный экран слайдером (#262). Пусковая страница делает это сама при открытии, и та же
- *  кнопка остаётся на экране — после закрытия слайдера должен быть путь обратно. */
-async function openMain(): Promise<void> {
-  await openAppSlider(APP_SLIDER_PLACE_MAIN, { width: 1200, title: 'AI-импорт прайсов' })
+ *  кнопка остаётся на экране — после закрытия слайдера должен быть путь обратно.
+ *
+ *  `closeAppSlider` тут намеренно НЕ зовём (в референсе он есть): открыть себя слайдером может
+ *  только лаунчер, а лаунчер по определению не слайдер — закрывать нечего. */
+async function openMain(): Promise<boolean> {
+  try {
+    window.sessionStorage?.setItem(MAIN_SLIDER_MARK_KEY, String(Date.now()))
+  } catch { /* приватный режим — без отметки, страховка от цикла просто не сработает */ }
+  const opened = await openAppSlider(APP_SLIDER_PLACE_MAIN, { width: 1200, title: 'AI-импорт прайсов' })
+  sliderFailed.value = !opened
+  return opened
+}
+
+/** Отметка предыдущего автооткрытия в этой вкладке — страховка от бесконечного открытия. */
+function lastMainSliderAt(): number | null {
+  try {
+    const raw = window.sessionStorage?.getItem(MAIN_SLIDER_MARK_KEY)
+    return raw ? Number(raw) : null
+  } catch {
+    return null
+  }
 }
 
 onMounted(async () => {
@@ -100,8 +128,11 @@ onMounted(async () => {
   if (launch.value === 'launcher') {
     // Базовый фрейм — только пусковая страница. Опрос статусов, метрики и настройки здесь НЕ
     // поднимаем: иначе они крутились бы одновременно и тут, и в открытом слайдере.
-    await openMain()
-    return
+    // Автооткрытие — не чаще раза в окно (страховка от цикла); человек всегда может нажать кнопку.
+    if (!canAutoOpenMain(lastMainSliderAt(), Date.now())) return
+    if (await openMain()) return
+    // Слайдер не открылся — не оставляем человека на мёртвой странице, работаем как раньше.
+    launch.value = 'work'
   }
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
@@ -178,7 +209,7 @@ watch(jobs, (list) => {
       <!-- Шапка страницы — навбар каркаса (#259) вместо самодельного flex-заголовка. В мобильном
            приложении Б24 нативная шапка УЖЕ показывает название, поэтому навбар там не рисуем. -->
       <B24DashboardNavbar
-        v-if="!isBitrixMobile"
+        v-if="!isBitrixMobile && screen !== 'launcher'"
         :toggle="false"
         title="AI-импорт прайсов"
       >
@@ -210,14 +241,22 @@ watch(jobs, (list) => {
         <div
           v-else-if="screen === 'launcher'"
           class="py-6 text-center"
+          role="status"
         >
           <p class="mb-4 text-base text-(--ui-color-base-3)">
-            Импорт открывается отдельным окном поверх портала. Если окно закрылось — откройте снова.
+            Импорт открывается отдельным окном поверх портала. Не открылось или вы его
+            закрыли — нажмите «Открыть импорт».
+          </p>
+          <p
+            v-if="sliderFailed"
+            class="mb-4 text-sm text-(--ui-color-accent-main-alert)"
+          >
+            Окно открыть не удалось. Попробуйте ещё раз или обновите страницу.
           </p>
           <B24Button
             color="air-primary"
             label="Открыть импорт"
-            @click="openMain"
+            @click="() => { void openMain() }"
           />
         </div>
 

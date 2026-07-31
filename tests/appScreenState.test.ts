@@ -20,7 +20,7 @@ describe('appScreenState (#256)', () => {
   it('состояния взаимоисключающие — двух блоков на экране одновременно не бывает', () => {
     const all = [false, true].flatMap(settingsResolved =>
       [false, true].map(needsSetup => appScreenState({ settingsResolved, needsSetup })))
-    for (const s of all) expect(['loading', 'setup', 'work']).toContain(s)
+    for (const s of all) expect(['loading', 'launcher', 'setup', 'work']).toContain(s)
   })
 })
 

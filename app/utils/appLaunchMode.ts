@@ -42,3 +42,24 @@ export function appLaunchMode({ inFrame, place, sliderMode, isMobile }: LaunchIn
   if (place) return 'work'
   return 'launcher'
 }
+
+/** Ключ отметки «этот таб уже открывал главную слайдером» и окно, в котором повтор считается циклом. */
+export const MAIN_SLIDER_MARK_KEY = 'b24.mainSliderOpenedAt'
+export const MAIN_SLIDER_COOLDOWN_MS = 5000
+
+/**
+ * Можно ли открывать главную слайдером автоматически.
+ *
+ * Страховка от бесконечного открытия. Признак «мы уже в слайдере» — наш `place` из
+ * PLACEMENT_OPTIONS; он работает, но если портал когда-нибудь их не донесёт, лаунчер откроет
+ * слайдер, тот увидит себя базовым фреймом и откроет ещё один — и так без предела. Отметка времени
+ * в пределах вкладки это обрывает: второе автооткрытие подряд не делаем, показываем кнопку.
+ *
+ * Только про АВТО-открытие. Кнопку «Открыть импорт» человек нажимает сам — её не ограничиваем.
+ */
+export function canAutoOpenMain(lastOpenedAt: number | null, nowMs: number, cooldownMs = MAIN_SLIDER_COOLDOWN_MS): boolean {
+  if (lastOpenedAt === null || !Number.isFinite(lastOpenedAt)) return true
+  // Метка из будущего (переведённые часы) — не повод блокировать открытие навсегда.
+  if (lastOpenedAt > nowMs) return true
+  return nowMs - lastOpenedAt >= cooldownMs
+}
