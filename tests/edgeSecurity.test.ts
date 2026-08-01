@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   EDGE_MAX_BODY_BYTES,
@@ -143,5 +144,27 @@ describe('login throttle constants', () => {
   it('sane budget: 10 attempts / 15 min', () => {
     expect(LOGIN_MAX_ATTEMPTS).toBe(10)
     expect(LOGIN_WINDOW_MS).toBe(15 * 60 * 1000)
+  })
+})
+
+describe('заголовки вешаются хуком, а не middleware (иначе они не доходят до страниц)', () => {
+  // Live-verified regression (#185 п.1): Nitro registers the public-assets handler as the FIRST
+  // middleware and it RETURNS for any prerendered file. Every HTML page in this project is
+  // prerendered, so headers set from server/middleware/ never reached them — `GET /app` came back
+  // with no CSP while `GET /api/health` had the full set, i.e. exactly the pages that need
+  // frame-ancestors were the ones missing it. Moving them back into middleware would compile,
+  // pass every unit test, and silently ship pages without CSP again — hence a source guard.
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
+
+  it('плагин ставит заголовки на хуке request — он идёт до отдачи статики', () => {
+    const plugin = read('../server/plugins/edgeSecurity.ts')
+    expect(plugin).toMatch(/hooks\.hook\(\s*'request'/)
+    expect(plugin).toContain('buildSecurityHeaders')
+  })
+
+  it('middleware заголовки НЕ ставит — только гард тела, который обязан прерывать запрос', () => {
+    const mw = read('../server/middleware/edgeSecurity.ts')
+    expect(mw).not.toContain('buildSecurityHeaders')
+    expect(mw).toContain('edgeBodyGuard')
   })
 })

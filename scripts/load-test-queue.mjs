@@ -78,8 +78,8 @@ const check = (cond, msg) => (cond ? ok(msg) : (failures.push(msg), bad(msg)))
 const runId = `lt${Date.now().toString(36)}`
 const qname = s => `loadtest-${s}-${runId}`
 const created = []
-async function makeQueue(suffix) {
-  const q = new Queue(qname(suffix), { connection })
+async function makeQueue(suffix, defaultJobOptions) {
+  const q = new Queue(qname(suffix), { connection, ...(defaultJobOptions ? { defaultJobOptions } : {}) })
   created.push(q)
   return q
 }
@@ -274,10 +274,15 @@ async function scenarioStalledBound() {
   // перестал бы означать то, что мы измеряем.
   await q.add('crm-sync', { memberId: 'portalS', jobId: 'doc0' }, { jobId: 'cs|portalS|doc0', attempts: 1 })
 
-  const FAST_LOCK = { lockDuration: 2_000, stalledInterval: 2_000, maxStalledCount: CRM_LOCK.maxStalledCount }
+  // 4 s, not 2: this scenario counts EXACT handler entries, so a >lockDuration/2 hiccup in the test
+  // process itself (GC, a loaded CI box) would let w1 declare its own job stalled before w2 ever
+  // starts — the count would shift and the check would go red for the wrong reason. Scenario 3 is
+  // immune (it only asserts «at least one» recovery); this one is not, so it buys headroom.
+  const FAST_LOCK = { lockDuration: 4_000, stalledInterval: 4_000, maxStalledCount: CRM_LOCK.maxStalledCount }
   let entered = 0
   // Обработчик ВИСИТ (никогда не резолвится) — так задача остаётся «в работе» до обрыва воркера.
-  // Именно `new Promise(() => {})`, а не sleep: висящий таймер держал бы процесс после теста.
+  // Именно `new Promise(() => {})`, а не sleep: sleep бы ДОРЕЗОЛВИЛСЯ после обрыва, задача
+  // завершилась бы через уже закрытое соединение — и мерить стало бы нечего.
   const mkWorker = () => new Worker(q.name, async () => {
     entered += 1
     await new Promise(() => {})
@@ -293,14 +298,19 @@ async function scenarioStalledBound() {
   }
 
   const w1 = mkWorker()
-  await waitFor(async () => entered >= 1, 10_000)
+  const started = await waitFor(async () => entered >= 1, 10_000)
+  // ASSERT, не молчаливое ожидание: если первый воркер не успел взять задачу, «первым входом»
+  // станет второй, счёт сместится и сообщения ниже будут врать про то, что произошло.
+  check(started, `первый воркер взял задачу в работу (входов ${entered})`)
   await w1.close(true) // первый обрыв
   const w2 = mkWorker()
   const recovered = await waitFor(async () => entered >= 2, 20_000)
   check(recovered, `после первого обрыва задача поднята повторно (входов ${entered})`)
   await w2.close(true) // второй обрыв — восстановлений больше не положено
 
-  const w3 = mkWorker() // живой воркер, чтобы сканер отработал второй срыв
+  // Живой воркер ОБЯЗАТЕЛЕН: в bullmq 6 задача сверх лимита срывов не падает в самом Lua-сканере —
+  // она возвращается в ожидание с пометкой и падает в момент подъёма воркером.
+  const w3 = mkWorker()
   const failed = await waitFor(async () => (await q.getFailedCount()) >= 1, 25_000)
   await w3.close(true)
 
@@ -311,33 +321,42 @@ async function scenarioStalledBound() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 3c. Хвост выполненных УРЕЗАЕТСЯ по числу. На это опирается алертинг (server/utils/queueAlert.ts):
-// счётчики completed/failed — это размеры урезанных множеств, поэтому тревога считается по возрасту
-// задач, а не по дельте. Замена числа на true/false молча ломает то рассуждение — здесь оно
-// проверяется последствием: 10 обработанных, а в хвосте ровно кап.
+// 3c. Хвосты выполненных И неудачных УРЕЗАЮТСЯ по числу — через ОЧЕРЕДНЫЕ `defaultJobOptions`, тем
+// же путём, каким их задаёт прод (server/queue/connection.ts getQueue). На это опирается алертинг
+// (server/utils/queueAlert.ts): счётчики completed/failed — размеры урезанных множеств, поэтому
+// тревога считается по возрасту задач, а не по дельте; замена числа на true/false молча ломает то
+// рассуждение.
+//
+// ЧЕСТНАЯ ГРАНИЦА: капы здесь МАСШТАБИРОВАНЫ (3/2 вместо 1000/5000) — иначе сценарию пришлось бы
+// прогнать тысячи задач. Значит, он доказывает механизм («очередной дефолт-число режет хвост»), а
+// не сами боевые числа; их пинит юнит-тест tests/queueConnection.test.ts по импорту.
 // ---------------------------------------------------------------------------------------------
 async function scenarioRetention() {
-  head('3c · Хвост выполненных урезается по числу (боевые defaultJobOptions)')
-  const CAP = 3 // масштабированный боевой removeOnComplete: 1000
-  const q = await makeQueue('retention')
-  const N = 10
-  await q.addBulk(Array.from({ length: N }, (_, i) => ({
-    name: 'crm-sync',
-    data: { memberId: 'portalT', jobId: `doc${i}` },
-    opts: { jobId: `cs|portalT|doc${i}`, removeOnComplete: CAP }
-  })))
+  head('3c · Хвосты урезаются по числу через очередные defaultJobOptions')
+  const KEEP_OK = 3 // масштабированный боевой removeOnComplete: 1000
+  const KEEP_FAIL = 2 // масштабированный боевой removeOnFail: 5000
+  // Опции задаются НА ОЧЕРЕДИ, как в getQueue — задачи ниже своих опций хранения не несут вовсе.
+  const q = await makeQueue('retention', { attempts: 1, removeOnComplete: KEEP_OK, removeOnFail: KEEP_FAIL })
+  const OK = 6
+  const BAD = 4
+  await q.addBulk([
+    ...Array.from({ length: OK }, (_, i) => ({ name: 'crm-sync', data: { jobId: `ok${i}`, bad: false }, opts: { jobId: `cs|portalT|ok${i}` } })),
+    ...Array.from({ length: BAD }, (_, i) => ({ name: 'crm-sync', data: { jobId: `bad${i}`, bad: true }, opts: { jobId: `cs|portalT|bad${i}` } }))
+  ])
   let done = 0
-  const w = new Worker(q.name, async () => {
+  const w = new Worker(q.name, async (job) => {
     done += 1
+    if (job.data.bad) throw new Error('сбой по сценарию')
   }, { connection, concurrency: 2, ...CRM_LOCK })
   const until = Date.now() + 20_000
-  while (Date.now() < until && done < N) await sleep(50)
-  await sleep(300) // дать очереди дочистить хвост после последней задачи
+  while (Date.now() < until && done < OK + BAD) await sleep(50)
   await w.close()
 
-  check(done === N, `обработаны все ${N} документов (фактически ${done})`)
+  check(done === OK + BAD, `обработаны все ${OK + BAD} документов (фактически ${done})`)
   const kept = await q.getCompletedCount()
-  check(kept === CAP, `в хвосте выполненных осталось ровно ${CAP} (фактически ${kept}) — при true было бы 0, при false ${N}`)
+  const keptFailed = await q.getFailedCount()
+  check(kept === KEEP_OK, `в хвосте выполненных осталось ровно ${KEEP_OK} (фактически ${kept}) — при true было бы 0, при false ${OK}`)
+  check(keptFailed === KEEP_FAIL, `в хвосте неудачных осталось ровно ${KEEP_FAIL} (фактически ${keptFailed}) — кап неудачных тоже число, а не флаг`)
 }
 
 // ---------------------------------------------------------------------------------------------

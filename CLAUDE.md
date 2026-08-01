@@ -354,7 +354,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   (`/`,`/app`,`/import`,`/settings`,`/metrics`,`/login`,`/queues`,`/install` GET **и POST** = 200,
   `/api/health` = ok; `/api/ready` у нас нет). pg/redis + OCR-тулчейн провижнятся на VM в `preStart`
   (LLM-вызов in-process, CLI-бинаря нет), миграции в процессе на старте. **Паритет безопасности без nginx —
-  `APP_EDGE_SECURITY=1`** (`server/utils/edgeSecurity.ts` + `server/middleware/edgeSecurity.ts`): раз nginx
+  `APP_EDGE_SECURITY=1`** (`server/utils/edgeSecurity.ts` + плагин `server/plugins/edgeSecurity.ts` — **заголовки ставятся на хуке `request`, НЕ в middleware**: обработчик статики Nitro зарегистрирован первым и возвращает ответ для любой пререндеренной страницы, поэтому middleware до HTML не доходит — живая проверка показала `/app` без CSP при полном наборе на `/api/health`; гард тела остался в middleware, т.к. он обязан **прервать** запрос, а throw внутри хука Nitro глотает — плюс `server/middleware/edgeSecurity.ts`): раз nginx
   нет, приложение само вешает его защиту — security-заголовки (CSP + `frame-ancestors` доменов Б24, nosniff,
   Referrer-Policy, HSTS; относительно `/b24-form.html` — расслабленный form-CSP) на **все** ответы и
   app-level анти-брутфорс на `/api/auth/login` (10/15мин по реальному IP пира `socket.remoteAddress`, т.к.

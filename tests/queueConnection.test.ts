@@ -24,7 +24,9 @@ describe('QUEUE_DEFAULT_JOB_OPTIONS (retention the alert rules depend on)', () =
     expect(QUEUE_DEFAULT_JOB_OPTIONS.removeOnComplete).toBe(1000)
     expect(QUEUE_DEFAULT_JOB_OPTIONS.removeOnFail).toBe(5000)
   })
-  it('failed tail outlives the completed tail (a failure must stay visible longer)', () => {
+  it('keeps MORE failures than successes (a failure is the one an operator comes looking for)', () => {
+    // Deliberately about COUNT, not time: under a burst of failures 5000 entries can be evicted
+    // sooner in wall-clock than 1000 completions under rare successes.
     expect(QUEUE_DEFAULT_JOB_OPTIONS.removeOnFail).toBeGreaterThan(QUEUE_DEFAULT_JOB_OPTIONS.removeOnComplete)
   })
   it('retries: 3 attempts with a GROWING pause (#267)', () => {

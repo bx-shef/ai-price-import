@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq'
+import type { JobsOptions } from 'bullmq'
 import type { QueueName } from './topology'
 
 // Lazy BullMQ connection. Passes connection OPTIONS parsed from REDIS_URL (no direct
@@ -40,12 +41,17 @@ const queues = new Map<string, Queue>()
  *  rules deliberately do NOT count completed/failed deltas (queueAlert.ts header) precisely because
  *  these are NUMERIC caps — the sets are truncated, so a delta is zero exactly when all is well.
  *  Swapping either to `true`/`false` would silently invalidate that reasoning. */
-export const QUEUE_DEFAULT_JOB_OPTIONS = {
+/*  `satisfies JobsOptions` is load-bearing, not decoration: a spread into `new Queue({...})` loses the
+ *  excess-property check an inline literal gets, so a typo like `removeOnCompete` would compile and be
+ *  silently ignored by BullMQ. Frozen (outer AND the nested backoff — the spread is shallow, so every
+ *  queue shares that one object) because this is exported for tests: a mutation here would leak into
+ *  every queue built later by the lazy getQueue. */
+export const QUEUE_DEFAULT_JOB_OPTIONS = Object.freeze({
   attempts: 3,
-  backoff: { type: 'exponential' as const, delay: 5000 },
+  backoff: Object.freeze({ type: 'exponential' as const, delay: 5000 }),
   removeOnComplete: 1000,
   removeOnFail: 5000
-}
+} satisfies JobsOptions)
 
 export function getQueue(name: QueueName): Queue | null {
   const connection = connectionOptions()
