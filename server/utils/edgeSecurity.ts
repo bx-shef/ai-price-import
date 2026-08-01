@@ -169,3 +169,62 @@ export function edgeBodyGuard(contentLength: string | undefined, transferEncodin
   if (chunked && !contentLength) return 411
   return null
 }
+
+// ── Request-time limits (#322): the no-nginx analog of client_header_timeout / client_body_timeout ──
+//
+// nginx (nginx.conf) enforces client_header_timeout / client_body_timeout (both default 60s — an
+// IDLE bound between reads, so an honest slow upload that keeps sending bytes is never cut), and the
+// proxy_read_timeout chain bounds totals. Without nginx only Node's defaults apply: requestTimeout
+// 300s (total), headersTimeout 60s — and NO idle bound, so a drip-feed body (1 byte / 30s) holds a
+// socket for the full 300s at near-zero cost to the attacker (slowloris by body). A hundred such
+// POSTs is a hundred sockets pinned for five minutes each on the single process serving every portal.
+//
+// The compensation mirrors nginx semantics, applied to the Node http.Server when APP_EDGE_SECURITY=1:
+//  - socket idle (server.timeout) ← client_body_timeout: cuts a connection that sent NOTHING for the
+//    window. An honest user on a bad channel keeps trickling bytes and is never idle-cut.
+//  - requestTimeout stays as the TOTAL ceiling (Node's own default, made explicit + tunable): even a
+//    never-idle drip is bounded. 300s comfortably covers the largest legit body (25 MB needs ~7 min
+//    at 0.5 Mbit/s — but in-portal uploads ride office channels; the demo caps at 6 MB).
+//  - headersTimeout ← client_header_timeout.
+// Behind nginx (flag off) none of this is applied — nginx already owns these bounds.
+//
+// Live-verified on the built server (2026-08-01): a declared-1000-byte POST that sends 10 bytes and
+// goes silent is cut at exactly the idle bound; a never-idle 1-byte/2s drip is cut by the total
+// ceiling (COARSELY — Node enforces requestTimeout on a periodic connections check, so the actual
+// cut lands up to ~2 check intervals past the deadline; the bound is «total + minutes», not exact);
+// a normal POST passes; with the flag off nothing is applied (Node defaults).
+const EDGE_TIMEOUT_DEFAULTS = { socketIdleMs: 60_000, headersTimeoutMs: 60_000, requestTimeoutMs: 300_000 }
+
+/** Clamp an env override into a sane band: below 5s cuts honest clients mid-handshake, above 1h is no
+ *  protection at all. Absent/invalid env → the default. */
+function timeoutFromEnv(raw: string | undefined, fallback: number): number {
+  const n = Number((raw ?? '').trim())
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(Math.max(n, 5_000), 3_600_000)
+}
+
+/** Resolved edge timeouts (ms) from env, with nginx-parity defaults. Pure → unit-tested. */
+export function edgeTimeouts(env: Record<string, string | undefined>): { socketIdleMs: number, headersTimeoutMs: number, requestTimeoutMs: number } {
+  return {
+    socketIdleMs: timeoutFromEnv(env.EDGE_SOCKET_IDLE_MS, EDGE_TIMEOUT_DEFAULTS.socketIdleMs),
+    headersTimeoutMs: timeoutFromEnv(env.EDGE_HEADERS_TIMEOUT_MS, EDGE_TIMEOUT_DEFAULTS.headersTimeoutMs),
+    requestTimeoutMs: timeoutFromEnv(env.EDGE_REQUEST_TIMEOUT_MS, EDGE_TIMEOUT_DEFAULTS.requestTimeoutMs)
+  }
+}
+
+/** Minimal shape of node:http Server this module needs (keeps the util import-free and testable). */
+export interface TimeoutServer {
+  timeout: number
+  headersTimeout: number
+  requestTimeout: number
+  setTimeout: (ms: number) => unknown
+}
+
+/** Apply the resolved timeouts to a live http.Server. Idempotent — safe to call per request; the
+ *  plugin still gates it to once. `setTimeout` (not just the property) so already-open sockets get
+ *  the idle bound too. */
+export function applyEdgeTimeouts(server: TimeoutServer, t: ReturnType<typeof edgeTimeouts>): void {
+  server.setTimeout(t.socketIdleMs)
+  server.headersTimeout = t.headersTimeoutMs
+  server.requestTimeout = t.requestTimeoutMs
+}

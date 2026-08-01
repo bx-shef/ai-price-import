@@ -12,7 +12,9 @@ import {
   edgeSecurityEnabled,
   edgeTrustXff,
   normalisePathname,
-  rateLimitKey
+  rateLimitKey,
+  edgeTimeouts,
+  applyEdgeTimeouts
 } from '../server/utils/edgeSecurity'
 
 describe('edgeSecurityEnabled', () => {
@@ -259,5 +261,40 @@ describe('ipBucket: подсеть IPv6 не даёт бесконечных б�
   it('мусор не притворяется адресом и не схлопывает чужие ключи', () => {
     expect(ipBucket('')).toBe('unknown')
     expect(ipBucket('not:an:address:at:all:x:y:z')).toBe('not:an:address:at:all:x:y:z')
+  })
+})
+
+describe('edgeTimeouts (#322 — аналог client_body/header_timeout без nginx)', () => {
+  it('дефолты зеркалят nginx: idle 60s, headers 60s, total 300s', () => {
+    expect(edgeTimeouts({})).toEqual({ socketIdleMs: 60_000, headersTimeoutMs: 60_000, requestTimeoutMs: 300_000 })
+  })
+  it('env-переопределение с клампом [5s, 1h]; мусор → дефолт', () => {
+    expect(edgeTimeouts({ EDGE_SOCKET_IDLE_MS: '30000' }).socketIdleMs).toBe(30_000)
+    expect(edgeTimeouts({ EDGE_REQUEST_TIMEOUT_MS: '120000' }).requestTimeoutMs).toBe(120_000)
+    expect(edgeTimeouts({ EDGE_SOCKET_IDLE_MS: '1' }).socketIdleMs).toBe(5_000) // ниже пола — кламп
+    expect(edgeTimeouts({ EDGE_HEADERS_TIMEOUT_MS: '999999999' }).headersTimeoutMs).toBe(3_600_000)
+    expect(edgeTimeouts({ EDGE_REQUEST_TIMEOUT_MS: 'abc' }).requestTimeoutMs).toBe(300_000)
+    expect(edgeTimeouts({ EDGE_REQUEST_TIMEOUT_MS: '-5' }).requestTimeoutMs).toBe(300_000)
+  })
+  it('applyEdgeTimeouts ставит все три значения на сервер (setTimeout — чтобы покрыть уже открытые сокеты)', () => {
+    const calls: number[] = []
+    const srv = {
+      timeout: 0,
+      headersTimeout: 0,
+      requestTimeout: 0,
+      setTimeout: (ms: number) => {
+        calls.push(ms)
+        srv.timeout = ms
+      }
+    }
+    applyEdgeTimeouts(srv, { socketIdleMs: 60_000, headersTimeoutMs: 61_000, requestTimeoutMs: 300_000 })
+    expect(calls).toEqual([60_000])
+    expect(srv.headersTimeout).toBe(61_000)
+    expect(srv.requestTimeout).toBe(300_000)
+  })
+  it('плагин гейтится флагом и не трогает сервер за nginx', () => {
+    const src = readFileSync(new URL('../server/plugins/edgeTimeouts.ts', import.meta.url), 'utf8')
+    expect(src).toContain('edgeSecurityEnabled(process.env)')
+    expect(src).toContain('applyEdgeTimeouts')
   })
 })
