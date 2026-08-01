@@ -397,6 +397,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   `client_max_body_size`): middleware **глобально** (любой роут, включая публичный вебхук `/api/b24/events`)
   рубит заявленный `Content-Length` > кап → 413 и chunked-тело без длины → 411 **до** чтения тела; безтелые
   запросы не трогает. Буферящие всё тело роуты (`/api/demo/extract`, `/api/import/upload`) кап-чекают свой
+<<<<<<< HEAD
   предел (`bodySizeStatus`). Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
   `/api/demo/*` держит собственный пер-IP лимитер (`demoRateLimit`) плюс глобальный `AI_MAX_CONCURRENCY`
   плюс **суточный бюджет AI-разборов** (#321, `demoBudget.ts`): пер-IP лимит и конкуренция ограничивают
@@ -404,6 +405,14 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
   UTC-дню (переживает рестарт; без Redis — in-memory на процесс с warning), проверка **до** OCR/LLM и до
   слота конкуренции, отказ — 429 с честным текстом; детерминированный путь (текст/CSV/Excel и образцы
   лендинга) бюджет не тратит; `DEMO_DAILY_LIMIT` (дефолт 200, кламп [1,100000]), расход виден в логе. ⚠
+=======
+  предел (`bodySizeStatus`). Плюс **таймауты запроса** (#322, аналог nginx `client_header/body_timeout`):
+  плагин `server/plugins/edgeTimeouts.ts` на первом запросе берёт `req.socket.server` и ставит
+  `edgeTimeouts(env)` — idle 60с (`server.setTimeout`, честный медленный аплоад капает байтами и не
+  режется), headers 60с, total 300с (кап slowloris-по-телу); env `EDGE_SOCKET_IDLE_MS`/
+  `EDGE_HEADERS_TIMEOUT_MS`/`EDGE_REQUEST_TIMEOUT_MS`, кламп [5с,1ч]; за nginx — no-op. Служебная зона (`/api/ops/*`, `/api/queues`) **fail-closed** (nginx для неё не нужен); демо
+  `/api/demo/*` держит собственный пер-IP лимитер (`demoRateLimit`) плюс глобальный `AI_MAX_CONCURRENCY`. ⚠
+>>>>>>> origin/main
   `NUXT_PUBLIC_SITE_URL` нужен **и на build** (пререндер `/install`; canonical/og лендинга с #304 от него
   НЕ зависят — всегда прод), **и в рантайме**
   (`/robots.txt`, `/sitemap.xml` читают его на запрос) — скрипт запекает его в `pnpm build` из
