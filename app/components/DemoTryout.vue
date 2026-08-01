@@ -161,12 +161,22 @@ async function onDrop(e: DragEvent) {
   if (file) await upload(file)
 }
 
-/** Human retry hint for the rate-limit block («через ~N минут», or a generic line). */
+/** Human retry hint for the rate-limit block. Minutes for the per-IP window; hours for the daily
+ *  budget 429 (#321), where «через 600 мин» would read absurd. */
 const retryHint = computed(() => {
   if (retrySec.value <= 0) return 'Попробуйте позже.'
   const min = Math.ceil(retrySec.value / 60)
-  return `Попробуйте примерно через ${min} мин.`
+  if (min < 90) return `Попробуйте примерно через ${min} мин.`
+  return `Попробуйте примерно через ${Math.ceil(min / 60)} ч.`
 })
+
+/** The lockout banner must name the RIGHT limit: a lock longer than the 10-min per-IP window can
+ *  only be the daily budget (#321) — saying «3 файла за 10 минут» there would be a lie. */
+const lockMessage = computed(() =>
+  retrySec.value > 660
+    ? 'Дневной бюджет демо-разборов исчерпан.'
+    : 'Лимит демо-загрузок исчерпан — 3 файла за 10 минут.'
+)
 
 // ISO currency code drives the glyph (BYN has no Unicode sign → rendered via CurrencySign).
 const code = computed(() => result.value?.currencyCode || '')
@@ -252,7 +262,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
       class="mx-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-5 text-center text-sm text-amber-200 sm:mx-0"
       role="status"
     >
-      Лимит демо-загрузок исчерпан — 3 файла за 10 минут. {{ retryHint }}
+      {{ lockMessage }} {{ retryHint }}
       <span class="mt-1 block text-xs text-amber-200/70">Примеры выше по-прежнему доступны без ограничений.</span>
     </div>
 
