@@ -2,6 +2,7 @@ import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { resolveFeedbackConfig } from '../utils/feedbackConfig'
 import { commitFeedbackFile, postFeedbackIssue } from '../utils/feedbackGithub'
+import { feedbackUploadAllowed } from '../utils/feedbackRepoPrivacy'
 import { buildFeedbackIssue, feedbackFilePath, normalizeKind } from '~/utils/feedback'
 import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
@@ -87,7 +88,13 @@ export default defineEventHandler(async (event) => {
               // (scope `disk`) and COMMIT it to the PRIVATE feedback repo, so the publisher gets the
               // actual file — a portal-Disk link is inaccessible to them. Best-effort: any failure
               // (no archived file, download/commit error) yields no file, the issue is still filed.
-              const diskId = await getDiskFileId(member.memberId, jobId, jobRedis)
+              // Ask GitHub whether the receiver is actually private BEFORE reading any bytes (#200).
+              // The slug comes from an env var and nothing else verifies it: one typo, or the repo
+              // being flipped to public later, and real invoices become public. Cached, three-state —
+              // "could not verify" blocks the upload just like "public" does, but is retried sooner.
+              const diskId = await feedbackUploadAllowed(config, fetchImpl)
+                ? await getDiskFileId(member.memberId, jobId, jobRedis)
+                : null
               if (diskId) {
                 const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
                 // redirect:'manual' — never follow a portal's redirect off-host (SSRF on the shared
