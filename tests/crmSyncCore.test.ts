@@ -134,10 +134,12 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.errors).toHaveLength(0)
     // #336: the warning must carry printed / computed / difference — the bare fact of a mismatch
     // is unusable on a 44-line document. Difference here: |120 − 99 999| = 99 879.
+    // Числа пинятся ВМЕСТЕ С ПОДПИСЯМИ: набор из трёх `toContain` переживал перестановку
+    // «напечатано» и «посчитано» местами, а такой текст говорит оператору ровно обратное.
     const w = r.warnings.find(x => /^Итог документа —/.test(x))!
-    expect(w).toContain('99 999,00 BYN')
-    expect(w).toContain('120,00 BYN')
-    expect(w).toContain('разница 99 879,00 BYN')
+    expect(w).toMatch(/Итог документа — 99 999,00 BYN/)
+    expect(w).toMatch(/по строкам вышло 120,00 BYN/)
+    expect(w).toMatch(/разница 99 879,00 BYN/)
     // NOT anchored to the bogus 99999 — opportunity computed from the lines (net-priced gross = 120).
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 120 }))
   })

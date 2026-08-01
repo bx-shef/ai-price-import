@@ -169,9 +169,11 @@ export function describeTotalMismatch(statedTotal: number | undefined, grossTota
     return `Итог, напечатанный в документе, не сошёлся с суммой по строкам. ${tail}`
   }
   const cur = typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency) ? ` ${currency.toUpperCase()}` : ''
-  // Round the printed total ONCE and reuse: showing round2(x) while subtracting the raw x made the
-  // three numbers disagree by a kopeck — in a message whose entire job is arithmetic.
+  // Round BOTH amounts once, then subtract the rounded pair: the difference must be the difference
+  // of the two numbers actually printed. Subtracting raw values (or rounding only one of them) let
+  // the three figures disagree by a kopeck — in a message whose entire job is arithmetic.
   const stated = round2(statedTotal)
-  const diff = Math.abs(round2(grossTotal - stated))
-  return `Итог документа — ${formatAmount(stated)}${cur}, по строкам вышло ${formatAmount(grossTotal)}${cur}: разница ${formatAmount(diff)}${cur}. ${tail}`
+  const gross = round2(grossTotal)
+  const diff = Math.abs(round2(gross - stated))
+  return `Итог документа — ${formatAmount(stated)}${cur}, по строкам вышло ${formatAmount(gross)}${cur}: разница ${formatAmount(diff)}${cur}. ${tail}`
 }
