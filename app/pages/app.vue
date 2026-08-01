@@ -85,10 +85,10 @@ async function openMetrics(): Promise<void> {
 // the composable) would no-op, leaking the pull client. init() runs async inside; this is inert
 // outside a portal.
 const { subscribeReload } = useSettingsSync()
-// Подписку заводим синхронно (после await теряется scope эффекта), но в пусковой странице она
-// должна молчать: иначе базовый фрейм читал бы настройки параллельно со слайдером — ровно то
-// удвоение, ради которого лаунчер и появился.
-subscribeReload(() => {
+// Подписку заводим синхронно (после await теряется scope эффекта), но в пусковой странице её надо
+// СНЯТЬ, а не просто заглушить обработчик: сама подписка поднимает websocket, и он висел бы вторым —
+// рядом с тем, что поднимает открытый слайдер. Ровно то удвоение, ради которого лаунчер и делался.
+const unsubscribeReload = subscribeReload(() => {
   if (launch.value === 'launcher') return
   void loadSettings()
 })
@@ -103,11 +103,16 @@ const sliderFailed = ref(false)
  *  `closeAppSlider` тут намеренно НЕ зовём (в референсе он есть): открыть себя слайдером может
  *  только лаунчер, а лаунчер по определению не слайдер — закрывать нечего. */
 async function openMain(): Promise<boolean> {
-  try {
-    window.sessionStorage?.setItem(MAIN_SLIDER_MARK_KEY, String(Date.now()))
-  } catch { /* приватный режим — без отметки, страховка от цикла просто не сработает */ }
   const opened = await openAppSlider(APP_SLIDER_PLACE_MAIN, { width: 1200, title: 'AI-импорт прайсов' })
   sliderFailed.value = !opened
+  // Отметку ставим ТОЛЬКО на успехе: иначе портал, где слайдеры вообще не открываются, съедал бы ею
+  // право на автооткрытие — и повторная загрузка страницы в пределах окна оставляла бы человека на
+  // пусковой странице с нерабочей кнопкой и без рабочего экрана.
+  if (opened) {
+    try {
+      window.sessionStorage?.setItem(MAIN_SLIDER_MARK_KEY, String(Date.now()))
+    } catch { /* приватный режим — без отметки, страховка от цикла просто не сработает */ }
+  }
   return opened
 }
 
@@ -132,7 +137,9 @@ onMounted(async () => {
   if (launch.value === 'launcher') {
     // Базовый фрейм — только пусковая страница. Опрос статусов, метрики и настройки здесь НЕ
     // поднимаем: иначе они крутились бы одновременно и тут, и в открытом слайдере.
+    unsubscribeReload()
     // Автооткрытие — не чаще раза в окно (страховка от цикла); человек всегда может нажать кнопку.
+    // Если окно уже открывали только что — просто показываем кнопку, ничего не поднимая.
     if (!canAutoOpenMain(lastMainSliderAt(), Date.now())) return
     if (await openMain()) return
     // Слайдер не открылся — не оставляем человека на мёртвой странице, работаем как раньше.

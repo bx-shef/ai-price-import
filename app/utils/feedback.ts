@@ -7,8 +7,17 @@
 // builder keeps the comment (that's the point) but renders it INERT (hostile-char-stripped +
 // HTML-escaped inside <pre><code>) so it can't Trojan-Source the issue list or inject markdown.
 
-/** 👍 / 👎 — the two employee ratings. RU words for the issue. */
-export const FEEDBACK_KINDS = { up: 'положительный 👍', down: 'отрицательный 👎' } as const
+/** Оценка сотрудника словами — для ТЕЛА задачи. */
+export const FEEDBACK_KINDS = { up: 'положительный', down: 'отрицательный' } as const
+
+/**
+ * Метка оценки в ЗАГОЛОВКЕ задачи (#299, решение владельца).
+ *
+ * Положительный и отрицательный отзыв — одна и та же форма и один и тот же заголовок
+ * «Отзыв сотрудника»; различает их только цветной кружок в начале. Так список задач в репозитории
+ * отзывов читается одним взглядом, а не разными формулировками.
+ */
+export const FEEDBACK_TITLE_MARK = { up: '🟢', down: '🔴' } as const
 export type FeedbackKind = keyof typeof FEEDBACK_KINDS
 
 export const MAX_COMMENT_LENGTH = 5000
@@ -106,11 +115,10 @@ function contextLine(label: string, value: unknown, opts: { cap?: number, multil
  */
 export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context: FeedbackContext = {}): IssuePayload {
   const safe = escapeHtml(sanitizeComment(comment)).trim() || '(без текста)'
-  const firstLine = safe.split('\n', 1)[0]!.slice(0, 80).trim()
   const kindWord = FEEDBACK_KINDS[kind]
-  const title = (firstLine && firstLine !== '(без текста)'
-    ? `${kindWord} · ${firstLine}`
-    : `Отзыв сотрудника — ${kindWord}`).slice(0, 120)
+  // Заголовок ОДИН для обеих оценок, различает их только метка (#299). Текст комментария в
+  // заголовок не выносим — он целиком в теле, инертно обёрнутый.
+  const title = `[${FEEDBACK_TITLE_MARK[kind]}] Отзыв сотрудника`
   const contextLines = [
     contextLine('Статус разбора', context.status),
     contextLine('Исход', context.outcome),

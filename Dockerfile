@@ -70,9 +70,9 @@ ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
 # Same reason, same trap, two more values. `/robots.txt` and `/sitemap.xml` are RUNTIME routes (they
 # must resolve the host per deploy, so they are not prerendered) — they read `siteUrl`/`buildDate` at
 # REQUEST time. Set only in the build stage, both would stay at the nuxt.config defaults here and
-# `<lastmod>` would never ship. Keeping SITE_URL in both stages narrows the window in which the baked
-# canonical/og:url and the runtime Sitemap:/<loc> advertise DIFFERENT hosts — it cannot close it: the
-# baked side comes from the build-arg, the runtime side from `env_file`, which outranks image ENV.
+# `<lastmod>` would never ship. Since #304 the baked canonical/og:url ignore the build-arg entirely
+# (always the prod constant); SITE_URL on both stages still matters for the /install prerender and
+# the runtime Sitemap:/<loc>, whose base comes from `env_file`, which outranks image ENV.
 # That override is also why an existing deploy setting these in .env is unaffected.
 ARG NUXT_PUBLIC_SITE_URL=""
 ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL

@@ -113,3 +113,22 @@ describe('validateExtractedDocument', () => {
     expect(validateExtractedDocument({ priceIncludesVat: false, items: [{ name: 'A', price: 1, quantity: 1 }] })?.priceIncludesVat).toBe(false)
   })
 })
+
+describe('английская группировка тысяч не читается как дробь (#302)', () => {
+  const qty = (v: string) => validateExtractedDocument({ items: [{ name: 'A', price: 1, quantity: v }] })?.items[0]?.quantity
+
+  it('«10,000» — это десять тысяч, а не десять', () => {
+    // Живой случай: количество 10 000 превратилось в 10, и сумма сделки разошлась в тысячу раз.
+    expect(qty('10,000')).toBe(10000)
+    expect(qty('1,000')).toBe(1000)
+    expect(qty('999,000')).toBe(999000)
+  })
+
+  it('обычная десятичная запятая не ломается', () => {
+    expect(qty('1,5')).toBe(1.5)
+    expect(qty('0,86')).toBe(0.86)
+    expect(qty('0,860')).toBe(0.86) // ведущий ноль — это дробь, а не «ноль тысяч восемьсот шестьдесят»
+    expect(qty('12,25')).toBe(12.25)
+    expect(qty('1234,567')).toBe(1234.567) // целая часть длиннее трёх цифр — группировкой быть не может
+  })
+})
