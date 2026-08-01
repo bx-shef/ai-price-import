@@ -33,6 +33,8 @@ export function ownerTypeCode(entityTypeId: number): string {
 export interface ProductRowInput {
   productId?: number
   productName: string
+  /** DOCUMENT per-unit price — net or gross per `priceIncludesVat`. The written row's `price`
+   *  is always gross (see buildProductRow). */
   price: number
   quantity: number
   /** VAT percent or null for «Без НДС». */
@@ -42,16 +44,37 @@ export interface ProductRowInput {
   measureCode: number
 }
 
-/** Build one crm.item.productrow.set row. Clamps price/qty to finite, 2 dp. */
+/**
+ * Build one crm.item.productrow.set row.
+ *
+ * B24 semantics (live-verified 2026-08-01, #302): the row `price` is ALWAYS the gross per-unit
+ * price — the docs say «цена … с учетом скидок и налогов» — and `taxIncluded` does NOT affect
+ * the computation at all (the same price sent with 'N' and with 'Y' produced identical
+ * priceExclusive/priceBrutto; the portal always derives net = price / (1 + rate)). Writing the
+ * document's NET price with `taxIncluded:'N'` therefore undershot every row by the whole VAT,
+ * while the manually-set entity `opportunity` (correct) masked it: the deal header said 10 320
+ * and its product tab summed to 8 600. So the net→gross conversion happens HERE, and the row
+ * carries `taxIncluded:'Y'` so the visible flag agrees with the number.
+ *
+ * The converted price is deliberately NOT rounded to kopecks: 0.86 @20% → 1.032, and round2
+ * would give 1.03 → ×10 000 = 10 300 — resurrecting the per-unit-rounding defect the per-line
+ * rule exists to avoid (see computeOpportunity). The portal stores ≥6 decimals verbatim
+ * (live-verified: 1.032456 came back unchanged), so 6 dp keeps line totals exact to the cent
+ * while killing IEEE noise (0.86×1.2 is 1.0319999… in floats).
+ */
 export function buildProductRow(input: ProductRowInput, sort: number): Record<string, unknown> {
-  const price = round2(finite(input.price))
+  const net = round2(finite(input.price))
   const quantity = round2(finite(input.quantity, 1))
+  const rate = input.taxRate == null ? 0 : finite(input.taxRate)
+  const price = input.priceIncludesVat || rate <= 0 ? net : round6(net * (1 + rate / 100))
   const row: Record<string, unknown> = {
     productName: input.productName.slice(0, 500),
     price,
     quantity,
     taxRate: input.taxRate,
-    taxIncluded: input.priceIncludesVat ? 'Y' : 'N',
+    // Informational only (computation-neutral, see above) — but 'N' next to a gross price would
+    // be a caption contradicting the number, so it is always 'Y' now that `price` is always gross.
+    taxIncluded: 'Y',
     measureCode: input.measureCode,
     sort
   }
@@ -119,6 +142,11 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
  * per-line but 10 300 if the per-unit gross (1.032→1.03) is rounded first — the document and
  * standard accounting use the per-line figure, so we do too. (crm-sync prefers the document's
  * printed grand total when it states one — see reconcilePricing — this is the fallback/partial path.)
+ *
+ * Since #302, rows built by buildProductRow always carry a GROSS price + taxIncluded:'Y', so for
+ * them this reduces to Σ round2(price×qty) — the same per-row figure the portal itself computes,
+ * which is exactly why the row sum and this total now agree. The 'N' branch stays for generality
+ * (the function accepts arbitrary rows) and for the discount note in crmSyncCore (clamped rows).
  */
 export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
   let sum = 0
@@ -146,4 +174,9 @@ function finite(n: number, fallback = 0): number {
 }
 function round2(n: number): number {
   return Math.round(n * 100) / 100
+}
+/** 6-dp rounding for the net→gross unit price: enough that line totals stay exact to the cent
+ *  at realistic quantities, while float noise (0.86×1.2 = 1.0319999…) collapses to 1.032. */
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6
 }

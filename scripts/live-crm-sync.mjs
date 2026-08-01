@@ -24,7 +24,7 @@ import { findCompanyByTaxId } from '../server/utils/companyLookup.ts'
 import { findProduct } from '../server/utils/productLookup.ts'
 import { fetchVatRates } from '../server/utils/portalVat.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
-import { createTargetItem, setProductRows } from '../server/utils/crmWrite.ts'
+import { createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite.ts'
 import { findExistingItemId } from '../server/utils/originLookup.ts'
 
 const argv = process.argv.slice(2)
@@ -165,6 +165,29 @@ try {
   if (res.entityId) {
     const { item } = await call('crm.item.get', { entityTypeId: res.entityTypeId, id: res.entityId })
     console.log('entity:', JSON.stringify({ entityTypeId: res.entityTypeId, id: item.id, title: item.title, categoryId: item.categoryId, companyId: item.companyId, currencyId: item.currencyId, opportunity: item.opportunity }))
+    // #302: read the rows BACK and hold the invariant «Σ price×qty == сумма сущности». The old
+    // check printed `opportunity` — the number WE set — so rows understated by the whole VAT
+    // still passed as «live-verified». The portal computes the product tab from row `price`
+    // alone (always gross; taxIncluded is computation-neutral — proven live), so this comparison
+    // is exactly what a person sees: products tab vs deal header.
+    const { productRows } = await call('crm.item.productrow.list', {
+      filter: { '=ownerType': ownerTypeCode(res.entityTypeId), '=ownerId': res.entityId }
+    })
+    const rows = productRows ?? []
+    for (const r of rows) console.log(`  row: ${JSON.stringify({ name: r.productName, price: r.price, qty: r.quantity, taxRate: r.taxRate, taxIncluded: r.taxIncluded, exclusive: r.priceExclusive })}`)
+    const rowSum = Math.round(rows.reduce((s, r) => s + Number(r.price) * Number(r.quantity), 0) * 100) / 100
+    const opp = Number(item.opportunity)
+    console.log(`rows: ${rows.length}, Σ price×qty = ${rowSum}`)
+    // Dynamic smart-processes may not expose opportunity at all (supportsOpportunity=false —
+    // we don't set it, the portal may report 0/null there) — compare only when it is meaningful.
+    if (Number.isFinite(opp) && opp > 0) {
+      // Sub-cent slack: the portal rounds the TOTAL of unrounded row products, our header comes
+      // from per-line/printed-total math — a legitimate cent can appear on thirds-like prices.
+      if (Math.abs(rowSum - opp) > 0.01) {
+        throw new Error(`строки разошлись с суммой сущности: Σ строк ${rowSum} ≠ opportunity ${opp} — ровно дефект #302`)
+      }
+      console.log(`✓ Σ строк сходится с суммой сущности (${opp})`)
+    }
   }
 } finally {
   // Always clean up the created entity (even on a mid-run failure), unless --keep.
