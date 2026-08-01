@@ -121,6 +121,20 @@ export function canonicalUrl(path: string, siteUrl?: string | null): string {
   return `${base}/${p.replace(/^\/+/, '')}`
 }
 
+/**
+ * Is this deployment THE canonical landing host? (#304)
+ *
+ * There is exactly one public home of the landing — `LANDING_SITE_URL`. Every other deployment that
+ * serves the same pages (staging, a Vibecode target, a client's isolated server) is a DUPLICATE by
+ * construction, and a duplicate must not advertise itself to search engines: its canonical tag has
+ * to point at production, and its sitemap must not invite crawlers in. Comparison is on the
+ * VALIDATED origin (`siteBaseUrl`), so an unset/garbage env — which falls back to the canonical
+ * home anyway — counts as canonical rather than flapping on formatting.
+ */
+export function isCanonicalHost(siteUrl?: string | null): boolean {
+  return siteBaseUrl(siteUrl) === LANDING_SITE_URL
+}
+
 /** Copyright year range string: "2026" or "2024–2026". */
 export function copyrightYears(from: number, current: number): string {
   return from >= current ? String(current) : `${from}–${current}`

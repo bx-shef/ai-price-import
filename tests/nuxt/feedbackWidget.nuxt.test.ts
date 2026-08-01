@@ -30,26 +30,53 @@ describe('FeedbackWidget', () => {
     expect(w.find('button').exists()).toBe(false)
   })
 
-  it('renders 👍/👎 when enabled', async () => {
+  it('показывает обе оценки, когда канал включён', async () => {
     const w = await mountSuspended(FeedbackWidget)
     expect(w.find('button[aria-label="Хорошо"]').exists()).toBe(true)
     expect(w.find('button[aria-label="Плохо"]').exists()).toBe(true)
   })
 
-  it('👍 submits immediately → «Спасибо»', async () => {
+  it('оценка «Хорошо» открывает ту же форму и НЕ отправляет сразу (#299)', async () => {
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await tick()
-    // 👍 stays instant and never attaches a file (consent lives in the 👎 box) → attachFile false.
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, expect.any(Object), true)
+    // Главное в #299: положительная оценка больше не уходит мгновенно и не прикладывает файл молча.
+    expect(h.submit).not.toHaveBeenCalled()
+    expect(w.find('textarea').exists()).toBe(true)
+    expect(w.text()).toContain('Приложить исходный файл')
+  })
+
+  it('положительная оценка уходит по «Отправить», файл — только по галочке', async () => {
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-7', fileName: 'счёт.xlsx' } })
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await w.find('textarea').setValue('всё верно')
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(h.submit).toHaveBeenCalledWith('up', 'всё верно', { jobId: 'job-7', fileName: 'счёт.xlsx' }, false)
     expect(w.text()).toContain('Спасибо')
   })
 
-  it('passes jobId/fileName context to submit', async () => {
-    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-7', fileName: 'счёт.xlsx' } })
+  it('положительная оценка с галочкой прикладывает файл', async () => {
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-8' } })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await w.find('[role="checkbox"]').trigger('click')
+    await clickText(w, 'Отправить')
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-7', fileName: 'счёт.xlsx' }, true)
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-8', fileName: undefined }, true)
+  })
+
+  it('оценку можно передумать: 👍 → 👎 → «Отправить» уходит как отрицательная', async () => {
+    const w = await mountSuspended(FeedbackWidget)
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await w.find('textarea').setValue('передумал')
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    // Выбор виден не только цветом — иначе о нём не узнает скринридер.
+    expect(w.find('button[aria-label="Плохо"]').attributes('aria-pressed')).toBe('true')
+    expect(w.find('button[aria-label="Хорошо"]').attributes('aria-pressed')).toBe('false')
+    await clickText(w, 'Отправить')
+    await tick()
+    // Текст не потерян при смене оценки.
+    expect(h.submit).toHaveBeenCalledWith('down', 'передумал', expect.any(Object), false)
   })
 
   it('👎 opens the comment box; the «Отправить» button sends with the comment', async () => {
@@ -78,6 +105,7 @@ describe('FeedbackWidget', () => {
     h.submit = vi.fn(async () => false)
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await clickText(w, 'Отправить')
     await tick()
     expect(w.text()).not.toContain('Спасибо')
     expect(w.text()).toContain('внутри портала')
@@ -89,6 +117,7 @@ describe('FeedbackWidget', () => {
     })
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await clickText(w, 'Отправить')
     await tick()
     expect(w.text()).not.toContain('Спасибо')
     expect(w.text()).toContain('Не удалось отправить')
@@ -97,6 +126,7 @@ describe('FeedbackWidget', () => {
   it('already-rated job (localStorage) shows «Спасибо» on mount, does not re-offer (#D)', async () => {
     const w1 = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-42' } })
     await w1.find('button[aria-label="Хорошо"]').trigger('click')
+    await clickText(w1, 'Отправить')
     await tick()
     expect(w1.text()).toContain('Спасибо') // sent + remembered in localStorage
     // A fresh mount for the SAME job (e.g. after a reload) must not show the buttons again.

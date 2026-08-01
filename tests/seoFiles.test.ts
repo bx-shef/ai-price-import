@@ -216,11 +216,48 @@ describe('враждебный NUXT_PUBLIC_SITE_URL не доходит до к�
 
   it('sitemap остаётся well-formed', () => {
     for (const raw of hostile) {
-      const loc = crawlerFiles(raw, '2026-07-31').sitemap.match(/<loc>([\s\S]*?)<\/loc>/)?.[1]
-      expect(loc, `база ${JSON.stringify(raw)}: <loc> не найден`).toBeTruthy()
+      // С #304 враждебная база может отвалидироваться в НЕканонический origin — тогда sitemap
+      // валидный и пустой (<loc> нет вовсе). Если <loc> есть, он обязан быть чистым.
+      const sitemap = crawlerFiles(raw, '2026-07-31').sitemap
+      expect(sitemap, `база ${JSON.stringify(raw)}`).toContain('<urlset')
+      const loc = sitemap.match(/<loc>([\s\S]*?)<\/loc>/)?.[1]
+      if (loc === undefined) continue
       expect(loc, `база ${JSON.stringify(raw)}`).not.toMatch(/[<>]/)
       expect(loc).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/)
       expect(loc).not.toMatch(/[\n\r\t]/)
     }
+  })
+})
+
+describe('неканонический хост не зовёт себя в индекс (#304)', () => {
+  const STAGING = 'https://staging.example.dev'
+
+  it('isCanonicalHost: прод и пустой env — канонические, чужой origin — нет', async () => {
+    const { isCanonicalHost, LANDING_SITE_URL } = await import('../app/utils/landing')
+    expect(isCanonicalHost(LANDING_SITE_URL)).toBe(true)
+    expect(isCanonicalHost(undefined)).toBe(true) // фолбэк и так на прод
+    expect(isCanonicalHost('мусор')).toBe(true) // валидатор откатывает на прод
+    expect(isCanonicalHost(STAGING)).toBe(false)
+    expect(isCanonicalHost('https://price-import.bx-shef.by/path?q=1')).toBe(true) // origin тот же
+  })
+
+  it('robots на staging — без строки Sitemap, но БЕЗ Disallow: / (canonical должен читаться)', () => {
+    const { robots } = crawlerFiles(STAGING)
+    expect(robots).not.toContain('Sitemap:')
+    expect(robots).not.toMatch(/^Disallow: \/$/m)
+    expect(robots).toContain('Disallow: /api/')
+  })
+
+  it('sitemap на staging — валидный, но пустой', () => {
+    const { sitemap } = crawlerFiles(STAGING, '2026-07-31')
+    expect(sitemap).toContain('<urlset')
+    expect(sitemap).not.toContain('<loc>')
+    expect(sitemap).not.toContain(STAGING)
+  })
+
+  it('прод отдаёт всё как раньше', () => {
+    const { robots, sitemap } = crawlerFiles('https://price-import.bx-shef.by', '2026-07-31')
+    expect(robots).toContain('Sitemap: https://price-import.bx-shef.by/sitemap.xml')
+    expect(sitemap).toContain('<loc>https://price-import.bx-shef.by/</loc>')
   })
 })

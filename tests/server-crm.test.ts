@@ -44,7 +44,10 @@ describe('crmWrite', () => {
     expect(ownerTypeCode(2)).toBe('D')
     expect(ownerTypeCode(7)).toBe('Q')
     expect(ownerTypeCode(31)).toBe('SI')
-    expect(ownerTypeCode(1030)).toBe('T1030') // dynamic smart-process
+    // Dynamic smart process: 'T' + HEX id (live-verified: 'T460' OK, decimal 'T1120' →
+    // ENTITY_TYPE_NOT_SUPPORTED — the decimal form silently broke every SP product write).
+    expect(ownerTypeCode(1120)).toBe('T460')
+    expect(ownerTypeCode(1030)).toBe('T406')
   })
   it('buildProductRow: taxIncluded + clamp + productId omitted when absent', () => {
     const row = buildProductRow({ productName: 'x', price: 4.355, quantity: 2, taxRate: 22, priceIncludesVat: true, measureCode: 796 }, 10)
@@ -118,5 +121,14 @@ describe('disk + activity', () => {
     expect(a.ownerTypeId).toBe(2)
     expect((a.fields as { typeId: string }).typeId).toBe('CONFIGURABLE')
     expect(a.layout).toBeDefined()
+  })
+})
+
+describe('ownerTypeCode — hex с буквами и регистр', () => {
+  it('буквенный hex — строчный, как в доке (PREFIX = T + dechex, нижний регистр)', () => {
+    // 1054 = 0x41E. Портал принимает любой регистр (проверено вживую), но канонична строчная
+    // форма из офдоки — тест ловит случайный .toUpperCase(), который мимо буквенно-чистых
+    // пинов (0x460, 0x406) прошёл бы незамеченным.
+    expect(ownerTypeCode(1054)).toBe('T41e')
   })
 })

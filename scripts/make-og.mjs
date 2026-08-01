@@ -4,19 +4,30 @@
 //
 // The PNG is a committed static asset (served by nginx, referenced by og:image in
 // app.vue). Regenerate + commit when you edit the template below. Dev-only, not SSG.
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { resolveChromium } from './lib/chromium.mjs'
+// Card copy comes FROM the landing content module (#298) — the previous inline copy drifted from
+// the real title the moment someone edited landing.ts. The `og` script passes
+// --experimental-strip-types explicitly (same as client-bank's recon scripts): default stripping
+// only arrived in Node 22.18, while our `engines` allows any >=22 — without the flag the script
+// would crash on 22.0–22.17. landing.ts has no imports, so no loader is needed.
+import { LANDING_TITLE, LANDING_SUBTITLE } from '../app/utils/landing.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const OUT = join(ROOT, 'public', 'og.png')
 const WIDTH = 1200
 const HEIGHT = 630
 
-// Standalone card copy (tuned for 1200×630, not derived from landing.ts). Re-sync by
-// hand when the landing title/branding changes. Brand: dark #05010f + cyan accent.
+// The title is split so «Bitrix24» keeps the accent colour regardless of wording.
+const [titleHead, titleTail] = LANDING_TITLE.split(/ в Bitrix24$/).length === 1
+  ? [LANDING_TITLE, '']
+  : [LANDING_TITLE.replace(/ в Bitrix24$/, ''), ' в <span>Bitrix24</span>']
+const logoSvg = await readFile(join(ROOT, 'public', 'favicon.svg'), 'utf8')
+const logoData = `data:image/svg+xml;base64,${Buffer.from(logoSvg).toString('base64')}`
+
 const html = `<!doctype html><html><head><meta charset="utf-8"><style>
   * { margin: 0; box-sizing: border-box; }
   body { width: ${WIDTH}px; height: ${HEIGHT}px; }
@@ -35,11 +46,16 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><style>
   .title span { color: #22d3ee; }
   .sub { font-size: 34px; color: #cbd5e1; margin-top: 34px; max-width: 900px; line-height: 1.3; }
   .foot { font-size: 28px; color: #94a3b8; margin-top: auto; }
+  .head { display: flex; align-items: center; gap: 26px; }
+  .logo { width: 88px; height: 88px; border-radius: 20px; }
 </style></head><body>
   <div class="card">
-    <div class="eyebrow">Приложение для Bitrix24</div>
-    <div class="title">AI-импорт прайсов<br>в <span>Bitrix24</span></div>
-    <div class="sub">Накладные, счета, КП и прайсы → товары в вашей CRM. Контрагент, суммы и НДС — 1-в-1.</div>
+    <div class="head">
+      <img class="logo" src="${logoData}" alt="">
+      <div class="eyebrow">Приложение для Bitrix24</div>
+    </div>
+    <div class="title">${titleHead}${titleTail}</div>
+    <div class="sub">${LANDING_SUBTITLE}</div>
     <div class="foot">PDF · скан / фото (OCR) · Excel · Word · 1С</div>
   </div>
 </body></html>`

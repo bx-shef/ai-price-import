@@ -10,8 +10,18 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      // Global favicon (SVG — modern browsers; the landing + in-portal pages inherit it).
-      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }]
+      // Favicon bundle (#298) — ONE place for every page (landing + in-portal inherit it).
+      // Master is public/favicon.svg; the rest is generated from it by `pnpm icons`.
+      // Order matters: browsers pick the FIRST usable match, so SVG (crisp at any size)
+      // goes first, .ico stays as the legacy fallback, PNG sizes serve pinned-tab/pwa UIs.
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32.png' },
+        { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/favicon-16.png' },
+        { rel: 'icon', sizes: '16x16 32x32 48x48', href: '/favicon.ico' },
+        { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
+        { rel: 'manifest', href: '/site.webmanifest' }
+      ]
     }
   },
 

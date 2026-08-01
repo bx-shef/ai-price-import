@@ -27,13 +27,14 @@ import { B24_BOOKING_URL } from '~/utils/booking'
 
 // Share/SEO meta lives HERE, not in app.vue: the root component also wraps the in-portal and
 // operator screens, so root-level SEO meta leaked the landing's marketing OG onto /app and
-// /settings. `siteUrl` (NUXT_PUBLIC_SITE_URL) lets a staging/Vibecode host advertise itself; when
-// it is absent both helpers fall back to the canonical landing home, so the tags are ALWAYS
-// absolute — this page is prerendered, so a relative og:image would be baked into the static HTML
-// and dropped by Facebook/LinkedIn (exactly the defect this replaces).
-const siteUrl = useRuntimeConfig().public.siteUrl
-const ogImage = ogImageUrl(siteUrl)
-const canonical = canonicalUrl('/', siteUrl)
+// /settings. Canonical and OG deliberately IGNORE `NUXT_PUBLIC_SITE_URL` (#304): the landing has
+// exactly one public home, and a staging/Vibecode/client deployment that built itself with its own
+// URL was advertising ITSELF as the canonical — an indexable duplicate. Every copy now points at
+// production: a shared staging link resolves its card and its «оригинал здесь» to the real site.
+// Both helpers return absolute URLs by construction — this page is prerendered, and a relative
+// og:image baked into static HTML is dropped by Facebook/LinkedIn (the defect this replaced).
+const ogImage = ogImageUrl()
+const canonical = canonicalUrl('/')
 
 useHead({
   title: LANDING_TITLE,

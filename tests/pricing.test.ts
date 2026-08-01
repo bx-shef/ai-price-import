@@ -125,3 +125,27 @@ describe('reconcilePricing', () => {
     expect(r.grossTotal).toBe(2408)
   })
 })
+
+describe('печатный итог, совпавший с суммой строк, не считается подтверждением (#302)', () => {
+  const items = [item({ price: 0.86, quantity: 10000, vatRate: 20 })] // 8600 без НДС / 10320 с НДС
+
+  it('модель сказала «с НДС», итог = 8600 → берём её слово, но помечаем как неподтверждённое', () => {
+    const r = reconcilePricing(items, true, 8600)
+    expect(r.priceIncludesVat).toBe(true)
+    expect(r.grossTotal).toBe(8600)
+    // Главное: раньше это выглядело как «подтверждено печатным итогом» и уходило молча.
+    expect(r.totalAmbiguous).toBe(true)
+  })
+
+  it('однозначный случай (итог = 10320) подтверждением остаётся и предупреждения не даёт', () => {
+    const r = reconcilePricing(items, true, 10320)
+    expect(r.priceIncludesVat).toBe(false)
+    expect(r.grossTotal).toBe(10320)
+    expect(r.totalAmbiguous).toBe(false)
+  })
+
+  it('без НДС двусмысленности нет — сумма одна и та же при любом флаге', () => {
+    const noVat = [item({ price: 10, quantity: 5, vatRate: 0 })]
+    expect(reconcilePricing(noVat, true, 50).totalAmbiguous).toBe(false)
+  })
+})
