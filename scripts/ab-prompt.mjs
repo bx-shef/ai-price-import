@@ -101,7 +101,10 @@ for (const f of docs) {
         // VAT-inclusive document read as net inflates the total by the VAT rate, and NONE of the
         // other counters sees it (reconcilePricing keeps «net» silently). Without this, a prompt
         // that always answers `false` scores best on every other number here.
-        inclusiveMissed: d.priceIncludesVat !== true && p.grossTotal > (d.total ?? 0) && !p.totalMismatch && !p.corrected
+        // Requires a PRINTED total: with none there is nothing to be inconsistent with, and the
+        // naive `> (d.total ?? 0)` fired on every document that prints no total at all.
+        inclusiveMissed: d.priceIncludesVat !== true && d.total != null
+          && p.grossTotal > d.total && !p.totalMismatch && !p.corrected
       })
     }
   }

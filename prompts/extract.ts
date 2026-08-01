@@ -6,16 +6,28 @@
 // NB: the instruction text is Russian on purpose — documents are ru/be/kk and the
 // model reasons about them in Russian; only this comment/JSDoc is English.
 //
-// ⚠ THIS TEXT IS MEASURED, NOT DRAFTED. It was A/B'd against 34 real invoices (#336): the
-// per-row arithmetic self-check in rule 1 and the standalone vatRate rule are what moved the
-// numbers, and BOTH carry an explicit «does not affect priceIncludesVat» disclaimer because
-// without it the model drifted toward `priceIncludesVat: true` — the unsafe direction, since
-// Σ price×qty is indistinguishable from a net document's «Итого» and trusting it drops the VAT
-// (see app/utils/pricing.ts). Measured over the 34 documents, old → new: flag=true 16 → 8,
-// «corrected by the printed total» 14 → 7, mismatches 3 → 2.
-// The rule NUMBERING is deliberately left as it came out of that measurement (1,2,3,8,7,4,5,6) —
-// tidying it edits the prompt, and any prompt edit invalidates the numbers above. Re-run the A/B
-// before "just renumbering".
+// ⚠ THIS TEXT IS MEASURED, NOT DRAFTED — and the measurement is honest about what it does not
+// show. `pnpm ab:prompt` (scripts/ab-prompt.mjs) A/B'd it against origin/main over 33 distinct
+// real documents, 2 runs per side, 66 runs each (#336/#337):
+//
+//   итог не сошёлся      7 → 4   ← парно по документам: лучше на 2, хуже на 0, McNemar p = 0.500
+//   флаг правился по итогу 23 → 34  ← ХУЖЕ
+//   flag=true            27 → 37  ← ХУЖЕ
+//   взяли слово модели    0 → 1   ← ХУЖЕ (один прогон одного документа)
+//   с НДС прочитан как без НДС  0 → 0
+//
+// So: the row-arithmetic rule never made a document worse and fixed two, but with only two
+// discordant pairs that is NOT statistically significant. The cost is real and measured — the
+// model leans further toward `priceIncludesVat: true`, which `reconcilePricing` then corrects
+// from the printed total (money stayed right in every run; the lone «взяли слово модели» is a
+// document where `true` is plausibly correct and unverifiable by arithmetic). Both new rules
+// carry an explicit «does not affect priceIncludesVat» disclaimer; it reduces that lean but does
+// not remove it. Do not quote the improvement without the cost.
+//
+// Rule NUMBERING is 1,2,3,8,7,4,5,6: the stray `7` predates #336, and the new rule was appended
+// as `8` rather than renumbering, because renumbering edits the text and any text edit
+// invalidates the numbers above. Re-measure (`pnpm ab:prompt --dir <корпус> --runs 2`) before
+// changing a word — including "just tidying".
 
 /** The strict output contract shown to the agent (mirrors app/types/document.ts). */
 const OUTPUT_SCHEMA = `{
