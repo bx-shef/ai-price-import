@@ -4,7 +4,6 @@ import MagicWandIcon from '@bitrix24/b24icons-vue/solid/MagicWandIcon'
 import OpenBookIcon from '@bitrix24/b24icons-vue/main/OpenBookIcon'
 import ShieldIcon from '@bitrix24/b24icons-vue/solid/ShieldIcon'
 import ReceiptIcon from '@bitrix24/b24icons-vue/outline/ReceiptIcon'
-import LogInIcon from '@bitrix24/b24icons-vue/outline/LogInIcon'
 import ContactDetailsIcon from '@bitrix24/b24icons-vue/outline/ContactDetailsIcon'
 import { LANDING_CTA_MARKET, LANDING_MARKET_URL } from '~/utils/landing'
 
@@ -19,8 +18,10 @@ const NAV: NavItem[] = [
   { label: 'Демо', to: '#demo', icon: MagicWandIcon },
   { label: 'Как это работает', to: '#how', icon: OpenBookIcon },
   { label: 'Почему мы', to: '#why', icon: ShieldIcon },
-  { label: 'Реквизиты', to: 'https://offer.bx-shef.by/legal', icon: ReceiptIcon, external: true },
-  { label: 'Операторам', to: '/login', icon: LogInIcon, route: true }
+  { label: 'Реквизиты', to: 'https://offer.bx-shef.by/legal', icon: ReceiptIcon, external: true }
+  // NB: «Операторам» → /login убрано намеренно. Служебная консоль нужна одному человеку —
+  // владельцу, который знает адрес; посетителю лендинга она не нужна, а ссылка на форму входа
+  // с публичной страницы только приглашает подбирать пароль. Заходить — прямым адресом.
 ]
 
 const mobileOpen = ref(false)
