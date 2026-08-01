@@ -1,7 +1,7 @@
 // Pure presentation model for import-job status (used by the /app upload/status UI).
 // Mirrors server JobStatus; keeps label/tone/terminal logic testable and out of components.
 
-// `expired` is CLIENT-ONLY: the browser remembers a job for 7 days (importHistory) but the server
+// `expired` is CLIENT-ONLY: the page keeps a job row in memory while the server
 // keeps its status for 48h (IMPORT_JOB_TTL_HOURS). A remembered row the server no longer knows about
 // used to be dropped silently from the merge — the row just vanished. It is now surfaced as `expired`
 // so «истории нет» and «статус больше не хранится» stop looking identical.

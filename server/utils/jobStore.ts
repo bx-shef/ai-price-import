@@ -8,7 +8,7 @@ import { parseManualTarget } from '~/utils/manualTarget'
 // STORAGE (#B/#D): jobs live in REDIS with a TTL — NOT Postgres — so nothing accumulates (native PX
 // expiry, no sweep). Each job is a hash `import:job:{member}:{jobId}` (status/fileName/result/
 // manualOverride/diskFile/notified/createdAt). There is NO server-side per-portal list: the employee's
-// browser keeps its own job list in localStorage (app/utils/importHistory.ts) and polls status BY ID
+// page keeps its own job list in memory (useImport, localStorage dropped) and polls status BY ID
 // (getJob) — the status list is only useful to the person who ran the import. The raw bytes / extracted
 // text live elsewhere and are deleted at their own stages (docs/PROCESS.md); this is only the
 // lightweight per-job status the client polls.

@@ -2,17 +2,16 @@
 // the rules that actually matter — what counts as an id, how many we answer for, and what we tell the
 // caller when we answer for fewer — are testable without an HTTP layer.
 
-import { MAX_ENTRIES } from '~/utils/importHistory'
-
 /** Job ids are client-generated UUIDs; anything else is not ours and is dropped. */
 const JOB_ID_RE = /^[A-Za-z0-9-]{1,64}$/
 
 /**
- * How many ids one request may ask about. Deliberately tied to the browser's own history cap: the
- * client can never hold more than MAX_ENTRIES, so a smaller server cap here would silently stop
- * updating the oldest rows. A parity test pins the two together — raising one alone is a bug.
+ * How many ids one request may ask about. The client list now lives in page memory only (localStorage
+ * dropped — owner rework), so there is no persisted-history cap to mirror any more; 50 comfortably
+ * covers several 10-file batches on one open page while still bounding the Redis fan-out per request.
+ * Answering for fewer than asked is reported via `requested` — never silently (#260).
  */
-export const MAX_IDS = MAX_ENTRIES
+export const MAX_IDS = 50
 
 export interface ParsedStatusIds {
   /** Ids we will answer for (capped, newest-first as the client sent them). */

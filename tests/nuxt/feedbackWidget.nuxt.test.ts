@@ -24,7 +24,6 @@ const sendWith = async (w: Awaited<ReturnType<typeof mountSuspended>>, file: boo
 beforeEach(() => {
   h.enabledValue = true
   h.submit = vi.fn(async () => true)
-  if (typeof window !== 'undefined') window.localStorage.clear() // client-side dedup lives here
 })
 
 describe('FeedbackWidget', () => {
@@ -147,16 +146,14 @@ describe('FeedbackWidget', () => {
     expect(w.text()).toContain('Не удалось отправить')
   })
 
-  it('already-rated job (localStorage) shows «Спасибо» on mount, does not re-offer (#D)', async () => {
-    const w1 = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-42' } })
-    await w1.find('button[aria-label="Хорошо"]').trigger('click')
-    await sendWith(w1, false)
+  it('после отправки виджет показывает «Спасибо» и не предлагает оценить снова (в пределах страницы)', async () => {
+    // Персистентного дедупа больше нет (localStorage убран — переработка владельца): список заданий
+    // живёт только на открытой странице, поэтому и «уже оценил» достаточно помнить в компоненте.
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-42' } })
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await sendWith(w, false)
     await tick()
-    expect(w1.text()).toContain('Спасибо') // sent + remembered in localStorage
-    // A fresh mount for the SAME job (e.g. after a reload) must not show the buttons again.
-    const w2 = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-42' } })
-    await tick()
-    expect(w2.text()).toContain('Спасибо')
-    expect(w2.find('button[aria-label="Хорошо"]').exists()).toBe(false)
+    expect(w.text()).toContain('Спасибо')
+    expect(w.find('button[aria-label="Хорошо"]').exists()).toBe(false)
   })
 })

@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue'
 import LikeIcon from '@bitrix24/b24icons-vue/outline/LikeIcon'
 import DislikeIcon from '@bitrix24/b24icons-vue/outline/DislikeIcon'
 import { useFeedback } from '~/composables/useFeedback'
-import { importFeedbackKind, markImportFeedback } from '~/utils/importHistory'
 
 // Compact «нравится / не нравится» widget under an import result row. Renders nothing unless the
 // channel is enabled on the server (probed via useFeedback). ОБЕ оценки ведут себя ОДИНАКОВО (#299):
@@ -17,9 +16,10 @@ import { importFeedbackKind, markImportFeedback } from '~/utils/importHistory'
 // открывает ровно один вопрос с двумя равноправными ответами: с файлом или без.
 // Inert outside a portal (submit no-ops). Ported UX from #218.
 // Optional jobId/fileName trace the issue back to the run (rendered inert server-side; the receiving
-// repo is private, so client context is permitted). DUPLICATE SUPPRESSION is client-side: the
-// employee's localStorage remembers which jobs they already rated (importHistory, keyed by jobId), so
-// the widget won't re-ask after a reload — no server-side search-before-create.
+// repo is private, so client context is permitted). DUPLICATE SUPPRESSION lives in this component's
+// state only: the job list itself is page-memory now (localStorage dropped — owner rework), so a rated
+// row simply shows «Спасибо» until the page dies together with the list. No server-side
+// search-before-create either.
 const props = defineProps<{ jobId?: string, fileName?: string }>()
 const { enabled, ensureEnabled, submit } = useFeedback()
 
@@ -36,10 +36,6 @@ const error = ref('')
 
 onMounted(() => {
   ensureEnabled()
-  // Already rated this job in this browser? Show the thanks state instead of re-offering (client-only).
-  if (typeof window !== 'undefined' && props.jobId && importFeedbackKind(window.localStorage, props.jobId)) {
-    sent.value = true
-  }
 })
 
 /** Нажатие на оценку: всегда сначала форма (комментарий + согласие на файл), потом отправка. */
@@ -69,8 +65,6 @@ async function send(withFile: boolean): Promise<void> {
     }, withFile)
     if (ok) {
       sent.value = true
-      // Remember it locally so a reload doesn't re-ask for this job (the client is the dedup owner).
-      if (typeof window !== 'undefined' && props.jobId) markImportFeedback(window.localStorage, props.jobId, kind)
     } else {
       error.value = 'Отзыв доступен только внутри портала Bitrix24'
     }

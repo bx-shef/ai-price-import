@@ -3,16 +3,19 @@ import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
 import { jobStatusMeta, type JobStatus } from '~/utils/jobStatus'
 import { nextPollDelay } from '~/utils/pollBackoff'
-import { addImportJob, clearImportHistory, importJobIds, readHistory, removeImportJob } from '~/utils/importHistory'
-import { mergeJobRows } from '~/utils/importMerge'
 import { truncationWarning } from '~~/server/utils/importStatusIds'
 import { classifyUploadError, type UploadOutcome } from '~/utils/importUpload'
 import type { TargetRef } from '~/types/mapping'
 
-// In-portal import client: upload a document and poll job status via the frame-token
-// authenticated API (/api/import/*). Inert outside a portal (no frame auth). Auto-polls the status
-// while any job is still running (queued/extracting/processing) so the /app progress moves on its
-// own, and stops once everything is terminal (done/error) — no idle polling.
+// In-portal import client: upload documents and poll job status via the frame-token authenticated
+// API (/api/import/*). Inert outside a portal (no frame auth). Auto-polls while any job is still
+// running (queued/extracting/processing) and stops once everything is terminal — no idle polling.
+//
+// THE JOB LIST LIVES IN PAGE MEMORY ONLY (owner rework). localStorage held a 7-day history of jobIds
+// per employee; the owner dropped it: nothing is written to localStorage any more, so the list shows
+// exactly the imports of THIS open page and dies with it. That is why the import run warns «не
+// закрывайте страницу» — a closed tab loses the only mapping from jobId to file name. The server
+// keeps only ephemeral per-job status (Redis TTL) and never a per-portal list.
 
 export interface ImportJobView {
   jobId: string
@@ -31,11 +34,11 @@ export function useImport() {
   const uploading = ref(false)
   const error = ref('')
   // Separate from `error`, which is shared with upload() and «вне портала». Only set by refresh(), so
-  // the empty state can say «историю получить не удалось» without claiming that after a failed UPLOAD.
+  // the list can say «статус получить не удалось» without claiming that after a failed UPLOAD.
   const listError = ref('')
-  // A SUCCESSFUL poll that couldn't cover every remembered job. Deliberately NOT `listError`: that one
+  // A SUCCESSFUL poll that couldn't cover every tracked job. Deliberately NOT `listError`: that one
   // feeds the failure streak in scheduleNext, so a warning there would stop auto-polling after five
-  // successful-but-truncated answers — exactly for the user with the longest history (#260).
+  // successful-but-truncated answers — exactly for the page with the most jobs (#260).
   const listWarning = ref('')
 
   // Any job not yet in a terminal state → keep polling.
@@ -47,9 +50,6 @@ export function useImport() {
   // the dead component.
   let disposed = false
   let pollFailures = 0 // consecutive failed polls → stop after MAX_POLL_FAILURES
-  // The first successful `refresh()` of this instance. Until it happens we keep retrying on a backoff
-  // even with nothing active — otherwise a single failed first load left the list empty forever.
-  let firstLoadOk = false
   function clearTimer(): void {
     if (pollTimer) {
       clearTimeout(pollTimer)
@@ -60,12 +60,13 @@ export function useImport() {
     disposed = true
     clearTimer()
   }
-  // Arm the next poll if the pure rule says so (nextPollDelay): while a job is running, or until the
-  // first load succeeds. Self-cancelling. Client-only (no window on SSG).
+  // Arm the next poll if the pure rule says so (nextPollDelay). Self-cancelling. Client-only (no
+  // window on SSG). `firstLoadOk: true` — with no persisted history there is nothing to «first-load»:
+  // an empty in-memory list needs no retry loop, polling starts when the first upload adds a job.
   function scheduleNext(): void {
     clearTimer()
     if (disposed || typeof window === 'undefined') return
-    const delay = nextPollDelay({ firstLoadOk, hasActive: hasActive.value, failures: pollFailures })
+    const delay = nextPollDelay({ firstLoadOk: true, hasActive: hasActive.value, failures: pollFailures })
     if (delay === null) return
     pollTimer = setTimeout(async () => {
       await refresh()
@@ -82,41 +83,37 @@ export function useImport() {
   }
 
   async function refresh(): Promise<void> {
+    const ids = jobs.value.map(j => j.jobId)
+    if (!ids.length) {
+      listError.value = ''
+      return
+    }
     const h = await headers()
     if (!h) {
       listError.value = 'Импорт доступен только внутри портала Bitrix24'
       error.value = listError.value
       return
     }
-    // The client owns the job list (localStorage) — poll status only for OUR jobIds. No server list.
-    const store = typeof window !== 'undefined' ? window.localStorage : null
-    const ids = store ? importJobIds(store) : []
-    if (!ids.length) {
-      jobs.value = []
-      listError.value = ''
-      firstLoadOk = true // an empty history IS a successful load — nothing to retry
-      return
-    }
     loading.value = true
     try {
-      // POST: the id list rides in the body, not in the URL (#260) — it grows with the history cap and
-      // would otherwise hit proxy header limits and leak job ids into access logs.
+      // POST: the id list rides in the body, not in the URL (#260) — it would otherwise hit proxy
+      // header limits and leak job ids into access logs.
       const res = await $fetch<{ jobs: ImportJobView[], requested?: number, answered?: number }>(
         '/api/import/status',
         { method: 'POST', headers: h, body: { ids } }
       )
-      // Merge: server gives the live status/result; localStorage gives the fileName we remembered
-      // (and preserves display order = newest-first). A remembered row the server no longer knows
-      // (its 48h status TTL ran out while the browser keeps 7 days) becomes an `expired` row rather
-      // than disappearing — silently dropping it read as «истории нет» (#268).
-      const local = store ? readHistory(store) : []
-      jobs.value = mergeJobRows(local, res.jobs, { portal: auth()?.domain })
-      // The server caps how many ids it answers for. It used to drop the excess silently — those rows
-      // then just stopped updating, with no error anywhere (#260). Say it out loud instead. The counts
-      // come FROM the server: only it knows how many ids survived validation.
+      // Merge the server's live status INTO the in-memory rows. The page owns the row identity and
+      // the file name (the server response may omit or shorten it); the server owns status/result.
+      // An id the server no longer knows keeps its last in-memory state — with the list living only
+      // as long as the page, that means a Redis-side loss, not a stale 7-day history entry.
+      const byId = new Map(res.jobs.map(j => [j.jobId, j]))
+      jobs.value = jobs.value.map((row) => {
+        const live = byId.get(row.jobId)
+        return live ? { ...live, fileName: row.fileName || live.fileName } : row
+      })
+      // The server caps how many ids it answers for; say it out loud instead of dropping rows (#260).
       listWarning.value = truncationWarning(res.requested, res.answered)
       listError.value = ''
-      firstLoadOk = true
     } catch (e) {
       listError.value = fetchErrorMessage(e, 'Не удалось получить статус импорта')
     } finally {
@@ -135,9 +132,8 @@ export function useImport() {
     uploading.value = true
     // A client-supplied jobId (stable per staged file) makes a retry idempotent AND lets us record the
     // job UP FRONT — so even if the response is lost after the server committed the job, it still shows
-    // in «Последние операции» and is polled (no invisible import). addImportJob is keyed by jobId (idempotent).
-    const clientJob = !!jobId && typeof window !== 'undefined'
-    if (clientJob) addImportJob(window.localStorage, jobId!, file.name, Date.now(), auth()?.domain)
+    // in the list and is polled (no invisible import). Recording is keyed by jobId (idempotent).
+    if (jobId) track(jobId, file.name, target)
     try {
       const form = new FormData()
       form.append('file', file)
@@ -146,8 +142,7 @@ export function useImport() {
       if (target && target.entityTypeId > 0) form.append('target', JSON.stringify(target))
       if (jobId) form.append('jobId', jobId) // idempotency key (server validates it's a UUID)
       const res = await $fetch<{ jobId?: string }>('/api/import/upload', { method: 'POST', headers: h, body: form })
-      // Remember this job in the browser (no-op if already recorded up-front). Client owns history now.
-      if (!clientJob && typeof window !== 'undefined' && res?.jobId) addImportJob(window.localStorage, res.jobId, file.name, Date.now(), auth()?.domain)
+      if (!jobId && res?.jobId) track(res.jobId, file.name, target)
       await refresh()
       scheduleNext() // the new job is queued → start following its progress
       return { ok: true, stop: false }
@@ -162,12 +157,32 @@ export function useImport() {
     }
   }
 
-  /** Initial load + start following in-flight jobs (call on mount). */
+  /** Add a job row to the in-memory list (newest first). Idempotent by jobId — a retried upload of
+   *  the same staged file must not produce a second row. */
+  function track(jobId: string, fileName: string, target?: TargetRef | null): void {
+    if (jobs.value.some(j => j.jobId === jobId)) return
+    jobs.value = [{
+      jobId,
+      status: 'queued',
+      fileName,
+      result: '',
+      ...(target && target.entityTypeId > 0 ? { targetEntityTypeId: target.entityTypeId } : {})
+    }, ...jobs.value]
+  }
+
+  /** Terminal status of a tracked job, or null while it is still running / unknown. Used by the
+   *  staging list to decide when the whole batch is finished. */
+  function jobDone(jobId: string): JobStatus | null {
+    const j = jobs.value.find(x => x.jobId === jobId)
+    if (!j) return null
+    return jobStatusMeta(j.status).terminal ? j.status : null
+  }
+
+  /** Start following in-flight jobs (call on mount). With no persisted history the initial list is
+   *  always empty — this only arms the polling loop for uploads made on this page. */
   async function startAutoPoll(): Promise<void> {
     disposed = false // in case this instance was previously stopped and is restarted
     pollFailures = 0
-    firstLoadOk = false
-    await refresh()
     scheduleNext()
   }
 
@@ -175,27 +190,21 @@ export function useImport() {
    *  poll failures may have stopped the loop (MAX_POLL_FAILURES) while jobs are still in flight; a
    *  successful manual refresh clears the failure streak and re-arms polling so «обновляется» is honest. */
   async function refreshNow(): Promise<void> {
-    // Reset the failure streak BEFORE re-arming: this button is the only way out once the loop has
-    // given up (MAX_POLL_FAILURES), so it must restart it even when this attempt also failed — with
-    // an unloaded list nextPollDelay then keeps retrying the first load on its backoff (#268).
     pollFailures = 0
     await refresh()
     scheduleNext()
   }
 
-  /** Clear the employee's import history (localStorage) + the visible list. The server keeps only
-   *  ephemeral per-job status (Redis TTL); this just forgets which jobIds the browser polls. */
-  function clearHistory(): void {
-    if (typeof window !== 'undefined') clearImportHistory(window.localStorage)
-    jobs.value = []
+  /** Drop every finished row from the visible list (page memory only — nothing persists anywhere). */
+  function clearList(): void {
+    jobs.value = jobs.value.filter(j => !jobStatusMeta(j.status).terminal)
   }
 
-  /** Forget a SINGLE «Последние операции» row (localStorage + the visible list). Server keeps only
-   *  ephemeral status; this just stops the browser polling/showing that jobId. */
+  /** Forget a single row (page memory only). The server keeps only ephemeral status; this just stops
+   *  the page polling/showing that jobId. */
   function removeJob(jobId: string): void {
-    if (typeof window !== 'undefined') removeImportJob(window.localStorage, jobId)
     jobs.value = jobs.value.filter(j => j.jobId !== jobId)
   }
 
-  return { jobs, loading, uploading, error, listError, listWarning, hasActive, refresh, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob }
+  return { jobs, loading, uploading, error, listError, listWarning, hasActive, refresh, refreshNow, upload, track, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob }
 }
