@@ -1,5 +1,5 @@
-import { mkdir, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
-import { type FileIO, safeSeg, UPLOAD_DIR } from './fileStore'
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { type FileIO, safeSeg, UPLOAD_DIR, uploadPath } from './fileStore'
 
 // node:fs implementation of the injectable FileIO (used by the upload route and
 // the extract worker). Kept separate so pure fileStore stays node-free/testable.
@@ -15,15 +15,38 @@ export const nodeFileIO: FileIO = {
   }
 }
 
+/**
+ * Read a job's retained upload bytes as base64 for the feedback attachment (#200), or null when the
+ * file is gone (already swept) or bigger than `maxBytes`. The cap mirrors the Disk path
+ * (`downloadDiskFile`): 5 MB is far above any invoice and keeps one request from buffering a huge
+ * file into RAM. `stat` first, so an over-cap file is rejected WITHOUT reading it.
+ */
+export async function readUploadBase64(memberId: string, jobId: string, maxBytes = 5 * 1024 * 1024): Promise<string | null> {
+  const path = uploadPath(memberId, jobId)
+  try {
+    const st = await stat(path)
+    if (!st.isFile() || st.size === 0 || st.size > maxBytes) return null
+    return (await readFile(path)).toString('base64')
+  } catch {
+    return null // swept, never written, or unreadable — the issue is filed without the file
+  }
+}
+
 /** Remove a portal's entire upload directory (ONAPPUNINSTALL — client-data purge on
  * disk, complementing the DB purge in deletePortal). Best-effort. */
 export async function purgePortalFiles(memberId: string): Promise<void> {
   await rm(`${UPLOAD_DIR}/${safeSeg(memberId)}`, { recursive: true, force: true }).catch(() => {})
 }
 
-/** TTL backstop for orphaned upload bytes: delete .bin files older than maxAgeMs
- * (normally removed within minutes by the extract worker). Best-effort. */
-export async function sweepOldUploads(maxAgeMs = 6 * 60 * 60 * 1000, now = Date.now()): Promise<number> {
+/**
+ * Delete upload bytes older than `maxAgeMs`. This is the PRIMARY retention path now (#200), not the
+ * orphan backstop it started as: the extract worker no longer deletes the file on its way out, because
+ * a 👎 on «документ не распознан» has nothing else to attach — that case writes neither a CRM entity
+ * nor a Disk archive. The window therefore has to match how long a job can still be rated, i.e. the
+ * job TTL; the caller passes it (default here only guards a caller that forgets).
+ * Best-effort per file: one unreadable entry must not stop the sweep.
+ */
+export async function sweepOldUploads(maxAgeMs = 48 * 60 * 60 * 1000, now = Date.now()): Promise<number> {
   let removed = 0
   let members: string[]
   try {

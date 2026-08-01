@@ -8,7 +8,7 @@ import { bodySizeStatus, edgeSecurityEnabled } from '../../utils/edgeSecurity'
 import { query } from '../../db/client'
 
 // POST /api/import/status {ids:[…]} — status of the SPECIFIC jobs the caller asks about (the client
-// keeps its own job list in localStorage and polls by id). Frame-token authenticated + member-scoped
+// keeps its own job list in page memory — localStorage dropped, owner rework — and polls by id). Frame-token authenticated + member-scoped
 // (getJob only reads this portal's jobs). No server-side per-portal list — nothing accumulates.
 //
 // POST, not GET with ?ids= (#260). Two reasons, both about the id LIST rather than about semantics:

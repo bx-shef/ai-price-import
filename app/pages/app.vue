@@ -27,11 +27,11 @@ definePageMeta({ layout: 'clear' })
 // a blocked page is never fetched, so its noindex is never read (see server/utils/seoFiles.ts).
 useHead({ title: 'AI-импорт прайсов', meta: [{ name: 'robots', content: 'noindex' }] })
 
-const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, startAutoPoll, stopAutoPoll, clearHistory, removeJob } = useImport()
+const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
-function doClearHistory(): void {
-  clearHistory()
+function doClearList(): void {
+  clearList()
   confirmClear.value = false
 }
 const { counters, savings, moneyBlocker, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
@@ -301,10 +301,14 @@ watch(jobs, (list) => {
            «Настроить», не-админу — «обратитесь к администратору»); весь рабочий контент скрыт до настройки
            (owner ask). Вне портала (standalone) needsSetup=false → всё видно как обычно. -->
         <template v-if="screen === 'work'">
-          <!-- PRIMARY ACTION: stage files → set a per-file target → import one-by-one on «Импортировать».
-             `upload` comes from THIS page's single useImport() so uploads land in the same job list/poll. -->
+          <!-- PRIMARY ACTION: stage files → ONE target for the batch → «Импортировать» uploads the batch
+             and WAITS for every result, holding the page locked (owner rework, round 2). `upload`/`jobDone`
+             come from THIS page's single useImport() so the run and the list below share one poll. -->
           <ImportStaging
             :upload="upload"
+            :job-done="jobDone"
+            :refresh-now="refreshNow"
+            :list-error="listError"
             @update:busy="v => stagingBusy = v"
           />
 
@@ -354,12 +358,12 @@ watch(jobs, (list) => {
                 />
               </template>
               <template v-else-if="confirmClear">
-                <span class="text-xs text-(--ui-color-base-3)">Убрать все строки из списка? Документы в CRM останутся.</span>
+                <span class="text-xs text-(--ui-color-base-3)">Убрать завершённые строки из списка? Ещё обрабатываемые останутся, документы в CRM — тоже.</span>
                 <B24Button
                   label="Да, очистить"
                   color="air-primary-alert"
                   size="xs"
-                  @click="doClearHistory"
+                  @click="doClearList"
                 />
                 <B24Button
                   label="Отмена"
@@ -380,11 +384,12 @@ watch(jobs, (list) => {
             </div>
           </div>
 
+          <!-- НЕ блокируется на время прогона: результаты обязаны читаться по ходу импорта — ради
+               этого страница и ждёт. Блокировка остаётся на настройках/метриках ниже. -->
           <B24Card
             v-if="jobs.length || uploading || listError || listWarning"
             variant="outline"
             class="transition-opacity"
-            :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
             :b24ui="{ body: 'p-0 sm:p-0' }"
           >
             <ul class="divide-y divide-(--ui-color-base-5)">
@@ -416,7 +421,7 @@ watch(jobs, (list) => {
                 v-if="!jobs.length && !uploading && listError"
                 class="p-3 text-sm text-(--ui-color-base-3)"
               >
-                Историю загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
+                Статус загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
                 откройте приложение заново.
               </li>
             </ul>

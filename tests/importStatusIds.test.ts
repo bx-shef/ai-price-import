@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_IDS, parseStatusIds, truncationWarning } from '../server/utils/importStatusIds'
-import { MAX_ENTRIES } from '../app/utils/importHistory'
+import { MAX_UPLOAD_FILES } from '../app/utils/importUpload'
 
 const uuid = (n: number) => `599f0239-0d87-412f-8a9a-${String(n).padStart(12, '0')}`
 
@@ -36,10 +36,11 @@ describe('parseStatusIds', () => {
 })
 
 describe('согласованность капов', () => {
-  it('серверный кап равен браузерному — иначе самые старые строки молча перестанут обновляться', () => {
-    // Браузер физически не может прислать больше MAX_ENTRIES id; серверный кап меньше означал бы
-    // тихую потерю обновлений, больше — мёртвую ветку. Связь задана в коде, тест её сторожит.
-    expect(MAX_IDS).toBe(MAX_ENTRIES)
+  it('серверный кап держит несколько пачек на одной странице', () => {
+    // Персистентной истории больше нет (localStorage убран — переработка владельца), парного капа
+    // на клиенте не существует. Смысл серверного: страница за сессию может прогнать несколько пачек
+    // по MAX_UPLOAD_FILES файлов, и все их строки обязаны продолжать обновляться одним запросом.
+    expect(MAX_IDS).toBeGreaterThanOrEqual(3 * MAX_UPLOAD_FILES)
   })
 })
 

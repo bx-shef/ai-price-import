@@ -12,7 +12,7 @@ import { useB24 } from '~/composables/useB24'
 // (Извлечение текста → Распознавание и запись → Готово, driven by the real backend status), and the
 // outcome («разбор») once terminal. Pure presentation over the injected job — no I/O.
 const props = defineProps<{ job: ImportJobView }>()
-// «Убрать из списка» — forgets just THIS row (localStorage) in the parent; server keeps only ephemeral
+// «Убрать из списка» — forgets just THIS row (page memory) in the parent; server keeps only ephemeral
 // status, so this is purely the employee tidying their own history. Emitted with the jobId.
 const emit = defineEmits<{ remove: [jobId: string] }>()
 
