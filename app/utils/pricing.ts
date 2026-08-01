@@ -127,3 +127,34 @@ export function reconcilePricing(items: DocumentItem[], modelFlag: boolean | und
   // model flag, compute, and flag the mismatch so crm-sync warns the operator (don't silently trust it).
   return { priceIncludesVat: flag, grossTotal: compute(flag), corrected: false, totalMismatch: true, totalAmbiguous: false, usedStatedTotal: false }
 }
+
+/** Russian money formatting for operator-facing text: 390344.56 → «390 344,56». Sign kept
+ *  (a discount-heavy document can compute negative); plain space as the group separator, not
+ *  the NBSP `toLocaleString` emits — this text lands in a chat message and a timeline block. */
+function formatAmount(n: number): string {
+  const v = finite(n)
+  const [int, frac] = Math.abs(round2(v)).toFixed(2).split('.') as [string, string]
+  return `${v < 0 ? '−' : ''}${int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')},${frac}`
+}
+
+/**
+ * Operator-facing text for `totalMismatch`. Naming the THREE numbers is the whole point: the
+ * old wording («итог не сошёлся с суммой строк») sent a person to eyeball a 44- or 61-line
+ * document with no idea what to look for, while the difference is the search key — a mis-read
+ * cell (wrong price column, quantity swallowed into the name) moves exactly one line, so the
+ * gap tells you which line to check. Observed live on real invoices, see #336.
+ *
+ * `statedTotal` is whatever the document printed; when it is not a usable number (the caller
+ * has no reason to see that — `totalMismatch` only fires with a positive printed total — but
+ * the helper must not print «NaN» if it ever happens) the text degrades to the generic form.
+ * `currency` is model-extracted, so only a bare ISO-4217-shaped code is echoed. Pure → tested.
+ */
+export function describeTotalMismatch(statedTotal: number | undefined, grossTotal: number, currency?: string): string {
+  const tail = 'Откройте созданную запись и сверьте суммы с документом: чаще всего всю разницу даёт одна строка, где неверно распознаны цена или количество.'
+  if (statedTotal == null || !Number.isFinite(statedTotal)) {
+    return `Итог, напечатанный в документе, не сошёлся с суммой по строкам. ${tail}`
+  }
+  const cur = typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency) ? ` ${currency.toUpperCase()}` : ''
+  const diff = round2(grossTotal - statedTotal)
+  return `Итог, напечатанный в документе, — ${formatAmount(statedTotal)}${cur}, а по распознанным строкам вышло ${formatAmount(grossTotal)}${cur}: разница ${formatAmount(Math.abs(diff))}${cur}. ${tail}`
+}

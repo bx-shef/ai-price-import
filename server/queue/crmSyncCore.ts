@@ -2,7 +2,7 @@ import type { ExtractedDocument } from '~/types/document'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { ENTITY_TYPE_ID } from '~/config/b24'
 import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
-import { reconcilePricing } from '~/utils/pricing'
+import { describeTotalMismatch, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
@@ -181,7 +181,9 @@ export async function runCrmSync(
     warnings.push('Итог документа совпадает с суммой строк, поэтому по цифрам не отличить «цены с НДС» от «цены без НДС». Взяли вариант «цены с НДС» — откройте созданную запись и сверьте сумму с документом.')
   }
   if (pricing.totalMismatch) {
-    warnings.push('Итог, напечатанный в документе, не сошёлся с суммой строк. Откройте созданную запись и сверьте сумму вручную.')
+    // #336: назвать НОМЕРА, а не факт. Разница — поисковый ключ: неверно прочитанная ячейка
+    // (не та ценовая колонка, количество, съеденное названием) сдвигает ровно одну строку.
+    warnings.push(describeTotalMismatch(doc.total, pricing.grossTotal, doc.currency))
   }
 
   // PRE-PASS: validate every line's VAT rate against the portal BEFORE any catalog write. The create

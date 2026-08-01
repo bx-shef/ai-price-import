@@ -122,7 +122,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.errors).toHaveLength(0)
   })
 
-  it('printed total matches NEITHER interpretation → warns «итог не сошёлся», still creates (opportunity from lines)', async () => {
+  it('printed total matches NEITHER interpretation → warns with the NUMBERS, still creates (opportunity from lines)', async () => {
     const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) })
     const d: ExtractedDocument = {
       currency: 'BYN', priceIncludesVat: false, total: 99999, // wildly off both net (120) and incl (100)
@@ -132,7 +132,12 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const r = await runCrmSync('j', d, mapping(), {}, deps)
     expect(r.created).toBe(true)
     expect(r.errors).toHaveLength(0)
-    expect(r.warnings.some(w => /не сошёлся с суммой строк/i.test(w))).toBe(true)
+    // #336: the warning must carry printed / computed / difference — the bare fact of a mismatch
+    // is unusable on a 44-line document. Difference here: |120 − 99 999| = 99 879.
+    const w = r.warnings.find(x => /Итог, напечатанный в документе/.test(x))!
+    expect(w).toContain('99 999,00 BYN')
+    expect(w).toContain('120,00 BYN')
+    expect(w).toContain('разница 99 879,00 BYN')
     // NOT anchored to the bogus 99999 — opportunity computed from the lines (net-priced gross = 120).
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 120 }))
   })

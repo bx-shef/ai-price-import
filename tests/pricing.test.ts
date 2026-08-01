@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lineGross, computeGrossTotal, reconcilePricing } from '../app/utils/pricing'
+import { describeTotalMismatch, lineGross, computeGrossTotal, reconcilePricing } from '../app/utils/pricing'
 import type { DocumentItem } from '../app/types/document'
 
 const item = (over: Partial<DocumentItem> = {}): DocumentItem => ({ name: 'x', price: 1, quantity: 1, ...over })
@@ -147,5 +147,57 @@ describe('печатный итог, совпавший с суммой стро
   it('без НДС двусмысленности нет — сумма одна и та же при любом флаге', () => {
     const noVat = [item({ price: 10, quantity: 5, vatRate: 0 })]
     expect(reconcilePricing(noVat, true, 50).totalAmbiguous).toBe(false)
+  })
+})
+
+// #336: живой прогон 34 реальных документов показал, что сам факт «итог не сошёлся» бесполезен —
+// на счёте в 44 или 61 строку искать нечего. Поисковый ключ — разница: неверно прочитанная ячейка
+// (не та ценовая колонка, количество, съеденное названием) сдвигает ровно одну строку.
+describe('describeTotalMismatch', () => {
+  it('называет напечатанный итог, посчитанный по строкам и разницу — в русском формате', () => {
+    // Реальный случай из прогона: одна строка из девяти взяла цену за м³ вместо цены за упаковку.
+    const s = describeTotalMismatch(373198, 390344.56, 'RUB')
+    expect(s).toContain('373 198,00 RUB')
+    expect(s).toContain('390 344,56 RUB')
+    expect(s).toContain('разница 17 146,56 RUB')
+  })
+
+  it('разница печатается модулем — направление видно по двум названным числам', () => {
+    const less = describeTotalMismatch(1000, 900)
+    const more = describeTotalMismatch(900, 1000)
+    expect(less).toContain('разница 100,00')
+    expect(more).toContain('разница 100,00')
+    expect(less).toContain('1 000,00')
+    expect(more).toContain('1 000,00')
+    // Ни один из вариантов не печатает «−» перед разницей.
+    expect(less).not.toContain('разница −')
+    expect(more).not.toContain('разница −')
+  })
+
+  it('отрицательный итог (скидочный документ) сохраняет знак у самой суммы', () => {
+    expect(describeTotalMismatch(100, -50)).toContain('−50,00')
+  })
+
+  it('валюта эхом идёт ТОЛЬКО кодом ISO — всё остальное от модели отбрасывается', () => {
+    expect(describeTotalMismatch(100, 200, 'byn')).toContain('100,00 BYN')
+    for (const bad of ['', ' ', 'BY', 'BYNN', 'B1N', 'руб.', '[url=x]y[/url]', 'BYN\nDisallow']) {
+      const s = describeTotalMismatch(100, 200, bad)
+      expect(s).toContain('100,00,') // сумма, сразу запятая предложения — валюты нет
+      expect(s).not.toContain(bad.trim() || 'НИЧЕГО-НЕ-ИЩЕМ')
+    }
+  })
+
+  it('без пригодного напечатанного итога — общая формулировка, без NaN', () => {
+    for (const v of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const s = describeTotalMismatch(v, 120, 'BYN')
+      expect(s).not.toMatch(/NaN|Infinity/)
+      expect(s).toMatch(/не сошёлся с суммой по строкам/)
+    }
+  })
+
+  it('всегда говорит, что делать дальше', () => {
+    for (const s of [describeTotalMismatch(1, 2), describeTotalMismatch(undefined, 2)]) {
+      expect(s).toMatch(/Откройте созданную запись/)
+    }
   })
 })
