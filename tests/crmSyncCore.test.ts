@@ -134,7 +134,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.errors).toHaveLength(0)
     // #336: the warning must carry printed / computed / difference — the bare fact of a mismatch
     // is unusable on a 44-line document. Difference here: |120 − 99 999| = 99 879.
-    const w = r.warnings.find(x => /Итог, напечатанный в документе/.test(x))!
+    const w = r.warnings.find(x => /^Итог документа —/.test(x))!
     expect(w).toContain('99 999,00 BYN')
     expect(w).toContain('120,00 BYN')
     expect(w).toContain('разница 99 879,00 BYN')

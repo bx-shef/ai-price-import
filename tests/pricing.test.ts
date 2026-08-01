@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { describeTotalMismatch, lineGross, computeGrossTotal, reconcilePricing } from '../app/utils/pricing'
+// Осознанная связка app→server в тесте: бюджет длины предупреждения задаёт именно чат-лимит,
+// и держать его копию тут значило бы разъехаться с ним при первой же правке.
+import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
 import type { DocumentItem } from '../app/types/document'
 
 const item = (over: Partial<DocumentItem> = {}): DocumentItem => ({ name: 'x', price: 1, quantity: 1, ...over })
@@ -197,7 +200,51 @@ describe('describeTotalMismatch', () => {
 
   it('всегда говорит, что делать дальше', () => {
     for (const s of [describeTotalMismatch(1, 2), describeTotalMismatch(undefined, 2)]) {
-      expect(s).toMatch(/Откройте созданную запись/)
+      expect(s).toMatch(/проверьте позиции/)
     }
+  })
+
+  // Сумма ≥1e21 уводит toFixed в экспоненту, и «1,2345678901234568e+21» читается как «1,23…» —
+  // уверенно неверное число хуже отсутствия числа. Бесконечность приходила как «0,00», то есть
+  // сообщение заявляло, что строки дают ноль. Оба случая теперь уходят в общую формулировку.
+  it('непечатаемая сумма (экспонента, бесконечность, NaN) → общая формулировка, без чисел', () => {
+    const bad: Array<[number | undefined, number]> = [
+      [1e24, 24], [24, 1e24], [1e21, 1], // ровно граница экспоненты
+      [100, Number.POSITIVE_INFINITY], [Number.POSITIVE_INFINITY, 100],
+      [Number.NaN, 100], [undefined, 100]
+    ]
+    for (const [a, b] of bad) {
+      const s = describeTotalMismatch(a, b, 'BYN')
+      expect(s, `${a} / ${b}`).toMatch(/не сошёлся с суммой по строкам/)
+      expect(s).not.toMatch(/e\+|undefined|NaN|Infinity/)
+      // и никакой выдуманной точной суммы
+      expect(s).not.toMatch(/\d,\d\d BYN/)
+    }
+    // сразу под границей — числа печатаются
+    expect(describeTotalMismatch(1e21 - 1e6, 1, 'BYN')).toMatch(/разница/)
+  })
+
+  it('три числа согласованы между собой (округляем печатный итог ОДИН раз)', () => {
+    // Раньше показывали round2(итога), а разницу считали от сырого — три числа не сходились.
+    for (const [a, b] of [[100.005, 200], [0.005, 1], [12345.674, 12345.671]] as const) {
+      const s = describeTotalMismatch(a, b)
+      const nums = [...s.matchAll(/(−?[\d ]+),(\d\d)/g)].map(m => Number(m[1]!.replace(/ /g, '') + '.' + m[2]))
+      expect(nums).toHaveLength(3)
+      expect(Math.abs(Math.abs(nums[1]! - nums[0]!) - nums[2]!)).toBeLessThan(0.005)
+    }
+  })
+
+  // Чат режет каждое предупреждение ровно на MAX_CHAT_REASON БЕЗ многоточия (chatSafeText → slice),
+  // поэтому длинная фраза молча теряет хвост. Первая редакция этого текста была 261 символ.
+  it('реалистичный текст умещается в лимит строки предупреждения в чате', () => {
+    const real: Array<[number, number, string | undefined]> = [
+      [373198, 390344.56, 'RUB'], [10320, 8600, 'BYN'], [232176.45, 220400.04, 'RUB'],
+      [99999, 120, 'BYN'], [1519.2, 1519.21, undefined], [4092.82, 4092.83, 'BYN']
+    ]
+    for (const c of real) expect(describeTotalMismatch(...c).length, JSON.stringify(c)).toBeLessThanOrEqual(MAX_CHAT_REASON)
+    expect(describeTotalMismatch(undefined, 1).length).toBeLessThanOrEqual(MAX_CHAT_REASON)
+    // Числа идут ПЕРВЫМИ: даже если экзотическая сумма выйдет за лимит, режется только совет.
+    const huge = describeTotalMismatch(-999999999999.99, 999999999999.99, 'KZT')
+    expect(huge.indexOf('разница')).toBeLessThan(MAX_CHAT_REASON)
   })
 })

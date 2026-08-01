@@ -128,13 +128,23 @@ export function reconcilePricing(items: DocumentItem[], modelFlag: boolean | und
   return { priceIncludesVat: flag, grossTotal: compute(flag), corrected: false, totalMismatch: true, totalAmbiguous: false, usedStatedTotal: false }
 }
 
+/** Beyond 1e21 `toFixed` switches to exponential notation, and a Russian reader parses
+ *  «1,2345678901234568e+21» as «1,23…» — a confidently wrong number is worse than no number.
+ *  A 22-digit run in the total cell is exactly the OCR garbage (an account number, a barcode)
+ *  that triggers a mismatch in the first place, so this is reachable, not theoretical. */
+function isPrintableAmount(n: number | undefined): n is number {
+  return n != null && Number.isFinite(n) && Math.abs(n) < 1e21
+}
+
 /** Russian money formatting for operator-facing text: 390344.56 → «390 344,56». Sign kept
- *  (a discount-heavy document can compute negative); plain space as the group separator, not
- *  the NBSP `toLocaleString` emits — this text lands in a chat message and a timeline block. */
+ *  (a discount-heavy document can compute negative). Plain space as the group separator: the
+ *  chat path collapses whitespace anyway (`chatSafeText`), so an NBSP would buy nothing there,
+ *  and a plain space keeps this readable in the timeline block and in the UI list.
+ *  Domain is guaranteed by `isPrintableAmount` at the only call site — no `finite()` fallback
+ *  here on purpose: substituting 0 for an unprintable value invents a number. */
 function formatAmount(n: number): string {
-  const v = finite(n)
-  const [int, frac] = Math.abs(round2(v)).toFixed(2).split('.') as [string, string]
-  return `${v < 0 ? '−' : ''}${int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')},${frac}`
+  const [int, frac] = Math.abs(round2(n)).toFixed(2).split('.') as [string, string]
+  return `${n < 0 ? '−' : ''}${int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')},${frac}`
 }
 
 /**
@@ -144,17 +154,24 @@ function formatAmount(n: number): string {
  * cell (wrong price column, quantity swallowed into the name) moves exactly one line, so the
  * gap tells you which line to check. Observed live on real invoices, see #336.
  *
- * `statedTotal` is whatever the document printed; when it is not a usable number (the caller
- * has no reason to see that — `totalMismatch` only fires with a positive printed total — but
- * the helper must not print «NaN» if it ever happens) the text degrades to the generic form.
- * `currency` is model-extracted, so only a bare ISO-4217-shaped code is echoed. Pure → tested.
+ * Either amount out of printable range (non-finite, or ≥1e21 where `toFixed` goes exponential)
+ * ⇒ degrade to the generic sentence rather than print a number that is wrong or unreadable.
+ * `currency` is model-extracted, so only a bare ISO-4217-shaped code is echoed.
+ *
+ * LENGTH MATTERS: the chat path caps each warning at `MAX_CHAT_REASON` (200) and cuts with a bare
+ * `slice` — no ellipsis — so an over-long sentence is silently beheaded mid-word. Kept under that
+ * for realistic amounts, and the numbers come FIRST so even a pathological one loses only the
+ * advice tail. Pure → tested (including the length budget).
  */
 export function describeTotalMismatch(statedTotal: number | undefined, grossTotal: number, currency?: string): string {
-  const tail = 'Откройте созданную запись и сверьте суммы с документом: чаще всего всю разницу даёт одна строка, где неверно распознаны цена или количество.'
-  if (statedTotal == null || !Number.isFinite(statedTotal)) {
+  const tail = 'Обычно всю разницу даёт одна строка с неверной ценой или количеством — проверьте позиции.'
+  if (!isPrintableAmount(statedTotal) || !isPrintableAmount(grossTotal)) {
     return `Итог, напечатанный в документе, не сошёлся с суммой по строкам. ${tail}`
   }
   const cur = typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency) ? ` ${currency.toUpperCase()}` : ''
-  const diff = round2(grossTotal - statedTotal)
-  return `Итог, напечатанный в документе, — ${formatAmount(statedTotal)}${cur}, а по распознанным строкам вышло ${formatAmount(grossTotal)}${cur}: разница ${formatAmount(Math.abs(diff))}${cur}. ${tail}`
+  // Round the printed total ONCE and reuse: showing round2(x) while subtracting the raw x made the
+  // three numbers disagree by a kopeck — in a message whose entire job is arithmetic.
+  const stated = round2(statedTotal)
+  const diff = Math.abs(round2(grossTotal - stated))
+  return `Итог документа — ${formatAmount(stated)}${cur}, по строкам вышло ${formatAmount(grossTotal)}${cur}: разница ${formatAmount(diff)}${cur}. ${tail}`
 }
