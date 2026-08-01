@@ -67,7 +67,8 @@ export default defineEventHandler(async (event) => {
       const jobId = typeof c.jobId === 'string' && JOB_ID_RE.test(c.jobId) ? c.jobId : ''
       const attachFile = raw?.attachFile === true
       const fetchImpl = globalThis.fetch as unknown as FetchFn
-      // Duplicate suppression lives on the CLIENT (localStorage): the widget won't offer feedback twice
+      // Duplicate suppression lives in the widget's page state (no persisted client store any more —
+      // localStorage dropped, owner rework): it won't offer feedback twice
       // for a jobId it already sent. No server-side search-before-create — it cost a GitHub Search call
       // per submit and was only best-effort anyway (eventual-consistency). Server just files the issue.
       // Server-resolved context from the job's row (never trusted from the client): the created

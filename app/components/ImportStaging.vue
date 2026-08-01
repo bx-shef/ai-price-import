@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import AttachIcon from '@bitrix24/b24icons-vue/outline/AttachIcon'
 import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_GENERIC_ERROR, formatBytes, validateUploadFile, type UploadOutcome } from '~/utils/importUpload'
-import type { JobStatus } from '~/utils/jobStatus'
+import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
 
 // Batch import staging (owner rework, round 2): pick files, choose ONE target for the whole batch,
@@ -39,6 +39,12 @@ const props = defineProps<{
   upload: (file: File, target?: TargetRef | null, jobId?: string) => Promise<UploadOutcome>
   /** Terminal status of a job accepted by the server, or null while it is still being processed. */
   jobDone: (jobId: string) => JobStatus | null
+  /** Restart the parent's status polling (it self-stops after MAX_POLL_FAILURES). The wait phase
+   *  depends on that poll — without a revive hook a dead poll meant waiting forever in silence. */
+  refreshNow: () => Promise<void>
+  /** The parent's last poll error, '' when polling is healthy. Shown during the wait so a dead
+   *  connection is not mistaken for a slow portal. */
+  listError: string
 }>()
 // Surface the «идёт импорт» state to the parent so it can BLOCK the rest of the UI while the run is
 // in flight — the operator shouldn't touch settings/metrics mid-run (owner ask).
@@ -115,7 +121,7 @@ function onPicked(files: File[] | null | undefined): void {
     added++
   }
   const notes: string[] = []
-  if (dupes) notes.push(`${dupes} уже в списке, их пропустили`)
+  if (dupes) notes.push(`${dupes} уже в списке — пропущено`)
   if (added < files.length - dupes) notes.push(`за раз можно не больше ${MAX_UPLOAD_FILES} файлов`)
   notice.value = notes.length ? `Добавлено ${added} из ${files.length}: ${notes.join('; ')}.` : ''
 }
@@ -202,6 +208,7 @@ async function startImport(): Promise<void> {
     // PHASE 2 — wait until every accepted job reaches a terminal state. Results appear in «Последние
     // операции» below as each job finishes (the parent's poll updates them); a finished row leaves
     // the staged list at that moment, so the two lists never show the same file twice.
+    let ticks = 0
     while (!cancelled.value) {
       let running = 0
       for (const s of sent) {
@@ -217,7 +224,18 @@ async function startImport(): Promise<void> {
       }
       const waitingFor = sent.filter(s => staged.value.includes(s)).length
       if (!waitingFor) break
-      notice.value = `Обрабатываем: осталось ${running} из ${sentTotal}. Результаты появляются ниже — не закрывайте страницу.`
+      // «не закрывайте страницу» тут НЕ повторяем — эта фраза живёт только в баннере, иначе тесты
+      // удовлетворялись бы дублем, а читатель слышал бы её от скринридера на каждый тик. Текст
+      // меняем только при смене числа: role=status зачитывается на каждое обновление.
+      const line = props.listError
+        ? `Связь с порталом потеряна — пробуем восстановить… (${props.listError})`
+        : `Обрабатываем: осталось ${running} из ${sentTotal}. Результаты появляются ниже.`
+      if (notice.value !== line) notice.value = line
+      // The parent's poll self-stops after a streak of failures; the wait phase would then hang in
+      // silence. While the run is active we own the retry: every ~5 s poke refreshNow(), which
+      // resets the streak and re-arms the loop (or refreshes the error text if still down).
+      ticks++
+      if (props.listError && ticks % 20 === 0) void props.refreshNow()
       await sleep(WAIT_TICK_MS)
     }
 
@@ -226,7 +244,7 @@ async function startImport(): Promise<void> {
       // Honesty over comfort: the server HAS the sent files and will finish them — a cancel cannot
       // recall a job already accepted. What it does stop: uploading the rest and holding the page.
       notice.value = inFlight
-        ? `Импорт отменён. ${inFlight} уже отправленных файлов сервер дообработает — их результат появится ниже. Остальные остались в списке.`
+        ? `Импорт отменён. Уже отправленные (${inFlight} ${pluralRu(inFlight, ['файл', 'файла', 'файлов'])}) сервер дообработает — их результат появится ниже. Остальные остались в списке.`
         : 'Импорт отменён. Неотправленные файлы остались в списке.'
       for (const s of staged.value) {
         if (s.status === 'sent') staged.value = staged.value.filter(x => x !== s) // follows below
@@ -235,7 +253,9 @@ async function startImport(): Promise<void> {
     } else {
       notice.value = failed
         ? `Готово: успешно ${doneOk}, с ошибкой ${failed}. Подробности — ниже, в «Последних операциях», и на строках выше.`
-        : `Готово: все ${sentTotal} файлов обработаны. Результаты — ниже, в «Последних операциях».`
+        : sentTotal === 1
+          ? 'Готово: файл обработан. Результат — ниже, в «Последних операциях».'
+          : `Готово: все ${sentTotal} ${pluralRu(sentTotal, ['файл', 'файла', 'файлов'])} обработаны. Результаты — ниже, в «Последних операциях».`
     }
   } catch {
     // `upload()` handles its own errors today, so reaching here means something unexpected broke.
@@ -261,6 +281,9 @@ async function startImport(): Promise<void> {
  *  server — see the run notice. */
 function cancelImport(): void {
   cancelled.value = true
+  // The sent jobs keep running server-side and their results still land below — make sure the
+  // parent's poll is alive to show them (it may have self-stopped while we were waiting).
+  void props.refreshNow()
 }
 </script>
 
@@ -300,7 +323,7 @@ function cancelImport(): void {
         multiple
         :accept="UPLOAD_ACCEPT"
         :disabled="importing"
-        class="hidden"
+        class="sr-only"
         @change="onInputChange"
       >
     </label>
@@ -374,7 +397,7 @@ function cancelImport(): void {
       class="mt-3 flex flex-wrap items-center gap-3"
     >
       <div
-        class="flex items-center gap-2"
+        class="flex min-w-0 flex-wrap items-center gap-2"
         :class="importing ? 'pointer-events-none opacity-60' : ''"
       >
         <span class="text-xs text-(--ui-color-base-4)">Куда импортировать:</span>

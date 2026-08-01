@@ -307,6 +307,8 @@ watch(jobs, (list) => {
           <ImportStaging
             :upload="upload"
             :job-done="jobDone"
+            :refresh-now="refreshNow"
+            :list-error="listError"
             @update:busy="v => stagingBusy = v"
           />
 
@@ -356,7 +358,7 @@ watch(jobs, (list) => {
                 />
               </template>
               <template v-else-if="confirmClear">
-                <span class="text-xs text-(--ui-color-base-3)">Убрать все строки из списка? Документы в CRM останутся.</span>
+                <span class="text-xs text-(--ui-color-base-3)">Убрать завершённые строки из списка? Ещё обрабатываемые останутся, документы в CRM — тоже.</span>
                 <B24Button
                   label="Да, очистить"
                   color="air-primary-alert"

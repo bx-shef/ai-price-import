@@ -25,7 +25,14 @@ export interface ImportJobView {
   diskUrl?: string
   /** CRM type the employee chose for this file, when they chose one manually (#269). */
   targetEntityTypeId?: number
+  /** When this page started tracking the job — grace window for the expired-detection below. */
+  trackedAt?: number
 }
+
+/** How long an id may stay unknown to the server before we call it lost. Covers the race where a
+ *  poll fires between track() and the upload POST landing (the server writes the job record inside
+ *  that POST) — seconds in practice; a minute is comfortably outside it. */
+const EXPIRE_UNKNOWN_AFTER_MS = 60_000
 
 export function useImport() {
   const { init, auth } = useB24()
@@ -109,7 +116,15 @@ export function useImport() {
       const byId = new Map(res.jobs.map(j => [j.jobId, j]))
       jobs.value = jobs.value.map((row) => {
         const live = byId.get(row.jobId)
-        return live ? { ...live, fileName: row.fileName || live.fileName } : row
+        if (live) return { ...live, fileName: row.fileName || live.fileName, trackedAt: row.trackedAt }
+        // The server does not know this id. Right after track() that is a benign race (the upload
+        // POST has not landed yet) — but past the grace window it means the job is GONE (Redis loss,
+        // TTL). Left as-is the row would poll forever: a terminal `expired` stops the loop and the
+        // row says honestly that the status was lost.
+        const age = Date.now() - (row.trackedAt ?? 0)
+        return age > EXPIRE_UNKNOWN_AFTER_MS && !jobStatusMeta(row.status).terminal
+          ? { ...row, status: 'expired' as JobStatus }
+          : row
       })
       // The server caps how many ids it answers for; say it out loud instead of dropping rows (#260).
       listWarning.value = truncationWarning(res.requested, res.answered)
@@ -149,6 +164,13 @@ export function useImport() {
     } catch (e) {
       const msg = fetchErrorMessage(e, 'Загрузка не удалась — проверьте формат и размер файла')
       error.value = msg
+      // The row was pre-tracked BEFORE the POST (so a response lost after the server committed still
+      // shows). But a DEFINITE rejection (an HTTP status came back: 400/413/429…) means the server
+      // never created the job — keeping the row would leave a phantom «В очереди» polling forever.
+      // A network error (no status) keeps it: the server may well have committed.
+      const status = e as { statusCode?: number, status?: number, response?: { status?: number } }
+      const code = status?.statusCode ?? status?.status ?? status?.response?.status
+      if (jobId && typeof code === 'number' && code >= 400) removeJob(jobId)
       // The staging loop needs more than «не вышло»: on a rate-limit refusal it must stop the batch
       // and show the server's own wording (it says how long to wait), not «проверьте связь».
       return classifyUploadError(e, msg)
@@ -166,6 +188,7 @@ export function useImport() {
       status: 'queued',
       fileName,
       result: '',
+      trackedAt: Date.now(),
       ...(target && target.entityTypeId > 0 ? { targetEntityTypeId: target.entityTypeId } : {})
     }, ...jobs.value]
   }

@@ -29,10 +29,12 @@ const clickText = (w: Awaited<ReturnType<typeof mountSuspended>>, label: string)
  *  first wait pass, keeping tests fast. Individual tests override either side. */
 const instantDone = () => ({
   upload: vi.fn(async () => OK),
-  jobDone: vi.fn((): JobStatus | null => 'done')
+  jobDone: vi.fn((): JobStatus | null => 'done'),
+  refreshNow: vi.fn(async () => {}),
+  listError: ''
 })
-const mount = (props: { upload: unknown, jobDone: unknown }) =>
-  mountSuspended(ImportStaging, { props: props as never, global: { stubs } })
+const mount = (props: { upload: unknown, jobDone: unknown, refreshNow?: unknown, listError?: string }) =>
+  mountSuspended(ImportStaging, { props: { refreshNow: async () => {}, listError: '', ...props } as never, global: { stubs } })
 
 describe('ImportStaging (пачка + ожидание результатов)', () => {
   it('выбор файлов только СТАВИТ их в список — без автозагрузки', async () => {
@@ -61,7 +63,7 @@ describe('ImportStaging (пачка + ожидание результатов)',
     expect(order).toEqual(['a.pdf', 'b.pdf'])
     // Each call carries (File, the SHARED batch target — null with the picker stubbed, a UUID key).
     expect(upload).toHaveBeenCalledWith(expect.any(File), null, expect.stringMatching(/^[0-9a-f-]{36}$/i))
-    expect(w.text()).toContain('Готово: все 2 файлов обработаны')
+    expect(w.text()).toContain('Готово: все 2 файла обработаны')
     // Завершённые строки ушли вниз, в «Последние операции».
     expect(w.text()).not.toContain('a.pdf')
     expect(w.text()).not.toContain('b.pdf')
@@ -78,7 +80,9 @@ describe('ImportStaging (пачка + ожидание результатов)',
     // Загрузка прошла, но разбор ещё идёт: блок держится, баннер видим, строка «Обрабатывается…».
     const busy = w.emitted('update:busy') as Array<[boolean]>
     expect(busy.at(-1)?.[0]).toBe(true)
-    expect(w.text()).toContain('не закрывайте страницу')
+    // Полный заголовок БАННЕРА: короткий хвост фразы раньше дублировался в notice, и удаление
+    // самого баннера тесты не замечали (мутационная дыра). Теперь фраза живёт только тут.
+    expect(w.text()).toContain('Идёт импорт — не закрывайте страницу')
     expect(w.text()).toContain('Обрабатывается…')
     finished = true
     await wait(400) // один тик ожидания (250 мс) с запасом
@@ -260,6 +264,31 @@ describe('ImportStaging (пачка + ожидание результатов)',
     await tick()
     const targets = t.upload.mock.calls.map(c => (c as unknown[])[1])
     expect(new Set(targets).size).toBe(1)
+  })
+
+  it('«Отменить» будит опрос статусов — иначе результаты уже отправленных не появятся', async () => {
+    const refreshNow = vi.fn(async () => {})
+    const t = { upload: vi.fn(async () => OK), jobDone: vi.fn(() => null), refreshNow, listError: '' }
+    const w = await mount(t)
+    await pick(w, [file('first.pdf')])
+    const run = clickText(w, 'Импортировать')
+    await wait(50)
+    await clickText(w, 'Отменить')
+    await wait(400)
+    await run
+    expect(refreshNow).toHaveBeenCalled()
+  })
+
+  it('мёртвый опрос во время ожидания виден человеку, а не маскируется под «обрабатываем»', async () => {
+    const t = { upload: vi.fn(async () => OK), jobDone: vi.fn(() => null), refreshNow: vi.fn(async () => {}), listError: 'Не удалось получить статус импорта' }
+    const w = await mount(t)
+    await pick(w, [file('first.pdf')])
+    const run = clickText(w, 'Импортировать')
+    await wait(400)
+    expect(w.text()).toContain('Связь с порталом потеряна')
+    await clickText(w, 'Отменить')
+    await wait(400)
+    await run
   })
 
   it('строка списка показывает размер файла', async () => {
