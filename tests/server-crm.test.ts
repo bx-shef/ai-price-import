@@ -49,21 +49,77 @@ describe('crmWrite', () => {
     expect(ownerTypeCode(1120)).toBe('T460')
     expect(ownerTypeCode(1030)).toBe('T406')
   })
-  it('buildProductRow: taxIncluded + clamp + productId omitted when absent', () => {
+  it('buildProductRow: inclusive price kept at DOCUMENT precision + productId omitted when absent', () => {
     const row = buildProductRow({ productName: 'x', price: 4.355, quantity: 2, taxRate: 22, priceIncludesVat: true, measureCode: 796 }, 10)
     expect(row.taxIncluded).toBe('Y')
-    expect(row.price).toBe(4.36)
+    // NOT bumped to 4.36: the header rounds the LINE (4.355×2 → 8.71); a kopeck-rounded unit
+    // would make the portal tab 8.72 — a cent off the header for no reason.
+    expect(row.price).toBe(4.355)
     expect(row).not.toHaveProperty('productId')
   })
-  it('buildProductRows maps items via resolver', () => {
+  // #302 (live-verified): the portal treats row `price` as ALWAYS gross and ignores taxIncluded in
+  // its math — a net price written as-is undershot every row by the whole VAT. The builder must
+  // convert net→gross itself and stamp taxIncluded 'Y'.
+  it('buildProductRow: net price converted to gross, NOT rounded to kopecks (the reported invoice)', () => {
+    const row = buildProductRow({ productName: 'Мешок', price: 0.86, quantity: 10000, taxRate: 20, priceIncludesVat: false, measureCode: 796 }, 10)
+    // exactly 1.032 — round2 would give 1.03 → ×10 000 = 10 300; float noise (1.0319999…) must not leak
+    expect(row.price).toBe(1.032)
+    expect(row.taxIncluded).toBe('Y')
+    // the portal computes the row sum as price×qty — it must land on the printed «Всего к оплате»
+    expect(Math.round((row.price as number) * (row.quantity as number) * 100) / 100).toBe(10320)
+  })
+  it('buildProductRow: net with null/zero rate stays as-is; fractional rate converts', () => {
+    expect(buildProductRow({ productName: 'x', price: 100, quantity: 1, taxRate: null, priceIncludesVat: false, measureCode: 796 }, 10).price).toBe(100)
+    expect(buildProductRow({ productName: 'x', price: 100, quantity: 1, taxRate: 0, priceIncludesVat: false, measureCode: 796 }, 10).price).toBe(100)
+    expect(buildProductRow({ productName: 'x', price: 1, quantity: 1, taxRate: 8.5, priceIncludesVat: false, measureCode: 796 }, 10).price).toBe(1.085)
+  })
+  // Pin the 6-dp contract BELOW kopeck level: every other gross pin has ≤3 decimals, so a round3/
+  // round4 mutant survived the suite while diverging in production (0.33 @22% → 0.4026; round3
+  // writes 0.403 → ×10 000 = 4 030 vs opportunity 4 026 — the #302 mismatch at smaller scale).
+  it('buildProductRow: gross keeps ≥4 decimals (round6, not a coarser rounding)', () => {
+    expect(buildProductRow({ productName: 'x', price: 0.33, quantity: 1, taxRate: 22, priceIncludesVat: false, measureCode: 796 }, 10).price).toBe(0.4026)
+    expect(buildProductRow({ productName: 'x', price: 0.33, quantity: 1, taxRate: 8.5, priceIncludesVat: false, measureCode: 796 }, 10).price).toBe(0.35805)
+    // The NET input is NOT quantized to kopecks either: 0.335 stays 0.335 → ×1.085 = 0.363475.
+    // (A kopeck-rounding mutant would emit 0.34 → 0.3689.)
+    expect(buildProductRow({ productName: 'x', price: 0.335, quantity: 1, taxRate: 8.5, priceIncludesVat: false, measureCode: 796 }, 10).price).toBe(0.363475)
+  })
+  // Sub-kopeck unit price × large qty — the reviewer-found sibling of the reported invoice:
+  // header math uses RAW document precision (round2(0.8654×10 000)=8 654 → ×1.2 = 10 384.80),
+  // so kopeck-rounding the input (0.8654→0.87 → gross 1.044 → tab 10 440.00) diverged header
+  // vs products tab by 55.20 — the same #302 symptom one step earlier. Quantities likewise
+  // (weights in tonnes: 1.3754 → 1.38 shifted a line by 0.55).
+  it('buildProductRow: sub-kopeck net and fractional quantity keep document precision', () => {
+    const row = buildProductRow({ productName: 'x', price: 0.8654, quantity: 10000, taxRate: 20, priceIncludesVat: false, measureCode: 6 }, 10)
+    expect(row.price).toBe(1.03848)
+    expect(Math.round((row.price as number) * (row.quantity as number) * 100) / 100).toBe(10384.8)
+    expect(buildProductRow({ productName: 'x', price: 100, quantity: 1.3754, taxRate: 20, priceIncludesVat: false, measureCode: 796 }, 10).quantity).toBe(1.3754)
+  })
+  it('buildProductRows maps items via resolver (net doc → gross rows)', () => {
     const rows = buildProductRows(
       [{ name: 'a', price: 10, quantity: 1 }, { name: 'b', price: 20, quantity: 3 }],
       () => ({ taxRate: 20, measureCode: 796 }),
       false
     )
     expect(rows).toHaveLength(2)
-    expect(rows[1]!.taxIncluded).toBe('N')
+    expect(rows[1]!.taxIncluded).toBe('Y')
+    expect(rows[1]!.price).toBe(24) // 20 net @20% → 24 gross
     expect(rows[1]!.sort).toBe(20)
+  })
+  // The invariant the live E2E now also holds: what the portal computes from the written rows
+  // (Σ price×qty) equals our computeOpportunity over the same rows — header and product tab agree.
+  it('row sum computed the portal way equals computeOpportunity (net doc)', () => {
+    const rows = buildProductRows(
+      [
+        { name: 'Мешок', price: 0.86, quantity: 10000 },
+        { name: 'Кабель', price: 1.2, quantity: 500 },
+        { name: 'Без НДС', price: 50, quantity: 3 }
+      ],
+      (_it, i) => ({ taxRate: i === 2 ? null : 20, measureCode: 796 }),
+      false
+    )
+    const portalSum = Math.round(rows.reduce((s, r) => s + (r.price as number) * (r.quantity as number), 0) * 100) / 100
+    expect(portalSum).toBe(computeOpportunity(rows))
+    expect(portalSum).toBe(10320 + 720 + 150)
   })
   it('createTargetItem + setProductRows call REST correctly', async () => {
     const call = vi.fn()
