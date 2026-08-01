@@ -44,6 +44,20 @@ RUN for p in app settings metrics install import login queues; do \
       || { echo "BUILD FAILED: /$p is prerendered without robots:noindex — it would be indexed on the landing's domain." >&2; exit 1; }; \
     done
 
+# Third guard of the same kind, for the no-nginx target's security headers (#185 п.1). The bug it
+# replaces was invisible to every unit test: Nitro answers a prerendered page from the public-assets
+# handler, which runs BEFORE server/middleware, so headers set there never reached any HTML — `/app`
+# shipped with no CSP (hence no frame-ancestors, no clickjacking protection) while `/api/health`
+# carried the full set. Only the RUNNING server can show that, so boot it here and ask it.
+# `/app` and `/api/health` together are the point: one static, one dynamic — the original defect was
+# precisely that the dynamic half passed while the static half did not.
+# The probe is plain node, not curl/wget: neither is guaranteed in a slim base, and a guard that
+# silently no-ops because its tool is missing is worse than no guard. `$!`, not `%1`: job control is
+# off in a non-interactive RUN shell.
+COPY docker/check-edge-headers.mjs /tmp/check-edge-headers.mjs
+RUN APP_EDGE_SECURITY=1 NITRO_PORT=3999 node .output/server/index.mjs & \
+    SRV=$!; node /tmp/check-edge-headers.mjs; RC=$?; kill $SRV 2>/dev/null; exit $RC
+
 FROM node:22-slim AS backend
 WORKDIR /app
 # Text-extraction toolchain (file-extract worker): PDF text, office→text, OCR with

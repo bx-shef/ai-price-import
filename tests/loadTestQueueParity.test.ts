@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { QUEUE_DEFAULT_JOB_OPTIONS } from '../server/queue/connection'
 
 // Drift guard for the queue load test (scripts/load-test-queue.mjs). The script must exercise the
 // SAME BullMQ lock settings production uses — otherwise it silently keeps "proving" a tuning that no
@@ -40,10 +41,14 @@ describe('нагрузочный тест очереди сверен с бое�
     // Сценарий ретраев «доказывает» боевой тюнинг повторов, поэтому он обязан быть тем же. Сам
     // `delay` расходится НАМЕРЕННО (прод 5000 мс, сценарий ужат, иначе прогон занимал бы полминуты)
     // — сверяем то, что определяет поведение: сколько попыток и растёт ли пауза.
-    const connection = read('../server/queue/connection.ts')
-    expect(num(script, /const ATTEMPTS = ([\d_]+)/)).toBe(num(connection, /attempts:\s*([\d_]+)/))
+    //
+    // Боевая сторона берётся ИМПОРТОМ, а не регуляркой по исходнику: регулярка ломалась от
+    // безобидной правки записи (обёртка `Object.freeze` вокруг `backoff` уронила тест, хотя
+    // значения не менялись) — то есть падала на форматировании, а не на дрейфе. Скриптовая
+    // сторона остаётся по исходнику: .mjs нельзя импортировать в тест, у него top-level-эффекты.
+    expect(num(script, /const ATTEMPTS = ([\d_]+)/)).toBe(QUEUE_DEFAULT_JOB_OPTIONS.attempts)
     expect(script).toMatch(/backoff:\s*\{\s*type:\s*'exponential'/)
-    expect(connection).toMatch(/backoff:\s*\{\s*type:\s*'exponential'/)
+    expect(QUEUE_DEFAULT_JOB_OPTIONS.backoff.type).toBe('exponential')
   })
 
   it('гард безопасности на месте: скрипт отказывается работать с удалённым Redis без явного флага', () => {
