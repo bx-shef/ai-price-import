@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { extractFrameAuth } from '../server/utils/frameAuth'
+import { isSafeB24Domain } from '../server/utils/b24Rest'
 
 describe('extractFrameAuth', () => {
   it('extracts Bearer token + domain', () => {
@@ -13,5 +14,18 @@ describe('extractFrameAuth', () => {
   })
   it('null on unsafe domain (SSRF guard)', () => {
     expect(extractFrameAuth({ 'authorization': 'Bearer t', 'x-b24-domain': 'evil.com' })).toBeNull()
+  })
+})
+
+describe('isSafeB24Domain — облачные зоны', () => {
+  it('принимает одноуровневые зоны и обе официальные двухуровневые (#323)', () => {
+    for (const d of ['p.bitrix24.ru', 'p.bitrix24.de', 'p.bitrix24.uk', 'p.bitrix24.com.tr', 'p.bitrix24.com.br']) {
+      expect(isSafeB24Domain(d), d).toBe(true)
+    }
+  })
+  it('двухуровневая форма не открывает произвольные суффиксы', () => {
+    for (const d of ['p.bitrix24.com.evil', 'p.bitrix24.com.tr.evil.com', 'p.bitrix24.co.uk', 'evil.com']) {
+      expect(isSafeB24Domain(d), d).toBe(false)
+    }
   })
 })

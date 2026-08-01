@@ -39,6 +39,16 @@ describe('contentSecurityPolicy', () => {
     // strict page CSP must NOT carry the form loader's unsafe-eval
     expect(csp).not.toContain('unsafe-eval')
   })
+  it('покрыты ВСЕ 21 официальная облачная зона Б24 — и в frame-ancestors, и в connect-src (#323)', () => {
+    const csp = contentSecurityPolicy('/app')
+    const zones = ['com', 'ru', 'by', 'eu', 'kz', 'de', 'uk', 'pl', 'fr', 'it', 'ae', 'com.tr', 'in', 'co', 'mx', 'es', 'com.br', 'cn', 'vn', 'jp', 'id']
+    const hosts = (directive: string) => (csp.split(';').find(d => d.trim().startsWith(directive)) ?? '')
+      .trim().split(/\s+/).filter(t => t.startsWith('https://')).sort()
+    const expected = zones.map(z => `https://*.bitrix24.${z}`).sort()
+    // exactly the official list, no extras (a stray host here is a clickjacking allowlist hole)
+    expect(hosts('frame-ancestors')).toEqual(expected)
+    expect(hosts('connect-src')).toEqual(expected)
+  })
   it('relaxed form CSP only for /b24-form.html (unsafe-eval + B24 script hosts)', () => {
     const csp = contentSecurityPolicy('/b24-form.html')
     expect(csp).toContain('unsafe-eval')
