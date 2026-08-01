@@ -396,7 +396,12 @@ pnpm loadtest:123 # доказательство rate-limiter (RestrictionManage
 # ⚠ Мажоры зависимостей: bullmq 6 и openai 7 взяты (2026-07-31, прогон нагрузочного теста +
 #   офлайн-проба SDK). TypeScript 7 ВЗЯТЬ НЕЛЬЗЯ: это нативный порт с другой раскладкой пакета
 #   (нет `typescript/lib/*` в exports) — vue-tsc падает `ERR_PACKAGE_PATH_NOT_EXPORTED`. Ждём
-#   поддержки в vue-tsc/typescript-eslint. @nuxt/test-utils держим на 4.0.x: 4.1 тянет h3 v2-rc,
+#   поддержки в vue-tsc/typescript-eslint. ⚠ `pnpm.overrides` на транзитивную зависимость
+#   пишем **со скоупом родителя** (`minimatch@3>brace-expansion`), не голым именем: голый
+#   `brace-expansion: >=5.0.8` затолкал v5 в minimatch 3/5/9 (те объявляют ^1/^2), а v5 сменил
+#   CJS-экспорт с функции на неймспейс → `expand is not a function` на любом шаблоне со скобками.
+#   Аналогично версию клампим сверху (`uuid: >=11.1.1 <12`) — без верхней границы уехало на v14
+#   (ESM-only) против объявленного exceljs `^8.3.0`. @nuxt/test-utils держим на 4.0.x: 4.1 тянет h3 v2-rc,
 #   а Nuxt 4.5 живёт на h3 v1 — два несовместимых типа H3Event в одном дереве.
 pnpm loadtest:queue # очередь под нагрузкой (локальный Redis): backlog, дедуп, обрыв воркера,
                     # scale-out, приём под нагрузкой, реальный темп лимитера Б24 (~900 док/ч на портал)
