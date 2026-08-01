@@ -5,7 +5,7 @@ import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, DEMO_AI_EXT, MAX_DEMO
 import { xlsxToText, XlsxTooLargeError } from '../../utils/demoXlsx'
 import { runDemoAiExtract, type DemoAiDeps } from '../../utils/demoAi'
 import { demoJobStore } from '../../utils/demoJobs'
-import { createDemoBudget, demoDailyLimit } from '../../utils/demoBudget'
+import { createDemoBudget, demoDailyLimit, secondsToBudgetReset } from '../../utils/demoBudget'
 import { createIoredisBudgetStore } from '../../utils/demoBudgetRedis'
 import { connectionOptions } from '../../queue/connection'
 import { extractText } from '../../utils/textExtract'
@@ -133,27 +133,38 @@ export default defineEventHandler(async (event) => {
       event.node.res.setHeader('Retry-After', '30')
       return { error: 'Демо сейчас перегружено разбором. Попробуйте через минуту.' }
     }
-    // Daily budget FIRST (#321): a refused job must spend nothing — no OCR, no LLM, no slot.
-    // Refused ticks inflate the counter past the limit; harmless (comparison is `>` and nothing
-    // was spent). The owner sees consumption in the log line below.
-    const budget = await demoBudget.consume()
-    if (!budget.allowed) {
-      setResponseStatus(event, 429)
-      event.node.res.setHeader('Retry-After', '3600')
-      return { error: 'Дневной бюджет демо-разборов исчерпан. Попробуйте завтра — или напишите нам, покажем на ваших файлах.' }
-    }
-    console.info(`[demo-budget] AI job ${budget.used}/${budget.limit} today${budget.degraded ? ' (in-memory)' : ''}`)
     // Shed load when too many heavy extractions are already running (global DoS guard).
     // NB: no `await` between this check and aiInFlight++ below — keep it that way, or the
-    // counter could exceed the cap under concurrency. Reserve the slot BEFORE the (now
-    // async) store call and release it if creation is refused.
+    // counter could exceed the cap under concurrency. Reserve the slot BEFORE the async
+    // budget/store calls and release it if anything downstream refuses.
+    // The slot check comes BEFORE the budget on purpose (#321 review): a 503-shed request
+    // spends nothing, so it must not tick the day's budget — otherwise keeping the two OCR
+    // slots busy would let anyone drain DEMO_DAILY_LIMIT at zero LLM cost.
     if (aiInFlight >= AI_MAX_CONCURRENCY) return shed503()
     aiInFlight++
+    // Daily budget (#321): checked before any OCR/LLM work. Refused ticks inflate the counter
+    // past the limit; harmless (comparison is `>` and nothing was spent).
+    const budget = await demoBudget.consume()
+    if (!budget.allowed) {
+      aiInFlight--
+      const resetSec = secondsToBudgetReset(Date.now())
+      console.warn(`[demo-budget] refused: ${budget.used}/${budget.limit} today${budget.degraded ? ' (in-memory)' : ''}`)
+      setResponseStatus(event, 429)
+      event.node.res.setHeader('Retry-After', String(resetSec))
+      return {
+        error: 'Дневной бюджет демо-разборов исчерпан. Попробуйте завтра — или напишите нам, покажем на ваших файлах.',
+        // Feeds the client's lockout countdown (same contract as the per-IP 429 above):
+        // seconds until the UTC-day budget key rolls over.
+        retryAfterSec: resetSec
+      }
+    }
+    console.info(`[demo-budget] AI job ${budget.used}/${budget.limit} today${budget.degraded ? ' (in-memory)' : ''}`)
     // Register a job and process it in the BACKGROUND — return the id immediately so the
     // HTTP request is short (no 504 on a slow scan); the client polls the result endpoint.
     const jobId = await demoJobStore.create(now)
     if (!jobId) {
       aiInFlight-- // job store full → release the reserved slot before shedding
+      await demoBudget.refund() // nothing was spent → give the tick back
       return shed503()
     }
     const bytes = file.data

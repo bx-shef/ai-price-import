@@ -10,9 +10,13 @@
 // Without Redis (or when it is down) an in-memory fallback still bounds the process (honest caveat:
 // per-process and reset by restart — logged once so the owner knows which mode is live).
 
-/** Minimal store: atomically increment `key`, arming `ttlSec` on first increment; null = store down. */
+/** Minimal store: atomically increment `key`, arming `ttlSec` on first increment; null = store down.
+ *  `decr` refunds a tick for a job that was admitted by the budget but then refused downstream
+ *  (concurrency shed / job store full) — otherwise sustained 503s would drain the day's budget with
+ *  zero actual LLM spend, making a full-day lockout cheap. Best-effort (failure just loses one tick). */
 export interface BudgetStore {
   incrWithTtl: (key: string, ttlSec: number) => Promise<number | null>
+  decr: (key: string) => Promise<void>
 }
 
 /** Daily cap from env. Default 200 AI jobs/day (a real prospect tries a handful; 200 ≈ an active
@@ -42,16 +46,36 @@ export interface BudgetDecision {
   degraded: boolean
 }
 
+/** Seconds until the next UTC midnight — when the daily budget key rolls over. Floor 60s so a
+ *  client right before midnight is not told «retry in 0s» (the counter is per whole UTC day). */
+export function secondsToBudgetReset(nowMs: number): number {
+  const next = Date.UTC(
+    new Date(nowMs).getUTCFullYear(),
+    new Date(nowMs).getUTCMonth(),
+    new Date(nowMs).getUTCDate() + 1
+  )
+  return Math.max(60, Math.ceil((next - nowMs) / 1000))
+}
+
 /** In-memory fallback counter (per process, per day key). */
-function createMemoryCounter(): (key: string) => number {
+function createMemoryCounter(): { incr: (key: string) => number, decr: (key: string) => void } {
   let currentKey = ''
   let count = 0
-  return (key: string) => {
+  const roll = (key: string) => {
     if (key !== currentKey) {
       currentKey = key
       count = 0
     }
-    return ++count
+  }
+  return {
+    incr: (key: string) => {
+      roll(key)
+      return ++count
+    },
+    decr: (key: string) => {
+      roll(key)
+      count = Math.max(0, count - 1)
+    }
   }
 }
 
@@ -72,8 +96,18 @@ export function createDemoBudget(store: BudgetStore | null, opts: { limit: numbe
         warnedDegraded = true
         console.warn('[demo-budget] Redis unavailable — daily budget is in-memory (per process, resets on restart)')
       }
-      const used = degraded ? memory(key) : fromStore
+      const used = degraded ? memory.incr(key) : fromStore
       return { allowed: used <= opts.limit, used, limit: opts.limit, degraded }
+    },
+    /** Refund one tick for a job that was admitted but refused DOWNSTREAM without spending (503
+     *  shed / job store full). Best-effort: a lost refund costs one tick, never correctness. */
+    async refund(): Promise<void> {
+      const key = demoBudgetKey(now())
+      if (store) {
+        await store.decr(key)
+        return
+      }
+      memory.decr(key)
     }
   }
 }

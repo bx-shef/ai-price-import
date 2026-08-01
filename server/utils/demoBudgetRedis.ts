@@ -31,6 +31,14 @@ export function createIoredisBudgetStore(conn: RedisOptions): BudgetStore {
         console.error('[demo-budget] redis incr failed:', e instanceof Error ? e.message : e)
         return null
       }
+    },
+    async decr(key) {
+      try {
+        await client.decr(key)
+      } catch (e) {
+        // Best-effort refund: a lost DECR costs one budget tick, never correctness.
+        console.error('[demo-budget] redis decr failed:', e instanceof Error ? e.message : e)
+      }
     }
   }
 }

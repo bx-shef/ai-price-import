@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BUDGET_TTL_SEC, createDemoBudget, demoBudgetKey, demoDailyLimit, type BudgetStore } from '../server/utils/demoBudget'
+import { BUDGET_TTL_SEC, createDemoBudget, demoBudgetKey, demoDailyLimit, secondsToBudgetReset, type BudgetStore } from '../server/utils/demoBudget'
 
 describe('demoDailyLimit', () => {
   it('дефолт 200; мусор/пусто/ноль/отрицательное → дефолт', () => {
@@ -37,6 +37,10 @@ function fakeStore(): BudgetStore & { counts: Map<string, number>, ttls: Map<str
       counts.set(key, n)
       if (n === 1) ttls.set(key, ttlSec)
       return n
+    },
+    async decr(key) {
+      if (this.down) return
+      counts.set(key, (counts.get(key) ?? 0) - 1)
     }
   }
 }
@@ -92,5 +96,28 @@ describe('createDemoBudget', () => {
     day = 2
     expect((await b.consume()).allowed).toBe(true)
     warn.mockRestore()
+  })
+})
+
+describe('refund и сброс бюджета', () => {
+  it('refund возвращает тик: 503-отказ ниже по течению не тратит дневной бюджет', async () => {
+    const store = fakeStore()
+    const b = createDemoBudget(store, { limit: 1, now: () => Date.UTC(2026, 7, 1) })
+    expect((await b.consume()).allowed).toBe(true)
+    await b.refund() // job store full → тик вернули
+    expect((await b.consume()).allowed).toBe(true) // бюджет всё ещё свободен
+  })
+  it('refund работает и в in-memory фолбэке', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const b = createDemoBudget(null, { limit: 1, now: () => Date.UTC(2026, 7, 1) })
+    expect((await b.consume()).allowed).toBe(true)
+    await b.refund()
+    expect((await b.consume()).allowed).toBe(true)
+    warn.mockRestore()
+  })
+  it('secondsToBudgetReset — до следующей полуночи UTC, пол 60с', () => {
+    expect(secondsToBudgetReset(Date.UTC(2026, 7, 1, 23, 0))).toBe(3600)
+    expect(secondsToBudgetReset(Date.UTC(2026, 7, 1, 0, 0))).toBe(86_400)
+    expect(secondsToBudgetReset(Date.UTC(2026, 7, 1, 23, 59, 30))).toBe(60)
   })
 })
