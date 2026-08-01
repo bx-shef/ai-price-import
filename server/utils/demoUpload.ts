@@ -7,7 +7,7 @@ export const DEMO_TEXT_EXT = ['txt', 'csv', 'tsv', 'text']
 /** Extensions parsed as a spreadsheet (vs. decoded as text). */
 export const DEMO_XLSX_EXT = ['xlsx']
 /** AI formats (P5-b): extracted via poppler/libreoffice/OCR → DeepSeek agent. `.xls` is
- *  the legacy binary Excel (1C exports) — exceljs can't read it, so it goes through the
+ *  the legacy binary Excel (BIFF8, what old accounting exports emit) — exceljs can't read it, so it goes through the
  *  libreoffice office path like .doc, not the deterministic xlsx reader (GH #64). */
 export const DEMO_AI_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'doc', 'xls']
 export const DEMO_ALLOWED_EXT = [...DEMO_TEXT_EXT, ...DEMO_XLSX_EXT, ...DEMO_AI_EXT]

@@ -3,7 +3,7 @@
 
 export const LANDING_TITLE = 'AI-импорт прайсов в Bitrix24'
 export const LANDING_SUBTITLE
-  = 'Накладные, счета, КП и прайсы превращаются в товары в вашей CRM: контрагент находится сам, суммы и НДС сходятся 1-в-1.'
+  = 'Накладные, счета, КП и прайсы разбираются автоматически: товары и контрагент подбираются по вашей базе, а на выходе — готовый лид, сделка, счёт или смарт-процесс с позициями, суммами и НДС 1-в-1.'
 
 export interface LandingStep { n: number, title: string, text: string }
 export const LANDING_STEPS: LandingStep[] = [
@@ -32,9 +32,15 @@ export const LANDING_DESCRIPTION = LANDING_SUBTITLE
 /** Small reassurance note under the hero CTAs. */
 export const LANDING_HERO_NOTE = 'Бесплатное приложение закрывает импорт. Настройку под ваш процесс берём на себя.'
 
-/** «Tech-string» под hero — какие форматы документов понимает разбор. */
+/** «Tech-string» под hero — какие ФАЙЛЫ понимает разбор. */
 export const LANDING_FORMATS: string[] = [
-  'PDF', 'Скан / фото (OCR)', 'Excel', 'Word', '1С', 'Накладная · Счёт · КП · Прайс'
+  'PDF', 'Скан / фото (OCR)', 'Excel', 'Word'
+]
+
+/** Виды документов — отдельной строкой: у них своя ось (что за бумага, а не чем открывается),
+ *  и вперемешку с расширениями они читались как один список. */
+export const LANDING_DOC_KINDS: string[] = [
+  'Накладная', 'Счёт', 'КП', 'Прайс'
 ]
 
 /** Боль → результат (секция под hero). */
@@ -49,7 +55,8 @@ export const LANDING_WHY_SUBTITLE = 'Бесплатное приложение �
 
 /** Промо-карточка «Приложение в Маркете» (бесплатная точка входа, self-install). */
 export const LANDING_MARKET_PROMO = {
-  eyebrow: 'Приложение для Bitrix24',
+  /** Подпись бейджа рядом со словом «Bitrix24» — тем же знаком, что «Партнёр» в hero. */
+  badgeCaption: 'Приложение',
   title: 'AI-импорт прайсов прямо в Bitrix24',
   text: 'Само приложение — бесплатное, есть в Маркете Bitrix24. Установите за минуту и загружайте документы прямо в портале.',
   cta: 'Открыть в Маркете Bitrix24'
@@ -104,6 +111,21 @@ export function siteBaseUrl(siteUrl?: string | null): string {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return LANDING_SITE_URL
   if (!u.hostname || u.username || u.password) return LANDING_SITE_URL // userinfo confusion
   return u.origin
+}
+
+/**
+ * CTA лендинга для промо-баннера внутри портала (#231): всегда АБСОЛЮТНЫЙ адрес брифа.
+ *
+ * Раньше баннер склеивал ссылку из сырого `NUXT_PUBLIC_SITE_URL`, и при пустом или неабсолютном
+ * значении получался ОТНОСИТЕЛЬНЫЙ путь. Внутри портального iframe он резолвится к домену КЛИЕНТА —
+ * кнопка «Обсудить» уводила на `https://<клиент>.bitrix24.by/?…#brief` вместо лендинга, и никакой
+ * ошибки при этом не возникало. Тот же капкан, что с canonical/og (#304), поэтому и правило то же:
+ * дом ровно один, отсутствующий env падает на него, а не деградирует в относительный путь.
+ *
+ * UTM стоит ДО якоря — за `#` он уехал бы в хеш и до аналитики не долетел.
+ */
+export function appBriefUrl(siteUrl?: string | null): string {
+  return `${siteBaseUrl(siteUrl)}/?utm_source=b24app&utm_medium=app_promo#brief`
 }
 
 /** Absolute URL of the OG share image for scrapers. Always absolute — see `siteBaseUrl`. */
