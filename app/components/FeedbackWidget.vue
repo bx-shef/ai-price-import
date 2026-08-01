@@ -7,9 +7,15 @@ import { importFeedbackKind, markImportFeedback } from '~/utils/importHistory'
 
 // Compact «нравится / не нравится» widget under an import result row. Renders nothing unless the
 // channel is enabled on the server (probed via useFeedback). ОБЕ оценки ведут себя ОДИНАКОВО (#299):
-// нажатие открывает одну и ту же форму — комментарий + согласие приложить файл, — и только потом
-// отправка. Раньше «нравится» отправлялось мгновенно и прикладывало файл БЕЗ спроса; согласие на
-// передачу документа не может зависеть от того, какую кнопку нажали. Inert outside a portal (submit no-ops). Ported UX from #218.
+// нажатие открывает одну и ту же форму, и дальше путь один и тот же. Раньше «нравится» отправлялось
+// мгновенно и прикладывало файл БЕЗ спроса; согласие на передачу документа не может зависеть от того,
+// какую кнопку нажали.
+//
+// Про файл спрашиваем В МОМЕНТ ОТПРАВКИ, а не галочкой в форме. Галочка стояла рядом с комментарием,
+// когда сотрудник ещё не решил, отправляет ли он вообще, — и «Приложить исходный файл» читалось как
+// часть оформления отзыва, а не как отдельное решение отдать документ наружу. Теперь «Отправить»
+// открывает ровно один вопрос с двумя равноправными ответами: с файлом или без.
+// Inert outside a portal (submit no-ops). Ported UX from #218.
 // Optional jobId/fileName trace the issue back to the run (rendered inert server-side; the receiving
 // repo is private, so client context is permitted). DUPLICATE SUPPRESSION is client-side: the
 // employee's localStorage remembers which jobs they already rated (importHistory, keyed by jobId), so
@@ -22,7 +28,8 @@ const { enabled, ensureEnabled, submit } = useFeedback()
 const pending = ref<'up' | 'down' | null>(null)
 const open = computed(() => pending.value !== null)
 const comment = ref('')
-const attachFile = ref(false) // consent to attach the source-file link (#192 п.3)
+// Спрашиваем про файл после нажатия «Отправить»: `null` — вопрос ещё не задан.
+const asking = ref(false)
 const sending = ref(false)
 const sent = ref(false)
 const error = ref('')
@@ -41,18 +48,25 @@ function pick(kind: 'up' | 'down'): void {
   error.value = '' // прошлая неудача не должна висеть над новой попыткой
 }
 
-async function send(): Promise<void> {
+/** «Отправить» ничего не отправляет — только задаёт единственный вопрос про файл. */
+function askAboutFile(): void {
+  asking.value = true
+  error.value = ''
+}
+
+async function send(withFile: boolean): Promise<void> {
   const kind = pending.value
   if (!kind) return
+  asking.value = false
   sending.value = true
   error.value = ''
   try {
     // submit() returns false (without throwing) outside a portal frame — do NOT claim success.
-    // Файл прикладываем ТОЛЬКО по явной галочке — одинаково для обеих оценок (#299).
+    // Файл уходит ТОЛЬКО по явному ответу на вопрос — одинаково для обеих оценок (#299).
     const ok = await submit(kind, comment.value.trim() || undefined, {
       jobId: props.jobId,
       fileName: props.fileName
-    }, attachFile.value)
+    }, withFile)
     if (ok) {
       sent.value = true
       // Remember it locally so a reload doesn't re-ask for this job (the client is the dedup owner).
@@ -117,20 +131,50 @@ async function send(): Promise<void> {
           :placeholder="pending === 'up' ? 'Что получилось хорошо? (необязательно)' : 'Что пошло не так? (необязательно)'"
           class="w-full rounded border border-(--ui-color-base-5) p-1.5 text-xs"
         />
-        <B24Checkbox
-          v-model="attachFile"
-          size="xs"
-          label="Приложить исходный файл"
-          description="Копия документа уйдёт разработчику вместе с отзывом — она нужна, чтобы воспроизвести разбор. Если файл уже удалён по сроку хранения, отзыв уйдёт без него"
-        />
+        <!-- Вопрос про файл — ОТДЕЛЬНЫЙ шаг после «Отправить», а не галочка в форме: отдать документ
+             наружу это решение само по себе, и принимать его надо тогда, когда уже решил отправлять.
+             Два равноправных ответа, ни один не «по умолчанию»: молча приложить чужой счёт нельзя,
+             но и прятать полезный вариант в неприметную ссылку — тоже. -->
+        <div
+          v-if="asking"
+          class="flex flex-col gap-1 rounded border border-(--ui-color-base-5) p-2"
+          role="group"
+          aria-label="Приложить исходный файл?"
+        >
+          <p class="text-(--ui-color-base-3)">
+            Приложить исходный файл?
+          </p>
+          <p class="text-(--ui-color-base-4)">
+            Копия документа уйдёт разработчику вместе с отзывом — она нужна, чтобы воспроизвести разбор.
+            Если файл уже удалён по сроку хранения, отзыв уйдёт без него.
+          </p>
+          <div class="mt-1 flex flex-wrap items-center gap-2">
+            <B24Button
+              size="xs"
+              color="air-primary"
+              :loading="sending"
+              :disabled="sending"
+              label="Отправить с файлом"
+              @click="send(true)"
+            />
+            <B24Button
+              size="xs"
+              color="air-tertiary"
+              :disabled="sending"
+              label="Отправить без файла"
+              @click="send(false)"
+            />
+          </div>
+        </div>
         <div class="flex items-center gap-2">
           <B24Button
+            v-if="!asking"
             size="xs"
             color="air-primary"
             :loading="sending"
             :disabled="sending"
             :label="sending ? 'Отправка…' : 'Отправить'"
-            @click="send"
+            @click="askAboutFile"
           />
           <span
             v-if="error"

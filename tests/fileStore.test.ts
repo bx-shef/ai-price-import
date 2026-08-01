@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { deleteUpload, safeSeg, saveUpload, uploadPath } from '../server/utils/fileStore'
 
@@ -33,5 +34,31 @@ describe('saveUpload / deleteUpload', () => {
       throw new Error('ENOENT')
     }) }
     await expect(deleteUpload('m', 'j', io, '/base')).resolves.toBeUndefined()
+  })
+})
+
+describe('удержание исходника под отзыв (#200)', () => {
+  // Раньше воркер удалял байты сразу после извлечения текста. Именно тот случай, ради которого
+  // отзыв и существует — «документ не распознан», — не создаёт ни сущности в CRM, ни архивной копии
+  // на Диске, так что прикладывать к 👎 было нечего. Проверяем сам факт: путь удаления из воркера
+  // убран, а окно хранения привязано к сроку жизни задания, а не задано отдельным числом.
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
+
+  it('воркер НЕ удаляет загруженные байты после извлечения', () => {
+    const worker = read('../server/queue/worker.ts')
+    expect(worker).not.toContain('cleanupUpload')
+    expect(worker).not.toMatch(/unlink\(\s*uploadPath/)
+  })
+
+  it('подметание идёт по сроку жизни задания — одна ручка, не две', () => {
+    // Два независимых числа разъехались бы: файл пережил бы задание (лишнее хранение) или исчез
+    // раньше (отзыв без файла ровно тогда, когда он нужен).
+    const retention = read('../server/plugins/retention.ts')
+    expect(retention).toContain('sweepOldUploads(JOB_TTL_MS)')
+  })
+
+  it('удаление портала по-прежнему сносит файлы сразу', () => {
+    // Удержание — про срок, а не про «оставить навсегда»: деинсталляция чистит немедленно.
+    expect(read('../server/utils/nodeFileIO.ts')).toContain('purgePortalFiles')
   })
 })

@@ -15,6 +15,11 @@ mockNuxtImport('useFeedback', () => () => ({
 const tick = () => new Promise(r => setTimeout(r))
 const clickText = (w: Awaited<ReturnType<typeof mountSuspended>>, label: string) =>
   w.findAll('button').find((b: { text: () => string }) => b.text().includes(label))!.trigger('click')
+/** «Отправить» больше не отправляет — оно задаёт вопрос про файл. Полный путь = кнопка + ответ. */
+const sendWith = async (w: Awaited<ReturnType<typeof mountSuspended>>, file: boolean) => {
+  await clickText(w, 'Отправить')
+  await clickText(w, file ? 'Отправить с файлом' : 'Отправить без файла')
+}
 
 beforeEach(() => {
   h.enabledValue = true
@@ -43,24 +48,44 @@ describe('FeedbackWidget', () => {
     // Главное в #299: положительная оценка больше не уходит мгновенно и не прикладывает файл молча.
     expect(h.submit).not.toHaveBeenCalled()
     expect(w.find('textarea').exists()).toBe(true)
-    expect(w.text()).toContain('Приложить исходный файл')
   })
 
-  it('положительная оценка уходит по «Отправить», файл — только по галочке', async () => {
+  it('«Отправить» сначала СПРАШИВАЕТ про файл и ничего не отправляет', async () => {
+    // Суть правки: отдать документ наружу — отдельное решение, и принимается оно явно, а не
+    // галочкой, поставленной мимоходом рядом с комментарием.
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-ask' } })
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(h.submit).not.toHaveBeenCalled()
+    expect(w.text()).toContain('Приложить исходный файл?')
+    // Оба ответа предложены явно — «без файла» не спрятан.
+    const labels = w.findAll('button').map((b: { text: () => string }) => b.text())
+    expect(labels.some(t => t.includes('Отправить с файлом'))).toBe(true)
+    expect(labels.some(t => t.includes('Отправить без файла'))).toBe(true)
+  })
+
+  it('галочки согласия больше нет — вопрос задаётся один раз, при отправке', async () => {
+    const w = await mountSuspended(FeedbackWidget)
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await tick()
+    expect(w.find('[role="checkbox"]').exists()).toBe(false)
+  })
+
+  it('положительная оценка уходит без файла, если так ответили', async () => {
     const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-7', fileName: 'счёт.xlsx' } })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await w.find('textarea').setValue('всё верно')
-    await clickText(w, 'Отправить')
+    await sendWith(w, false)
     await tick()
     expect(h.submit).toHaveBeenCalledWith('up', 'всё верно', { jobId: 'job-7', fileName: 'счёт.xlsx' }, false)
     expect(w.text()).toContain('Спасибо')
   })
 
-  it('положительная оценка с галочкой прикладывает файл', async () => {
+  it('положительная оценка с ответом «с файлом» прикладывает файл', async () => {
     const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-8' } })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
-    await w.find('[role="checkbox"]').trigger('click')
-    await clickText(w, 'Отправить')
+    await sendWith(w, true)
     await tick()
     expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-8', fileName: undefined }, true)
   })
@@ -73,7 +98,7 @@ describe('FeedbackWidget', () => {
     // Выбор виден не только цветом — иначе о нём не узнает скринридер.
     expect(w.find('button[aria-label="Плохо"]').attributes('aria-pressed')).toBe('true')
     expect(w.find('button[aria-label="Хорошо"]').attributes('aria-pressed')).toBe('false')
-    await clickText(w, 'Отправить')
+    await sendWith(w, false)
     await tick()
     // Текст не потерян при смене оценки.
     expect(h.submit).toHaveBeenCalledWith('down', 'передумал', expect.any(Object), false)
@@ -84,18 +109,17 @@ describe('FeedbackWidget', () => {
     await w.find('button[aria-label="Плохо"]').trigger('click') // opens, no send yet
     expect(h.submit).not.toHaveBeenCalled()
     await w.find('textarea').setValue('НДС не тот')
-    await clickText(w, 'Отправить') // the real primary submit control
+    await sendWith(w, false)
     await tick()
-    // File-attach consent defaults OFF → attachFile false unless the employee ticks the box.
+    // Файл уходит только по явному ответу — «без файла» значит именно без файла.
     expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object), false)
     expect(w.text()).toContain('Спасибо')
   })
 
-  it('👎 with the file-consent checkbox ticked sends attachFile=true (#192 п.3)', async () => {
+  it('👎 с ответом «с файлом» шлёт attachFile=true (#192 п.3)', async () => {
     const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-9' } })
-    await w.find('button[aria-label="Плохо"]').trigger('click') // open the box (checkbox appears)
-    await w.find('[role="checkbox"]').trigger('click') // B24Checkbox toggles v-model on click
-    await clickText(w, 'Отправить')
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await sendWith(w, true)
     await tick()
     expect(h.submit).toHaveBeenCalledWith('down', undefined, { jobId: 'job-9', fileName: undefined }, true)
     expect(w.text()).toContain('Спасибо')
@@ -105,7 +129,7 @@ describe('FeedbackWidget', () => {
     h.submit = vi.fn(async () => false)
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
-    await clickText(w, 'Отправить')
+    await sendWith(w, false)
     await tick()
     expect(w.text()).not.toContain('Спасибо')
     expect(w.text()).toContain('внутри портала')
@@ -117,7 +141,7 @@ describe('FeedbackWidget', () => {
     })
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
-    await clickText(w, 'Отправить')
+    await sendWith(w, false)
     await tick()
     expect(w.text()).not.toContain('Спасибо')
     expect(w.text()).toContain('Не удалось отправить')
@@ -126,7 +150,7 @@ describe('FeedbackWidget', () => {
   it('already-rated job (localStorage) shows «Спасибо» on mount, does not re-offer (#D)', async () => {
     const w1 = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-42' } })
     await w1.find('button[aria-label="Хорошо"]').trigger('click')
-    await clickText(w1, 'Отправить')
+    await sendWith(w1, false)
     await tick()
     expect(w1.text()).toContain('Спасибо') // sent + remembered in localStorage
     // A fresh mount for the SAME job (e.g. after a reload) must not show the buttons again.

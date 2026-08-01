@@ -1,7 +1,18 @@
 // Uploaded-file storage on local disk, scoped by portal+job. The bytes never ride
 // in a queue payload — file-extract reads them by (memberId, jobId). Path building is
 // traversal-safe and pure (tested); the fs ops are injected (FileIO) → also testable.
-// The raw file is deleted after extraction / on job cleanup (data minimisation, docs 05).
+//
+// RETENTION (#200). The raw file used to be deleted the moment text was extracted. That made the ONE
+// case feedback exists for — «документ не распознан», where no CRM entity is created and no Disk
+// archive is written either — impossible to reproduce: the employee pressed 👎 and there was nothing
+// to attach. The bytes now live until the job itself expires (`sweepOldUploads`, window = the job
+// TTL): while a job can still be rated, its file exists; when the job record is gone, so is the file.
+// Uninstall still purges a portal's files immediately (`purgePortalFiles`).
+//
+// ⚠ ОПЕРАЦИОННОЕ ПОСЛЕДСТВИЕ: раньше диск держал файлы минуты, теперь — до суток с лишним. Пиковый
+// объём = поток документов за TTL × средний размер (25 МБ — потолок одной загрузки). При росте
+// нагрузки это первое, что упрётся в место на диске: либо уменьшать `IMPORT_JOB_TTL_HOURS`, либо
+// выносить хранилище. Мониторить свободное место на разделе `UPLOAD_DIR`.
 
 export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/tmp/procure-uploads'
 
