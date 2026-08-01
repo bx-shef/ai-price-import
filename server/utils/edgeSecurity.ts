@@ -74,11 +74,19 @@ function expandV6(addr: string): string[] | null {
 
 // Kept byte-identical to nginx.conf so the two paths present the same policy (no drift): the strict
 // page CSP and the relaxed, form-scoped CSP for the B24 CRM-form loader iframe (public/b24-form.html).
+// Every official Bitrix24 cloud zone (#323): the CIS zones we started with plus the full list from
+// status.bitrix24.com (EU DC: de/uk/pl/fr/it/ae/com.tr; US DC: com/in/co/mx/es/com.br/cn/vn/jp/id).
+// A portal on any of them must be able to iframe /app — a missing zone looks like a white screen
+// («приложение не работает») with the error only in the console. Self-hosted (custom-domain) boxes
+// are still NOT covered: that needs an env-driven list, which would break the byte-parity with
+// nginx.conf — tracked in #323.
+const B24_CLOUD = 'https://*.bitrix24.com https://*.bitrix24.ru https://*.bitrix24.by https://*.bitrix24.eu https://*.bitrix24.kz https://*.bitrix24.de https://*.bitrix24.uk https://*.bitrix24.pl https://*.bitrix24.fr https://*.bitrix24.it https://*.bitrix24.ae https://*.bitrix24.com.tr https://*.bitrix24.in https://*.bitrix24.co https://*.bitrix24.mx https://*.bitrix24.es https://*.bitrix24.com.br https://*.bitrix24.cn https://*.bitrix24.vn https://*.bitrix24.jp https://*.bitrix24.id'
+
 const PAGE_CSP
   = 'default-src \'self\'; img-src \'self\' data: https:; style-src \'self\' \'unsafe-inline\'; '
     + 'script-src \'self\' \'unsafe-inline\'; '
-    + 'connect-src \'self\' https://*.bitrix24.com https://*.bitrix24.ru https://*.bitrix24.by https://*.bitrix24.eu https://*.bitrix24.kz; '
-    + 'frame-ancestors \'self\' https://*.bitrix24.com https://*.bitrix24.ru https://*.bitrix24.by https://*.bitrix24.eu https://*.bitrix24.kz; '
+    + `connect-src 'self' ${B24_CLOUD}; `
+    + `frame-ancestors 'self' ${B24_CLOUD}; `
     + 'base-uri \'self\'; object-src \'none\''
 
 const FORM_CSP
