@@ -57,8 +57,12 @@ const connection = {
 /** Never print REDIS_URL raw — it may carry a password. */
 const SAFE_REDIS = `${redisUrl.protocol}//${redisUrl.host}${redisUrl.pathname}`
 
-// Mirrors server/queue/worker.ts crmLockTuning() — the whole point of the stalled-recovery scenario
-// is to exercise the SAME lock settings production uses.
+// Mirrors server/queue/worker.ts crmLockTuning(). NOTE what this buys and what it does not: the
+// scenarios below run fast, non-blocking handlers, so a 60 s lock is never reached and no check
+// here would fail if lockDuration changed — the drift guard for that value is a unit test
+// (tests/loadTestQueueParity.test.ts + tests/workerConcurrency.test.ts), not this script. The
+// numbers are mirrored so the run is realistic, and scenario 3b does exercise the ONE lock
+// setting whose value is observable in a bounded run: maxStalledCount.
 const CRM_LOCK = { lockDuration: 60_000, stalledInterval: 60_000, maxStalledCount: 1 }
 
 const C = { g: '\x1b[32m', r: '\x1b[31m', y: '\x1b[33m', d: '\x1b[2m', b: '\x1b[1m', x: '\x1b[0m' }
@@ -213,7 +217,9 @@ async function scenarioWorkerCrash() {
   // ACCELERATED lock: production uses lockDuration/stalledInterval = 60 s (crmLockTuning) so a live,
   // slow job is never falsely declared dead. Waiting 60 s here would make the test useless, so this
   // scenario runs the SAME mechanism with a 2 s lock — what we verify is the RECOVERY PATH, not the
-  // timeout value. maxStalledCount:1 is kept exactly as production.
+  // timeout value. maxStalledCount is kept at the production 1; what that value actually BUYS
+  // (a bound of one recovery, then failure) is proved separately in scenario 3b — this scenario
+  // alone would stay green for any maxStalledCount >= 1.
   const FAST_LOCK = { lockDuration: 2_000, stalledInterval: 2_000, maxStalledCount: 1 }
   const handledCount = new Map() // jobId → сколько раз обработчик его брал
   const mkWorker = () => new Worker(q.name, async (job) => {
@@ -252,6 +258,86 @@ async function scenarioWorkerCrash() {
   check(redelivered.length > 0, `зависшие задачи ПЕРЕДОСТАВЛЕНЫ новой реплике (${redelivered.length} шт.) — механизм восстановления сработал`)
   info(`повторно доставлено: ${redelivered.map(([k]) => k).join(', ')}`)
   info('это ожидаемо: очередь гарантирует «хотя бы один раз»; дубль в CRM ловит маркер идемпотентности')
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3b. Сколько раз задача может «воскреснуть». Сценарий 3 доказывает, что восстановление ЕСТЬ; он
+// остался бы зелёным при любом maxStalledCount >= 1. Здесь проверяется сама ГРАНИЦА (#163): при
+// maxStalledCount=1 упавшая задача поднимается РОВНО один раз, после второго обрыва уходит в
+// неудачные, а не крутится вечно. Если границу поднять до 2 — обработчик войдёт третий раз и
+// сценарий покраснеет.
+// ---------------------------------------------------------------------------------------------
+async function scenarioStalledBound() {
+  head('3b · Граница восстановления: одна попытка «воскресить», дальше — в неудачные')
+  const q = await makeQueue('stallbound')
+  // attempts:1 — иначе обычный ретрай подменил бы собой stalled-восстановление и счёт входов
+  // перестал бы означать то, что мы измеряем.
+  await q.add('crm-sync', { memberId: 'portalS', jobId: 'doc0' }, { jobId: 'cs|portalS|doc0', attempts: 1 })
+
+  const FAST_LOCK = { lockDuration: 2_000, stalledInterval: 2_000, maxStalledCount: CRM_LOCK.maxStalledCount }
+  let entered = 0
+  // Обработчик ВИСИТ (никогда не резолвится) — так задача остаётся «в работе» до обрыва воркера.
+  // Именно `new Promise(() => {})`, а не sleep: висящий таймер держал бы процесс после теста.
+  const mkWorker = () => new Worker(q.name, async () => {
+    entered += 1
+    await new Promise(() => {})
+  }, { connection, concurrency: 1, ...FAST_LOCK })
+
+  const waitFor = async (cond, ms) => {
+    const until = Date.now() + ms
+    while (Date.now() < until) {
+      if (await cond()) return true
+      await sleep(100)
+    }
+    return false
+  }
+
+  const w1 = mkWorker()
+  await waitFor(async () => entered >= 1, 10_000)
+  await w1.close(true) // первый обрыв
+  const w2 = mkWorker()
+  const recovered = await waitFor(async () => entered >= 2, 20_000)
+  check(recovered, `после первого обрыва задача поднята повторно (входов ${entered})`)
+  await w2.close(true) // второй обрыв — восстановлений больше не положено
+
+  const w3 = mkWorker() // живой воркер, чтобы сканер отработал второй срыв
+  const failed = await waitFor(async () => (await q.getFailedCount()) >= 1, 25_000)
+  await w3.close(true)
+
+  check(failed, 'после второго обрыва задача ушла в неудачные, а не «воскресла» снова')
+  check(entered === 2, `обработчик входил РОВНО дважды (первичный + одно восстановление), фактически ${entered}`)
+  const [job] = await q.getFailed(0, 5)
+  check(/stall/i.test(job?.failedReason ?? ''), `причина отказа названа честно: «${job?.failedReason ?? '—'}»`)
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3c. Хвост выполненных УРЕЗАЕТСЯ по числу. На это опирается алертинг (server/utils/queueAlert.ts):
+// счётчики completed/failed — это размеры урезанных множеств, поэтому тревога считается по возрасту
+// задач, а не по дельте. Замена числа на true/false молча ломает то рассуждение — здесь оно
+// проверяется последствием: 10 обработанных, а в хвосте ровно кап.
+// ---------------------------------------------------------------------------------------------
+async function scenarioRetention() {
+  head('3c · Хвост выполненных урезается по числу (боевые defaultJobOptions)')
+  const CAP = 3 // масштабированный боевой removeOnComplete: 1000
+  const q = await makeQueue('retention')
+  const N = 10
+  await q.addBulk(Array.from({ length: N }, (_, i) => ({
+    name: 'crm-sync',
+    data: { memberId: 'portalT', jobId: `doc${i}` },
+    opts: { jobId: `cs|portalT|doc${i}`, removeOnComplete: CAP }
+  })))
+  let done = 0
+  const w = new Worker(q.name, async () => {
+    done += 1
+  }, { connection, concurrency: 2, ...CRM_LOCK })
+  const until = Date.now() + 20_000
+  while (Date.now() < until && done < N) await sleep(50)
+  await sleep(300) // дать очереди дочистить хвост после последней задачи
+  await w.close()
+
+  check(done === N, `обработаны все ${N} документов (фактически ${done})`)
+  const kept = await q.getCompletedCount()
+  check(kept === CAP, `в хвосте выполненных осталось ровно ${CAP} (фактически ${kept}) — при true было бы 0, при false ${N}`)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -514,6 +600,8 @@ async function main() {
     summary = await scenarioBacklog()
     await scenarioIdempotency()
     await scenarioWorkerCrash()
+    await scenarioStalledBound()
+    await scenarioRetention()
     await scenarioScaleOut()
     await scenarioAcceptUnderLoad()
     pace = await scenarioRealisticPace()

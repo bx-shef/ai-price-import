@@ -36,6 +36,17 @@ export function queueEnabled(): boolean {
 
 const queues = new Map<string, Queue>()
 
+/** Job defaults every queue inherits. Exported so the retention numbers are assertable: the alert
+ *  rules deliberately do NOT count completed/failed deltas (queueAlert.ts header) precisely because
+ *  these are NUMERIC caps — the sets are truncated, so a delta is zero exactly when all is well.
+ *  Swapping either to `true`/`false` would silently invalidate that reasoning. */
+export const QUEUE_DEFAULT_JOB_OPTIONS = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 5000 },
+  removeOnComplete: 1000,
+  removeOnFail: 5000
+}
+
 export function getQueue(name: QueueName): Queue | null {
   const connection = connectionOptions()
   if (!connection) return null
@@ -43,7 +54,7 @@ export function getQueue(name: QueueName): Queue | null {
   if (!q) {
     q = new Queue(name, {
       connection,
-      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: 1000, removeOnFail: 5000 }
+      defaultJobOptions: { ...QUEUE_DEFAULT_JOB_OPTIONS }
     })
     queues.set(name, q)
   }
