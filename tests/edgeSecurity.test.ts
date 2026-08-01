@@ -14,7 +14,8 @@ import {
   normalisePathname,
   rateLimitKey,
   edgeTimeouts,
-  applyEdgeTimeouts
+  applyEdgeTimeouts,
+  shouldCutOnIdle
 } from '../server/utils/edgeSecurity'
 
 describe('edgeSecurityEnabled', () => {
@@ -276,25 +277,118 @@ describe('edgeTimeouts (#322 — аналог client_body/header_timeout без 
     expect(edgeTimeouts({ EDGE_REQUEST_TIMEOUT_MS: 'abc' }).requestTimeoutMs).toBe(300_000)
     expect(edgeTimeouts({ EDGE_REQUEST_TIMEOUT_MS: '-5' }).requestTimeoutMs).toBe(300_000)
   })
-  it('applyEdgeTimeouts ставит все три значения на сервер (setTimeout — чтобы покрыть уже открытые сокеты)', () => {
-    const calls: number[] = []
+  it('«0» и пустое значение НЕ означают «выключить» — берётся дефолт (контракт задокументирован)', () => {
+    expect(edgeTimeouts({ EDGE_SOCKET_IDLE_MS: '0' }).socketIdleMs).toBe(60_000)
+    expect(edgeTimeouts({ EDGE_SOCKET_IDLE_MS: '   ' }).socketIdleMs).toBe(60_000)
+  })
+
+  /** Fake http.Server capturing the listeners applyEdgeTimeouts installs. */
+  function fakeServer() {
     const srv = {
       timeout: 0,
       headersTimeout: 0,
       requestTimeout: 0,
-      setTimeout: (ms: number) => {
-        calls.push(ms)
-        srv.timeout = ms
+      idleMs: 0,
+      onTimeout: undefined as ((s: { destroy: () => void, edgeReceiving?: boolean }) => void) | undefined,
+      onRequest: undefined as ((req: FakeReq) => void) | undefined,
+      setTimeout(ms: number, listener?: (s: { destroy: () => void, edgeReceiving?: boolean }) => void) {
+        srv.idleMs = ms
+        srv.onTimeout = listener
+      },
+      on(_event: 'request', listener: (req: FakeReq) => void) {
+        srv.onRequest = listener
       }
     }
+    return srv
+  }
+  interface FakeReq {
+    socket: { destroy: () => void, destroyed?: boolean, edgeReceiving?: boolean }
+    headers: Record<string, string | string[] | undefined>
+    readableEnded?: boolean
+    on: (event: 'end' | 'close', listener: () => void) => unknown
+  }
+  function fakeReq(headers: Record<string, string> = { 'content-length': '1000' }): FakeReq & { fire: (e: 'end' | 'close') => void } {
+    const listeners: Record<string, () => void> = {}
+    const socket = {
+      destroyed: false,
+      destroy() {
+        socket.destroyed = true
+      },
+      edgeReceiving: undefined as boolean | undefined
+    }
+    return {
+      socket,
+      headers,
+      readableEnded: false,
+      on(event, listener) { listeners[event] = listener },
+      fire(event) { listeners[event]?.() }
+    }
+  }
+
+  it('applyEdgeTimeouts ставит все три значения; idle идёт через setTimeout (покрывает уже открытые сокеты)', () => {
+    const srv = fakeServer()
     applyEdgeTimeouts(srv, { socketIdleMs: 60_000, headersTimeoutMs: 61_000, requestTimeoutMs: 300_000 })
-    expect(calls).toEqual([60_000])
+    expect(srv.idleMs).toBe(60_000)
     expect(srv.headersTimeout).toBe(61_000)
     expect(srv.requestTimeout).toBe(300_000)
   })
+
+  // The load-bearing subtlety: nginx's client_body_timeout applies only WHILE RECEIVING, while Node's
+  // server.timeout counts silence in both directions. A handler that computes for minutes with nothing
+  // on the wire (demo OCR) must NOT be idle-cut; a half-sent body must.
+  it('idle РЕЖЕТ, пока тело ещё принимается (slowloris), и НЕ режет тишину ожидания медленного обработчика (OCR)', () => {
+    const srv = fakeServer()
+    applyEdgeTimeouts(srv, { socketIdleMs: 60_000, headersTimeoutMs: 60_000, requestTimeoutMs: 300_000 })
+
+    // request arrived, body still in flight → timeout destroys
+    const rec = fakeReq()
+    srv.onRequest!(rec)
+    srv.onTimeout!(rec.socket)
+    expect(rec.socket.destroyed).toBe(true)
+
+    // body fully received ('end') → the same idle window spares the socket (handler is working)
+    const done = fakeReq()
+    srv.onRequest!(done)
+    done.fire('end')
+    srv.onTimeout!(done.socket)
+    expect(done.socket.destroyed).toBe(false)
+
+    // aborted request ('close') must not leave the socket marked as receiving forever
+    const aborted = fakeReq()
+    srv.onRequest!(aborted)
+    aborted.fire('close')
+    srv.onTimeout!(aborted.socket)
+    expect(aborted.socket.destroyed).toBe(false)
+
+    // bodyless GET (no content-length/transfer-encoding): received the moment headers are in —
+    // its (empty) stream is never read, 'end' never fires, so the marker must not wait for it
+    const get = fakeReq({})
+    srv.onRequest!(get)
+    srv.onTimeout!(get.socket)
+    expect(get.socket.destroyed).toBe(false)
+
+    // a socket that never presented a request idles for nothing legit → cut
+    const silent = {
+      destroyed: false,
+      destroy() {
+        silent.destroyed = true
+      }
+    }
+    srv.onTimeout!(silent)
+    expect(silent.destroyed).toBe(true)
+  })
+
+  it('shouldCutOnIdle: режет «принимается» и «запроса ещё не было», щадит «тело принято»', () => {
+    expect(shouldCutOnIdle(true)).toBe(true)
+    expect(shouldCutOnIdle(undefined)).toBe(true)
+    expect(shouldCutOnIdle(false)).toBe(false)
+  })
+
   it('плагин гейтится флагом и не трогает сервер за nginx', () => {
     const src = readFileSync(new URL('../server/plugins/edgeTimeouts.ts', import.meta.url), 'utf8')
-    expect(src).toContain('edgeSecurityEnabled(process.env)')
+    // The gate must RETURN before any hook is registered — assert the shape, not mere presence.
+    expect(src).toMatch(/if \(!edgeSecurityEnabled\(process\.env\)\) return/)
+    expect(src.indexOf('edgeSecurityEnabled(process.env)')).toBeLessThan(src.indexOf('hooks.hook'))
     expect(src).toContain('applyEdgeTimeouts')
   })
 })
