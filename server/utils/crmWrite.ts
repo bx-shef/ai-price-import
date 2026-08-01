@@ -56,15 +56,22 @@ export interface ProductRowInput {
  * and its product tab summed to 8 600. So the net→gross conversion happens HERE, and the row
  * carries `taxIncluded:'Y'` so the visible flag agrees with the number.
  *
- * The converted price is deliberately NOT rounded to kopecks: 0.86 @20% → 1.032, and round2
- * would give 1.03 → ×10 000 = 10 300 — resurrecting the per-unit-rounding defect the per-line
- * rule exists to avoid (see computeOpportunity). The portal stores ≥6 decimals verbatim
- * (live-verified: 1.032456 came back unchanged), so 6 dp keeps line totals exact to the cent
- * while killing IEEE noise (0.86×1.2 is 1.0319999… in floats).
+ * NO kopeck quantization anywhere in this function — neither on the converted price NOR on the
+ * inputs. The header math (lineGross/grossTotal) works on RAW document precision and rounds the
+ * line total once, so any 2-dp rounding here diverges the products tab from the header — the
+ * very mismatch this builder exists to prevent:
+ *   • converted gross: 0.86 @20% → 1.032; round2 → 1.03 → ×10 000 = 10 300 (not 10 320);
+ *   • input net:  0.8654 @20% → round2 0.87 → 1.044 → ×10 000 = 10 440 vs header 10 384.80;
+ *   • inclusive price: 1.032 → round2 1.03 → 10 300 — the same number through the other branch;
+ *   • quantity: 1.3754 т → round2 1.38 → 165.60 vs header 165.05.
+ * The portal stores ≥6 decimals verbatim (live-verified: 1.032456 came back unchanged), so 6 dp
+ * (round6) preserves the document's own precision — sub-kopeck unit prices (per metre/kg/litre)
+ * and 3-dp quantities are normal in this domain — while killing IEEE noise (0.86×1.2 is
+ * 1.0319999… in floats).
  */
 export function buildProductRow(input: ProductRowInput, sort: number): Record<string, unknown> {
-  const net = round2(finite(input.price))
-  const quantity = round2(finite(input.quantity, 1))
+  const net = round6(finite(input.price))
+  const quantity = round6(finite(input.quantity, 1))
   const rate = input.taxRate == null ? 0 : finite(input.taxRate)
   const price = input.priceIncludesVat || rate <= 0 ? net : round6(net * (1 + rate / 100))
   const row: Record<string, unknown> = {
@@ -144,9 +151,12 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
  * printed grand total when it states one — see reconcilePricing — this is the fallback/partial path.)
  *
  * Since #302, rows built by buildProductRow always carry a GROSS price + taxIncluded:'Y', so for
- * them this reduces to Σ round2(price×qty) — the same per-row figure the portal itself computes,
- * which is exactly why the row sum and this total now agree. The 'N' branch stays for generality
- * (the function accepts arbitrary rows) and for the discount note in crmSyncCore (clamped rows).
+ * them this reduces to Σ round2(price×qty) per line. NB the portal's own tab total was observed
+ * (live, auto-recalc deal) to equal rounding the SUM of unrounded row products — whether it also
+ * rounds per row is NOT verified; the two differ by ≤ a cent per line, which is why the live
+ * check compares in whole kopecks with a per-line allowance rather than exact equality. The 'N'
+ * branch stays for generality (the function accepts arbitrary rows) and for the discount note in
+ * crmSyncCore (clamped rows).
  */
 export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
   let sum = 0
@@ -175,8 +185,12 @@ function finite(n: number, fallback = 0): number {
 function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
-/** 6-dp rounding for the net→gross unit price: enough that line totals stay exact to the cent
- *  at realistic quantities, while float noise (0.86×1.2 = 1.0319999…) collapses to 1.032. */
+/** 6-dp rounding for row price/quantity: preserves the document's own precision (sub-kopeck unit
+ *  prices, fractional quantities) so line totals stay exact to the cent at realistic quantities,
+ *  while float noise (0.86×1.2 = 1.0319999…) collapses to 1.032. Assumes VAT rates with ≤2
+ *  decimals (RF/RB/KZ rates are integers; расчётные like 16.67 are 2 dp) — a ≤2-dp net × ≤2-dp
+ *  rate is exactly 6 dp, so nothing is lost; an exotic 3-dp rate would drop its 7th decimal
+ *  (error ≤5e-7 per unit). */
 function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6
 }

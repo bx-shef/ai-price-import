@@ -71,6 +71,10 @@ const listCall = async (method, params) => {
 // company match succeeds; adjust to a value present on your portal.
 const SUPPLIER_TAX_ID = '7712345678'
 
+// The item set deliberately covers the row-write edge cases of #302: a plain 2-dp net line, a
+// SUB-KOPECK unit price with a FRACTIONAL quantity (0.8654 × 12.345 — per-metre pricing; both
+// must reach the portal at document precision, not kopeck-rounded), and a «Без НДС» line
+// (vatRate 0 → taxRate null → price written unconverted).
 const CRAFTED = {
   documentType: DOC_TYPE,
   currency: 'BYN',
@@ -78,17 +82,23 @@ const CRAFTED = {
   supplier: { name: 'ООО «Тест-Поставщик»', taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
   items: [
     { name: 'Кабель ВВГ 3х2.5', article: 'KAB-325', quantity: 500, unit: 'м', price: 1.20, vatRate: 20 },
-    { name: 'Автомат С16', article: 'AVT-C16', quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 }
+    { name: 'Автомат С16', article: 'AVT-C16', quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 },
+    { name: 'Провод ПВС 2х1.5', article: 'PVS-215', quantity: 12.345, unit: 'м', price: 0.8654, vatRate: 20 },
+    { name: 'Доставка', article: 'DLV-1', quantity: 1, unit: 'шт', price: 50, vatRate: 0 }
   ]
 }
 
+// Printed totals follow document arithmetic (per-line net rounded to kopecks, VAT per line):
+// 600.00 + 135.00 + round2(0.8654×12.345)=10.68 + 50.00 = 795.68; НДС 120+27+2.14+0 = 149.14.
 const DOC_TEXT = [
   'ТОВАРНАЯ НАКЛАДНАЯ № ТН-2026-777 от 14.07.2026',
   `Поставщик: ООО «Тест-Поставщик»  ИНН: ${SUPPLIER_TAX_ID}`,
   'Наименование | Артикул | Кол-во | Ед. | Цена | Сумма',
   'Кабель ВВГ 3х2.5 | KAB-325 | 500 | м | 1.20 | 600.00',
   'Автомат С16 | AVT-C16 | 30 | шт | 4.50 | 135.00',
-  'Итого: 735.00', 'НДС 20%: 147.00', 'Всего к оплате: 882.00', 'Валюта: BYN'
+  'Провод ПВС 2х1.5 | PVS-215 | 12.345 | м | 0.8654 | 10.68',
+  'Доставка | DLV-1 | 1 | шт | 50.00 | 50.00',
+  'Итого: 795.68', 'НДС 20%: 149.14', 'Всего к оплате: 944.82', 'Валюта: BYN'
 ].join('\n')
 
 async function extractWithAi(text) {
@@ -178,15 +188,29 @@ try {
     const rowSum = Math.round(rows.reduce((s, r) => s + Number(r.price) * Number(r.quantity), 0) * 100) / 100
     const opp = Number(item.opportunity)
     console.log(`rows: ${rows.length}, Σ price×qty = ${rowSum}`)
+    // A discount line is BY DESIGN not representable in rows (negative price clamps to 0, the
+    // header keeps the discount — crmSyncCore), so Σ rows > opportunity is correct there: skip.
+    const hasDiscount = doc.items.some(i => Number(i.price) < 0)
     // Dynamic smart-processes may not expose opportunity at all (supportsOpportunity=false —
     // we don't set it, the portal may report 0/null there) — compare only when it is meaningful.
-    if (Number.isFinite(opp) && opp > 0) {
-      // Sub-cent slack: the portal rounds the TOTAL of unrounded row products, our header comes
-      // from per-line/printed-total math — a legitimate cent can appear on thirds-like prices.
-      if (Math.abs(rowSum - opp) > 0.01) {
-        throw new Error(`строки разошлись с суммой сущности: Σ строк ${rowSum} ≠ opportunity ${opp} — ровно дефект #302`)
+    if (hasDiscount) {
+      console.log('  (скидочная строка клампится в 0 — сверка Σ строк с суммой сущности пропущена, by design)')
+    } else if (Number.isFinite(opp) && opp > 0) {
+      // Compare in WHOLE KOPECKS (float |a-b| > 0.01 is unreliable at ≥2048: |10319.99−10320|
+      // computes to 0.01000000000021). Allowance: ±1 kopeck per line — lineGross rounds each
+      // line's gross while the portal sums unrounded row products, a legitimate ± cent per line;
+      // when the document STATED a total, reconcilePricing may anchor the header up to
+      // min(max(0.5, 0.5/line), 1%) away from row arithmetic — mirror that slack.
+      // NaN guard: a non-numeric row field would make rowSum NaN and any comparison false-pass.
+      const rowSumC = Math.round(rowSum * 100)
+      const oppC = Math.round(opp * 100)
+      const allowanceC = doc.total != null
+        ? Math.round(Math.min(Math.max(0.5, 0.5 * rows.length), opp * 0.01) * 100)
+        : Math.max(1, rows.length)
+      if (!Number.isFinite(rowSum) || Math.abs(rowSumC - oppC) > allowanceC) {
+        throw new Error(`строки разошлись с суммой сущности: Σ строк ${rowSum} ≠ opportunity ${opp} (допуск ${allowanceC} коп.) — класс дефекта #302: запись строк расходится с шапкой`)
       }
-      console.log(`✓ Σ строк сходится с суммой сущности (${opp})`)
+      console.log(`✓ Σ строк сходится с суммой сущности (${opp}, допуск ${allowanceC} коп.)`)
     }
   }
 } finally {

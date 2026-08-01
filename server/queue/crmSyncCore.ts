@@ -382,5 +382,9 @@ export async function runCrmSync(
 
 function clampNonNeg(n: number, fallback = 0): number {
   if (!Number.isFinite(n)) return fallback
-  return n < 0 ? 0 : Math.round(n * 100) / 100
+  // 6 dp, NOT kopecks: the header math (lineGross) works on raw document precision, so
+  // quantizing the unit price/quantity here diverges the products tab from the header
+  // (0.8654 → 0.87 @20% ×10 000 = 10 440 vs 10 384.80). Sub-kopeck unit prices and
+  // fractional quantities are normal in this domain; buildProductRow keeps 6 dp too (#302).
+  return n < 0 ? 0 : Math.round(n * 1e6) / 1e6
 }
