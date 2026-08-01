@@ -3,6 +3,7 @@ import {
   LANDING_CTA_BRIEF,
   LANDING_CTA_MARKET,
   LANDING_DESCRIPTION,
+  LANDING_DOC_KINDS,
   LANDING_FEATURES,
   LANDING_FORMATS,
   LANDING_HERO_NOTE,
@@ -47,6 +48,10 @@ useHead({
 
 useSeoMeta({
   description: LANDING_DESCRIPTION,
+  // `author` — не SEO-фактор Google, но его требуют валидаторы карточек (microlink и подобные) и
+  // читают агрегаторы. Значение — издатель, тот же, что в og:site_name: один источник, без дрейфа.
+  author: LANDING_PUBLISHER,
+  articleAuthor: [LANDING_PUBLISHER],
   ogTitle: LANDING_TITLE,
   ogDescription: LANDING_DESCRIPTION,
   ogType: 'website',
@@ -197,8 +202,10 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- Formats tech-string -->
-            <div class="mt-12 flex flex-col items-start gap-3 sm:mt-16">
+            <!-- Formats tech-string. Две ОТДЕЛЬНЫЕ строки: чем файл открывается и что это за бумага —
+                 оси разные, а одним списком «Word · Накладная» читалось как продолжение перечисления.
+                 Подпись отбита от строки заметнее (gap-5), иначе прилипала к ней. -->
+            <div class="mt-12 flex flex-col items-start gap-5 sm:mt-16">
               <div class="font-mono text-xs uppercase tracking-[0.18em] text-white/40">
                 Понимает форматы
               </div>
@@ -211,6 +218,18 @@ onMounted(async () => {
                   <span
                     v-if="i < LANDING_FORMATS.length - 1"
                     class="size-1 rounded-full bg-white/20"
+                  />
+                </template>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-white/45 sm:gap-x-8">
+                <template
+                  v-for="(d, i) in LANDING_DOC_KINDS"
+                  :key="d"
+                >
+                  <span class="font-mono text-sm tracking-tight">{{ d }}</span>
+                  <span
+                    v-if="i < LANDING_DOC_KINDS.length - 1"
+                    class="size-1 rounded-full bg-white/15"
                   />
                 </template>
               </div>
@@ -354,9 +373,13 @@ onMounted(async () => {
             >
               <div class="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
                 <div class="min-w-0">
-                  <div class="mb-2 font-mono text-[11px] font-medium uppercase tracking-wide text-cyan-300/80">
-                    {{ LANDING_MARKET_PROMO.eyebrow }}
-                  </div>
+                  <!-- Тот же бейдж, что «Bitrix24 Партнёр» в hero: два знака принадлежности к Б24 на
+                       одной странице должны выглядеть одинаково, иначе читаются как разные сущности. -->
+                  <BrandBadge
+                    brand="Bitrix24"
+                    :caption="LANDING_MARKET_PROMO.badgeCaption"
+                    class="mb-3"
+                  />
                   <h2 class="mb-1.5 text-lg font-semibold text-white">
                     {{ LANDING_MARKET_PROMO.title }}
                   </h2>
