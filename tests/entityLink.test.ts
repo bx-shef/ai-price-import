@@ -30,6 +30,12 @@ describe('portalCurrencySettingsUrl', () => {
     expect(portalCurrencySettingsUrl('portal-a.bitrix24.by')).toBe('https://portal-a.bitrix24.by/crm/configs/currency/')
     expect(portalCurrencySettingsUrl('portal-b.bitrix24.kz')).toBe('https://portal-b.bitrix24.kz/crm/configs/currency/')
   })
+  it('принимает двухуровневые официальные зоны com.tr/com.br (#323), но не произвольные суффиксы', () => {
+    expect(portalCurrencySettingsUrl('p.bitrix24.com.tr')).toBe('https://p.bitrix24.com.tr/crm/configs/currency/')
+    expect(portalCurrencySettingsUrl('p.bitrix24.com.br')).toBe('https://p.bitrix24.com.br/crm/configs/currency/')
+    expect(portalCurrencySettingsUrl('p.bitrix24.com.evil')).toBeNull()
+    expect(portalCurrencySettingsUrl('p.bitrix24.com.tr.evil.com')).toBeNull()
+  })
   it('нормализует регистр и пробелы', () => {
     expect(portalCurrencySettingsUrl('  Portal.Bitrix24.RU ')).toBe('https://portal.bitrix24.ru/crm/configs/currency/')
   })
