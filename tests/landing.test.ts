@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalUrl, copyrightYears, LANDING_FEATURES, LANDING_SITE_URL, LANDING_STEPS, LANDING_SUBTITLE, ogImageUrl, siteBaseUrl } from '../app/utils/landing'
+import { appBriefUrl, canonicalUrl, copyrightYears, LANDING_FEATURES, LANDING_SITE_URL, LANDING_STEPS, LANDING_SUBTITLE, ogImageUrl, siteBaseUrl } from '../app/utils/landing'
 
 describe('landing content', () => {
   it('has 3 how-it-works steps in order and 4 features', () => {
@@ -81,5 +81,36 @@ describe('copyrightYears', () => {
     expect(copyrightYears(2026, 2026)).toBe('2026')
     expect(copyrightYears(2024, 2026)).toBe('2024–2026')
     expect(copyrightYears(2027, 2026)).toBe('2026') // clamp future start
+  })
+})
+
+describe('appBriefUrl — кнопка баннера в портале всегда ведёт на лендинг (#231)', () => {
+  // Ссылка строилась из сырого NUXT_PUBLIC_SITE_URL: пустое/неабсолютное значение давало
+  // ОТНОСИТЕЛЬНЫЙ путь, а внутри портального iframe он резолвится к домену КЛИЕНТА — кнопка молча
+  // уводила на `https://<клиент>.bitrix24.by/?…#brief`. Проверяем именно это свойство.
+  it('переменной нет → всё равно абсолютный адрес канонического дома', () => {
+    for (const v of [undefined, null, '']) {
+      expect(appBriefUrl(v).startsWith(`${LANDING_SITE_URL}/`)).toBe(true)
+    }
+  })
+
+  it('абсолютный URL из окружения используется как есть (staging живёт на своём домене)', () => {
+    expect(appBriefUrl('https://staging.example.com')).toContain('https://staging.example.com/')
+  })
+
+  it.each(['/', '/app', 'price-import.bx-shef.by', '//evil.example', 'javascript:alert(1)', ' '])(
+    'мусор в переменной (%s) не даёт ни относительной, ни чужой ссылки',
+    (value) => {
+      expect(appBriefUrl(value).startsWith(`${LANDING_SITE_URL}/`)).toBe(true)
+    }
+  )
+
+  it('ведёт именно на бриф', () => {
+    expect(appBriefUrl('')).toContain('#brief')
+  })
+
+  it('UTM стоит ДО якоря — за решёткой он уехал бы в хеш и не долетел до аналитики', () => {
+    const u = appBriefUrl('')
+    expect(u.indexOf('utm_source=b24app')).toBeLessThan(u.indexOf('#brief'))
   })
 })

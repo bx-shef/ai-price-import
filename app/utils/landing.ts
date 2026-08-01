@@ -113,6 +113,21 @@ export function siteBaseUrl(siteUrl?: string | null): string {
   return u.origin
 }
 
+/**
+ * CTA лендинга для промо-баннера внутри портала (#231): всегда АБСОЛЮТНЫЙ адрес брифа.
+ *
+ * Раньше баннер склеивал ссылку из сырого `NUXT_PUBLIC_SITE_URL`, и при пустом или неабсолютном
+ * значении получался ОТНОСИТЕЛЬНЫЙ путь. Внутри портального iframe он резолвится к домену КЛИЕНТА —
+ * кнопка «Обсудить» уводила на `https://<клиент>.bitrix24.by/?…#brief` вместо лендинга, и никакой
+ * ошибки при этом не возникало. Тот же капкан, что с canonical/og (#304), поэтому и правило то же:
+ * дом ровно один, отсутствующий env падает на него, а не деградирует в относительный путь.
+ *
+ * UTM стоит ДО якоря — за `#` он уехал бы в хеш и до аналитики не долетел.
+ */
+export function appBriefUrl(siteUrl?: string | null): string {
+  return `${siteBaseUrl(siteUrl)}/?utm_source=b24app&utm_medium=app_promo#brief`
+}
+
 /** Absolute URL of the OG share image for scrapers. Always absolute — see `siteBaseUrl`. */
 export function ogImageUrl(siteUrl?: string | null): string {
   return `${siteBaseUrl(siteUrl)}/og.png`
