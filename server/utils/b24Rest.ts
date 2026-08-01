@@ -20,11 +20,14 @@ export function normaliseHost(domain: string): string {
   return domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim().toLowerCase()
 }
 
-/** SSRF guard: only allow Bitrix24 cloud hosts (the portal domain comes from the install event). */
+/** SSRF guard: only allow Bitrix24 cloud hosts (the portal domain comes from the install event).
+ *  The generic pattern covers every single-label zone; `com.tr`/`com.br` are the two official
+ *  TWO-label zones (#323) and need the explicit alternation — `[a-z]{2,}` cannot contain a dot,
+ *  so without it a `x.bitrix24.com.tr` portal passed the CSP but failed every frame-token call. */
 export function isSafeB24Domain(domain: string): boolean {
   const host = normaliseHost(domain)
   if (!host || host.includes('@') || host.includes(':')) return false
-  return /^([a-z0-9-]+\.)+bitrix24\.[a-z]{2,}$/.test(host) || host === 'oauth.bitrix24.tech'
+  return /^([a-z0-9-]+\.)+bitrix24\.(com\.(tr|br)|[a-z]{2,})$/.test(host) || host === 'oauth.bitrix24.tech'
 }
 
 /** Typed B24 REST error carrying the machine-readable error code + HTTP status,

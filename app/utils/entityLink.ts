@@ -46,6 +46,7 @@ export function entityDetailPath(entityTypeId: number | undefined | null, entity
 export function portalCurrencySettingsUrl(domain: string | undefined | null): string | null {
   const d = String(domain ?? '').trim().toLowerCase()
   if (d.includes('@') || d.includes(':') || d.includes('/')) return null
-  if (!/^([a-z0-9-]+\.)+bitrix24\.[a-z]{2,}$/.test(d)) return null
+  // com.tr/com.br — the two official TWO-label cloud zones (#323), same alternation as the server guard.
+  if (!/^([a-z0-9-]+\.)+bitrix24\.(com\.(tr|br)|[a-z]{2,})$/.test(d)) return null
   return `https://${d}/crm/configs/currency/`
 }
