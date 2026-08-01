@@ -34,8 +34,42 @@ export function edgeTrustXff(env: Record<string, string | undefined>): boolean {
  * verified trusted proxy (then use its appended last hop). Used by the public demo + login throttles.
  */
 export function rateLimitKey(edgeOn: boolean, trustXff: boolean, xff: string | undefined, remote: string | undefined): string {
-  if (!edgeOn || trustXff) return clientKey(xff, remote)
-  return (remote ?? '').trim() || 'unknown'
+  if (!edgeOn || trustXff) return ipBucket(clientKey(xff, remote))
+  return ipBucket((remote ?? '').trim() || 'unknown')
+}
+
+/**
+ * Collapse an IPv6 address to its /64 prefix before it becomes a rate-limit key. A single subscriber is
+ * routinely handed a whole /64, so keying on the full address means 2^64 free buckets: one loop over
+ * `curl --interface` lifts the login throttle AND the demo cost cap completely. nginx's
+ * `$binary_remote_addr` has the same hole, so this is not a regression there — it is a cheap fix here.
+ * IPv4 and anything unparseable pass through untouched (a v4 address IS the identity).
+ * IPv4-mapped v6 (`::ffff:1.2.3.4`) keeps its full form on purpose — truncating it would merge
+ * unrelated v4 clients into one bucket.
+ */
+export function ipBucket(key: string): string {
+  const raw = key.trim()
+  if (!raw.includes(':')) return raw || 'unknown' // v4 / hostname / 'unknown'
+  if (raw.toLowerCase().includes('.')) return raw // IPv4-mapped — keep the whole address
+  const zoneless = raw.split('%')[0] ?? raw
+  const groups = expandV6(zoneless)
+  return groups ? `${groups.slice(0, 4).join(':')}::/64` : raw
+}
+
+/** Expand an IPv6 address (incl. `::`) to its eight groups, or null when it does not parse. */
+function expandV6(addr: string): string[] | null {
+  const halves = addr.split('::')
+  if (halves.length > 2) return null
+  const head = (halves[0] ?? '').split(':').filter(Boolean)
+  const tail = halves.length === 2 ? (halves[1] ?? '').split(':').filter(Boolean) : []
+  const groups = halves.length === 2
+    ? [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill('0'), ...tail]
+    : head
+  if (groups.length !== 8) return null
+  return groups.map(g => (/^[0-9a-fA-F]{1,4}$/.test(g) ? g.toLowerCase().replace(/^0+(?=.)/, '') : null))
+    .every(Boolean)
+    ? groups.map(g => g.toLowerCase().replace(/^0+(?=.)/, ''))
+    : null
 }
 
 // Kept byte-identical to nginx.conf so the two paths present the same policy (no drift): the strict
@@ -110,9 +144,17 @@ export function bodySizeStatus(edgeOn: boolean, contentLength: number, max: numb
 }
 
 /**
- * GLOBAL edge body guard, applied by the middleware to EVERY request when edge security is on — the
- * safe-by-default equivalent of nginx `client_max_body_size` for a process with no nginx. Returns the
- * status to reject with, or null:
+ * Edge body guard, applied by the middleware to every request that can CARRY a body when edge security
+ * is on — the safe-by-default equivalent of nginx `client_max_body_size` for a process with no nginx.
+ *
+ * "Every request that can carry a body" is exact, not hand-waving: Nitro's public-assets handler runs
+ * before the middleware and answers prerendered files, but it handles GET and HEAD ONLY — and those are
+ * the methods that bring no body. A POST to a prerendered path falls through to the middleware and is
+ * guarded (live-checked: `POST /app` with an over-cap Content-Length answers 413, same as
+ * `POST /api/b24/events`). That asymmetry is exactly why the security HEADERS could not stay here — they
+ * belong on the GET responses the static handler owns — while this guard can.
+ *
+ * Returns the status to reject with, or null:
  *  - 413 when the declared Content-Length exceeds `max`;
  *  - 411 when the body is chunked (`Transfer-Encoding: chunked`) with NO Content-Length — such a body
  *    would buffer unbounded (h3 `readRawBody`/`readMultipartFormData` have no size limit), so it must be

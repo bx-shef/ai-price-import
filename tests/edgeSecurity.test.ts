@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EDGE_MAX_BODY_BYTES,
   LOGIN_MAX_ATTEMPTS,
   LOGIN_WINDOW_MS,
   bodySizeStatus,
   buildSecurityHeaders,
+  ipBucket,
   contentSecurityPolicy,
   edgeBodyGuard,
   edgeSecurityEnabled,
@@ -147,24 +148,116 @@ describe('login throttle constants', () => {
   })
 })
 
-describe('заголовки вешаются хуком, а не middleware (иначе они не доходят до страниц)', () => {
+describe('заголовки реально ставятся плагином (иначе они не доходят до страниц)', () => {
   // Live-verified regression (#185 п.1): Nitro registers the public-assets handler as the FIRST
   // middleware and it RETURNS for any prerendered file. Every HTML page in this project is
   // prerendered, so headers set from server/middleware/ never reached them — `GET /app` came back
   // with no CSP while `GET /api/health` had the full set, i.e. exactly the pages that need
-  // frame-ancestors were the ones missing it. Moving them back into middleware would compile,
-  // pass every unit test, and silently ship pages without CSP again — hence a source guard.
-  const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
+  // frame-ancestors were the ones missing it.
+  //
+  // This guard EXECUTES the plugin against a fake nitroApp instead of grepping its source. A source
+  // check was the first attempt and it was too weak — proved by mutation: an empty `hook('request')`
+  // with the real work moved to `afterResponse`, and an `if (true) return` at the top of the plugin,
+  // both reintroduced the bug while keeping the text green. Behaviour is what matters: a hook that
+  // fires before the handler chain, and headers that actually land on the event.
+  const loadPlugin = async (env: Record<string, string>) => {
+    const hooks: Record<string, ((event: unknown) => void)[]> = {}
+    const nitroApp = { hooks: { hook: (name: string, fn: (event: unknown) => void) => void (hooks[name] ??= []).push(fn) } }
+    vi.stubGlobal('defineNitroPlugin', (fn: (app: unknown) => void) => fn)
+    const set: Record<string, string> = {}
+    vi.stubGlobal('setResponseHeader', (_e: unknown, k: string, v: string) => void (set[k.toLowerCase()] = v))
+    vi.stubEnv('APP_EDGE_SECURITY', env.APP_EDGE_SECURITY ?? '')
+    // Плагин зовёт `defineNitroPlugin` на уровне модуля, поэтому импорт ДИНАМИЧЕСКИЙ — заглушка
+    // должна стоять раньше вычисления модуля. Кэш модуля не мешает: env читается в момент вызова.
+    const mod = await import('../server/plugins/edgeSecurity')
+    mod.default(nitroApp)
+    return { hooks, set, fire: (path: string) => hooks.request?.forEach(fn => fn({ path })) }
+  }
 
-  it('плагин ставит заголовки на хуке request — он идёт до отдачи статики', () => {
-    const plugin = read('../server/plugins/edgeSecurity.ts')
-    expect(plugin).toMatch(/hooks\.hook\(\s*'request'/)
-    expect(plugin).toContain('buildSecurityHeaders')
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  it('ON: заголовки ставятся на хуке request — он один срабатывает ДО отдачи статики', async () => {
+    const p = await loadPlugin({ APP_EDGE_SECURITY: '1' })
+    // Именно `request`: `beforeResponse`/`afterResponse` для статики уже поздно/мимо.
+    expect(Object.keys(p.hooks)).toEqual(['request'])
+    p.fire('/app')
+    expect(p.set['content-security-policy']).toContain('frame-ancestors')
+    expect(p.set['x-content-type-options']).toBe('nosniff')
+    expect(p.set['referrer-policy']).toBe('strict-origin-when-cross-origin')
+  })
+
+  it('ON: у формы Б24 своя, более мягкая CSP (её грузчик иначе не работает)', async () => {
+    const p = await loadPlugin({ APP_EDGE_SECURITY: '1' })
+    p.fire('/app')
+    const page = p.set['content-security-policy']
+    p.fire('/b24-form.html?utm=1')
+    expect(p.set['content-security-policy']).not.toBe(page)
+  })
+
+  it('OFF (за nginx): хук не регистрируется вовсе — второго CSP быть не может', async () => {
+    const p = await loadPlugin({})
+    expect(p.hooks.request ?? []).toHaveLength(0)
+    expect(p.set).toEqual({})
   })
 
   it('middleware заголовки НЕ ставит — только гард тела, который обязан прерывать запрос', () => {
-    const mw = read('../server/middleware/edgeSecurity.ts')
+    // Дубль в middleware не опасен сам по себе, но он — след возврата к сломанной схеме.
+    const mw = readFileSync(new URL('../server/middleware/edgeSecurity.ts', import.meta.url), 'utf8')
     expect(mw).not.toContain('buildSecurityHeaders')
     expect(mw).toContain('edgeBodyGuard')
+  })
+})
+
+describe('CSP приложения и nginx не разъезжаются', () => {
+  // `edgeSecurity.ts` заявляет «kept byte-identical to nginx.conf». Заявление ничем не держалось:
+  // правка одной строки в nginx.conf молча разводила две политики, и клиент за nginx получал не то,
+  // что клиент без него. Сравниваем буквально — источник истины у обеих сторон один.
+  const nginx = readFileSync(new URL('../nginx.conf', import.meta.url), 'utf8')
+  const cspDirectives = (line: string) => line.slice(line.indexOf('"') + 1, line.lastIndexOf('"'))
+  const fromNginx = nginx.split('\n')
+    .filter(l => l.includes('add_header Content-Security-Policy'))
+    .map(cspDirectives)
+
+  it('в nginx.conf ровно две политики: страничная и форменная', () => {
+    expect(fromNginx).toHaveLength(2)
+  })
+
+  it('страничная CSP совпадает символ в символ', () => {
+    expect(buildSecurityHeaders('/app')['Content-Security-Policy']).toBe(fromNginx[0])
+  })
+
+  it('форменная CSP совпадает символ в символ (у неё свои послабления под загрузчик формы)', () => {
+    // Хвостовая `;` в nginx-строке допустима и семантически ничего не меняет — единственное
+    // расхождение, которое мы прощаем; всё остальное обязано быть идентичным.
+    const trim = (s: string) => s.replace(/;\s*$/, '')
+    expect(trim(buildSecurityHeaders('/b24-form.html')['Content-Security-Policy'] ?? '')).toBe(trim(fromNginx[1] ?? ''))
+  })
+})
+
+describe('ipBucket: подсеть IPv6 не даёт бесконечных бакетов', () => {
+  // Абоненту выдают целую /64, поэтому ключ по полному адресу = 2^64 бесплатных бакетов: один цикл
+  // `curl --interface` снимал и троттл логина, и лимит расхода демо (OCR/LLM на токене владельца).
+  it('адреса одной /64 схлопываются в один ключ', () => {
+    expect(ipBucket('2001:db8:1:2:3:4:5:6')).toBe(ipBucket('2001:db8:1:2:ffff:ffff:ffff:ffff'))
+    expect(ipBucket('2001:db8::1')).toBe(ipBucket('2001:db8::dead:beef'))
+  })
+  it('разные /64 остаются разными ключами', () => {
+    expect(ipBucket('2001:db8:1:2::1')).not.toBe(ipBucket('2001:db8:1:3::1'))
+  })
+  it('IPv4 не трогаем — адрес и есть личность', () => {
+    expect(ipBucket('203.0.113.7')).toBe('203.0.113.7')
+  })
+  it('IPv4-mapped не режем — иначе разные v4-клиенты слились бы в один бакет', () => {
+    expect(ipBucket('::ffff:203.0.113.7')).not.toBe(ipBucket('::ffff:203.0.113.8'))
+  })
+  it('зона интерфейса не создаёт отдельный бакет', () => {
+    expect(ipBucket('fe80::1%eth0')).toBe(ipBucket('fe80::2'))
+  })
+  it('мусор не притворяется адресом и не схлопывает чужие ключи', () => {
+    expect(ipBucket('')).toBe('unknown')
+    expect(ipBucket('not:an:address:at:all:x:y:z')).toBe('not:an:address:at:all:x:y:z')
   })
 })
