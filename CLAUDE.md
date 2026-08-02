@@ -572,6 +572,12 @@ pnpm check        # lint + typecheck + test
 
 # Живые проверки (нужен .env.b24test/B24_HOOK + LLM-ключ DEEPSEEK_API_KEY/VIBE_API_KEY):
 pnpm sdk:smoke    # OAuth-транспорт SDK: profile+crm.item.list+burst 30 без QUERY_LIMIT_EXCEEDED
+# ⚠ Живые скрипты гоняют ПРОДОВЫЙ код через `node --experimental-strip-types` — режим только
+#   СТИРАЕТ типы и кода не генерирует, поэтому **параметр-свойства конструктора**
+#   (`constructor(readonly code: string)`) в `server/`/`app/`/`prompts/` запрещены: одно такое поле
+#   в `b24Rest.ts` роняло `pnpm sdk:smoke` на разборе файла — скрипт не стартовал вовсе. Сборка
+#   через Vite такой синтаксис принимает, typecheck молчит, тесты зелены; ломается ТОЛЬКО живая
+#   проверка, и узнаёшь об этом ровно тогда, когда она понадобилась. Гард — `tests/stripTypesCompat.test.ts`.
 pnpm verify:chat  # экстрактор (openai SDK): --provider deepseek|bitrixgpt → ExtractedDocument (ru/be/kk)
 pnpm live:crm --ai# полный E2E: текст → DeepSeek → runCrmSync → сделка+позиции+уведомление+очистка
 pnpm verify:idem  # идемпотентность: 2 прогона одним jobId → повтор нашёл по маркеру, created:false

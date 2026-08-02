@@ -33,9 +33,21 @@ export function isSafeB24Domain(domain: string): boolean {
 /** Typed B24 REST error carrying the machine-readable error code + HTTP status,
  * so callers can detect `expired_token`/`invalid_token` and retry after refresh. */
 export class B24RestError extends Error {
-  constructor(readonly code: string, readonly description: string, readonly status = 0) {
+  // Plain fields, NOT constructor parameter properties. The dev live-check scripts run through
+  // `node --experimental-strip-types`, which only ERASES types and cannot emit the assignments a
+  // parameter property implies — so `readonly code: string` in the signature made `pnpm sdk:smoke`
+  // fail to parse at import time. The script is documented as a live check; one that cannot start
+  // is worse than none, because its absence is invisible until someone needs it.
+  readonly code: string
+  readonly description: string
+  readonly status: number
+
+  constructor(code: string, description: string, status = 0) {
     super(`b24 rest: ${code}${description ? `: ${description}` : ''}`)
     this.name = 'B24RestError'
+    this.code = code
+    this.description = description
+    this.status = status
   }
 }
 
