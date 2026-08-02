@@ -1,11 +1,13 @@
 import type { QueryFn } from '../utils/tokenStore'
+import type { RestCall } from '../utils/b24Rest'
 import type { ExtractRunners } from '../utils/textExtract'
 import type { EnsureDeps } from '../utils/ensureAccessToken'
 import { ensureFreshToken } from '../utils/ensureAccessToken'
 import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
-import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
+import { deletePortal, getBotId, getToken, saveBotId, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
+import { createBotIdCache, resolveBotId } from '../utils/chatBot'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
@@ -151,7 +153,23 @@ export function liveKeepAliveDeps(infra: LiveInfra): KeepAliveDeps {
 /** b24-events deps: the SINGLE writer of portal_tokens (install/uninstall). */
 export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
   return {
-    savePortal: job => saveToken(eventJobToSaveInput(job), infra.query, job.ts),
+    savePortal: async (job) => {
+      const saved = await saveToken(eventJobToSaveInput(job), infra.query, job.ts)
+      // Register the chat bot AT INSTALL, not at the first message (#316, owner ask — there are no
+      // portals installed before the `imbot` scope, so nothing needs the lazy path as its only
+      // chance). Doing it here rather than on the `/install` page keeps it server-side, where the
+      // portal token already lives. Best-effort: a portal that cannot have a bot (free plan, bot
+      // limit) must still install — the send path falls back on its own.
+      if (saved) {
+        const memberId = eventJobToSaveInput(job).memberId
+        await resolvePortalBotId(memberId, infra, async () => {
+          const t = await restResolver(infra)(memberId)
+          if (!t) throw new Error('нет транспорта портала')
+          return t.call
+        }).catch(() => 0)
+      }
+      return saved
+    },
     deletePortal: (m, ts) => deletePortal(m, infra.query, ts),
     purgeFiles: m => purgePortalFiles(m)
   }
@@ -169,6 +187,22 @@ export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
  *
  * Best-effort throughout — a chat hiccup must not turn a recorded failure into an unrecorded one.
  */
+/**
+ * Bot id for a portal (#316) — pure resolution lives in `chatBot.resolveBotId`; here it is only
+ * bound to the live token store. The cache is module-level ON PURPOSE: it must outlive a single job
+ * so a batch of documents from one portal does not re-ask the portal about its bot per document.
+ */
+const botIdCache = createBotIdCache()
+
+export function resolvePortalBotId(memberId: string, infra: LiveInfra, call: () => Promise<RestCall>): Promise<number> {
+  return resolveBotId(memberId, {
+    getBotId: m => getBotId(m, infra.query),
+    saveBotId: (m, id) => saveBotId(m, id, infra.query),
+    call,
+    log: console.warn
+  }, botIdCache)
+}
+
 export async function notifyImportFailure(
   infra: LiveInfra,
   memberId: string,
@@ -191,6 +225,9 @@ export async function notifyImportFailure(
     // document. Repetition is the signal — ten identical messages mean a systemic break, and a
     // throttle that hid nine of them would hide exactly that. Duplicates for the SAME job are still
     // impossible (claimJobFailNotify above); what repeats is distinct documents.
+    // Signed by the app, not by the employee (#316). Resolved once per notification; 0 = no bot
+    // on this portal, and the send falls back to im.message.add.
+    const notifyBotId = await resolvePortalBotId(memberId, infra, async () => t.call)
     const planned = planFailureNotify({
       claimed: true,
       uploaderId,
@@ -203,7 +240,7 @@ export async function notifyImportFailure(
     })
     for (const m of planned) {
       try {
-        await sendChatMessage(m.dialogId, m.message, t.call)
+        await sendChatMessage(m.dialogId, m.message, t.call, notifyBotId, console.warn)
       } catch (e) {
         // A bare user id can be REFUSED: im.message.add rejects a self-dialog («Вы не можете
         // отправлять сообщения указанному получателю»), and the app's OAuth token sends AS the
@@ -309,6 +346,16 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     const t = await rest(memberId)
     if (!t) throw new Error('портал не авторизован (нет токена)')
     return t
+  }
+  // #316: id of the portal's chat bot so notices are signed by the app, not by the employee whose
+  // token we hold. Resolved lazily and at most once per job; a portal that cannot have a bot
+  // (free plan, bot limit, installed before the `imbot` scope) answers 0 and keeps the old path.
+  let botIdMemo: number | null = null
+  const botId = async (): Promise<number> => {
+    if (botIdMemo !== null) return botIdMemo
+    // Reuse the job's transport instead of resolving a second one — same portal, same client.
+    botIdMemo = await resolvePortalBotId(memberId, infra, async () => (await need()).call)
+    return botIdMemo
   }
   // Auto-create measure state (Q11): the portal's existing measures indexed once per job — codes
   // (seed the allocator) + title/symbol → code (FIND-before-create, so a unit already in the catalog
@@ -428,7 +475,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         try {
           const t = await rest(memberId)
           if (t && await claimJobErrorChat(memberId, jobId, jobRedis)) {
-            await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call)
+            await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call, await botId(), console.warn)
           }
         } catch { /* swallow — dashboard counter already bumped */ }
       }
@@ -439,7 +486,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // Portal host → an absolute clickable BB-link «Открыть в CRM» in the chat message
       // (a bare path is not a link). Best-effort: no token row ⇒ relative fallback.
       const domain = (await getToken(memberId, infra.query))?.domain
-      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call)
+      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call, await botId(), console.warn)
     },
     // Configurable timeline activity (crm.activity.configurable.add, OAuth app context — verified live).
     // OWNER MODEL (owner ask, live-verified): a дело has ONE owner (ownerTypeId/ownerId — where it

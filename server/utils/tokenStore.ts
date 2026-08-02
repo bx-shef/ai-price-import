@@ -124,6 +124,25 @@ export async function getToken(memberId: string, query: QueryFn): Promise<Portal
   return rows[0] ? mapRow(rows[0]) : null
 }
 
+/**
+ * Chat-bot id of the portal (#316). 0/absent = no bot — the caller falls back to `im.message.add`.
+ *
+ * Kept next to the token rather than in `app.option`: it is server-side plumbing, the worker needs
+ * it on every notification, and it must disappear together with the portal on uninstall (it does —
+ * the row goes with `deletePortal`).
+ */
+export async function getBotId(memberId: string, query: QueryFn): Promise<number> {
+  const { rows } = await query('SELECT bot_id FROM portal_tokens WHERE member_id = $1', [memberId])
+  const id = Number(rows[0]?.bot_id ?? 0)
+  return Number.isFinite(id) && id > 0 ? id : 0
+}
+
+/** Persist the registered bot id. UPDATE-only — a purged portal must not be resurrected by it. */
+export async function saveBotId(memberId: string, botId: number, query: QueryFn): Promise<void> {
+  if (!(botId > 0)) return
+  await query('UPDATE portal_tokens SET bot_id = $2 WHERE member_id = $1', [memberId, botId])
+}
+
 /** Resolve the portal member_id from its domain. Null when not installed. `domain`
  * is not unique-constrained (a stale reinstall row could duplicate it), so ORDER BY
  * member_id makes the auth pivot deterministic rather than arbitrary. */

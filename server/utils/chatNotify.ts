@@ -1,4 +1,5 @@
 import type { RestCall } from './b24Rest'
+import { buildBotSend, errorCode, messageIdFromBotSend } from './chatBot'
 
 // Chat notifications for crm-sync (im.message.add — scope `im`, live-verified).
 // Success → mapping.notifyChatId, hard errors → mapping.errorChatId.
@@ -103,10 +104,46 @@ export function buildErrorMessage(supplierName: string | undefined, messages: st
   return lines.join('\n')
 }
 
-/** Send one chat message via im.message.add. URL_PREVIEW off (avoid rich-link noise). */
-export async function sendChatMessage(dialogId: string, message: string, call: RestCall): Promise<number | null> {
+/**
+ * Send one chat message. URL_PREVIEW off (avoid rich-link noise).
+ *
+ * With a `botId` the message goes AS THE APP (#316, `imbot.v2.Chat.Message.send`). Without one — or
+ * when the bot call is refused — it falls back to `im.message.add`, which writes as the owner of
+ * the token. That fallback is deliberate and must stay: a portal on a free plan, at its bot limit,
+ * or installed before the `imbot` scope existed has no bot, and for those the choice is «wrong
+ * author» versus «no message at all». The failure notice is the only channel that reaches the
+ * employee who uploaded the document (#288), so silence is the worse half of that trade.
+ */
+export async function sendChatMessage(
+  dialogId: string,
+  message: string,
+  call: RestCall,
+  botId?: number | null,
+  log?: (msg: string) => void
+): Promise<number | null> {
   const text = message.trim()
   if (!dialogId || !text) return null
+  const bot = botId && botId > 0 ? buildBotSend(botId, dialogId, text) : null
+  if (bot) {
+    let answered = false
+    try {
+      const res = await call(bot.method, bot.params)
+      answered = true
+      const id = messageIdFromBotSend(res)
+      if (id) return id
+    } catch (e) {
+      // Code only: the rejected call carries the message text, and a REST error can echo it.
+      log?.(`[chat-bot] send refused: ${errorCode(e)}`)
+    }
+    // ⚠ Fall back ONLY when the call THREW. A call that answered with a shape we do not recognise
+    // most likely DELIVERED the message — resending it through im.message.add would post the same
+    // notice twice, in the very chat this feature exists to keep readable. An unknown envelope is
+    // reported as «sent, id unknown» (null), which no caller treats as an error.
+    if (answered) {
+      log?.('[chat-bot] sent, but the response carried no message id')
+      return null
+    }
+  }
   const res = await call('im.message.add', { DIALOG_ID: dialogId, MESSAGE: text, URL_PREVIEW: 'N' })
   const id = Number(res)
   return Number.isFinite(id) && id > 0 ? id : null
