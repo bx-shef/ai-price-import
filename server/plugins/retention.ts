@@ -9,7 +9,7 @@ import { sweepOldUploads, UPLOAD_ORPHAN_MAX_AGE_MS } from '../utils/nodeFileIO'
 // them the moment the text is out, so anything still on disk belongs to a job that never reached
 // extraction (crash, Redis loss, queue drop). #200 had briefly made this the only deletion path and
 // kept files for the job's whole TTL so a 👎 could attach them — the owner is not willing to hold
-// клиентские документы that long, and the feedback widget now sends bytes from page memory instead.
+// client documents that long, and the feedback widget now sends bytes from page memory instead.
 // The window stays `UPLOAD_ORPHAN_MAX_AGE_MS` — short, because a live job needs its file for minutes,
 // not hours.
 // No-op without a DB / during prerender.

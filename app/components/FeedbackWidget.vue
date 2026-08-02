@@ -4,6 +4,10 @@ import LikeIcon from '@bitrix24/b24icons-vue/outline/LikeIcon'
 import DislikeIcon from '@bitrix24/b24icons-vue/outline/DislikeIcon'
 import { useFeedback } from '~/composables/useFeedback'
 import { UPLOAD_ACCEPT } from '~/utils/importUpload'
+// Кап вложения — ОДНО число на клиент и сервер (#351 ревью): два независимых разъехались бы молча,
+// потому что превышение не ломает отправку — вложение просто исчезает, а отзыв уходит «успешно».
+// Импорт принимает 20 МБ, поэтому скан вполне может кап превысить, и сказать об этом надо заранее.
+import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
 
 // Compact «нравится / не нравится» widget under an import result row. Renders nothing unless the
 // channel is enabled on the server (probed via useFeedback). ОБЕ оценки ведут себя ОДИНАКОВО (#299):
@@ -40,19 +44,13 @@ const asking = ref(false)
 const sending = ref(false)
 const sent = ref(false)
 const error = ref('')
-/** Кап на вложение к отзыву — тот же, что проверяет сервер (`MAX_FEEDBACK_FILE_BYTES`). Импорт
- *  принимает файлы до 20 МБ, поэтому скан вполне может его превысить. Без этой проверки виджет
- *  обещал бы «Отправится «счёт.pdf»», сервер молча выбрасывал бы вложение (а на 19+ МБ запрос вообще
- *  не проходил бы кап тела — и терялась бы ВСЯ оценка, не только файл). Лучше сказать заранее. */
-const MAX_ATTACH_BYTES = 5 * 1024 * 1024
-
 /** Файл, выбранный вручную, когда страница своей копии уже не держит. */
 const manualFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 /** Файл-кандидат: копия страницы либо выбранная вручную. Может оказаться слишком большим. */
 const candidateFile = computed<File | null>(() => manualFile.value ?? props.file ?? null)
 /** Слишком большой файл — не «нет файла»: об этом надо сказать, а не молча отправить без него. */
-const tooBig = computed(() => !!candidateFile.value && candidateFile.value.size > MAX_ATTACH_BYTES)
+const tooBig = computed(() => !!candidateFile.value && candidateFile.value.size > MAX_FEEDBACK_FILE_BYTES)
 /** Что реально уйдёт с отзывом. */
 const fileToSend = computed<File | null>(() => (tooBig.value ? null : candidateFile.value))
 
@@ -192,7 +190,7 @@ async function send(withFile: boolean): Promise<void> {
             </template>
             <template v-else-if="tooBig">
               Файл «{{ candidateFile?.name }}» слишком большой, чтобы приложить его к отзыву
-              (больше {{ Math.round(MAX_ATTACH_BYTES / 1024 / 1024) }} МБ). Отправьте отзыв без файла —
+              (больше {{ Math.round(MAX_FEEDBACK_FILE_BYTES / 1024 / 1024) }} МБ). Отправьте отзыв без файла —
               напишите в комментарии, что было в документе, и мы попросим его отдельно.
             </template>
             <template v-else>

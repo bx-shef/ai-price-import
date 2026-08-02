@@ -5,7 +5,7 @@
 // RETENTION (#349 — the #200 retention was REVERTED). The raw file is deleted the moment its text is
 // extracted, so it lives on our disk for seconds. #200 had kept it for the job's whole TTL to give
 // «документ не распознан» something to attach to a 👎 (that case writes neither a CRM entity nor a
-// Disk archive) — the owner is not willing to hold клиентские документы that long, and the feedback
+// Disk archive) — the owner is not willing to hold client documents that long, and the feedback
 // widget now sends the copy the PAGE still holds instead. `sweepOldUploads` is back to being an
 // orphan backstop for jobs that never reached extraction; uninstall purges a portal at once.
 //
