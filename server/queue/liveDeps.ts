@@ -7,7 +7,7 @@ import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAl
 import { deletePortal, getBotId, getToken, saveBotId, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
-import { createBotIdCache, resolveBotId } from '../utils/chatBot'
+import { buildBotUnregister, createBotIdCache, errorCode, pushBotProfile, resolveBotId } from '../utils/chatBot'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
@@ -162,15 +162,23 @@ export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
       // limit) must still install — the send path falls back on its own.
       if (saved) {
         const memberId = eventJobToSaveInput(job).memberId
-        await resolvePortalBotId(memberId, infra, async () => {
+        const call = async () => {
           const t = await restResolver(infra)(memberId)
           if (!t) throw new Error('нет транспорта портала')
           return t.call
-        }).catch(() => 0)
+        }
+        const botId = await resolvePortalBotId(memberId, infra, call).catch(() => 0)
+        // Registration is idempotent AND overwrites nothing, so a REINSTALL onto an existing bot
+        // would keep whatever name it was first given. Push the profile explicitly (#360).
+        if (botId) await pushBotProfile(botId, call).catch(() => {})
       }
       return saved
     },
-    deletePortal: (m, ts) => deletePortal(m, infra.query, ts),
+    deletePortal: async (m, ts) => {
+      // Bot first: after the row is gone there is no token left to remove it with (#360).
+      await unregisterPortalBot(m, infra)
+      await deletePortal(m, infra.query, ts)
+    },
     purgeFiles: m => purgePortalFiles(m)
   }
 }
@@ -199,8 +207,30 @@ export function resolvePortalBotId(memberId: string, infra: LiveInfra, call: () 
     getBotId: m => getBotId(m, infra.query),
     saveBotId: (m, id) => saveBotId(m, id, infra.query),
     call,
-    log: console.warn
+    log: console.warn,
+    // Count the refusal (#360). Without it a portal that cannot have a bot degrades in complete
+    // silence — the send falls back, the employee still gets the message, and nobody learns that
+    // this portal signs its notices with a person's name.
+    onRefused: m => bumpCounter(m, METRICS.botRefused, 1, infra.query).catch(() => {})
   }, botIdCache)
+}
+
+/**
+ * Remove the portal's bot BEFORE its row is deleted (#360) — afterwards there is no token to speak
+ * with, and the bot would outlive the app that created it. Best-effort: uninstall must complete
+ * even if the portal refuses, and a bot we cannot remove is a leftover, not a failure.
+ */
+export async function unregisterPortalBot(memberId: string, infra: LiveInfra): Promise<void> {
+  try {
+    const botId = await getBotId(memberId, infra.query)
+    const req = buildBotUnregister(botId)
+    if (!req) return
+    const t = await restResolver(infra)(memberId)
+    if (!t) return
+    await t.call(req.method, req.params)
+  } catch (e) {
+    console.warn(`[chat-bot] unregister skipped: ${errorCode(e)}`)
+  }
 }
 
 export async function notifyImportFailure(

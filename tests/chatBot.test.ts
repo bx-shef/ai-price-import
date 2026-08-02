@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BOT_CODE, NO_BOT_CACHE_MAX, NO_BOT_TTL_MS, botIdFromRegister, buildBotRegister, buildBotSend, createBotIdCache, messageIdFromBotSend, registerBot, resolveBotId, type BotIdDeps } from '../server/utils/chatBot'
+import { BOT_CODE, BOT_PROPERTIES, NO_BOT_CACHE_MAX, NO_BOT_TTL_MS, botIdFromRegister, buildBotProfileUpdate, buildBotRegister, buildBotSend, buildBotUnregister, createBotIdCache, errorCode, pushBotProfile, messageIdFromBotSend, registerBot, resolveBotId, type BotIdDeps } from '../server/utils/chatBot'
 import { sendChatMessage } from '../server/utils/chatNotify'
 import { getBotId, saveBotId } from '../server/utils/tokenStore'
 import { B24_REQUIRED_SCOPES } from '../app/config/b24'
@@ -224,5 +224,50 @@ describe('хранение id бота в портале', () => {
     const query = vi.fn()
     await saveBotId('m1', 0, query)
     expect(query).not.toHaveBeenCalled()
+  })
+})
+
+describe('удаление бота и обновление профиля (#360)', () => {
+  it('удаление зовёт актуальный метод, без бота вызова нет', () => {
+    expect(buildBotUnregister(456)).toEqual({ method: 'imbot.v2.Bot.unregister', params: { botId: 456 } })
+    expect(buildBotUnregister(0)).toBeNull()
+  })
+
+  it('профиль обновляется отдельным вызовом — регистрация ничего не перезаписывает', async () => {
+    // Иначе бот, заведённый однажды, навсегда останется с первым именем: `Bot.register`
+    // идемпотентен по коду и данные НЕ обновляет.
+    const req = buildBotProfileUpdate(456)!
+    expect(req.method).toBe('imbot.v2.Bot.update')
+    expect((req.params.fields as { properties: { name: string } }).properties.name).toBe(BOT_PROPERTIES.name)
+    const call = vi.fn().mockResolvedValue({})
+    await pushBotProfile(456, async () => call)
+    expect(call).toHaveBeenCalledWith('imbot.v2.Bot.update', expect.anything())
+  })
+
+  it('отказ на обновлении профиля не бросается наружу — это косметика', async () => {
+    const call = vi.fn().mockRejectedValue(new Error('ACCESS_DENIED'))
+    await expect(pushBotProfile(456, async () => call)).resolves.toBeUndefined()
+  })
+
+  it('отказ регистрации считается — иначе деградация полностью немая', async () => {
+    const refused: string[] = []
+    const rest = async () => {
+      throw new Error('ACCESS_DENIED')
+    }
+    const d: BotIdDeps = {
+      getBotId: async () => 0,
+      saveBotId: async () => {},
+      call: async () => rest,
+      onRefused: m => refused.push(m)
+    }
+    await resolveBotId('m1', d, createBotIdCache())
+    expect(refused).toEqual(['m1'])
+  })
+
+  it('код ошибки достаётся из текста, а сам текст в лог не идёт', () => {
+    // REST-ответ может процитировать параметры вызова, а они несут текст документа клиента.
+    expect(errorCode(new Error('ACCESS_DENIED: REST API is available only on commercial plans'))).toBe('ACCESS_DENIED')
+    expect(errorCode(new Error('счёт №123 от ООО «Ромашка»'))).toBe('unknown')
+    expect(errorCode(null)).toBe('unknown')
   })
 })

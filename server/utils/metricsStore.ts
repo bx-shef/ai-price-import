@@ -13,7 +13,12 @@ export const METRICS = {
   skipped: 'skipped', // idempotent whole-document redeliveries (a duplicate job, nothing re-created)
   errors: 'errors', // documents that hit a hard error
   feedbackUp: 'feedback_up', // employee feedback: 👍 sent on a result (#192 п.4)
-  feedbackDown: 'feedback_down' // employee feedback: 👎 sent on a result (#192 п.4)
+  feedbackDown: 'feedback_down', // employee feedback: 👎 sent on a result (#192 п.4)
+  // #360: the portal refused to register the chat bot, so its notices are signed by an employee
+  // instead of the app (#316). Counted because the refusal is otherwise invisible: the send falls
+  // back silently, and «half our portals sign messages with a person's name» would only ever show
+  // up in a worker log nobody reads. ACCESS_DENIED on free plans is the expected mass case.
+  botRefused: 'bot_refused'
 } as const
 
 export type MetricName = typeof METRICS[keyof typeof METRICS]
