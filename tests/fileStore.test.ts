@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { UPLOAD_ORPHAN_MAX_AGE_MS } from '../server/utils/nodeFileIO'
 import { describe, expect, it, vi } from 'vitest'
 import { deleteUpload, safeSeg, saveUpload, uploadPath } from '../server/utils/fileStore'
 
@@ -37,28 +38,39 @@ describe('saveUpload / deleteUpload', () => {
   })
 })
 
-describe('удержание исходника под отзыв (#200)', () => {
-  // Раньше воркер удалял байты сразу после извлечения текста. Именно тот случай, ради которого
-  // отзыв и существует — «документ не распознан», — не создаёт ни сущности в CRM, ни архивной копии
-  // на Диске, так что прикладывать к 👎 было нечего. Проверяем сам факт: путь удаления из воркера
-  // убран, а окно хранения привязано к сроку жизни задания, а не задано отдельным числом.
+describe('исходник НЕ хранится на сервере (#349, откат #200)', () => {
+  // #200 держал загруженные байты весь срок жизни задания, чтобы 👎 на «документ не распознан» было
+  // что приложить. Владелец не готов держать документы клиента сутки, поэтому удаление вернулось
+  // сразу после извлечения текста, а файл к отзыву прикладывает САМА СТРАНИЦА из своей памяти.
+  // Проверяем оба конца: сервер удаляет, и никто не вернул хранение «на всякий случай».
   const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
 
-  it('воркер НЕ удаляет загруженные байты после извлечения', () => {
+  it('воркер удаляет загруженные байты сразу после извлечения', () => {
     const worker = read('../server/queue/worker.ts')
-    expect(worker).not.toContain('cleanupUpload')
-    expect(worker).not.toMatch(/unlink\(\s*uploadPath/)
+    expect(worker).toContain('cleanupUpload')
+    expect(worker).toMatch(/unlink\(\s*uploadPath/)
   })
 
-  it('подметание идёт по сроку жизни задания — одна ручка, не две', () => {
-    // Два независимых числа разъехались бы: файл пережил бы задание (лишнее хранение) или исчез
-    // раньше (отзыв без файла ровно тогда, когда он нужен).
+  it('свип — подстраховка от сирот, а не срок хранения: окно НЕ привязано к жизни задания', () => {
+    // Привязка к JOB_TTL_MS означала бы «держим файл, пока задание можно оценить», то есть ровно то
+    // хранение, от которого отказались. Сироты — это файлы заданий, не дошедших до извлечения.
     const retention = read('../server/plugins/retention.ts')
-    expect(retention).toContain('sweepOldUploads(JOB_TTL_MS)')
+    expect(retention).toContain('UPLOAD_ORPHAN_MAX_AGE_MS')
+    expect(retention).not.toContain('JOB_TTL_MS')
+  })
+
+  it('окно сирот измеряется часами, а не сутками', () => {
+    expect(UPLOAD_ORPHAN_MAX_AGE_MS).toBeLessThanOrEqual(12 * 60 * 60 * 1000)
+    expect(UPLOAD_ORPHAN_MAX_AGE_MS).toBeGreaterThan(0)
   })
 
   it('удаление портала по-прежнему сносит файлы сразу', () => {
-    // Удержание — про срок, а не про «оставить навсегда»: деинсталляция чистит немедленно.
     expect(read('../server/utils/nodeFileIO.ts')).toContain('purgePortalFiles')
+  })
+
+  it('роут отзыва больше не читает файл с диска — байты приходят от страницы', () => {
+    const route = read('../server/api/feedback.post.ts')
+    expect(route).not.toContain('readUploadBase64')
+    expect(route).toContain('parseClientFile')
   })
 })

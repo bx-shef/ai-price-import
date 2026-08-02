@@ -27,7 +27,7 @@ definePageMeta({ layout: 'clear' })
 // a blocked page is never fetched, so its noindex is never read (see server/utils/seoFiles.ts).
 useHead({ title: 'AI-импорт прайсов', meta: [{ name: 'robots', content: 'noindex' }] })
 
-const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob } = useImport()
+const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob, rememberFile, fileFor } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
 function doClearList(): void {
@@ -55,7 +55,10 @@ const screen = computed(() => appScreenState({ launch: launch.value, settingsRes
 // global middleware routes that slider frame to /settings. We do NOT use `slider.openPath` — that opens
 // a PORTAL-relative path (it resolved to `<portal>/settings` → 404). Fallback to in-frame navigation
 // when not framed (standalone) or if the SDK call fails, so settings always opens.
-const { init: initB24, placementPlace, isSliderMode, openAppSlider } = useB24()
+const { init: initB24, placementPlace, isSliderMode, openAppSlider, auth: b24Auth } = useB24()
+// Portal domain scopes the remembered import target (#349) — the only identity the frame gives the
+// client (`member_id` stays server-side). Empty until init resolves; the memory key falls back then.
+const portalDomain = ref('')
 // Как открыто приложение (#262). `undefined` — ещё не знаем: до ответа рисуем скелетон, иначе
 // базовый фрейм успел бы поднять рабочий экран со всем его опросом.
 const launch = ref<AppLaunchMode | undefined>()
@@ -128,6 +131,7 @@ function lastMainSliderAt(): number | null {
 
 onMounted(async () => {
   const frame = await initB24()
+  portalDomain.value = b24Auth()?.domain ?? '' // scopes the remembered import target (#349)
   launch.value = appLaunchMode({
     inFrame: !!frame,
     place: placementPlace(),
@@ -309,6 +313,8 @@ watch(jobs, (list) => {
             :job-done="jobDone"
             :refresh-now="refreshNow"
             :list-error="listError"
+            :remember-file="rememberFile"
+            :portal-domain="portalDomain"
             @update:busy="v => stagingBusy = v"
           />
 
@@ -405,6 +411,7 @@ watch(jobs, (list) => {
                 v-for="job in jobs"
                 :key="job.jobId"
                 :job="job"
+                :file="fileFor(job.jobId)"
                 @remove="removeJob"
               />
               <!-- Сервер ответил, но не по всем заданиям (#260): не ошибка — предупреждение, поэтому

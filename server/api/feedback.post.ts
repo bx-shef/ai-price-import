@@ -9,7 +9,6 @@ import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
 import { getDiskFileId, getJob } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
-import { readUploadBase64 } from '../utils/nodeFileIO'
 import { resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
 import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { downloadDiskFile, type BinaryFetchFn } from '../utils/diskDownload'
@@ -18,6 +17,25 @@ import type { FetchFn } from '../utils/b24Rest'
 
 /** jobId shape accepted for the DB lookup (matches the builder's context validation). */
 const JOB_ID_RE = /^[A-Za-z0-9-]{1,64}$/
+
+/** Cap on a client-sent feedback file. Same 5 MB the Disk fallback uses — a feedback attachment is
+ *  for reproducing a run, not for archiving; larger documents go without one (the widget says so). */
+const MAX_FEEDBACK_FILE_BYTES = 5 * 1024 * 1024
+
+/**
+ * Validate the file the PAGE sent along with a rating (#349). Untrusted input on an authenticated
+ * route: accept only a base64 string of sane size, and let `feedbackFilePath` sanitise the name (it
+ * already strips directories and non-allowlisted chars, so no path traversal into the repo).
+ * Anything odd → null, i.e. the feedback is filed without a file rather than refused.
+ */
+function parseClientFile(raw: unknown): { name: string, base64: string } | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { name, base64 } = raw as { name?: unknown, base64?: unknown }
+  if (typeof base64 !== 'string' || !base64) return null
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return null // not base64 → refuse rather than store junk
+  if (Math.ceil((base64.length * 3) / 4) > MAX_FEEDBACK_FILE_BYTES) return null
+  return { name: typeof name === 'string' && name ? name : '', base64 }
+}
 
 // POST /api/feedback — employee 👍/👎 + comment on the import result → a GitHub issue in the
 // configured PRIVATE receiving repo (#182 channel «сотрудник»). Frame-token authenticated (the
@@ -50,7 +68,7 @@ export default defineEventHandler(async (event) => {
       }
 
       const raw = await readBody(event).catch(() => null) as
-        { kind?: unknown, comment?: unknown, attachFile?: unknown, context?: Record<string, unknown> } | null
+        { kind?: unknown, comment?: unknown, attachFile?: unknown, file?: unknown, context?: Record<string, unknown> } | null
       const kind = normalizeKind(raw?.kind)
       if (!kind) {
         span.outcome = 'bad_request'
@@ -66,6 +84,11 @@ export default defineEventHandler(async (event) => {
       // a missing/expired job simply yields no extra context. jobId is client-supplied → validate first.
       const jobId = typeof c.jobId === 'string' && JOB_ID_RE.test(c.jobId) ? c.jobId : ''
       const attachFile = raw?.attachFile === true
+      // The bytes now come FROM THE PAGE (#349): the extract worker deletes the upload as soon as the
+      // text is out, so there is nothing on our disk to read back — and «документ не распознан» has no
+      // Disk archive either. The browser still holds the File it sent, so it sends it again, once, and
+      // only when the employee explicitly answered «с файлом».
+      const clientFile = parseClientFile(raw?.file)
       const fetchImpl = globalThis.fetch as unknown as FetchFn
       // Duplicate suppression lives in the widget's page state (no persisted client store any more —
       // localStorage dropped, owner rework): it won't offer feedback twice
@@ -95,15 +118,15 @@ export default defineEventHandler(async (event) => {
               // being flipped to public later, and real invoices become public. Cached, three-state —
               // "could not verify" blocks the upload just like "public" does, but is retried sooner.
               if (await feedbackUploadAllowed(config, fetchImpl)) {
-                // OUR retained copy first (#200). The Disk archive only exists when the portal turned
-                // `saveFile` on, and it is written only once a document got that far — so the case
-                // feedback matters most for, «документ не распознан», had no file at all. The upload
-                // bytes are kept for the job's lifetime precisely to close that hole.
-                let name = typeof c.fileName === 'string' && c.fileName ? c.fileName : `${jobId}.bin`
-                let base64 = await readUploadBase64(member.memberId, jobId)
+                // The page's own copy first (#349). Falling back to the portal Disk archive still
+                // helps when the page no longer holds the file (reload, another tab) AND the portal
+                // has `saveFile` on — but that archive does not exist for «документ не распознан»,
+                // which is exactly why the page sends its bytes.
+                let name = clientFile?.name || (typeof c.fileName === 'string' && c.fileName ? c.fileName : `${jobId}.bin`)
+                let base64 = clientFile?.base64
                 if (!base64) {
-                  // Swept already (job older than its TTL) → fall back to the Disk archive if the
-                  // portal keeps one. Carries the real stored name, so prefer it when present.
+                  // The page didn't send bytes (reload / другая вкладка) → fall back to the Disk
+                  // archive if the portal keeps one. Carries the real stored name, so prefer it.
                   const diskId = await getDiskFileId(member.memberId, jobId, jobRedis)
                   if (diskId) {
                     const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)

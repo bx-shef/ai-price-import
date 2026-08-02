@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import AttachIcon from '@bitrix24/b24icons-vue/outline/AttachIcon'
 import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_GENERIC_ERROR, formatBytes, validateUploadFile, type UploadOutcome } from '~/utils/importUpload'
 import { FORMATS_HUMAN } from '~/config/uploadFormats'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
+import { readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
 
 // Batch import staging (owner rework, round 2): pick files, choose ONE target for the whole batch,
 // press «Импортировать». The button LOCKS the page (via update:busy), uploads the files, then WAITS
@@ -38,6 +39,10 @@ interface StagedFile {
 
 const props = defineProps<{
   upload: (file: File, target?: TargetRef | null, jobId?: string) => Promise<UploadOutcome>
+  /** Park the picked File in page memory so a later 👍/👎 can attach it (#349). */
+  rememberFile?: (jobId: string, file: File) => void
+  /** Portal domain — the remembered target is scoped to it (#349). */
+  portalDomain?: string
   /** Terminal status of a job accepted by the server, or null while it is still being processed. */
   jobDone: (jobId: string) => JobStatus | null
   /** Restart the parent's status polling (it self-stops after MAX_POLL_FAILURES). The wait phase
@@ -58,7 +63,26 @@ watch(importing, v => emit('update:busy', v)) // notify the parent to lock/unloc
 const notice = ref('')
 // ONE target for the whole batch (owner ask — per-file pickers dropped): chosen while staging,
 // frozen for the duration of the run.
+//
+// Remembered for the TAB (#349, sessionStorage — see app/utils/targetMemory.ts): a person importing
+// invoices all day sends them to the same place, and re-picking сущность → направление → стадию on
+// every batch was pure friction. Only identifiers are stored, keyed by portal+employee, and the
+// memory dies with the tab — a shared office computer keeps nothing for the next person.
 const target = ref<TargetRef | null>(null)
+const memoryKey = computed(() => targetMemoryKey(props.portalDomain))
+
+onMounted(() => {
+  if (typeof window === 'undefined') return
+  // TargetPicker re-reads the live cascade and clears anything that no longer exists, so a deleted
+  // or renamed направление cannot resurrect here — the restored value is a suggestion, not truth.
+  const restored = readTarget(window.sessionStorage, memoryKey.value)
+  if (restored) target.value = restored
+})
+
+watch(target, (t) => {
+  if (typeof window === 'undefined') return
+  writeTarget(window.sessionStorage, memoryKey.value, t)
+}, { deep: true })
 // Set by «Отменить»; checked between uploads and inside the wait loop.
 const cancelled = ref(false)
 
@@ -196,6 +220,12 @@ async function startImport(): Promise<void> {
         s.status = 'sent'
         sent.push(s)
         sentTotal++
+        // HAND-OVER (owner ask, #349): the file now lives in the results list below — «в очереди»,
+        // then «разбирается», then the outcome. Keeping the row here too showed the same document
+        // twice in two different states, and the reader had to work out which one was current.
+        // The row leaves at the moment of hand-over, not when the job finishes.
+        props.rememberFile?.(s.key, s.file) // bytes stay in PAGE memory for a later 👍/👎 (#349)
+        staged.value = staged.value.filter(x => x !== s)
       } else {
         s.status = 'error'
         s.error = outcome.message || UPLOAD_GENERIC_ERROR
@@ -206,31 +236,27 @@ async function startImport(): Promise<void> {
       }
     }
 
-    // PHASE 2 — wait until every accepted job reaches a terminal state. Results appear in «Последние
-    // операции» below as each job finishes (the parent's poll updates them); a finished row leaves
-    // the staged list at that moment, so the two lists never show the same file twice.
+    // PHASE 2 — wait until every accepted job reaches a terminal state. The rows are already OUT of
+    // this list (handed over in phase 1), so the wait is tracked on its own set of keys — reading it
+    // off `staged` would end the wait instantly now.
+    const awaiting = new Set(sent.map(s => s.key))
     let ticks = 0
     while (!cancelled.value) {
-      let running = 0
-      for (const s of sent) {
-        if (!staged.value.includes(s)) continue // already moved down on a previous pass
-        const done = props.jobDone(s.key)
-        if (done) {
-          if (done === 'error') failed++
-          else doneOk++
-          staged.value = staged.value.filter(x => x !== s)
-        } else {
-          running++
-        }
+      for (const key of [...awaiting]) {
+        const done = props.jobDone(key)
+        if (!done) continue
+        if (done === 'error') failed++
+        else doneOk++
+        awaiting.delete(key)
       }
-      const waitingFor = sent.filter(s => staged.value.includes(s)).length
+      const waitingFor = awaiting.size
       if (!waitingFor) break
       // «не закрывайте страницу» тут НЕ повторяем — эта фраза живёт только в баннере, иначе тесты
       // удовлетворялись бы дублем, а читатель слышал бы её от скринридера на каждый тик. Текст
       // меняем только при смене числа: role=status зачитывается на каждое обновление.
       const line = props.listError
         ? `Связь с порталом потеряна — пробуем восстановить… (${props.listError})`
-        : `Обрабатываем: осталось ${running} из ${sentTotal}. Результаты появляются ниже.`
+        : `Обрабатываем: осталось ${waitingFor} из ${sentTotal}. Результаты появляются ниже.`
       if (notice.value !== line) notice.value = line
       // The parent's poll self-stops after a streak of failures; the wait phase would then hang in
       // silence. While the run is active we own the retry: every ~5 s poke refreshNow(), which
@@ -241,15 +267,18 @@ async function startImport(): Promise<void> {
     }
 
     if (cancelled.value) {
-      const inFlight = sent.filter(s => staged.value.includes(s)).length
+      // Rows leave this list on hand-over now (#349), so «still in flight» is read off the wait set,
+      // not off `staged` — the old check counted nothing and the honest warning went silent exactly
+      // when it mattered: a cancel cannot recall a job the server already accepted.
+      const inFlight = awaiting.size
       // Honesty over comfort: the server HAS the sent files and will finish them — a cancel cannot
       // recall a job already accepted. What it does stop: uploading the rest and holding the page.
       notice.value = inFlight
         ? `Импорт отменён. Уже отправленные (${inFlight} ${pluralRu(inFlight, ['файл', 'файла', 'файлов'])}) сервер дообработает — их результат появится ниже. Остальные остались в списке.`
         : 'Импорт отменён. Неотправленные файлы остались в списке.'
+      // Sent rows are already gone from the list; a row caught mid-upload goes back to «в очереди».
       for (const s of staged.value) {
-        if (s.status === 'sent') staged.value = staged.value.filter(x => x !== s) // follows below
-        else if (s.status === 'uploading') s.status = 'queued'
+        if (s.status === 'uploading') s.status = 'queued'
       }
     } else {
       notice.value = failed
@@ -341,9 +370,12 @@ function cancelImport(): void {
       role="status"
     />
 
-    <!-- Staged list: file rows + status. The target is ONE for the whole batch (below the list). -->
+    <!-- Staged list: file rows + status. The target is ONE for the whole batch (below the list).
+         Kept mounted WHILE THE RUN IS ON even when the list has emptied (#349): rows now leave on
+         hand-over, so the card would vanish mid-run and take «Отменить» with it — the employee would
+         be locked out of the page with no way to stop waiting. -->
     <B24Card
-      v-if="staged.length"
+      v-if="staged.length || importing"
       variant="outline"
       class="mt-3"
       :b24ui="{ body: 'p-0 sm:p-0' }"
@@ -393,8 +425,10 @@ function cancelImport(): void {
     </B24Card>
 
     <!-- ONE target for the whole batch (owner ask) + the action row. -->
+    <!-- Actions stay while the run is on even after the last row was handed over (#349) — otherwise
+         «Отменить» disappears mid-run and the locked page has no way out. -->
     <div
-      v-if="staged.length"
+      v-if="staged.length || importing"
       class="mt-3 flex flex-wrap items-center gap-3"
     >
       <div
@@ -422,7 +456,7 @@ function cancelImport(): void {
 
     <!-- Notice when there is NO staged list to host it (the list renders its own footer line). -->
     <B24Alert
-      v-if="notice && !staged.length"
+      v-if="notice && !staged.length && !importing"
       class="mt-3"
       :color="importing ? 'air-primary' : 'air-primary-success'"
       size="sm"

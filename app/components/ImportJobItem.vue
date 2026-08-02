@@ -11,7 +11,12 @@ import { useB24 } from '~/composables/useB24'
 // One row in «Последние операции»: shows the file, a per-STAGE progress stepper while the job runs
 // (Извлечение текста → Распознавание и запись → Готово, driven by the real backend status), and the
 // outcome («разбор») once terminal. Pure presentation over the injected job — no I/O.
-const props = defineProps<{ job: ImportJobView }>()
+const props = defineProps<{
+  job: ImportJobView
+  /** The File this page still holds for the job — the feedback widget attaches it itself (#349).
+   *  Undefined after a reload: the server keeps no copy, so the widget then asks to pick it. */
+  file?: File | null
+}>()
 // «Убрать из списка» — forgets just THIS row (page memory) in the parent; server keeps only ephemeral
 // status, so this is purely the employee tidying their own history. Emitted with the jobId.
 const emit = defineEmits<{ remove: [jobId: string] }>()
@@ -245,6 +250,7 @@ const stepDot: Record<string, string> = {
       v-if="meta.terminal && job.status !== 'expired'"
       :job-id="job.jobId"
       :file-name="job.fileName"
+      :file="file"
     />
   </li>
 </template>

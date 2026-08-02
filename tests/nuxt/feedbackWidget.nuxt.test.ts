@@ -77,16 +77,20 @@ describe('FeedbackWidget', () => {
     await w.find('textarea').setValue('всё верно')
     await sendWith(w, false)
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', 'всё верно', { jobId: 'job-7', fileName: 'счёт.xlsx' }, false)
+    expect(h.submit).toHaveBeenCalledWith('up', 'всё верно', { jobId: 'job-7', fileName: 'счёт.xlsx' }, false, null)
     expect(w.text()).toContain('Спасибо')
   })
 
   it('положительная оценка с ответом «с файлом» прикладывает файл', async () => {
-    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-8' } })
+    // Файл берётся ИЗ ПАМЯТИ СТРАНИЦЫ (#349) — сервер копию не хранит, поэтому без него кнопка
+    // «Отправить с файлом» недоступна (проверено отдельным тестом ниже).
+    const w = await mountSuspended(FeedbackWidget, {
+      props: { jobId: 'job-8', file: new File([new Uint8Array([1, 2, 3])], 'счёт.pdf') }
+    })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await sendWith(w, true)
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-8', fileName: undefined }, true)
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-8', fileName: undefined }, true, { name: 'счёт.pdf', base64: 'AQID' })
   })
 
   it('оценку можно передумать: 👍 → 👎 → «Отправить» уходит как отрицательная', async () => {
@@ -100,7 +104,7 @@ describe('FeedbackWidget', () => {
     await sendWith(w, false)
     await tick()
     // Текст не потерян при смене оценки.
-    expect(h.submit).toHaveBeenCalledWith('down', 'передумал', expect.any(Object), false)
+    expect(h.submit).toHaveBeenCalledWith('down', 'передумал', expect.any(Object), false, null)
   })
 
   it('👎 opens the comment box; the «Отправить» button sends with the comment', async () => {
@@ -111,16 +115,18 @@ describe('FeedbackWidget', () => {
     await sendWith(w, false)
     await tick()
     // Файл уходит только по явному ответу — «без файла» значит именно без файла.
-    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object), false)
+    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object), false, null)
     expect(w.text()).toContain('Спасибо')
   })
 
   it('👎 с ответом «с файлом» шлёт attachFile=true (#192 п.3)', async () => {
-    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-9' } })
+    const w = await mountSuspended(FeedbackWidget, {
+      props: { jobId: 'job-9', file: new File([new Uint8Array([4, 5])], 'накладная.pdf') }
+    })
     await w.find('button[aria-label="Плохо"]').trigger('click')
     await sendWith(w, true)
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('down', undefined, { jobId: 'job-9', fileName: undefined }, true)
+    expect(h.submit).toHaveBeenCalledWith('down', undefined, { jobId: 'job-9', fileName: undefined }, true, { name: 'накладная.pdf', base64: 'BAU=' })
     expect(w.text()).toContain('Спасибо')
   })
 
@@ -155,5 +161,33 @@ describe('FeedbackWidget', () => {
     await tick()
     expect(w.text()).toContain('Спасибо')
     expect(w.find('button[aria-label="Хорошо"]').exists()).toBe(false)
+  })
+
+  // #349: сервер больше НЕ хранит загруженный файл (владелец не готов держать документы клиента
+  // сутки). Единственная копия — в памяти страницы. Значит, кнопка «Отправить с файлом» не имеет
+  // права быть активной, когда копии нет: она бы молча отправила отзыв без того, ради чего его и
+  // отправляют. Вместо этого предлагается выбрать файл вручную.
+  it('без файла в памяти страницы «Отправить с файлом» недоступна и предлагается выбрать вручную', async () => {
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-nofile' } })
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(w.text()).toContain('выберите его вручную')
+    const withFile = w.findAll('button').find(b => b.text().includes('Отправить с файлом'))
+    expect(withFile?.attributes('disabled')).toBeDefined()
+    expect(h.submit).not.toHaveBeenCalled()
+  })
+
+  it('когда копия есть — говорим, что уйдёт именно она, и что на сервере файл не хранится', async () => {
+    const w = await mountSuspended(FeedbackWidget, {
+      props: { jobId: 'job-has', file: new File([new Uint8Array([9])], 'счёт-7.pdf') }
+    })
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(w.text()).toContain('счёт-7.pdf')
+    expect(w.text()).toContain('на сервере он не хранится')
   })
 })

@@ -46,7 +46,13 @@ export async function purgePortalFiles(memberId: string): Promise<void> {
  * job TTL; the caller passes it (default here only guards a caller that forgets).
  * Best-effort per file: one unreadable entry must not stop the sweep.
  */
-export async function sweepOldUploads(maxAgeMs = 48 * 60 * 60 * 1000, now = Date.now()): Promise<number> {
+/** How long an upload may sit on disk before the sweep treats it as an ORPHAN (#349). The extract
+ *  worker deletes bytes as soon as the text is out, so a file older than this belongs to a job that
+ *  never got extracted (crash / lost queue message). Hours, not days: a live job needs its file for
+ *  minutes, and holding a client's document longer is exactly what the owner declined. */
+export const UPLOAD_ORPHAN_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
+export async function sweepOldUploads(maxAgeMs = UPLOAD_ORPHAN_MAX_AGE_MS, now = Date.now()): Promise<number> {
   let removed = 0
   let members: string[]
   try {
