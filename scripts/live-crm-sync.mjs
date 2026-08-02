@@ -193,8 +193,12 @@ try {
     // the document's own price. Sums alone cannot catch a regression here: flipping the flag back
     // to 'Y' leaves every total identical and only changes the printed number, which is exactly
     // the complaint (#347: operator read 1,032 against a document printing 0,860).
-    if (!doc.priceIncludesVat) {
-      const off = rows
+    // Rows are matched to document items BY `sort` (the builder stamps (i+1)*10), not by the order
+    // the portal happened to return them in — and only when every line was written, since a
+    // skip-warn drop shifts the pairing and would compare unrelated rows.
+    if (!doc.priceIncludesVat && rows.length === doc.items.length) {
+      const ordered = [...rows].sort((a, b) => Number(a.sort) - Number(b.sort))
+      const off = ordered
         .map((r, i) => ({ i, want: Number(doc.items[i]?.price), got: Number(r.priceExclusive) }))
         .filter(x => Number.isFinite(x.want) && Math.abs(x.got - x.want) > 0.005)
       if (rows.every(r => r.taxIncluded === 'N') && !off.length) {

@@ -176,8 +176,9 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
 export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
   let sum = 0
   for (const r of rows) {
-    // `true` = «price already includes VAT» → lineGross returns round2(price × qty) as-is.
-    sum += lineGross(finite(Number(r.price)), finite(Number(r.quantity), 1), null, true)
+    const inclusive = r.taxIncluded === 'Y'
+    const rate = r.taxRate == null ? 0 : finite(Number(r.taxRate))
+    sum += lineGross(finite(Number(r.price)), finite(Number(r.quantity), 1), rate, inclusive)
   }
   return round2(sum)
 }
