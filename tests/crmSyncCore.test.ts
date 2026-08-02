@@ -676,6 +676,174 @@ describe('runCrmSync — products / units / routing', () => {
     expect(deps.setRows).not.toHaveBeenCalled()
   })
 
+  // #373. Живой прогон дал пять сделок с суммой 0, без строк и с зелёным «Готово»: каталог портала
+  // был пуст, а «Если товар не найден» стояло в «пропустить» — то есть пропускалось ВСЁ.
+  describe('#373: пропущены ВСЕ строки — отдельный исход, а не успех', () => {
+    const twoItems: ExtractedDocument = {
+      ...doc,
+      items: [
+        { name: 'Гвоздь', price: 100, quantity: 2, unit: 'шт', vatRate: 22 },
+        { name: 'Шуруп', price: 50, quantity: 1, unit: 'шт', vatRate: 22 }
+      ]
+    }
+
+    it('запись в CRM не создаётся вовсе', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps() // findProduct → null для обеих позиций
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      expect(r.created).toBe(false)
+      expect(r.entityId).toBe(0)
+      expect(r.rowCount).toBe(0)
+      expect(deps.createTarget).not.toHaveBeenCalled()
+      expect(deps.setRows).not.toHaveBeenCalled()
+    })
+
+    it('документ ИЗ ОДНОЙ строки — тот же исход', async () => {
+      // Замечание ревью: все остальные проверки блока идут на двух позициях, и мутация
+      // `doc.items.length > 0` → `> 1` их не роняла — то есть #373 оставался целиком живым для
+      // однострочных документов, а они в этом домене обычны.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps()
+      const r = await runCrmSync('j', doc, m, {}, deps)
+      expect(r.created).toBe(false)
+      expect(deps.createTarget).not.toHaveBeenCalled()
+      expect(r.errors.length).toBeGreaterThan(0)
+    })
+
+    it('текст несёт настоящее число позиций документа', async () => {
+      // Шов между чистой функцией и вызовом: `allLinesSkippedError(0)` или `rows.length` (всегда 0)
+      // прошли бы и тест функции, и regex на «Импорт остановлен» — а человек прочёл бы «ни одна из
+      // 0 позиций».
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const three: ExtractedDocument = { ...doc, items: [
+        { name: 'a', price: 1, quantity: 1, unit: 'шт', vatRate: null },
+        { name: 'b', price: 2, quantity: 1, unit: 'шт', vatRate: null },
+        { name: 'c', price: 3, quantity: 1, unit: 'шт', vatRate: null }
+      ] }
+      const r = await runCrmSync('j', three, m, {}, baseDeps())
+      expect(r.errors[0]).toContain('ни одна из 3 позиций')
+    })
+
+    it('текст говорит «запись не создана», а не «часть строк пропущена»', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
+      expect(r.errors.some(e => /запись в CRM не создана/i.test(e))).toBe(true)
+      // Прежний текст про «часть строк» тут — прямая неправда: пропущена не часть, а всё.
+      expect(r.errors.concat(r.warnings).some(t => /Часть строк пропущена/i.test(t))).toBe(false)
+    })
+
+    it('тип сущности в результате сохранён — по нему строится ссылка в интерфейсе', async () => {
+      const m = mapping() // defaultTarget entityTypeId 2
+      m.product.onMissing = 'skip-warn'
+      const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
+      expect(r.entityTypeId).toBe(2)
+    })
+
+    it('поставщик не найден — счётчик unmatched это по-прежнему видит', async () => {
+      // Обнулять его на самом провальном классе документов значит занижать счётчик ровно там, где
+      // он и заведён показывать проблему.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      expect(r.unmatched).toBe(true)
+    })
+
+    it('повтор задания, которое УЖЕ создало запись, не объявляется провалом', async () => {
+      // Первая попытка создала сущность со строками и умерла до записи статуса; к повтору каталог
+      // изменился и строки перестали подбираться. Гард ДО поиска маркера сказал бы «запись в CRM не
+      // создана» про живую сделку, перевёл бы завершённое задание в «Ошибка» и потерял бы защиту от
+      // дубля при повторной загрузке.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps({ findExisting: vi.fn(async () => 777) })
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      expect(r.errors).toEqual([])
+      expect(r.idempotent).toBe(true)
+      expect(r.entityId).toBe(777)
+      expect(deps.reportErrors).not.toHaveBeenCalled()
+    })
+
+    it('сообщение уходит в чат ошибок — молчать нельзя', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps()
+      await runCrmSync('j', twoItems, m, {}, deps)
+      expect(deps.reportErrors).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.stringMatching(/не найдена в каталоге, запись в CRM не создана/i)]),
+        'ООО Ромашка'
+      )
+    })
+
+    it('дело на таймлайне не пишется — сущности, к которой его привязать, нет', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const writeActivity = vi.fn(async () => {})
+      await runCrmSync('j', twoItems, m, {}, baseDeps({ writeActivity }))
+      expect(writeActivity).not.toHaveBeenCalled()
+    })
+
+    it('пропущена ЧАСТЬ строк — импорт по-прежнему проходит', async () => {
+      // Граница исхода: убери из гарда `rows.length === 0`, и этот случай тоже начнёт падать.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      expect(r.created).toBe(true)
+      expect(r.rowCount).toBe(1)
+      expect(r.errors).toEqual([])
+    })
+
+    it('в документе НЕТ позиций вовсе — это другой случай, ошибку не выдумываем', async () => {
+      // Граница с другой стороны: `doc.items.length > 0` в гарде. ⚠ Сегодня недостижимо —
+      // `validateExtractedDocument` отвергает документ без позиций ещё в извлечении. Гард и тест
+      // остаются страховкой: без них текст «ни одна из 0 позиций» и сам отказ появились бы у
+      // документа, который ничего не пропускал.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps()
+      const r = await runCrmSync('j', { ...doc, items: [] }, m, {}, deps)
+      expect(r.errors.some(e => /не найдена в каталоге/i.test(e))).toBe(false)
+      expect(r.created).toBe(true)
+    })
+
+    it('дело на таймлайне при ЧАСТИЧНОМ пропуске по-прежнему пишется', async () => {
+      // Пара к проверке «на полном пропуске дела нет»: без неё мутация «не писать дело, если
+      // пропущена хоть одна строка» прошла бы весь блок.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const writeActivity = vi.fn(async () => {})
+      await runCrmSync('j', twoItems, m, {}, baseDeps({
+        writeActivity,
+        findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null)
+      }))
+      expect(writeActivity).toHaveBeenCalled()
+    })
+
+    it('сумма 0 сама по себе не повод отказать — отказ про ОТСУТСТВИЕ строк', async () => {
+      // Различение, которое проводит #373: «пустая запись» и «запись на ноль» — не одно и то же.
+      // Документ с нулевыми ценами импортируется как обычно.
+      const m = mapping()
+      const zero: ExtractedDocument = { ...doc, items: [{ name: 'Гвоздь', price: 0, quantity: 1, unit: 'шт', vatRate: null }] }
+      const r = await runCrmSync('j', zero, m, {}, baseDeps())
+      expect(r.created).toBe(true)
+      expect(r.rowCount).toBe(1)
+      expect(r.errors).toEqual([])
+    })
+
+    it('дефолт портала до этого исхода не доводит', async () => {
+      // Смысл второго пункта #373: у нетронутого портала ненайденный товар становится произвольной
+      // позицией, поэтому «пропустить всё» вообще не может случиться без явной настройки.
+      const r = await runCrmSync('j', twoItems, defaultMapping(), {}, baseDeps())
+      expect(r.created).toBe(true)
+      expect(r.rowCount).toBe(2)
+    })
+  })
+
   it('freeform: product not found → row written WITHOUT productId (free-form position)', async () => {
     const m = mapping()
     m.product.onMissing = 'freeform'

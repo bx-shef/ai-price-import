@@ -111,15 +111,25 @@ function restResolver(infra: LiveInfra): PortalSdkResolver {
   return createPortalSdkResolver(memberId => makePortalSdkCall(memberId, deps), infra.now)
 }
 
-/** Load the portal mapping via server-side REST (falls back to defaults). */
+/**
+ * Load the portal mapping via server-side REST for the crm-sync job.
+ *
+ * ⚠ THROWS on a read failure instead of falling back to defaults (#373). While the default for
+ * `product.onMissing` was `skip-warn`, the fallback happened to coincide with the conservative
+ * option; now the default WRITES rows. A single transient `app.option.get` hiccup (rate limit,
+ * token race, REST 5xx) would therefore import the document under the OPPOSITE policy of the one
+ * the admin chose — free-form positions he explicitly forbade, landing in a real deal with an
+ * origin marker, which no retry removes. The same fallback also silently substitutes the default
+ * funnel for the configured one.
+ *
+ * Throwing makes the job fail and BullMQ retry it, which is the correct treatment for «настройки
+ * прочитать не удалось»: crm-sync is idempotent by marker, so a retry cannot duplicate. There is no
+ * token at all ⇒ nothing can be read or written for this portal, same conclusion.
+ */
 async function loadMapping(memberId: string, rest: (m: string) => Promise<SdkTransport | null>): Promise<PortalMapping> {
   const t = await rest(memberId)
-  if (!t) return defaultMapping()
-  try {
-    return await readMapping(t.call)
-  } catch {
-    return defaultMapping()
-  }
+  if (!t) throw new Error('mapping unavailable: no portal token')
+  return await readMapping(t.call)
 }
 
 /** Keep-alive deps (#175): select near-expiry portals + force-refresh each under the
@@ -346,7 +356,11 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
     // is swallowed by the handler — the import proceeds.
     saveSourceFile: makeSaveSourceFile({
       resolveCall: sharedRest,
-      loadMapping: call => readMapping(call).catch(() => defaultMapping()),
+      // Настройки не прочитались ⇒ архивирование НЕ делаем (#373, ревью): `saveFile` включён по
+      // умолчанию, поэтому обычный фолбэк на дефолты скопировал бы документ клиента на Диск портала
+      // как раз тогда, когда мы не знаем, не выключил ли админ это сам. Архив best-effort — его
+      // пропуск не роняет импорт, а лишняя копия чужого документа необратима.
+      loadMapping: call => readMapping(call).catch(() => ({ ...defaultMapping(), saveFile: false })),
       readBytes: (m, j) => readFile(uploadPath(m, j)),
       // Serialize the Disk write per portal so concurrent scale-out workers don't duplicate the
       // shared app/month folders (B24 Disk has no atomic create-if-absent). Same primitive as the

@@ -23,7 +23,10 @@ export async function readMapping(call: RestCall, key = SETTINGS_KEY): Promise<P
 
 /** Persist the portal mapping to app.option (normalised before write — never store junk). */
 export async function writeMapping(call: RestCall, mapping: unknown, key = SETTINGS_KEY): Promise<PortalMapping> {
-  const normalised = parsePortalSettings(mapping)
+  // `configured` ставится ЗДЕСЬ, а не приходит от клиента (#373): это единственная точка записи
+  // настроек, значит сам факт вызова и есть «админ сохранил». Верить клиентскому полю нельзя —
+  // тогда портал мог бы объявить себя настроенным, ничего не настроив, и гейт `/app` погас бы зря.
+  const normalised = { ...parsePortalSettings(mapping), configured: true }
   await call('app.option.set', { options: { [key]: JSON.stringify(normalised) } })
   return normalised
 }

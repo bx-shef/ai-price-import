@@ -6,6 +6,7 @@ import { describeTotalMismatch, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
+import { allLinesSkippedError, lineSkippedWarning } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
@@ -236,7 +237,7 @@ export async function runCrmSync(
 
     const productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
-      warnings.push(`Товар «${item.name}» не найден в каталоге — строка пропущена. Заведите товар (или поменяйте в настройках «Если товар не найден» на «Внести как произвольную позицию»).`)
+      warnings.push(lineSkippedWarning(item.name))
       continue
     }
     // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
@@ -309,6 +310,36 @@ export async function runCrmSync(
   // and its retry, the retry searches under a different key and may duplicate. This targets crash
   // recovery, not concurrent reconfiguration; acceptable residual for the «search in B24» design.
   const existingId = await deps.findExisting(target.entityTypeId, markerFilter!)
+
+  // EVERY line was skipped (skip-warn + not a single product matched the catalogue) — #373. Before
+  // this guard the import created an entity with NO rows, sum 0 and no company, and reported it as
+  // «Готово»: the operator saw five green imports and five useless deals to delete by hand. The
+  // per-line «строка пропущена» warnings did say it, but they sat inside a successful-looking result.
+  //
+  // We create NOTHING rather than an empty entity: with no rows there is nothing in the entity that
+  // the document contributed, so it is pure noise in the funnel — and the operator would have to
+  // delete it before re-importing anyway. The hard-error path gives the honest outcome for free:
+  // status «Ошибка», error-chat message, no timeline дело about a document that didn't land.
+  //
+  // ⚠ AFTER the marker search, not before (ревью): attempt 1 could have created a POPULATED entity
+  // and died before recording it, and by the retry the catalogue may no longer match (product
+  // deactivated, `onMissing` flipped). Checking rows first would then declare «запись в CRM не
+  // создана» about a deal that is sitting in the funnel, flip a finished job to «Ошибка», and lose
+  // the marker that protects the re-upload from duplicating it. A marker hit wins: the document DID
+  // land, the run is an idempotent redelivery, and nothing is reported as failed.
+  //
+  // ⚠ `doc.items.length > 0` — сегодня недостижимо (`validateExtractedDocument` отвергает документ
+  // без позиций ещё в извлечении), но остаётся страховкой: без него текст «ни одна из 0 позиций»
+  // и сам отказ появились бы у документа, который ничего не пропускал.
+  if (!existingId && doc.items.length > 0 && rows.length === 0) {
+    errors.push(allLinesSkippedError(doc.items.length))
+    await deps.reportErrors(errors, doc.supplier?.name)
+    // `unmatched` — честное состояние поиска поставщика (он уже отработал выше), а не константа:
+    // счётчик существует ровно чтобы показывать, как часто поставщик не находится, и обнулять его
+    // на самом провальном классе документов значит занижать его именно там, где он важен.
+    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: !companyId, warnings, errors }
+  }
+
   const entityTypeId = target.entityTypeId
   let entityId: number
   let created: boolean

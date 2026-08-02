@@ -21,14 +21,21 @@ const MAX_UNIT_DICT_ENTRIES = 1000
 export function defaultMapping(): PortalMapping {
   return {
     article: { field: '', kind: 'text' },
-    product: { by: 'article', onMissing: 'skip-warn' },
+    // #373: по умолчанию НЕ найденный товар вносится произвольной позицией. Прежний «пропустить»
+    // на свежем портале (каталог пуст, артикул не сопоставлен) пропускал ВСЕ строки — импорт давал
+    // пустую сделку и зелёное «Готово». Произвольная позиция несёт название, цену и количество из
+    // документа: запись остаётся верной бумаге даже без каталога, а связать её с карточкой товара
+    // можно позже. «Пропустить» остаётся в настройках — это осознанный выбор, а не стартовое
+    // состояние.
+    product: { by: 'article', onMissing: 'freeform' },
     units: { dictionary: {}, defaultCode: 796, autoCreate: false },
     // Opt-in (default OFF): archiving raw client documents onto the portal's common Disk is a
     // privacy choice on a multitenant OAuth app — a tenant that never configured it should not
     // have client files copied to its Disk. The admin turns it on in settings.
     saveFile: true, // #328: по умолчанию ВКЛЮЧЕНО — файл привязывается к делу (решение владельца)
     routingRules: [],
-    defaultTarget: { ...DEFAULT_TARGET }
+    defaultTarget: { ...DEFAULT_TARGET },
+    configured: false
   }
 }
 
@@ -80,10 +87,13 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     },
     product: {
       by: prod.by === 'name' ? 'name' : 'article',
-      // Product creation was removed. A portal that had the legacy `'create'` stored degrades to
-      // `'freeform'` (keep the line as a free-form position — the closest non-dropping behaviour),
-      // anything else → `'skip-warn'` (the default).
-      onMissing: prod.onMissing === 'freeform' || prod.onMissing === 'create' ? 'freeform' : 'skip-warn'
+      // Product creation was removed; the legacy `'create'` degrades to `'freeform'` (keep the line
+      // as a free-form position — the closest non-dropping behaviour).
+      // ⚠ `'skip-warn'` требует ЯВНО сохранённого значения, всё остальное падает на дефолт `'freeform'`
+      // (#373). Раньше было наоборот, и это важнее, чем кажется: `parsePortalSettings` вызывается и на
+      // ПУСТЫХ настройках свежего портала, поэтому обратный порядок молча перебил бы новый дефолт —
+      // правка `defaultMapping` не изменила бы вообще ничего.
+      onMissing: prod.onMissing === 'skip-warn' ? 'skip-warn' : 'freeform'
     },
     units: {
       dictionary: units.dictionary && typeof units.dictionary === 'object'
@@ -100,6 +110,9 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     ...(typeof o.errorChatId === 'string' ? { errorChatId: o.errorChatId } : {}),
     routingRules: asRules(o.routingRules),
     defaultTarget: asTarget(o.defaultTarget, DEFAULT_TARGET),
+    // Только литеральный `true` (#373): флаг решает, показывать ли гейт настройки, поэтому любой
+    // мусор в блобе должен читаться как «не настроен» — лишний баннер безобиден, пропущенный нет.
+    configured: o.configured === true,
     ...asSavings(o.savings)
   }
 }
@@ -114,13 +127,22 @@ function asSavings(v: unknown): { savings?: { ratePerHour: number } } {
   return { savings: { ratePerHour: Math.min(Math.round(rate * 100) / 100, MAX_SAVINGS_RATE) } }
 }
 
-/** Whether the admin has configured ANYTHING beyond the pristine defaults. Returns false only when
- *  the mapping is byte-for-byte the out-of-the-box default (defaultMapping) — i.e. the portal admin
- *  has never touched settings. The in-portal home page uses this to nudge an admin to set things up
- *  (and to tell a non-admin the app isn't configured yet) before the first import. Pure — any single
- *  meaningful setting (article field, a chat, a routing rule, a custom target/strategy/unit) flips it
- *  to true, so a partially-configured portal is never falsely reported as «not configured». */
+/**
+ * Настраивал ли админ приложение. Гейтит рабочий экран `/app`: не настроено ⇒ админу баннер
+ * «Настроить», не-админу «обратитесь к администратору», весь остальной контент скрыт.
+ *
+ * Признак — ФАКТ сохранения (`configured`, ставится в `writeMapping`). Всё, что ниже, — эвристики
+ * ТОЛЬКО для порталов, сохранявшихся до появления флага (#373): у них его в блобе нет, и без
+ * эвристик они разом получили бы баннер настройки.
+ *
+ * ⚠ Почему флаг вообще понадобился. Прежде признак вычислялся сравнением с дефолтами, и это
+ * работало ровно до первой смены дефолта: `onMissing` стал `freeform`, и портал, где админ ВЫБРАЛ
+ * `freeform` руками, мгновенно перестал считаться настроенным — деплой закрыл рабочий экран
+ * тенанту, у которого ничего не менялось. Новые признаки настройки сюда добавлять не нужно: флага
+ * достаточно, эвристики — исторический хвост.
+ */
 export function isPortalConfigured(m: PortalMapping): boolean {
+  if (m.configured) return true
   if (m.article.field.trim()) return true
   if (m.notifyChatId || m.errorChatId) return true
   if (m.routingRules.length > 0) return true
@@ -128,8 +150,13 @@ export function isPortalConfigured(m: PortalMapping): boolean {
   // `saveFile` НЕ считается признаком настройки (#328): с тех пор как хранение исходника включено
   // по умолчанию, оно есть у нетронутого портала — и «настроено» загоралось бы у всех сразу,
   // а баннер «сначала настройте приложение» не показался бы никому.
-  if (m.product.by !== 'article' || m.product.onMissing !== 'skip-warn') return true
-  if (m.units.defaultCode !== 796 || m.units.autoCreate) return true
+  // ⚠ Сверяемся с ДЕФОЛТОМ, а не с зашитым здесь литералом (#373): когда `onMissing` сменили на
+  // `freeform`, литерал `'skip-warn'` тут же начал бы читаться как «админ что-то настроил» у КАЖДОГО
+  // нетронутого портала — гейт настройки молча выключился бы для всех (ровно та же ловушка, что была
+  // с `saveFile` в #328). Ссылка на `defaultMapping()` делает такое расхождение невозможным.
+  const d = defaultMapping()
+  if (m.product.by !== d.product.by || m.product.onMissing !== d.product.onMissing) return true
+  if (m.units.defaultCode !== d.units.defaultCode || m.units.autoCreate !== d.units.autoCreate) return true
   // Default target moved off the fallback anchor (deal / direction 0 / no stage)? categoryId 0 IS
   // the anchor (default deal pipeline), so only a non-zero funnel or a set stage counts as configured.
   const t = m.defaultTarget
