@@ -135,9 +135,11 @@ describe('разрешение id бота (кэши и регистрация)'
   })
 
   it('отказ портала запоминается — повтор не долбит REST на каждый документ', async () => {
+    // Считаем ПОПЫТКИ (по вызову регистрации), а не сырые REST-вызовы: одна попытка теперь стоит
+    // двух — регистрация и, если она отвергнута, поиск уже заведённого бота в списке.
     let calls = 0
-    const rest = async () => {
-      calls++
+    const rest = async (m: string) => {
+      if (m === 'imbot.v2.Bot.register') calls++
       throw new Error('ACCESS_DENIED')
     }
     const cache = createBotIdCache()
@@ -149,8 +151,8 @@ describe('разрешение id бота (кэши и регистрация)'
 
   it('через отведённое время портал спрашивают снова — сменивший тариф начнёт подписывать сам', async () => {
     let calls = 0
-    const rest = async () => {
-      calls++
+    const rest = async (m: string) => {
+      if (m === 'imbot.v2.Bot.register') calls++
       throw new Error('ACCESS_DENIED')
     }
     const cache = createBotIdCache()
@@ -328,5 +330,72 @@ describe('лог не выдаёт текст портала (#360)', () => {
     await registerBot(call, m => lines.push(m))
     expect(lines.join(' ')).toContain('BOT_LIMIT_EXCEEDED')
     expect(lines.join(' ')).not.toContain('Ромашка')
+  })
+})
+
+describe('бот уже есть на портале — забираем его id, а не сдаёмся', () => {
+  // Живой случай 2026-08-02: портал нёс нашего бота с прошлой установки, приложение переустановили,
+  // `Bot.register` на занятый code существующего бота НЕ отдаёт (BOT_CODE_ALREADY_TAKEN —
+  // документированная ошибка метода). Мы сохраняли 0, и каждое уведомление уходило старым путём —
+  // автором отчётов приложения снова значился сотрудник, ровно симптом #316, вернувшийся на
+  // переустановке.
+  function portal(registerFails: boolean, bots: unknown) {
+    const seen: string[] = []
+    const call = async (m: string) => {
+      seen.push(m)
+      if (m === 'imbot.v2.Bot.register') {
+        if (registerFails) throw new Error('BOT_CODE_ALREADY_TAKEN')
+        return { bot: { id: 42 } }
+      }
+      return bots
+    }
+    return { seen, call: call as never }
+  }
+
+  it('регистрация отвергнута, бот на портале есть — берём его id', async () => {
+    const p = portal(true, { bots: [{ id: 7, code: 'другой' }, { id: 17, code: BOT_CODE }] })
+    expect(await registerBot(p.call)).toBe(17)
+    expect(p.seen).toEqual(['imbot.v2.Bot.register', 'imbot.v2.Bot.list'])
+  })
+
+  it('регистрация прошла — за списком не ходим', async () => {
+    const p = portal(false, { bots: [] })
+    expect(await registerBot(p.call)).toBe(42)
+    expect(p.seen).toEqual(['imbot.v2.Bot.register'])
+  })
+
+  it('чужие боты портала не подходят — берём только свой код', async () => {
+    // На портале живут боты Битрикса (copilot, marta, вайбкод). Схватить чужой id значило бы
+    // писать в чат от имени чужого бота.
+    const p = portal(true, { bots: [{ id: 5, code: 'copilot' }, { id: 13, code: 'vibecode_platform' }] })
+    expect(await registerBot(p.call)).toBeNull()
+  })
+
+  it('регистрация ответила без id — тоже идём в список', async () => {
+    const seen: string[] = []
+    const call = (async (m: string) => {
+      seen.push(m)
+      return m === 'imbot.v2.Bot.register' ? {} : { bots: [{ id: 17, code: BOT_CODE }] }
+    }) as never
+    expect(await registerBot(call)).toBe(17)
+    expect(seen).toHaveLength(2)
+  })
+
+  it('и список отказал — 0, сообщение уходит старым путём', async () => {
+    const call = (async () => {
+      throw new Error('ACCESS_DENIED')
+    }) as never
+    expect(await registerBot(call)).toBeNull()
+  })
+
+  it('в лог уходит только код ошибки', async () => {
+    // Ответ REST может процитировать параметры вызова, а они несут текст документа.
+    const logs: string[] = []
+    const call = (async () => {
+      throw new Error('Ошибка BOT_CODE_ALREADY_TAKEN: чат «Накладная №14 от ООО Ромашка»')
+    }) as never
+    await registerBot(call, m => logs.push(m))
+    expect(logs.join('\n')).not.toContain('Ромашка')
+    expect(logs.join('\n')).toContain('BOT_CODE_ALREADY_TAKEN')
   })
 })

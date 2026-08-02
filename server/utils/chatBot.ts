@@ -78,19 +78,63 @@ export function messageIdFromBotSend(res: unknown): number | null {
   return Number.isFinite(id) && id > 0 ? id : null
 }
 
+/** List the app's own bots. Used to recover an id we cannot register again (see `registerBot`). */
+export function buildBotList(): RestRequest {
+  // `limit` is set although a second page is unreachable by construction — the method is scoped to
+  // the CURRENT application and the app registers exactly one `code`. Stating the bound costs one
+  // line and removes the question; `hasNextPage` is deliberately ignored for the same reason.
+  return { method: 'imbot.v2.Bot.list', params: { limit: 50 } }
+}
+
+/** Our bot's id out of the list envelope (`result.bots[]`), matched by CODE. */
+export function botIdFromList(res: unknown): number | null {
+  const bots = (res as { bots?: Array<{ id?: unknown, code?: unknown }> } | null)?.bots
+  if (!Array.isArray(bots)) return null
+  for (const b of bots) {
+    if (String(b?.code ?? '') !== BOT_CODE) continue
+    const id = Number(b?.id)
+    if (Number.isFinite(id) && id > 0) return id
+  }
+  return null
+}
+
 /**
  * Register the bot for this portal, returning its id.
  *
- * Errors are swallowed into `null` ON PURPOSE: a portal on a free plan, at its bot limit, or
- * installed before the `imbot` scope existed simply has no bot — and a chat notice that never
- * arrives is a worse outcome than one signed by the wrong author. The caller falls back.
+ * ⚠ REGISTRATION IS NOT THE ONLY WAY TO GET THE ID, and assuming it was is what broke this live
+ * (2026-08-02, portal `b24-hrbvzq`): the portal already carried our bot from an earlier install,
+ * the app was reinstalled, and `Bot.register` on an already-taken `code` does not hand the existing
+ * bot back — `BOT_CODE_ALREADY_TAKEN` is a documented error of the method. We stored 0, every notice
+ * fell back to `im.message.add`, and the chat kept showing an employee as the author of the app's
+ * own reports — the exact symptom #316 exists to remove, reappearing precisely on a reinstall.
+ * ⚠ Scope: this recovers the case where we hold NO id (0). A stale NON-ZERO `bot_id` — the portal
+ * dropped the bot but our row still names it — is NOT covered: `resolveBotId` returns a stored id
+ * without re-checking it, so those notices keep falling back with no self-healing. Not fixed here
+ * on purpose (the bot is set up at install, and a new app version brings a new install event); it
+ * is written down so the next report of this symptom is not searched for in the wrong place.
+ *
+ * So a refusal is followed by ONE list lookup: the bot the portal already has is ours, it carries
+ * our `code`, and its id is what we needed all along.
+ *
+ * Everything is still swallowed into `null`: a portal on a free plan or at its bot limit simply has
+ * no bot, and a chat notice that never arrives is worse than one signed by the wrong author.
  */
 export async function registerBot(call: RestCall, log?: (msg: string) => void): Promise<number | null> {
   const req = buildBotRegister()
   try {
-    return botIdFromRegister(await call(req.method, req.params))
+    const id = botIdFromRegister(await call(req.method, req.params))
+    if (id) return id
+    log?.('[chat-bot] registration returned no id')
   } catch (e) {
     log?.(`[chat-bot] registration refused: ${errorCode(e)}`)
+  }
+  const list = buildBotList()
+  try {
+    const found = botIdFromList(await call(list.method, list.params))
+    if (found) log?.('[chat-bot] recovered the id of an already-registered bot')
+    return found
+  } catch (e) {
+    log?.(`[chat-bot] bot list refused: ${errorCode(e)}`)
     return null
   }
 }

@@ -112,5 +112,36 @@ export function hourlyRateHint(baseCurrency: string | null | undefined): { rate:
   const shown = rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
   // Код валюты идёт ПОСЛЕ числа, как в русском письме: «ориентир для BYN» читалось бы как
   // «ориентир для валюты», хотя ориентир — для ставки, а BYN лишь единица измерения.
-  return { rate, text: `Ориентир: ${shown} ${code} в час (данные на ${HOURLY_RATE_AS_OF}) — из открытых источников, не рекомендация: ставку решаете вы.` }
+  return { rate, text: `Подставлен ориентир: ${shown} ${code} в час (данные на ${HOURLY_RATE_AS_OF}) — из открытых источников. Поставьте свою ставку, если она отличается.` }
+}
+
+/**
+ * Should the rate field be seeded with the reference figure? (#311)
+ *
+ * A decision, not a formatting helper, and therefore pure and tested: the version that lived inline
+ * in the page was guarded only by «the source file contains these lines», and moving the assignment
+ * ABOVE its own guard — i.e. overwriting a hand-entered rate on every page load — passed every test.
+ *
+ * Four conditions, each closing a way to be wrong:
+ *   • `loaded` — before the server copy arrives «no rate» and «settings not here yet» look the same,
+ *     and seeding into the second one would overwrite a rate the admin set earlier;
+ *   • `isAdmin` — everyone else sees a read-only form, so a seeded number there is a figure on
+ *     screen that nobody can save: it would simply be a lie about what the portal is configured to;
+ *   • `current` empty — a rate that was entered by hand is never touched;
+ *   • `configured` false — seed only while the portal is being set up for the FIRST time. Otherwise
+ *     an empty rate is not a storable decision: «Оставьте пусто — плитки не будет» is offered right
+ *     under the field, yet the next visit would refill it, and one unrelated «Сохранить» would put
+ *     a figure the admin never chose behind a tile presented as the app's own achievement. That is
+ *     exactly what #270 removed.
+ */
+export function shouldPrefillRate(input: {
+  loaded: boolean
+  isAdmin: boolean
+  configured: boolean
+  current: number | undefined
+  hint: number | null
+}): boolean {
+  if (!input.loaded || !input.isAdmin || input.configured) return false
+  if (Number(input.current) > 0) return false
+  return Number(input.hint) > 0
 }

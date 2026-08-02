@@ -12,7 +12,7 @@ import { useCatalogMeasures } from '~/composables/useCatalogMeasures'
 import { dictionaryToRows, rowsToDictionary, hasDuplicateUnits } from '~/utils/unitsDictionary'
 import { BUILTIN_UNIT_HINT } from '~/utils/units'
 import { rulesToRows, rowsToRules } from '~/utils/routingRulesEditor'
-import { MAX_SAVINGS_RATE, parsePortalSettings } from '~/utils/portalSettings'
+import { MAX_SAVINGS_RATE, isPortalConfigured, parsePortalSettings } from '~/utils/portalSettings'
 import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 import { portalCurrencySettingsUrl } from '~/utils/entityLink'
@@ -157,10 +157,10 @@ const currencyLink = computed(() => portalCurrencySettingsUrl(portalDomain.value
 //     Intl currency format needs a valid code, and a wrong guess would print someone else's money.
 //     `locale="ru"` is pinned rather than left to the browser: the hint below the field prints
 //     «9,9», and a field formatting the same number as «9.9» would make a correct entry look wrong;
-//   • the HINT — a reference figure for that currency, shown as text UNDER the field and never
-//     written into the model. Owner's decision: seeding a default would put a number the admin did
-//     not choose behind a tile that is presented as the app's own achievement (#270 removed exactly
-//     such a hard-coded rate). An unknown currency simply gets no hint.
+//   • the SEED — the reference figure for that currency, written into the field while the portal is
+//     still being set up (see `shouldPrefillRate`), with a caption saying so. An unknown currency
+//     gets neither seed nor caption: a rate borrowed from a neighbouring economy is worse than
+//     silence.
 const rateFormatOptions = computed(() =>
   baseCurrency.value
     ? {
@@ -176,6 +176,47 @@ const rateFormatOptions = computed(() =>
     : undefined
 )
 const rateHint = computed(() => hourlyRateHint(baseCurrency.value))
+
+// Seed the rate field with the reference figure for the portal's currency (#311, owner's call: the
+// caption names a number, so the field must carry it — a caption saying «9,9» over an empty box asks
+// the admin to retype what the app already knows).
+//
+// The decision itself is a tested pure function (`shouldPrefillRate`) — an inline version of it was
+// guarded only by «the source contains these lines», and moving the assignment above its own check
+// would have silently overwritten hand-entered rates.
+//
+// SEED, not a stored default: it is written into the form, never into the portal, until the admin
+// presses «Сохранить» — so the number they see is the number that gets kept.
+const rateSeeded = ref(false)
+watch([loaded, baseCurrency], () => {
+  const seed = shouldPrefillRate({
+    loaded: loaded.value,
+    isAdmin: isAdmin.value,
+    configured: isPortalConfigured(mapping.value),
+    current: mapping.value.savings?.ratePerHour,
+    hint: rateHint.value?.rate ?? null
+  })
+  if (!seed) return
+  savingsRate.value = rateHint.value!.rate
+  rateSeeded.value = true
+}, { immediate: true })
+
+// Prefill the field with the reference rate for the portal's currency (#311, owner's call: the hint
+// names a number, so the field must carry it — a caption that says «9,9» over an empty box asks the
+// admin to retype what the app already knows).
+//
+// PREFILL, not a stored default: it is written into the form only while the admin has entered
+// nothing at all, and it is saved only if they press «Сохранить» — the value they see is the value
+// that is kept, and one that was never confirmed is never in the portal's settings. That is also
+// why it runs on `loaded` rather than on mount: before the server copy arrives, «ставки нет» and
+// «настройки ещё не пришли» look identical, and seeding into the second one would overwrite a rate
+// the admin had set earlier.
+watch([loaded, baseCurrency], ([isLoaded]) => {
+  if (!isLoaded || !isAdmin.value) return
+  if (mapping.value.savings?.ratePerHour) return
+  const hint = rateHint.value
+  if (hint) savingsRate.value = hint.rate
+}, { immediate: true })
 
 // Seed each picker's selected option so a SAVED id shows before the chat list is fetched
 // (the mapping stores only the id, not the title → the raw `chat<id>` is the fallback label
@@ -600,8 +641,10 @@ const ON_MISSING_ITEMS = [
                     class="text-sm text-(--ui-color-base-2)"
                   >в час</span>
                 </div>
+                <!-- Только когда значение ДЕЙСТВИТЕЛЬНО подставлено: текст говорит «Подставлен ориентир»,
+                     и над пустым полем (не-админ, уже настроенный портал) он был бы неправдой. -->
                 <p
-                  v-if="rateHint"
+                  v-if="rateHint && rateSeeded"
                   class="mt-1 text-xs text-(--ui-color-base-2)"
                 >
                   {{ rateHint.text }}
