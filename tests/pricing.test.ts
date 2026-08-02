@@ -210,6 +210,10 @@ describe('describeTotalMismatch', () => {
   it('непечатаемая сумма (экспонента, бесконечность, NaN) → общая формулировка, без чисел', () => {
     const bad: Array<[number | undefined, number]> = [
       [1e24, 24], [24, 1e24], [1e21, 1], // ровно граница экспоненты
+      // Отрицательная сторона границы: без `Math.abs` в isPrintableAmount проверка `n < 1e21`
+      // пропускала любое большое ОТРИЦАТЕЛЬНОЕ значение обратно в toFixed — тот же дефект с
+      // экспонентой, только зеркальный. Скидочный документ считается в минус, так что достижимо.
+      [-1e24, 1], [1, -1e24], [-1e21, 1], [100, Number.NEGATIVE_INFINITY],
       [100, Number.POSITIVE_INFINITY], [Number.POSITIVE_INFINITY, 100],
       [Number.NaN, 100], [undefined, 100]
     ]

@@ -12,9 +12,26 @@
 //
 // The corpus is CLIENT DOCUMENTS — keep it OUT of the repository (a git-ignored directory or a
 // path outside the tree). The script only reads `.txt`; produce them with the same runners the
-// worker uses (server/utils/extractRunners.ts) so the text matches production.
+// worker uses (server/utils/extractRunners.ts) so the text matches production. The `--out`
+// artefact carries the same client data (sums, file names) — its default is git-ignored and
+// guarded by tests/noLocalArtifacts.test.ts; if you point `--out` elsewhere, keep it out of git.
 //
 // Reads the provider key exactly like verify-chat.mjs: .env → process.env.
+//
+// WHAT THE OUTPUT MEANS — the columns are the only thing a reader has to judge a prompt change by:
+//   итог не сошёлся            печатный итог документа не сходится с суммой по строкам. The single
+//                              per-document quality signal we have — but blind for a document that
+//                              prints no total at all.
+//   флаг правился по итогу     `corrected` — the model got priceIncludesVat wrong and the printed
+//                              total fixed it. Money ends up right; each one is a warning to a human.
+//   взяли слово модели (риск)  `totalAmbiguous` — arithmetic cannot confirm the flag and we took the
+//                              model's word. THIS is the realised-risk column, not `flag=true`.
+//   с НДС прочитан как без НДС counter-metric: a genuinely VAT-inclusive document read as net. No
+//                              other column sees it, so without this a prompt that always answers
+//                              «без НДС» would score best on everything.
+//   flag=true                  how often the model claimed VAT-inclusive prices. Direction, not harm.
+// The paired block at the end is what actually decides: a NET difference proves nothing, only the
+// count of documents that DISAGREE between the two sides does (McNemar over the discordant pairs).
 import { readFileSync } from 'node:fs'
 import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
