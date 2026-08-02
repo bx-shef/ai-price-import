@@ -122,6 +122,53 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.errors).toHaveLength(0)
   })
 
+  // #337: слепая зона, найденная на ревью. Без печатного итога флаг «цены с НДС» подтвердить
+  // нечем, а он двигает сумму сделки ровно на ставку налога. Тот же документ С итогом получал
+  // предупреждение (totalAmbiguous), а БЕЗ итога уходил молча — при том же объёме знания.
+  // Прайс и КП — половина поддерживаемых типов входа, и итога у них часто нет по жанру.
+  it('НЕТ печатного итога + НДС в строках → предупреждаем в ОБЕ стороны, флаг не трогаем', async () => {
+    const vat = { portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) }
+    const base = {
+      currency: 'BYN' as const,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Товар', price: 100, quantity: 1, unit: 'шт', vatRate: 20 }]
+    }
+    // Модель сказала «цены с НДС»: сделка = 100 (НДС уже внутри). Если она ошиблась — не хватит 20.
+    const incl = baseDeps(vat)
+    const rIncl = await runCrmSync('j', { ...base, priceIncludesVat: true } as ExtractedDocument, mapping(), {}, incl)
+    expect(rIncl.errors).toHaveLength(0)
+    expect(incl.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 100 }))
+    expect(rIncl.warnings.some(w => /нет строки «Всего к оплате»/.test(w) && /цены с НДС/.test(w))).toBe(true)
+
+    // И симметрично: «цены без НДС» → 120. Ошибка здесь завышает сделку — предупреждать тоже надо.
+    const excl = baseDeps(vat)
+    const rExcl = await runCrmSync('j', { ...base, priceIncludesVat: false } as ExtractedDocument, mapping(), {}, excl)
+    expect(excl.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 120 }))
+    expect(rExcl.warnings.some(w => /нет строки «Всего к оплате»/.test(w) && /цены без НДС/.test(w))).toBe(true)
+  })
+
+  it('НЕТ итога, но и НДС нет → предупреждения быть не должно (флаг ни на что не влияет)', async () => {
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '1', name: 'Без НДС', rate: null }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: true,
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Услуга', price: 100, quantity: 1, unit: 'шт', vatRate: 0 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.warnings.some(w => /нет строки «Всего к оплате»/.test(w))).toBe(false)
+  })
+
+  it('печатный итог ПОДТВЕРДИЛ флаг → нового предупреждения нет (не дублируем шум)', async () => {
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false, total: 120, // 100 нетто @20% → 120: однозначно
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Товар', price: 100, quantity: 1, unit: 'шт', vatRate: 20 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.warnings.some(w => /нет строки «Всего к оплате»/.test(w))).toBe(false)
+  })
+
   it('printed total matches NEITHER interpretation → warns with the NUMBERS, still creates (opportunity from lines)', async () => {
     const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) })
     const d: ExtractedDocument = {
@@ -250,7 +297,12 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
   it('writeActivity records a configurable дело on the created entity', async () => {
     const writeActivity = vi.fn(async () => {})
     await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
-    expect(writeActivity).toHaveBeenCalledWith({ entityTypeId: 2, entityId: 555, companyId: 42, supplierName: 'ООО Ромашка', rowCount: 1, warnings: [] })
+    // У общей заготовки `doc` НДС в строках и НЕТ печатного итога, поэтому с #337 она честно
+    // несёт предупреждение «подтвердить флаг нечем» — раньше этот случай уходил молча.
+    expect(writeActivity).toHaveBeenCalledWith({
+      entityTypeId: 2, entityId: 555, companyId: 42, supplierName: 'ООО Ромашка', rowCount: 1,
+      warnings: [expect.stringMatching(/нет строки «Всего к оплате»/)]
+    })
   })
 
   it('passes import PROBLEMS (warnings) to writeActivity so they land on the timeline дело', async () => {

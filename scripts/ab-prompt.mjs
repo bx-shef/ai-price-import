@@ -16,8 +16,9 @@
 //
 // Reads the provider key exactly like verify-chat.mjs: .env → process.env.
 import { readFileSync } from 'node:fs'
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { resolveLlmConfig } from '../server/agent/llmConfig.ts'
@@ -50,12 +51,21 @@ const RUNS = Math.max(1, Number(arg('runs', '1')))
 const OUT = arg('out', 'ab-prompt.json')
 const BASE = arg('base')
 
-/** Baseline prompt: an explicit --base module, else origin/main's committed prompt. */
+/**
+ * Baseline prompt: an explicit --base module, else origin/main's committed prompt.
+ *
+ * The temp file goes into a freshly `mkdtemp`'d directory, NOT a name derived from the content
+ * hash. A hash-derived name is fully predictable from a public repository, so on a shared machine
+ * anyone could pre-place a symlink at that path and have this `writeFile` clobber a file the
+ * operator can write (fs.writeFile follows symlinks). `mkdtemp` creates with O_EXCL and a random
+ * suffix, which closes that.
+ */
 async function baselinePrompt() {
   if (BASE) return (await import(pathToFileURL(BASE).href)).buildExtractionPrompt()
   const { execFileSync } = await import('node:child_process')
   const src = execFileSync('git', ['show', 'origin/main:prompts/extract.ts'], { encoding: 'utf8' })
-  const tmp = join(process.env.TMPDIR || '/tmp', `ab-base-${createHash('md5').update(src).digest('hex').slice(0, 8)}.ts`)
+  const dir = await mkdtemp(join(tmpdir(), 'ab-base-'))
+  const tmp = join(dir, 'extract.ts')
   await writeFile(tmp, src, 'utf8')
   return (await import(pathToFileURL(tmp).href)).buildExtractionPrompt()
 }

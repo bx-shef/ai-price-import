@@ -185,6 +185,15 @@ export async function runCrmSync(
     // (не та ценовая колонка, количество, съеденное названием) сдвигает ровно одну строку.
     warnings.push(describeTotalMismatch(doc.total, pricing.grossTotal, doc.currency))
   }
+  // #337: документ БЕЗ печатного итога и с НДС в строках — флаг «цены с НДС» подтвердить нечем,
+  // а он меняет сумму сделки ровно на ставку налога. Раньше здесь была тишина: тот же документ
+  // с печатным итогом получал предупреждение (totalAmbiguous), а без него — ничего, хотя знаем
+  // мы РОВНО СТОЛЬКО ЖЕ. Прайс и КП — половина поддерживаемых типов входа, и итога у них часто
+  // нет по жанру. Флаг НЕ трогаем (в обе стороны это гадание), но молчать нельзя.
+  if (hasVat && doc.priceIncludesVat !== undefined && !pricing.usedStatedTotal
+    && !pricing.totalMismatch && !pricing.totalAmbiguous) {
+    warnings.push(`В документе нет строки «Всего к оплате», поэтому проверить нечем, включён ли НДС в цены. Взяли вариант «${priceIncludesVat ? 'цены с НДС' : 'цены без НДС'}» — откройте созданную запись и сверьте сумму с документом.`)
+  }
 
   // PRE-PASS: validate every line's VAT rate against the portal BEFORE any catalog write. The create
   // loop below writes products/measures as it iterates, so a bad rate on a LATER line would otherwise
