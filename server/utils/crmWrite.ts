@@ -61,7 +61,7 @@ export interface ProductRowInput {
  * So it must MIRROR THE DOCUMENT'S OWN convention, not our storage format: a net-priced invoice
  * gets 'N' and the card then shows 0,86 with VAT on top, exactly as printed on paper; a
  * VAT-inclusive one gets 'Y' and shows the gross price, also as printed. #302 hardcoded 'Y' on the
- * theory that the flag merely labels the number we send — it does not, and the операторы reading
+ * theory that the flag merely labels the number we send — it does not, and the operators reading
  * 1,032 against a document printing 0,860 concluded the import had miscounted (#347).
  *
  * NO kopeck quantization anywhere in this function — neither on the converted price NOR on the
