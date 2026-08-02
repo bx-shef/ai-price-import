@@ -1,3 +1,5 @@
+import { HOURLY_RATE_AS_OF, HOURLY_RATE_HINTS } from '~/config/hourlyRateHints'
+
 // Pure «сколько сэкономлено» estimate from the per-portal metric counters. Turns raw
 // counts (docs processed, product rows written) into a time figure for the in-portal
 // dashboard — and, ONLY when the portal admin configured an hourly rate, into money.
@@ -90,4 +92,23 @@ export function moneyBlocker(savings: Savings, rate: SavingsRate = {}): MoneyBlo
   if (savings.moneySaved !== null) return null
   if (savings.minutesSaved <= 0) return null
   return Number(rate.ratePerHour) > 0 ? 'no-currency' : 'no-rate'
+}
+
+/**
+ * Reference hourly rate to show under the rate input, for the portal's base currency (#311).
+ *
+ * A HINT, never a default (see `app/config/hourlyRateHints.ts`). Returns `null` for a currency we
+ * have no figure for — a portal in a fourth country gets no hint rather than a rate borrowed from
+ * a neighbouring economy, which would be worse than silence.
+ *
+ * The number is formatted in the RUSSIAN locale on purpose: the admin writes «9,9», and printing
+ * «9.9» right above a field that accepts a comma is a small but real way to make a correct entry
+ * look wrong.
+ */
+export function hourlyRateHint(baseCurrency: string | null | undefined): { rate: number, text: string } | null {
+  const code = String(baseCurrency ?? '').toUpperCase()
+  const rate = HOURLY_RATE_HINTS[code]
+  if (typeof rate !== 'number' || !(rate > 0)) return null
+  const shown = rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
+  return { rate, text: `Ориентир для ${code} — ${shown} в час (на ${HOURLY_RATE_AS_OF}). Это справочная цифра из открытых источников, а не рекомендация: ставку решаете вы.` }
 }
