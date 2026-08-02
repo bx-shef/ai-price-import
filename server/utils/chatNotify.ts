@@ -1,5 +1,5 @@
 import type { RestCall } from './b24Rest'
-import { buildBotSend, errorCode, messageIdFromBotSend } from './chatBot'
+import { buildBotSend, buildChatJoin, errorCode, messageIdFromBotSend } from './chatBot'
 
 // Chat notifications for crm-sync (im.message.add — scope `im`, live-verified).
 // Success → mapping.notifyChatId, hard errors → mapping.errorChatId.
@@ -134,6 +134,24 @@ export async function sendChatMessage(
     } catch (e) {
       // Code only: the rejected call carries the message text, and a REST error can echo it.
       log?.(`[chat-bot] send refused: ${errorCode(e)}`)
+      // A bot may only post in a chat it belongs to, and nothing ever added it — which is exactly
+      // how this feature failed live: every notice was refused and fell back, signed by the
+      // employee. So a refusal buys ONE join + ONE retry before giving up on the bot path.
+      //
+      // Reactive rather than proactive on purpose: checking membership before every message would
+      // cost a REST call per notice forever, to fix something that is wrong once per chat.
+      const join = buildChatJoin(dialogId, botId!)
+      if (join) {
+        try {
+          await call(join.method, join.params)
+          const res = await call(bot.method, bot.params)
+          answered = true
+          const id = messageIdFromBotSend(res)
+          if (id) return id
+        } catch (e2) {
+          log?.(`[chat-bot] join+retry refused: ${errorCode(e2)}`)
+        }
+      }
     }
     // ⚠ Fall back ONLY when the call THREW. A call that answered with a shape we do not recognise
     // most likely DELIVERED the message — resending it through im.message.add would post the same

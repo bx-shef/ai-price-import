@@ -324,3 +324,24 @@ export function forgetPortalBot(memberId: string, cache: BotIdCache): void {
 export function botIsReady(botId: number): boolean {
   return botId > 0
 }
+
+/**
+ * Add the bot to a GROUP chat so it is allowed to post there (#316 live-fix 2026-08-02).
+ *
+ * The gap that made the whole feature look broken: a Bitrix24 chat bot can only write to a chat it
+ * PARTICIPATES IN, and nothing ever put it there. Registration succeeded, the avatar was applied,
+ * the id was stored — and every `Chat.Message.send` was refused, so each notice quietly fell back
+ * to `im.message.add` and arrived signed by the employee. Live on `b24-hrbvzq` the target chat had
+ * exactly one member (the admin); adding the bot changed nothing else.
+ *
+ * Only for `chat<N>` dialogs: a PERSONAL dialog (a bare user id — the failure notice to whoever
+ * uploaded the document) has no membership to grant, and `CHAT_ID` would be meaningless there.
+ *
+ * `HIDE_HISTORY: 'Y'` — the bot joins to write, not to read what the team said before it arrived.
+ */
+export function buildChatJoin(dialogId: string, botId: number): RestRequest | null {
+  const m = /^chat(\d+)$/.exec(String(dialogId ?? '').trim())
+  const chatId = Number(m?.[1])
+  if (!m || !(chatId > 0) || !(botId > 0)) return null
+  return { method: 'im.chat.user.add', params: { CHAT_ID: chatId, USERS: [botId], HIDE_HISTORY: 'Y' } }
+}
