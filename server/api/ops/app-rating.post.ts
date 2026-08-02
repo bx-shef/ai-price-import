@@ -5,7 +5,7 @@ import { query } from '../../db/client'
 
 // POST /api/ops/app-rating { memberId, action } — owner control of the review lifecycle from the
 // /queues page (manage, not SQL). Operator SESSION cookie. Actions:
-//   'reviewed' → mark a confirmed Market review (terminal, stops prompting);
+//   'reviewed' → mark a confirmed Market review (stops prompting; reversible via 'unreview');
 //   'reset'    → clear opened/prompted so the modal returns (no review appeared after verification).
 //   'unreview' → undo a confirmed review (#318 п.2): a mis-click used to need SQL.
 export default defineEventHandler(async (event) => {

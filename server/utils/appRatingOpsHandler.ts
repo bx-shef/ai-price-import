@@ -5,7 +5,7 @@
 export type AppRatingOpAction = 'reviewed' | 'reset' | 'unreview'
 
 export interface AppRatingOpsDeps {
-  /** Mark a confirmed review (terminal). */
+  /** Mark a confirmed review. Reversible from the console since #318 п.2 (`unreview`). */
   markReviewed: (memberId: string) => Promise<void>
   /** Clear opened/prompted so the modal returns (no review appeared). */
   reset: (memberId: string) => Promise<void>

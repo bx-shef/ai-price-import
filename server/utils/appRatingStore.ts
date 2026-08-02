@@ -80,9 +80,15 @@ export async function markReviewed(memberId: string, query: QueryFn): Promise<vo
  *
  *  `reviewed` used to be terminal — a mis-click could only be undone with SQL, and the operator
  *  console is exactly where mis-clicks happen (a row per portal, buttons side by side). Undo returns
- *  the row to its state BEFORE confirmation: `prompted_at`/`opened_at` are left as they were, so the
- *  usual throttle decides when the modal may show again — «вернуть в состояние до подтверждения», not
- *  «показать попап прямо сейчас». */
+ *  the row to its state BEFORE confirmation and NOTHING more: `prompted_at`/`opened_at` are left as
+ *  they were.
+ *
+ *  ⚠ That state is usually `opened` — one gets to `reviewed` by way of the user clicking «Оценить»,
+ *  which stamps `opened_at`, and `shouldPrompt` treats a stamped `opened_at` as «waiting for manual
+ *  verification» and stays silent INDEFINITELY, not for a throttle window. So undo alone does NOT
+ *  bring the modal back: the operator has to press «Сбросить» (`clearOpened`) after it, and the UI
+ *  says so. Folding the two into one action was rejected — it would erase the prompt history, and
+ *  the modal could pop at a portal that had just been shown it. */
 export async function clearReviewed(memberId: string, query: QueryFn): Promise<void> {
   await query(
     `UPDATE portal_app_rating SET reviewed = false, updated_at = now() WHERE member_id = $1`,
