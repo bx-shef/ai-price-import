@@ -40,11 +40,21 @@ const asking = ref(false)
 const sending = ref(false)
 const sent = ref(false)
 const error = ref('')
+/** Кап на вложение к отзыву — тот же, что проверяет сервер (`MAX_FEEDBACK_FILE_BYTES`). Импорт
+ *  принимает файлы до 20 МБ, поэтому скан вполне может его превысить. Без этой проверки виджет
+ *  обещал бы «Отправится «счёт.pdf»», сервер молча выбрасывал бы вложение (а на 19+ МБ запрос вообще
+ *  не проходил бы кап тела — и терялась бы ВСЯ оценка, не только файл). Лучше сказать заранее. */
+const MAX_ATTACH_BYTES = 5 * 1024 * 1024
+
 /** Файл, выбранный вручную, когда страница своей копии уже не держит. */
 const manualFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
-/** Что реально уйдёт с отзывом: копия страницы либо выбранная вручную. */
-const fileToSend = computed<File | null>(() => manualFile.value ?? props.file ?? null)
+/** Файл-кандидат: копия страницы либо выбранная вручную. Может оказаться слишком большим. */
+const candidateFile = computed<File | null>(() => manualFile.value ?? props.file ?? null)
+/** Слишком большой файл — не «нет файла»: об этом надо сказать, а не молча отправить без него. */
+const tooBig = computed(() => !!candidateFile.value && candidateFile.value.size > MAX_ATTACH_BYTES)
+/** Что реально уйдёт с отзывом. */
+const fileToSend = computed<File | null>(() => (tooBig.value ? null : candidateFile.value))
 
 /** Прочитать файл в base64 для отправки. Возвращает null, если чтение не удалось — отзыв уйдёт
  *  без файла, но уйдёт: терять оценку из-за сбоя чтения хуже, чем потерять вложение. */
@@ -179,6 +189,11 @@ async function send(withFile: boolean): Promise<void> {
             Копия документа уйдёт разработчику вместе с отзывом — она нужна, чтобы воспроизвести разбор.
             <template v-if="fileToSend">
               Отправится «{{ fileToSend.name }}» — файл берётся из этой страницы, на сервере он не хранится.
+            </template>
+            <template v-else-if="tooBig">
+              Файл «{{ candidateFile?.name }}» слишком большой, чтобы приложить его к отзыву
+              (больше {{ Math.round(MAX_ATTACH_BYTES / 1024 / 1024) }} МБ). Отправьте отзыв без файла —
+              напишите в комментарии, что было в документе, и мы попросим его отдельно.
             </template>
             <template v-else>
               Эта страница копию документа уже не держит (перезагрузили вкладку или открыли в другой),

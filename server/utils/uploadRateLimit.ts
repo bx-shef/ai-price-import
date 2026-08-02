@@ -65,3 +65,33 @@ export function uploadRateMessage(retryAfterMs: number): string {
 export function resetUploadRateLimit(): void {
   limiter.sweep(Number.MAX_SAFE_INTEGER)
 }
+
+// ── Feedback channel (#349 review) ────────────────────────────────────────────
+//
+// The feedback route used to be cheap: a short JSON body, one GitHub issue. Since the source file
+// travels WITH the rating (the server keeps no copy any more), one authenticated employee can loop
+// «issue + ≤5 MB commit» per job and burn the publisher's shared GitHub quota / bloat the private
+// repo. The privacy probe and the path scoping bound WHAT can be written; nothing bounded HOW OFTEN.
+//
+// Stricter than the upload limit on purpose: rating a run is a deliberate, occasional act — a person
+// who legitimately sends more than a dozen ratings in ten minutes is not describing what went wrong.
+export const FEEDBACK_LIMIT = 12
+export const FEEDBACK_WINDOW_MS = 10 * 60 * 1000
+
+const feedbackLimiter = createRateLimiter(FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS)
+
+/** Check (and count) one feedback submission. Same per-person key as uploads (see `uploadRateKey`). */
+export function checkFeedbackRate(memberId: string, userId: string | null | undefined, nowMs: number): RateLimitDecision {
+  return feedbackLimiter.check(uploadRateKey(memberId, userId), nowMs)
+}
+
+/** Message for the person who hit the feedback limit. */
+export function feedbackRateMessage(retryAfterMs: number): string {
+  const min = Math.max(1, Math.ceil(retryAfterMs / 60_000))
+  return `Слишком много отзывов подряд. Попробуйте снова через ${min} мин.`
+}
+
+/** Test seam. */
+export function resetFeedbackRateLimit(): void {
+  feedbackLimiter.sweep(Number.MAX_SAFE_INTEGER)
+}

@@ -12,6 +12,7 @@ import { jobRedis } from '../utils/jobStoreRedis'
 import { resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
 import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { downloadDiskFile, type BinaryFetchFn } from '../utils/diskDownload'
+import { checkFeedbackRate, feedbackRateMessage } from '../utils/uploadRateLimit'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import type { FetchFn } from '../utils/b24Rest'
 
@@ -21,6 +22,9 @@ const JOB_ID_RE = /^[A-Za-z0-9-]{1,64}$/
 /** Cap on a client-sent feedback file. Same 5 MB the Disk fallback uses — a feedback attachment is
  *  for reproducing a run, not for archiving; larger documents go without one (the widget says so). */
 const MAX_FEEDBACK_FILE_BYTES = 5 * 1024 * 1024
+
+/** Cap on the whole JSON body: the attachment as base64 (×4/3) plus the comment and context. */
+const MAX_FEEDBACK_BODY_BYTES = 8 * 1024 * 1024
 
 /**
  * Validate the file the PAGE sent along with a rating (#349). Untrusted input on an authenticated
@@ -65,6 +69,26 @@ export default defineEventHandler(async (event) => {
         span.outcome = 'auth_failed'
         setResponseStatus(event, member.status ?? 401)
         return { error: 'authorization failed', reason: member.reason }
+      }
+
+      // Rate limit + body cap BEFORE buffering the body (#349 review). The route stopped being cheap
+      // once the source file rides WITH the rating: one authenticated employee could loop «issue +
+      // 5 MB commit» and burn the publisher's GitHub quota. The privacy probe bounds WHAT can be
+      // written and the path scoping WHERE — this bounds HOW OFTEN and HOW BIG.
+      const rate = checkFeedbackRate(member.memberId, member.userId, Date.now())
+      if (!rate.allowed) {
+        span.outcome = 'rate_limited'
+        setResponseStatus(event, 429)
+        setResponseHeader(event, 'retry-after', Math.ceil(rate.retryAfterMs / 1000))
+        return { error: feedbackRateMessage(rate.retryAfterMs) }
+      }
+      // Declared length is checked before the body is materialised: a 5 MB attachment is ~6.7 MB of
+      // base64 plus the rating itself, so anything past 8 MB is not a feedback we can use.
+      const declared = Number(getHeader(event, 'content-length') || 0)
+      if (Number.isFinite(declared) && declared > MAX_FEEDBACK_BODY_BYTES) {
+        span.outcome = 'bad_request'
+        setResponseStatus(event, 413)
+        return { error: 'Отзыв слишком большой. Отправьте его без файла.' }
       }
 
       const raw = await readBody(event).catch(() => null) as

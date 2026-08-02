@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  FEEDBACK_LIMIT,
+  checkFeedbackRate,
+  feedbackRateMessage,
+  resetFeedbackRateLimit,
   UPLOAD_LIMIT,
   UPLOAD_WINDOW_MS,
   checkUploadRate,
@@ -124,5 +128,38 @@ describe('uploadRateMessage', () => {
 
   it('ноль не превращается в бессмысленное «через 0 мин»', () => {
     expect(uploadRateMessage(0)).toContain('через 1 мин')
+  })
+})
+
+describe('лимит отзывов (#349 ревью)', () => {
+  beforeEach(() => resetFeedbackRateLimit())
+
+  it('строже загрузок: отзыв — редкое осознанное действие', () => {
+    expect(FEEDBACK_LIMIT).toBeLessThan(UPLOAD_LIMIT)
+  })
+
+  it('пускает до лимита, дальше отказывает и говорит, когда вернуться', () => {
+    const t = 1_000_000
+    for (let i = 0; i < FEEDBACK_LIMIT; i++) {
+      expect(checkFeedbackRate('m1', '7', t).allowed, `попытка ${i + 1}`).toBe(true)
+    }
+    const refused = checkFeedbackRate('m1', '7', t)
+    expect(refused.allowed).toBe(false)
+    expect(refused.retryAfterMs).toBeGreaterThan(0)
+    expect(feedbackRateMessage(refused.retryAfterMs)).toMatch(/через \d+ мин/)
+  })
+
+  it('счётчик отзывов НЕ общий с загрузками — иначе пачка импорта съедала бы право на отзыв', () => {
+    const t = 2_000_000
+    for (let i = 0; i < FEEDBACK_LIMIT; i++) checkFeedbackRate('m2', '7', t)
+    expect(checkFeedbackRate('m2', '7', t).allowed).toBe(false)
+    expect(checkUploadRate('m2', '7', t).allowed).toBe(true) // загрузки нетронуты
+  })
+
+  it('лимит персональный: коллега не расплачивается за соседа', () => {
+    const t = 3_000_000
+    for (let i = 0; i < FEEDBACK_LIMIT; i++) checkFeedbackRate('m3', '7', t)
+    expect(checkFeedbackRate('m3', '7', t).allowed).toBe(false)
+    expect(checkFeedbackRate('m3', '8', t).allowed).toBe(true)
   })
 })

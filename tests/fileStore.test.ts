@@ -45,10 +45,18 @@ describe('исходник НЕ хранится на сервере (#349, от
   // Проверяем оба конца: сервер удаляет, и никто не вернул хранение «на всякий случай».
   const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
 
-  it('воркер удаляет загруженные байты сразу после извлечения', () => {
+  it('воркер удаляет загруженные байты НА ОСНОВНОМ пути, сразу после извлечения', () => {
+    // Мутационная проверка вскрыла дыру в первой версии этого теста: он искал `cleanupUpload` по
+    // ВСЕМУ файлу, а удаление есть ещё в обработчике исчерпанных попыток и в самом определении
+    // функции. Поэтому удаление с основного пути можно было убрать — тест оставался зелёным, а
+    // хранение молча возвращалось. Смотрим ИМЕННО тело extract-воркера и порядок вызовов.
     const worker = read('../server/queue/worker.ts')
-    expect(worker).toContain('cleanupUpload')
-    expect(worker).toMatch(/unlink\(\s*uploadPath/)
+    const body = worker.slice(worker.indexOf('QUEUES.extract'), worker.indexOf('QUEUES.agent'))
+    expect(body, 'в теле extract-воркера нет удаления байтов').toContain('cleanupUpload(data)')
+    // Удаление обязано идти ПОСЛЕ разбора: иначе извлекать было бы не из чего.
+    expect(body.indexOf('handleFileExtractJob')).toBeLessThan(body.indexOf('cleanupUpload(data)'))
+    // Сама реализация действительно удаляет файл задания, а не «делает вид».
+    expect(worker).toMatch(/unlink\(\s*uploadPath\(job\.memberId, job\.jobId\)\s*\)/)
   })
 
   it('свип — подстраховка от сирот, а не срок хранения: окно НЕ привязано к жизни задания', () => {
