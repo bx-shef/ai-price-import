@@ -2,7 +2,7 @@ import type { ExtractedDocument } from '~/types/document'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { ENTITY_TYPE_ID } from '~/config/b24'
 import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
-import { describeTotalMismatch, reconcilePricing } from '~/utils/pricing'
+import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
@@ -183,8 +183,21 @@ export async function runCrmSync(
   }
   if (pricing.totalMismatch) {
     // #336: назвать НОМЕРА, а не факт. Разница — поисковый ключ: неверно прочитанная ячейка
-    // (не та ценовая колонка, количество, съеденное названием) сдвигает ровно одну строку.
-    warnings.push(describeTotalMismatch(doc.total, pricing.grossTotal, doc.currency))
+    // (не та ценовая колонка, количество, съеденное названием) сдвигает ровно одну строку. Если
+    // разница арифметически сходится ровно с ОДНОЙ строкой — называем и её: на документе в 44 или
+    // 61 позицию (такие в прогоне были) три числа всё ещё оставляли человека искать глазами.
+    // Допуск — ТОТ ЖЕ, которым сверка признала расхождение: полукопеечный показывал не на ту строку
+    // (настоящий виновник в него не укладывался на документе с НДС, округлённым на итог).
+    const suspect = findTotalGapSuspect(
+      doc.items,
+      pricing.grossTotal - (doc.total ?? 0),
+      priceIncludesVat,
+      pricingTolerance(doc.items.length, doc.total ?? 0)
+    )
+    // Строку зовём ПО НАЗВАНИЮ: наш номер — позиция в разобранном списке, и он расходится с бумагой
+    // ровно тогда, когда строка при разборе потерялась, — то есть в том самом случае, ради которого
+    // подсказка и существует.
+    warnings.push(describeTotalMismatch(doc.total, pricing.grossTotal, doc.currency, suspect, suspect ? doc.items[suspect.index]?.name : undefined))
   }
   // #337: флаг «цены с НДС» ничем не подтверждён, а он меняет сумму сделки ровно на ставку налога.
   // Раньше здесь была тишина: тот же документ с однозначным итогом получал предупреждение
