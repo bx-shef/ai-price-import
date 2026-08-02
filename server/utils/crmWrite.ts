@@ -5,8 +5,10 @@ import { lineGross } from '~/utils/pricing'
 
 // Pure builders + thin callers for creating the target CRM entity and its rows.
 // VAT model validated live: crm.item.productrow.set computes НДС 1-в-1 (no kernel patch).
-// NOTE: intended consumer is the isolated MCP `create_target` tool (docs/PROCESS.md),
-// not direct calls from crm-sync — MCP is the only door to Bitrix24.
+// Consumers: server/queue/crmSyncCore.ts (production) and scripts/live-crm-sync.mjs. The old note
+// here named an isolated MCP tool as the intended caller — that stopped being true when crm-sync
+// began calling these builders directly, and a stale contract note is exactly how the invariant
+// drift behind #302/#347 goes unnoticed.
 
 /**
  * Short owner-type code for crm.item.productrow.set `ownerType`.
@@ -55,9 +57,11 @@ export interface ProductRowInput {
  * `opportunity` (correct) masked it: the deal header said 10 320 and its product tab summed 8 600.
  *
  * `taxIncluded` does NOT touch the arithmetic — the same price with 'N' and with 'Y' stores
- * identical priceExclusive/priceBrutto/opportunity/taxValue (live-verified across lead, deal,
- * quote and smart-invoice). What it DOES decide is which of the two stored numbers the product
- * grid PRINTS in the «Цена» column: 'N' → priceExclusive (net), 'Y' → priceBrutto (gross).
+ * identical priceExclusive/priceBrutto/opportunity/taxValue — live-verified across lead, deal,
+ * quote, smart-invoice AND a dynamic smart-process. What it DOES decide is which of the two stored
+ * numbers the product grid PRINTS in the «Цена» column: 'N' → priceExclusive (net), 'Y' →
+ * priceBrutto (gross). ⚠ The STORED side is verified everywhere; the PRINTED side was compared by
+ * eye on deals only — REST cannot read the grid, so other entity types rest on the same rendering.
  * So it must MIRROR THE DOCUMENT'S OWN convention, not our storage format: a net-priced invoice
  * gets 'N' and the card then shows 0,86 with VAT on top, exactly as printed on paper; a
  * VAT-inclusive one gets 'Y' and shows the gross price, also as printed. #302 hardcoded 'Y' on the
@@ -78,8 +82,11 @@ export interface ProductRowInput {
  * 1.0319999… in floats).
  */
 export function buildProductRow(input: ProductRowInput, sort: number): Record<string, unknown> {
-  const net = round6(finite(input.price))
-  const quantity = round6(finite(input.quantity, 1))
+  // B24 rejects a negative row price, so crm-sync already clamps before calling (a discount line
+  // is carried by the entity total instead). Clamping HERE too costs nothing and stops the
+  // invariant from resting on one caller's memory — the exact way #302/#347 happened.
+  const net = Math.max(0, round6(finite(input.price)))
+  const quantity = Math.max(0, round6(finite(input.quantity, 1)))
   const rate = input.taxRate == null ? 0 : finite(input.taxRate)
   const price = input.priceIncludesVat || rate <= 0 ? net : round6(net * (1 + rate / 100))
   const row: Record<string, unknown> = {
