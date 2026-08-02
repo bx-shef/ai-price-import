@@ -75,7 +75,10 @@ describe('isPortalConfigured', () => {
     expect(cfg({ errorChatId: 'chat7' })).toBe(true)
     expect(cfg({ routingRules: [{ match: { type: 'накладная' }, target: { entityTypeId: 2 } }] })).toBe(true)
     expect(cfg({ units: { dictionary: { шт: 796 } } })).toBe(true)
-    expect(cfg({ saveFile: true })).toBe(true)
+    // #328: `saveFile` больше НЕ признак настройки — он включён по умолчанию, и «настроено»
+    // загоралось бы у нетронутого портала, а баннер «сначала настройте» не увидел бы никто.
+    expect(cfg({ saveFile: true })).toBe(false)
+    expect(cfg({ saveFile: false })).toBe(false)
     expect(cfg({ product: { by: 'name', onMissing: 'skip-warn' } })).toBe(true)
     expect(cfg({ product: { by: 'article', onMissing: 'freeform' } })).toBe(true)
     expect(cfg({ units: { defaultCode: 166 } })).toBe(true)
