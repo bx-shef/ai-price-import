@@ -6,6 +6,7 @@ import CheckLIcon from '@bitrix24/b24icons-vue/outline/CheckLIcon'
 import FingerprintIcon from '@bitrix24/b24icons-vue/outline/FingerprintIcon'
 import CopyIcon from '@bitrix24/b24icons-vue/outline/CopyIcon'
 import ReceiptIcon from '@bitrix24/b24icons-vue/outline/ReceiptIcon'
+import { PUBLISHER, PUBLISHER_PERSON } from '~/config/publisher'
 import { B24_BOOKING_URL } from '~/utils/booking'
 
 const props = defineProps<{ open: boolean }>()
@@ -32,16 +33,16 @@ const { reachGoal } = useMetrikaGoal()
 const cardEl = ref<HTMLElement | null>(null)
 let lastFocused: HTMLElement | null = null
 
-// Публичные реквизиты ИП — намеренно хардкодены, это публичная визитка.
+// Публичные реквизиты ИП — из единственного источника (#297), своей копии здесь больше нет.
 const card = {
-  name: 'Игорь Шевчик',
+  name: PUBLISHER_PERSON.fullName,
   role: 'AI-импорт прайсов и товаров в Bitrix24',
-  org: 'ИП Шевчик И. С.',
-  unp: 'УНП 192049017',
-  phone: '+375 29 736-01-26',
-  phoneTel: '+375297360126',
-  email: 'offer@bx-shef.by',
-  telegram: '@bxshefby',
+  org: PUBLISHER.shortName,
+  unp: PUBLISHER.unpLabel,
+  phone: PUBLISHER.phone,
+  phoneTel: PUBLISHER.phoneTel,
+  email: PUBLISHER.email,
+  telegram: PUBLISHER.telegram,
   // QR/сайт визитки ведут на этот лендинг (продукт), реквизиты/почта — на общий ИП.
   site: 'price-import.bx-shef.by',
   // «Реквизиты просто ссылкой» — на страницу с полными реквизитами.
@@ -169,9 +170,9 @@ function onBackdropClick(e: MouseEvent) {
 function downloadVCard() {
   const vcf = buildVCard({
     fullName: card.name,
-    lastName: 'Шевчик',
-    firstName: 'Игорь',
-    middleName: 'Сергеевич',
+    lastName: PUBLISHER_PERSON.lastName,
+    firstName: PUBLISHER_PERSON.firstName,
+    middleName: PUBLISHER_PERSON.middleName,
     org: card.org,
     title: card.role,
     phoneTel: card.phoneTel,
@@ -285,7 +286,7 @@ function triggerDownload(blob: Blob, filename: string) {
                 <!-- Photo -->
                 <img
                   src="/igor.jpg"
-                  alt="Игорь Шевчик"
+                  :alt="card.name"
                   class="size-20 rounded-full object-cover border-2 shadow-lg shrink-0"
                   style="border-color: rgb(var(--color-accent-primary-ch)/0.5); box-shadow: 0 0 28px rgb(var(--color-accent-primary-ch)/0.2);"
                   loading="eager"

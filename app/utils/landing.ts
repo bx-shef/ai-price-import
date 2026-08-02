@@ -1,6 +1,8 @@
 // Landing content + pure helpers (single source of truth, testable). Marketing
 // copy is Russian; see docs/PROCESS.md.
 
+import { PUBLISHER } from '../config/publisher'
+
 export const LANDING_TITLE = 'AI-импорт прайсов в Bitrix24'
 export const LANDING_SUBTITLE
   = 'Накладные, счета, КП и прайсы разбираются автоматически: товары и контрагент подбираются по вашей базе, а на выходе — готовый лид, сделка, счёт или смарт-процесс с позициями, суммами и НДС 1-в-1.'
@@ -24,7 +26,8 @@ export const LANDING_FEATURES: LandingFeature[] = [
 // FROM the Marketplace, so the app button opens the listing (not /app).
 export const LANDING_CTA_BRIEF = 'Обсудить интеграцию'
 export const LANDING_CTA_MARKET = 'Открыть в Маркете Bitrix24'
-export const LANDING_PUBLISHER = 'ИП Шевчик И.С.'
+/** Rights holder shown on the landing (SEO author/og:site_name). Source — `app/config/publisher.ts` (#297). */
+export const LANDING_PUBLISHER = PUBLISHER.shortName
 
 /**
  * SEO/OG description — its OWN string, no longer an alias of the subtitle (#329).
