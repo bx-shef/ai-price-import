@@ -41,6 +41,16 @@ const { counters, savings, moneyBlocker, resetting, error: metricsError, load: l
 // (pristine defaults) we nudge — an admin to open /settings, a non-admin to ask their admin. Only
 // when settings actually loaded IN the portal (`settingsLoaded` — no frame → error → no nudge).
 const { mapping, isAdmin, error: settingsError, load: loadSettings } = useSettings()
+// #360: у портала может не быть чат-бота (бесплатный тариф, предел ботов, права не выданы) — тогда
+// сообщения в чат подписаны именем сотрудника, а не приложения. Раньше это было видно только
+// счётчиком, который никто не открывает.
+const { ready: chatBotReady, load: loadChatBotStatus } = useChatBotStatus()
+const warnUnsignedChat = computed(() => shouldWarnUnsignedChat({
+  screen: screen.value,
+  isAdmin: isAdmin.value,
+  botReady: chatBotReady.value,
+  notifyChatId: mapping.value.notifyChatId
+}))
 const settingsLoaded = ref(false)
 const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
 // Третье состояние экрана: «ещё не знаем» (#256). Пока настройки не разрешились, показываем скелетон
@@ -151,6 +161,7 @@ onMounted(async () => {
   }
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
+  void loadChatBotStatus() // фоном: баннер не должен задерживать рабочий экран
   await loadSettings()
   // Loaded successfully inside the portal (a frame error means standalone/no-auth → don't nudge).
   settingsLoaded.value = !settingsError.value
@@ -300,6 +311,19 @@ watch(jobs, (list) => {
             />
           </template>
         </B24Alert>
+
+        <!-- Бот не завёлся (#360): сообщения уходят, но подписаны сотрудником, а не приложением.
+         Показываем ТОЛЬКО админу и ТОЛЬКО когда чат уведомлений реально настроен — иначе сообщений
+         нет вовсе и предупреждать не о чем. Не блокирует работу: это качество подписи, не отказ. -->
+        <B24Alert
+          v-if="warnUnsignedChat"
+          class="mb-4"
+          color="air-secondary"
+          size="sm"
+          :icon="WarningAlarmIcon"
+          title="Сообщения в чат подписаны сотрудником"
+          description="Портал не дал приложению завести своего чат-бота — обычно так бывает на бесплатном тарифе или когда при установке не выдали право на чат-ботов. Импорт работает как обычно, но отчёты и сообщения об ошибках приходят от имени того сотрудника, который устанавливал приложение. Чтобы это исправить, переустановите приложение на коммерческом тарифе."
+        />
 
         <!-- Пока приложение НЕ настроено (needsSetup) показываем ТОЛЬКО баннер выше (админу — с кнопкой
            «Настроить», не-админу — «обратитесь к администратору»); весь рабочий контент скрыт до настройки
