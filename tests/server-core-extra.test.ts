@@ -189,10 +189,13 @@ describe('portalSettings coercion nuances', () => {
     expect(parsePortalSettings({ defaultTarget: { entityTypeId: 2, categoryId: -1 } }).defaultTarget).toEqual({ entityTypeId: 2 })
     expect(m.routingRules[0]!.target).toEqual({ entityTypeId: 2, categoryId: 0 }) // fallback default (deal/0)
   })
-  it('chat ids pass-through only when string; saveFile default OFF (opt-in); dictionary non-object → {}', () => {
+  it('chat ids pass-through only when string; saveFile default ON (#328); dictionary non-object → {}', () => {
     expect(parsePortalSettings({ notifyChatId: 'chat1', errorChatId: 5 }).notifyChatId).toBe('chat1')
     expect(parsePortalSettings({ errorChatId: 5 }).errorChatId).toBeUndefined()
-    expect(parsePortalSettings({}).saveFile).toBe(false) // opt-in — privacy default
+    // #328 (решение владельца): включено по умолчанию — исходник на Диске нужен, чтобы привязать
+    // его к делу таймлайна. Выключить можно только явным `false`.
+    expect(parsePortalSettings({}).saveFile).toBe(true)
+    expect(parsePortalSettings({ saveFile: false }).saveFile).toBe(false)
     expect(parsePortalSettings({ saveFile: true }).saveFile).toBe(true) // explicit true enables
     expect(parsePortalSettings({ units: { dictionary: 'nope' } }).units.dictionary).toEqual({})
   })

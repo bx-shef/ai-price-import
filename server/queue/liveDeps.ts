@@ -583,7 +583,9 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         lines,
         openPath: entityOpenPath(entityTypeId, entityId),
         showOpenButton: hasCompany,
-        ...(sourceFileUrl ? { sourceFileUrl } : {})
+        // Имя файла — подпись ссылки в деле (#328). Берём из задания; нет — билдер подставит
+        // нейтральное «Открыть файл».
+        ...(sourceFileUrl ? { sourceFileUrl, sourceFileName: (await getJob(memberId, jobId, jobRedis))?.fileName ?? '' } : {})
       })) as { activity?: { id?: number } } | undefined
       // Additional binding to the created entity so the SAME дело shows on both the company AND the
       // entity timeline (crm.activity.binding.add — live-verified with a configurable activity). Best-

@@ -201,21 +201,49 @@ describe('configurableActivity', () => {
     const blocks = ((params.layout as Record<string, Record<string, Record<string, unknown>>>).body.blocks) as Record<string, unknown>
     expect(Object.keys(blocks).length).toBeGreaterThanOrEqual(1)
   })
-  it('adds an «Исходный файл» button ONLY for a valid same-portal file URL (keeps its IFRAME query)', () => {
+  // #328 (решение владельца): файл больше НЕ кнопка в подвале — он привязан к самому делу, строкой
+  // «Исходный файл: <имя>» внутри записи. Кнопка рядом с делом читалась как «что-то ещё», а строка
+  // в деле — как часть документа.
+  it('привязывает исходный файл В ТЕЛО дела, подписывая его именем файла', () => {
     const fileUrl = commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'j1__doc.xls')
     const withFile = buildConfigurableActivity({
       ownerTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', showOpenButton: false,
-      sourceFileUrl: fileUrl
+      sourceFileUrl: fileUrl, sourceFileName: 'накладная №5.xls'
     }) as Record<string, Record<string, Record<string, Record<string, Record<string, unknown>>>>>
-    expect(withFile.layout.footer.buttons.sourceFile).toMatchObject({
-      title: 'Исходный файл', action: { type: 'redirect', uri: fileUrl }
-    })
-    // protocol-relative / absolute URL is dropped (no off-portal redirect button)
+    const block = withFile.layout.body.blocks.sourceFile as unknown as Record<string, Record<string, Record<string, Record<string, unknown>>>>
+    expect(block.properties.title).toBe('Исходный файл')
+    expect(block.properties.block.properties.text).toBe('накладная №5.xls')
+    expect(block.properties.block.properties.action).toMatchObject({ type: 'redirect', uri: fileUrl })
+    // Кнопки в подвале за файл больше не отвечают.
+    expect(withFile.layout.footer).toBeUndefined()
+  })
+
+  it('без имени файла подпись нейтральная, а не пустая ссылка', () => {
+    const fileUrl = commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'j1__doc.xls')
+    const p = buildConfigurableActivity({
+      ownerTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', showOpenButton: false, sourceFileUrl: fileUrl
+    }) as Record<string, Record<string, Record<string, Record<string, Record<string, Record<string, Record<string, unknown>>>>>>>
+    expect(p.layout.body.blocks.sourceFile.properties.block.properties.text).toBe('Открыть файл')
+  })
+
+  it('чужой адрес файла в дело не попадает', () => {
+    // Протокол-относительный адрес увёл бы сотрудника с портала прямо из карточки сделки.
     const hostile = buildConfigurableActivity({
       ownerTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', showOpenButton: false, sourceFileUrl: '//evil.test/x'
-    }) as Record<string, Record<string, unknown>>
-    expect((hostile.layout as Record<string, unknown>).footer).toBeUndefined()
+    }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>
+    expect(hostile.layout.body.blocks.sourceFile).toBeUndefined()
+    expect(hostile.layout.footer).toBeUndefined()
   })
+
+  it('имя файла — внешний текст: BB-разметка обезврежена', () => {
+    const fileUrl = commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'j1__doc.xls')
+    const p = buildConfigurableActivity({
+      ownerTypeId: 2, ownerId: 5, title: 'x', lines: ['1'], openPath: '/crm/deal/details/5/', showOpenButton: false,
+      sourceFileUrl: fileUrl, sourceFileName: '[url=https://evil.test]клик[/url]'
+    }) as Record<string, Record<string, Record<string, Record<string, Record<string, Record<string, Record<string, unknown>>>>>>>
+    expect(String(p.layout.body.blocks.sourceFile.properties.block.properties.text)).not.toContain('[url=')
+  })
+
   it('safeRelativePath rejects absolute/scheme URLs', () => {
     expect(safeRelativePath('/crm/deal/details/5/')).toBe('/crm/deal/details/5/')
     expect(safeRelativePath('https://evil.test/')).toBe('/crm/')

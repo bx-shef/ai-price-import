@@ -39,15 +39,18 @@ export interface ActivityLayoutInput {
   /** Label for the «Открыть» button (e.g. «Открыть сделку» / «Открыть компанию»). Default «Открыть». */
   openButtonTitle?: string
   /** Optional in-portal link to the archived SOURCE file on the Disk (its view URL). When set
-   *  (and a valid same-portal relative path), a «Исходный файл» button is added to the timeline
+   *  (and a valid same-portal relative path), the file is bound into the activity body (#328) —
    *  дело so the operator can open the original document (#129 follow-up). */
   sourceFileUrl?: string
+  /** File name shown as the link text. External (chosen by the uploader) — neutralised and capped. */
+  sourceFileName?: string
 }
 
 /** Build the crm.activity.configurable.add params. Pure. */
 export function buildConfigurableActivity(input: ActivityLayoutInput): Record<string, unknown> {
-  // Footer allows at most TWO buttons — «Открыть» (opt) + «Исходный файл» (opt). Build only the
-  // present ones; an all-absent footer is omitted (an empty buttons map adds no value).
+  // Footer carries ONE button — «Открыть» (opt). The source file used to be a second button; it is
+  // now bound INTO the activity body instead (#328, owner ask): a document belongs with the record,
+  // not next to it. An absent footer is omitted (an empty buttons map adds no value).
   const buttons: Record<string, unknown> = {}
   if (input.showOpenButton) {
     buttons.open = {
@@ -56,16 +59,33 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
       action: { type: 'redirect', uri: safeRelativePath(input.openPath) }
     }
   }
-  // Link to the archived source file — only when the URL is a valid same-portal relative path (never
-  // a scheme/protocol-relative URL that could redirect off-portal). It may carry a query
-  // (`?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`) — kept as-is; the guard only checks the path prefix.
-  if (input.sourceFileUrl && isRelativePath(input.sourceFileUrl)) {
-    buttons.sourceFile = {
-      title: 'Исходный файл',
-      type: 'secondary',
-      action: { type: 'redirect', uri: input.sourceFileUrl }
-    }
-  }
+  // The archived source file, bound into the body as a named line (#328). Only when the URL is a
+  // valid same-portal relative path — never a scheme/protocol-relative URL that could redirect
+  // off-portal. It may carry a query (`?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`) — kept as-is; the guard
+  // only checks the path prefix.
+  //
+  // ⚠ NOT a real attachment: the configurable-activity contract has no file block — its content
+  // blocks are text / largeText / link / withTitle / lineOfBlocks / deadline (checked against the
+  // reference 2026-08-02). A true attachment would mean giving up the configurable layout for a
+  // classic activity type, which would cost the whole card. So the file is bound by NAME and opens
+  // from the record — «файл в деле», not «файл рядом с делом».
+  const fileBlock = input.sourceFileUrl && isRelativePath(input.sourceFileUrl)
+    ? {
+        type: 'withTitle',
+        properties: {
+          title: 'Исходный файл',
+          inline: true,
+          block: {
+            type: 'link',
+            properties: {
+              // The file name comes from the upload, so it is external text: neutralised and capped.
+              text: neutralizeBb(input.sourceFileName || 'Открыть файл').slice(0, 120),
+              action: { type: 'redirect', uri: input.sourceFileUrl }
+            }
+          }
+        }
+      }
+    : null
   return {
     ownerTypeId: input.ownerTypeId,
     ownerId: input.ownerId,
@@ -85,12 +105,15 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
         // clicking it redirects to the related entity, same as the «Открыть» button.
         logo: { code: 'document', action: { type: 'redirect', uri: safeRelativePath(input.openPath) } },
         // B24 requires 1..20 blocks — guarantee at least one so an empty `lines` can't 400.
-        blocks: Object.fromEntries(
-          (input.lines.length ? input.lines : ['—']).slice(0, 10).map((text, i) => [
-            `line${i}`,
-            { type: 'text', properties: { value: neutralizeBb(String(text)).slice(0, 500) } }
-          ])
-        )
+        blocks: {
+          ...Object.fromEntries(
+            (input.lines.length ? input.lines : ['—']).slice(0, 10).map((text, i) => [
+              `line${i}`,
+              { type: 'text', properties: { value: neutralizeBb(String(text)).slice(0, 500) } }
+            ])
+          ),
+          ...(fileBlock ? { sourceFile: fileBlock } : {})
+        }
       },
       ...(Object.keys(buttons).length ? { footer: { buttons } } : {})
     }

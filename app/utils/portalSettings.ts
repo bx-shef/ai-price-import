@@ -26,7 +26,7 @@ export function defaultMapping(): PortalMapping {
     // Opt-in (default OFF): archiving raw client documents onto the portal's common Disk is a
     // privacy choice on a multitenant OAuth app — a tenant that never configured it should not
     // have client files copied to its Disk. The admin turns it on in settings.
-    saveFile: false,
+    saveFile: true, // #328: по умолчанию ВКЛЮЧЕНО — файл привязывается к делу (решение владельца)
     routingRules: [],
     defaultTarget: { ...DEFAULT_TARGET }
   }
@@ -92,7 +92,10 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
       defaultCode: Number.isFinite(Number(units.defaultCode)) ? Number(units.defaultCode) : 796,
       autoCreate: units.autoCreate === true
     },
-    saveFile: o.saveFile === true, // opt-in — only an explicit `true` enables Disk archiving
+    // #328: включено по умолчанию (решение владельца) — исходник на Диске портала нужен, чтобы
+    // привязать его к делу таймлайна. Явный `false` выключает; всё остальное (нет поля, мусор)
+    // читается как «включено», иначе портал со старыми настройками молча потерял бы файл в деле.
+    saveFile: o.saveFile !== false,
     ...(typeof o.notifyChatId === 'string' ? { notifyChatId: o.notifyChatId } : {}),
     ...(typeof o.errorChatId === 'string' ? { errorChatId: o.errorChatId } : {}),
     routingRules: asRules(o.routingRules),
@@ -122,7 +125,9 @@ export function isPortalConfigured(m: PortalMapping): boolean {
   if (m.notifyChatId || m.errorChatId) return true
   if (m.routingRules.length > 0) return true
   if (Object.keys(m.units.dictionary).length > 0) return true
-  if (m.saveFile) return true
+  // `saveFile` НЕ считается признаком настройки (#328): с тех пор как хранение исходника включено
+  // по умолчанию, оно есть у нетронутого портала — и «настроено» загоралось бы у всех сразу,
+  // а баннер «сначала настройте приложение» не показался бы никому.
   if (m.product.by !== 'article' || m.product.onMissing !== 'skip-warn') return true
   if (m.units.defaultCode !== 796 || m.units.autoCreate) return true
   // Default target moved off the fallback anchor (deal / direction 0 / no stage)? categoryId 0 IS
