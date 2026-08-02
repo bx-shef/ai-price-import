@@ -5,26 +5,33 @@ import { buildConfigurableActivity, entityOpenPath } from '../server/utils/confi
 import { monthlySubfolderName, pickCommonStorage } from '../server/utils/disk'
 
 describe('computeOpportunity', () => {
-  it('sums gross: inclusive rows as-is, net rows + VAT', () => {
-    // 100×2 incl → 200; net 100×1 @20% → 120 ⇒ 320
+  // Контракт: сюда приходят строки от buildProductRow, где `price` УЖЕ валовая (#302).
+  // Сумма = Σ round2(price × qty), налог сверху не добавляется никогда.
+  it('суммирует валовые строки как есть', () => {
     expect(computeOpportunity([
       { price: 100, quantity: 2, taxRate: 22, taxIncluded: 'Y' },
-      { price: 100, quantity: 1, taxRate: 20, taxIncluded: 'N' }
+      { price: 120, quantity: 1, taxRate: 20, taxIncluded: 'N' }
     ])).toBe(320)
   })
-  it('null taxRate = no VAT; empty rows = 0', () => {
-    expect(computeOpportunity([{ price: 50, quantity: 3, taxRate: null, taxIncluded: 'N' }])).toBe(150)
+  it('пустой список = 0', () => {
     expect(computeOpportunity([])).toBe(0)
   })
   it('non-finite price → 0; missing quantity → 1 (matches buildProductRow clamps)', () => {
     expect(computeOpportunity([{ price: NaN, quantity: 2, taxIncluded: 'Y' }])).toBe(0)
     expect(computeOpportunity([{ price: 100, quantity: NaN, taxIncluded: 'Y' }])).toBe(100)
   })
-  it('adds VAT on the LINE total (round once per line), not per unit', () => {
-    // net line round2(10.11×3)=30.33 @20% → round2(36.396)=36.40 (per-line, matches printed «Сумма НДС»)
-    expect(computeOpportunity([{ price: 10.11, quantity: 3, taxRate: 20, taxIncluded: 'N' }])).toBe(36.40)
-    // the reported invoice: 0.86 × 10000 @20% → 8600 net → 10320 gross (NOT 10300 from per-unit rounding)
-    expect(computeOpportunity([{ price: 0.86, quantity: 10000, taxRate: 20, taxIncluded: 'N' }])).toBe(10320)
+  // #347: флаг `taxIncluded` теперь ЗЕРКАЛИТ ДОКУМЕНТ (он решает, что портал печатает в колонке
+  // «Цена»), поэтому нетто-счёт несёт 'N' рядом с уже валовой ценой. Прежняя версия читала флаг
+  // и на таком наборе добавляла НДС ВТОРОЙ раз: 10 320 превращалось в 12 384. Тест держит именно
+  // эту связку — «строка от buildProductRow с флагом N» — а не абстрактное «сумма считается».
+  it('НЕ добавляет НДС по флагу «N» — цена уже валовая (иначе задвоение налога)', () => {
+    const row = buildProductRow({ productName: 'Мешок', price: 0.86, quantity: 10000, taxRate: 20, priceIncludesVat: false, measureCode: 796 }, 10)
+    expect(row.taxIncluded).toBe('N') // документ печатает цены без НДС
+    expect(computeOpportunity([row])).toBe(10320) // не 12 384
+  })
+  it('сумма строки округляется один раз (не по единице)', () => {
+    const row = buildProductRow({ productName: 'x', price: 10.11, quantity: 3, taxRate: 20, priceIncludesVat: false, measureCode: 796 }, 10)
+    expect(computeOpportunity([row])).toBe(36.40)
   })
 })
 
@@ -59,12 +66,13 @@ describe('crmWrite', () => {
   })
   // #302 (live-verified): the portal treats row `price` as ALWAYS gross and ignores taxIncluded in
   // its math — a net price written as-is undershot every row by the whole VAT. The builder must
-  // convert net→gross itself and stamp taxIncluded 'Y'.
+  // convert net→gross itself; the flag mirrors the DOCUMENT (#347), so a net-priced invoice gets
+  // 'N' and the card prints 0,86 — the number on paper — while storing the gross 1,032.
   it('buildProductRow: net price converted to gross, NOT rounded to kopecks (the reported invoice)', () => {
     const row = buildProductRow({ productName: 'Мешок', price: 0.86, quantity: 10000, taxRate: 20, priceIncludesVat: false, measureCode: 796 }, 10)
     // exactly 1.032 — round2 would give 1.03 → ×10 000 = 10 300; float noise (1.0319999…) must not leak
     expect(row.price).toBe(1.032)
-    expect(row.taxIncluded).toBe('Y')
+    expect(row.taxIncluded).toBe('N')
     // the portal computes the row sum as price×qty — it must land on the printed «Всего к оплате»
     expect(Math.round((row.price as number) * (row.quantity as number) * 100) / 100).toBe(10320)
   })
@@ -101,8 +109,8 @@ describe('crmWrite', () => {
       false
     )
     expect(rows).toHaveLength(2)
-    expect(rows[1]!.taxIncluded).toBe('Y')
-    expect(rows[1]!.price).toBe(24) // 20 net @20% → 24 gross
+    expect(rows[1]!.taxIncluded).toBe('N') // документ печатает цены без НДС → карточка покажет 20
+    expect(rows[1]!.price).toBe(24) // 20 net @20% → 24 gross (хранится валовая, показывается 20)
     expect(rows[1]!.sort).toBe(20)
   })
   // The invariant the live E2E now also holds: what the portal computes from the written rows
