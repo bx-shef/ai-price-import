@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { HOURLY_RATE_AS_OF, HOURLY_RATE_HINTS } from '../app/config/hourlyRateHints'
-import { hourlyRateHint } from '../app/utils/savings'
+import { hourlyRateHint, shouldPrefillRate } from '../app/utils/savings'
 
 // #311. Ставка-ориентир теперь живёт В ДВУХ местах: таблица в `docs/PROCESS.md` §7.1 (для человека)
 // и карта в коде (для подсказки под полем). Ровно этого расхождения опасалась задача-напоминание
@@ -96,14 +96,18 @@ describe('проводка на странице настроек (#311)', () =>
     expect(PAGE).not.toContain('v-html="rateHint')
   })
 
-  it('ориентир подставляется в поле — но только в пустое и только у админа', () => {
-    // Значение подставляется (решение владельца), однако три условия обязаны стоять рядом:
-    // подставляем ТОЛЬКО когда ставки нет вовсе (иначе затрём введённую руками), ТОЛЬКО после
-    // загрузки серверной копии (до неё «ставки нет» и «настройки не пришли» неразличимы) и
-    // ТОЛЬКО админу (у остальных форма read-only, и подстановка была бы ложью на экране).
-    expect(PAGE).toContain('savingsRate.value = hint.rate')
-    expect(PAGE).toMatch(/if \(mapping\.value\.savings\?\.ratePerHour\) return/)
-    expect(PAGE).toMatch(/if \(!isLoaded \|\| !isAdmin\.value\) return/)
+  it('ориентир подставляется в поле — решение вынесено в чистую функцию', () => {
+    // Замечание ревью: гард «в исходнике есть такие строки» пропускал перестановку присваивания
+    // ВЫШЕ собственной проверки — то есть затирание введённой руками ставки на каждой загрузке.
+    // Теперь решение принимает `shouldPrefillRate`, и оно проверено поведением (ниже).
+    expect(PAGE).toContain('shouldPrefillRate({')
+    expect(PAGE).toContain('savingsRate.value = rateHint.value!.rate')
+  })
+
+  it('подпись показывается только когда значение реально подставили', () => {
+    // Текст говорит «Подставлен ориентир» — над пустым полем (не-админ, настроенный портал)
+    // это была бы неправда.
+    expect(PAGE).toContain('v-if="rateHint && rateSeeded"')
   })
 })
 
@@ -141,5 +145,41 @@ describe('подсказка под полем ставки (#311)', () => {
     // иначе цифра читается как позиция приложения о стоимости чужого сотрудника.
     expect(hourlyRateHint('RUB')!.text).toContain('Подставлен ориентир')
     expect(hourlyRateHint('RUB')!.text).toContain('свою ставку')
+  })
+})
+
+describe('когда ориентир подставляется в поле (#311)', () => {
+  const base = { loaded: true, isAdmin: true, configured: false, current: undefined, hint: 9.9 }
+
+  it('свежий портал, админ, поле пустое — подставляем', () => {
+    expect(shouldPrefillRate(base)).toBe(true)
+  })
+
+  it('ставка уже введена — не трогаем', () => {
+    expect(shouldPrefillRate({ ...base, current: 15 })).toBe(false)
+  })
+
+  it('настройки ещё не загрузились — не трогаем', () => {
+    // До прихода серверной копии «ставки нет» и «настройки не пришли» неразличимы, и подстановка
+    // во второй случай затёрла бы ставку, заданную ранее.
+    expect(shouldPrefillRate({ ...base, loaded: false })).toBe(false)
+  })
+
+  it('портал уже настроен — не подставляем НИКОГДА больше', () => {
+    // Главное замечание ревью: иначе пустая ставка перестаёт быть сохраняемым решением. Рядом с
+    // полем написано «Оставьте пусто — плитки не будет», а при следующем открытии значение
+    // вернулось бы, и одно постороннее «Сохранить» записало бы цифру, которую админ не выбирал —
+    // ровно то, что убирал #270.
+    expect(shouldPrefillRate({ ...base, configured: true })).toBe(false)
+  })
+
+  it('не администратору — не подставляем', () => {
+    // Форма у него read-only: подставленное число было бы цифрой на экране, которую некому сохранить.
+    expect(shouldPrefillRate({ ...base, isAdmin: false })).toBe(false)
+  })
+
+  it('валюты портала нет в таблице — подставлять нечего', () => {
+    expect(shouldPrefillRate({ ...base, hint: null })).toBe(false)
+    expect(shouldPrefillRate({ ...base, hint: 0 })).toBe(false)
   })
 })

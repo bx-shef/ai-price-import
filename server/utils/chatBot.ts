@@ -80,7 +80,10 @@ export function messageIdFromBotSend(res: unknown): number | null {
 
 /** List the app's own bots. Used to recover an id we cannot register again (see `registerBot`). */
 export function buildBotList(): RestRequest {
-  return { method: 'imbot.v2.Bot.list', params: {} }
+  // `limit` is set although a second page is unreachable by construction — the method is scoped to
+  // the CURRENT application and the app registers exactly one `code`. Stating the bound costs one
+  // line and removes the question; `hasNextPage` is deliberately ignored for the same reason.
+  return { method: 'imbot.v2.Bot.list', params: { limit: 50 } }
 }
 
 /** Our bot's id out of the list envelope (`result.bots[]`), matched by CODE. */
@@ -104,7 +107,11 @@ export function botIdFromList(res: unknown): number | null {
  * bot back — `BOT_CODE_ALREADY_TAKEN` is a documented error of the method. We stored 0, every notice
  * fell back to `im.message.add`, and the chat kept showing an employee as the author of the app's
  * own reports — the exact symptom #316 exists to remove, reappearing precisely on a reinstall.
- * A stale `bot_id` in our own store (restore from backup, a lost uninstall event) has the same shape.
+ * ⚠ Scope: this recovers the case where we hold NO id (0). A stale NON-ZERO `bot_id` — the portal
+ * dropped the bot but our row still names it — is NOT covered: `resolveBotId` returns a stored id
+ * without re-checking it, so those notices keep falling back with no self-healing. Not fixed here
+ * on purpose (the bot is set up at install, and a new app version brings a new install event); it
+ * is written down so the next report of this symptom is not searched for in the wrong place.
  *
  * So a refusal is followed by ONE list lookup: the bot the portal already has is ours, it carries
  * our `code`, and its id is what we needed all along.
