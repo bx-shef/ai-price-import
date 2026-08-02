@@ -1,11 +1,13 @@
 import type { QueryFn } from '../utils/tokenStore'
+import type { RestCall } from '../utils/b24Rest'
 import type { ExtractRunners } from '../utils/textExtract'
 import type { EnsureDeps } from '../utils/ensureAccessToken'
 import { ensureFreshToken } from '../utils/ensureAccessToken'
 import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAlive'
-import { deletePortal, getToken, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
+import { deletePortal, getBotId, getToken, saveBotId, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
+import { registerBot } from '../utils/chatBot'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
@@ -169,6 +171,45 @@ export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
  *
  * Best-effort throughout — a chat hiccup must not turn a recorded failure into an unrecorded one.
  */
+/**
+ * Bot id for a portal, registering it once if needed (#316).
+ *
+ * Two caches, and both earn their keep:
+ *   • a POSITIVE answer is already durable — it lives in `portal_tokens.bot_id`;
+ *   • a NEGATIVE one («this portal cannot have a bot») is held in memory for a while, because it is
+ *     the normal state of a free-plan portal and re-registering on every single job would spend a
+ *     REST call per document forever, against the portal's own rate limit.
+ * The negative cache expires so a portal that upgrades its plan starts signing messages by itself,
+ * without anyone remembering to restart the worker.
+ */
+const NO_BOT_TTL_MS = 6 * 60 * 60 * 1000
+const noBotUntil = new Map<string, number>()
+
+export async function resolvePortalBotId(
+  memberId: string,
+  infra: LiveInfra,
+  call: () => Promise<RestCall>,
+  now: () => number = Date.now
+): Promise<number> {
+  try {
+    const stored = await getBotId(memberId, infra.query)
+    if (stored > 0) return stored
+    const until = noBotUntil.get(memberId) ?? 0
+    if (until > now()) return 0
+    const id = await registerBot(await call(), console.warn)
+    if (!id) {
+      noBotUntil.set(memberId, now() + NO_BOT_TTL_MS)
+      return 0
+    }
+    await saveBotId(memberId, id, infra.query)
+    noBotUntil.delete(memberId)
+    return id
+  } catch {
+    // Never let bot plumbing break a notification: 0 simply means «send the old way».
+    return 0
+  }
+}
+
 export async function notifyImportFailure(
   infra: LiveInfra,
   memberId: string,
@@ -191,6 +232,9 @@ export async function notifyImportFailure(
     // document. Repetition is the signal — ten identical messages mean a systemic break, and a
     // throttle that hid nine of them would hide exactly that. Duplicates for the SAME job are still
     // impossible (claimJobFailNotify above); what repeats is distinct documents.
+    // Signed by the app, not by the employee (#316). Resolved once per notification; 0 = no bot
+    // on this portal, and the send falls back to im.message.add.
+    const notifyBotId = await resolvePortalBotId(memberId, infra, async () => t.call)
     const planned = planFailureNotify({
       claimed: true,
       uploaderId,
@@ -203,7 +247,7 @@ export async function notifyImportFailure(
     })
     for (const m of planned) {
       try {
-        await sendChatMessage(m.dialogId, m.message, t.call)
+        await sendChatMessage(m.dialogId, m.message, t.call, notifyBotId, console.warn)
       } catch (e) {
         // A bare user id can be REFUSED: im.message.add rejects a self-dialog («Вы не можете
         // отправлять сообщения указанному получателю»), and the app's OAuth token sends AS the
@@ -309,6 +353,15 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     const t = await rest(memberId)
     if (!t) throw new Error('портал не авторизован (нет токена)')
     return t
+  }
+  // #316: id of the portal's chat bot so notices are signed by the app, not by the employee whose
+  // token we hold. Resolved lazily and at most once per job; a portal that cannot have a bot
+  // (free plan, bot limit, installed before the `imbot` scope) answers 0 and keeps the old path.
+  let botIdMemo: number | null = null
+  const botId = async (): Promise<number> => {
+    if (botIdMemo !== null) return botIdMemo
+    botIdMemo = await resolvePortalBotId(memberId, infra, () => need().then(t => t.call))
+    return botIdMemo
   }
   // Auto-create measure state (Q11): the portal's existing measures indexed once per job — codes
   // (seed the allocator) + title/symbol → code (FIND-before-create, so a unit already in the catalog
@@ -428,7 +481,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         try {
           const t = await rest(memberId)
           if (t && await claimJobErrorChat(memberId, jobId, jobRedis)) {
-            await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call)
+            await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call, await botId(), console.warn)
           }
         } catch { /* swallow — dashboard counter already bumped */ }
       }
@@ -439,7 +492,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // Portal host → an absolute clickable BB-link «Открыть в CRM» in the chat message
       // (a bare path is not a link). Best-effort: no token row ⇒ relative fallback.
       const domain = (await getToken(memberId, infra.query))?.domain
-      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call)
+      await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call, await botId(), console.warn)
     },
     // Configurable timeline activity (crm.activity.configurable.add, OAuth app context — verified live).
     // OWNER MODEL (owner ask, live-verified): a дело has ONE owner (ownerTypeId/ownerId — where it

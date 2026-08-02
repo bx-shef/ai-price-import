@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS portal_tokens (
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- #316: id of the portal's chat bot, so notices are signed by the app and not by the employee
+-- whose token we hold. 0 = not registered (free plan, bot limit, or installed before the imbot
+-- scope existed) — those portals keep the old im.message.add path. ADD COLUMN IF NOT EXISTS, not a
+-- new column in the CREATE above: the table already exists on every deployed portal.
+ALTER TABLE portal_tokens ADD COLUMN IF NOT EXISTS bot_id INTEGER NOT NULL DEFAULT 0;
+
 -- Event-ordering guard (#77): a late/retried install job must not resurrect an uninstalled portal.
 -- deleted_ts is a B24 event ts in unix SECONDS. Growth is bounded — retentionSweep drops rows older
 -- than ~30d (a months-old tombstone can no longer be raced); see server/utils/retentionSweep.ts.

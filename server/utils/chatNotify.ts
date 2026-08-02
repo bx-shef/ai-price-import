@@ -1,4 +1,5 @@
 import type { RestCall } from './b24Rest'
+import { buildBotSend, messageIdFromBotSend } from './chatBot'
 
 // Chat notifications for crm-sync (im.message.add — scope `im`, live-verified).
 // Success → mapping.notifyChatId, hard errors → mapping.errorChatId.
@@ -103,10 +104,36 @@ export function buildErrorMessage(supplierName: string | undefined, messages: st
   return lines.join('\n')
 }
 
-/** Send one chat message via im.message.add. URL_PREVIEW off (avoid rich-link noise). */
-export async function sendChatMessage(dialogId: string, message: string, call: RestCall): Promise<number | null> {
+/**
+ * Send one chat message. URL_PREVIEW off (avoid rich-link noise).
+ *
+ * With a `botId` the message goes AS THE APP (#316, `imbot.v2.Chat.Message.send`). Without one — or
+ * when the bot call is refused — it falls back to `im.message.add`, which writes as the owner of
+ * the token. That fallback is deliberate and must stay: a portal on a free plan, at its bot limit,
+ * or installed before the `imbot` scope existed has no bot, and for those the choice is «wrong
+ * author» versus «no message at all». The failure notice is the only channel that reaches the
+ * employee who uploaded the document (#288), so silence is the worse half of that trade.
+ */
+export async function sendChatMessage(
+  dialogId: string,
+  message: string,
+  call: RestCall,
+  botId?: number | null,
+  log?: (msg: string) => void
+): Promise<number | null> {
   const text = message.trim()
   if (!dialogId || !text) return null
+  const bot = botId && botId > 0 ? buildBotSend(botId, dialogId, text) : null
+  if (bot) {
+    try {
+      const id = messageIdFromBotSend(await call(bot.method, bot.params))
+      if (id) return id
+      // Answered, but not with an id we understand — fall through rather than report a phantom send.
+      log?.('[chat-bot] send returned no message id, falling back to im.message.add')
+    } catch (e) {
+      log?.(`[chat-bot] send refused: ${(e as Error)?.message?.slice(0, 120) ?? 'unknown'}`)
+    }
+  }
   const res = await call('im.message.add', { DIALOG_ID: dialogId, MESSAGE: text, URL_PREVIEW: 'N' })
   const id = Number(res)
   return Number.isFinite(id) && id > 0 ? id : null
