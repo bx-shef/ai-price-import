@@ -11,13 +11,16 @@ import { createHash } from 'node:crypto'
 // Deliberately NOT mtime-based: git does not preserve modification times, so after a fresh clone
 // (every CI run) the PNG and its inputs are all equally «new» and such a guard proves nothing.
 //
-// Shared by the generator and the test so the hash cannot be computed two slightly different ways.
-export function ogStamp(input) {
-  const canonical = JSON.stringify({
-    title: input.title,
-    subtitle: input.subtitle,
-    formats: input.formats,
-    badge: input.badge
-  })
-  return { hash: createHash('sha256').update(canonical).digest('hex') }
+// Hashes the FINISHED markup, not just the copy: layout, colours, badge chrome and the inlined logo
+// all change what the PNG looks like, and a copy-only hash would have let a template edit ship stale
+// pixels. Both sides build that markup with the same `buildOgHtml` (scripts/lib/ogTemplate.mjs), so
+// the hash cannot be computed two slightly different ways.
+export function ogStamp(html, pngBytes) {
+  return {
+    hash: createHash('sha256').update(html).digest('hex'),
+    // …and a digest of the produced image. Without it the stamp only proves «the sources match what
+    // the sources were», so a revert or bad merge that touches ONLY public/og.png (say
+    // `git checkout main -- public/og.png`) restores the exact #329 symptom with every test green.
+    png: createHash('sha256').update(pngBytes).digest('hex')
+  }
 }

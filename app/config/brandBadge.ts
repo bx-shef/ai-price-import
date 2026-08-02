@@ -11,10 +11,12 @@
 // asserts every class here is actually present — editing one side alone fails CI. Same discipline
 // as the nginx.conf ↔ edgeSecurity.ts CSP parity test.
 export const BRAND_BADGE = {
-  /** border-cyan-400/40 */
-  borderColor: 'rgba(34,211,238,0.4)',
+  /** border-cyan-400/40 — Tailwind v4 palette is oklch, and the `/40` alpha compiles to color-mix
+   *  in oklab. The v3 hex (#22d3ee) is a DIFFERENT, less saturated colour: decoding it that way made
+   *  the card's badge visibly duller than the landing's — exactly the drift this module prevents. */
+  borderColor: 'color-mix(in oklab, oklch(78.9% 0.154 211.53) 40%, transparent)',
   /** bg-cyan-400/10 */
-  background: 'rgba(34,211,238,0.1)',
+  background: 'color-mix(in oklab, oklch(78.9% 0.154 211.53) 10%, transparent)',
   /** rounded-md */
   radiusPx: 6,
   /** px-3 py-1.5 */
@@ -25,7 +27,7 @@ export const BRAND_BADGE = {
   /** text-[14px] font-bold text-cyan-300 */
   brandSizePx: 14,
   brandWeight: 700,
-  brandColor: '#67e8f9',
+  brandColor: 'oklch(86.5% 0.127 207.078)',
   /** text-[10px] font-semibold uppercase tracking-[0.14em] text-white/70 */
   captionSizePx: 10,
   captionWeight: 600,
@@ -35,6 +37,8 @@ export const BRAND_BADGE = {
 
 /** Tailwind classes the component must carry for the values above to be truthful (test asserts). */
 export const BRAND_BADGE_CLASSES = [
+  'inline-flex',
+  'items-center',
   'rounded-md',
   'border-cyan-400/40',
   'bg-cyan-400/10',
@@ -42,8 +46,12 @@ export const BRAND_BADGE_CLASSES = [
   'py-1.5',
   'gap-2',
   'text-[14px]',
+  'font-bold',
+  'leading-none',
   'text-cyan-300',
   'text-[10px]',
+  'font-semibold',
+  'uppercase',
   'tracking-[0.14em]',
   'text-white/70'
 ] as const
