@@ -76,6 +76,20 @@ export async function markReviewed(memberId: string, query: QueryFn): Promise<vo
   )
 }
 
+/** MANUAL (owner op): undo a confirmed review (#318 п.2).
+ *
+ *  `reviewed` used to be terminal — a mis-click could only be undone with SQL, and the operator
+ *  console is exactly where mis-clicks happen (a row per portal, buttons side by side). Undo returns
+ *  the row to its state BEFORE confirmation: `prompted_at`/`opened_at` are left as they were, so the
+ *  usual throttle decides when the modal may show again — «вернуть в состояние до подтверждения», not
+ *  «показать попап прямо сейчас». */
+export async function clearReviewed(memberId: string, query: QueryFn): Promise<void> {
+  await query(
+    `UPDATE portal_app_rating SET reviewed = false, updated_at = now() WHERE member_id = $1`,
+    [memberId]
+  )
+}
+
 /** MANUAL (owner op): clear opened_at AND prompted_at (no review appeared after the verification
  *  window) so the modal shows again on the user's next successful import — «модалка снова
  *  показывается». No-op on a confirmed review. */

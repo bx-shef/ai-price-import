@@ -325,7 +325,7 @@ AI-импорт прайсов с табличной частью в Bitrix24. �
     override — `NUXT_PUBLIC_B24_MARKET_CODE`). Решение показа — **на
     сервере**, рядом с авторизацией: таблица `portal_app_rating` (ключ `member_id`, чистится при uninstall) +
     чистая `shouldPrompt` (`prompted_at` троттлит показ ≤1 раза в `RATING_REPROMPT_DAYS`=4д; `opened_at`
-    глушит до **ручной** проверки; `reviewed` — терминально). Роуты `GET /api/app-rating` (read-only `{show}`)
+    глушит до **ручной** проверки; `reviewed` больше **не терминально** — из консоли его можно снять, #318 п.2: ошибочный клик раньше откатывался только через SQL. Снятие возвращает строку в состояние ДО подтверждения (метки показов не трогаются), это НЕ то же, что `reset`, который чистит показы). Роуты `GET /api/app-rating` (read-only `{show}`)
     / `POST` (`prompted`/`opened`) — фрейм-токен (`resolveFrameMember`). Факт отзыва Маркет по REST не отдаёт →
     владелец подтверждает **из UI оператора** (`/queues`, карточка «Оценки приложения», паттерн reauth):
     `GET/POST /api/ops/app-rating` (сессия оператора, чистые `appRatingStatus`/`appRatingOpsHandler` →

@@ -2,13 +2,15 @@
 // controls (mirrors tokenRefreshHandler). DI over the store writes so it unit-tests without a DB.
 // The route does I/O + operator auth only.
 
-export type AppRatingOpAction = 'reviewed' | 'reset'
+export type AppRatingOpAction = 'reviewed' | 'reset' | 'unreview'
 
 export interface AppRatingOpsDeps {
   /** Mark a confirmed review (terminal). */
   markReviewed: (memberId: string) => Promise<void>
   /** Clear opened/prompted so the modal returns (no review appeared). */
   reset: (memberId: string) => Promise<void>
+  /** Undo a confirmed review (#318 п.2) — back to the state before confirmation. */
+  unreview: (memberId: string) => Promise<void>
 }
 
 /** A B24 member_id is a hex id — validate before it reaches the query. */
@@ -17,7 +19,7 @@ function validMemberId(v: unknown): v is string {
 }
 
 function validAction(v: unknown): v is AppRatingOpAction {
-  return v === 'reviewed' || v === 'reset'
+  return v === 'reviewed' || v === 'reset' || v === 'unreview'
 }
 
 /** Decide the response for an operator rating-state change. */
@@ -30,6 +32,7 @@ export async function handleAppRatingOp(
   if (!validAction(action)) return { status: 400, body: { error: 'invalid action' } }
   const id = memberId.trim()
   if (action === 'reviewed') await deps.markReviewed(id)
+  else if (action === 'unreview') await deps.unreview(id)
   else await deps.reset(id)
   return { status: 200, body: { ok: true, action } }
 }

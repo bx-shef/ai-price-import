@@ -9,7 +9,9 @@ import { copyToClipboard } from '~/utils/clipboard'
 // Operator queue monitor (service zone). Auth-gated (server 401 + client redirect).
 // Layout `clear`, noindex, prerendered (shell; data loads client-side).
 definePageMeta({ layout: 'clear' })
-useHead({ title: 'Служебная консоль', meta: [{ name: 'robots', content: 'noindex' }] })
+// Заголовок вкладки называет ПРОДУКТ (#318 п.1): у владельца открыто несколько служебных консолей
+// разных продуктов, и по вкладке «Служебная консоль» они неразличимы.
+useHead({ title: 'Служебная консоль / AI-импорт документов в Bitrix24', meta: [{ name: 'robots', content: 'noindex' }] })
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
 interface QueueAlert { kind: 'stalled' | 'failing' | 'unreadable', queue: string, text: string }
@@ -227,13 +229,19 @@ const ratingMsg = ref<string>('')
 // через SQL. Двухшаговое подтверждение у нас принятый паттерн на куда более безобидных действиях
 // («Очистить список», «Обнулить счётчики») — здесь его не было (#271-I).
 const confirmReviewed = ref<string>('')
-async function setRating(memberId: string, action: 'reviewed' | 'reset') {
+const confirmUnreview = ref<string>('') // #318 п.2: отмена подтверждённого отзыва — тоже в два шага
+async function setRating(memberId: string, action: 'reviewed' | 'reset' | 'unreview') {
   ratingBusy.value = memberId
   ratingMsg.value = ''
   confirmReviewed.value = ''
+  confirmUnreview.value = ''
   try {
     await $fetch('/api/ops/app-rating', { method: 'POST', body: { memberId, action } })
-    flash(ratingMsg, action === 'reviewed' ? 'Отмечено как «отзыв оставлен»' : 'Флаг сброшен — попап покажется снова')
+    flash(ratingMsg, action === 'reviewed'
+      ? 'Отмечено как «отзыв оставлен»'
+      : action === 'unreview'
+        ? 'Подтверждение отменено — портал вернулся в состояние до него'
+        : 'Флаг сброшен — попап покажется снова')
     await load() // re-pull so the row reflects the new state
   } catch (e) {
     const code = (e as { statusCode?: number })?.statusCode
@@ -834,6 +842,40 @@ onMounted(async () => {
               :aria-label="`Сбросить флаг оценки для портала ${r.domain}`"
               @click="() => setRating(r.memberId, 'reset')"
             />
+            <!-- Отмена подтверждения (#318 п.2). Раньше «отзыв оставлен» был тупиком: ошибочный клик
+                 откатывался только через базу — а ошибаются здесь легко, строки идут подряд и кнопки
+                 рядом. Возврат в состояние ДО подтверждения: попап снова МОЖЕТ показаться, когда
+                 подойдёт обычный срок, а не сразу. Два шага — как у остальных необратимых действий. -->
+            <B24Button
+              v-if="r.state === 'reviewed' && confirmUnreview !== r.memberId"
+              color="air-tertiary-no-accent"
+              size="xs"
+              :loading="ratingBusy === r.memberId"
+              :disabled="ratingBusy === r.memberId"
+              label="Отменить подтверждение"
+              :aria-label="`Отменить отметку об отзыве для портала ${r.domain}`"
+              @click="() => { confirmUnreview = r.memberId }"
+            />
+            <span
+              v-else-if="r.state === 'reviewed'"
+              class="flex flex-wrap items-center gap-2 text-xs"
+            >
+              <span class="text-(--ui-color-base-3)">Снять отметку об отзыве? Портал вернётся в состояние до подтверждения.</span>
+              <B24Button
+                color="air-primary"
+                size="xs"
+                :loading="ratingBusy === r.memberId"
+                :disabled="ratingBusy === r.memberId"
+                label="Да, снять"
+                @click="() => setRating(r.memberId, 'unreview')"
+              />
+              <B24Button
+                color="air-tertiary-no-accent"
+                size="xs"
+                label="Отмена"
+                @click="() => { confirmUnreview = '' }"
+              />
+            </span>
           </span>
         </div>
       </div>
