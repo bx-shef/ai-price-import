@@ -89,8 +89,104 @@ export async function registerBot(call: RestCall, log?: (msg: string) => void): 
   try {
     return botIdFromRegister(await call(req.method, req.params))
   } catch (e) {
-    // Error CLASS only — the portal's text may quote its own internals.
-    log?.(`[chat-bot] registration refused: ${(e as Error)?.message?.slice(0, 120) ?? 'unknown'}`)
+    log?.(`[chat-bot] registration refused: ${errorCode(e)}`)
     return null
+  }
+}
+
+/**
+ * The portal's error CODE, never its prose.
+ *
+ * Truncating the message was not enough: a REST error text can echo the parameters of the call it
+ * rejected, and these calls carry the chat message — i.e. text extracted from a client document,
+ * which must never reach the log (project rule). So we pull out the machine-readable code and drop
+ * everything else; an unrecognised shape logs as `unknown`, which is still enough to tell «the bot
+ * was refused» from «the bot worked».
+ */
+export function errorCode(e: unknown): string {
+  const raw = (e as Error)?.message ?? ''
+  const m = /\b([A-Z][A-Z0-9_]{3,49})\b/.exec(raw)
+  return m ? m[1]! : 'unknown'
+}
+
+/** Injected side of bot-id resolution — makes the stateful part testable without a portal or a DB. */
+export interface BotIdDeps {
+  /** Stored id for the portal, 0 when none. */
+  getBotId: (memberId: string) => Promise<number>
+  saveBotId: (memberId: string, botId: number) => Promise<void>
+  /** Portal REST transport, resolved lazily — a stored id must cost no transport at all. */
+  call: () => Promise<RestCall>
+  now?: () => number
+  log?: (msg: string) => void
+}
+
+/** How long «this portal cannot have a bot» is believed before asking the portal again. */
+export const NO_BOT_TTL_MS = 6 * 60 * 60 * 1000
+/** Upper bound on remembered refusals, so a fleet of free-plan portals cannot grow the map forever. */
+export const NO_BOT_CACHE_MAX = 500
+
+export interface BotIdCache {
+  /** memberId → epoch ms until which we do not retry registration. */
+  noBotUntil: Map<string, number>
+  /** In-flight registrations, so parallel jobs of ONE portal make ONE REST call. */
+  inFlight: Map<string, Promise<number>>
+}
+
+export function createBotIdCache(): BotIdCache {
+  return { noBotUntil: new Map(), inFlight: new Map() }
+}
+
+/**
+ * Bot id for a portal, registering it once if needed.
+ *
+ * Three caches, each for a different failure:
+ *   • the POSITIVE answer is durable — it lives in `portal_tokens.bot_id`, so a registered portal
+ *     costs one cheap SELECT and no REST at all;
+ *   • a NEGATIVE answer is held in memory for `NO_BOT_TTL_MS`, because «no bot» is the NORMAL state
+ *     of a free-plan portal and retrying per document would burn a REST call per document forever,
+ *     against the portal's own rate limit. It expires so a portal that upgrades its plan starts
+ *     signing its messages without anyone remembering to restart the worker;
+ *   • an IN-FLIGHT registration is shared, so a batch of jobs from one portal — the normal shape of
+ *     an import — fires ONE `Bot.register`, not one per job. Registration is idempotent by code, so
+ *     parallel calls would be harmless, just wasteful.
+ *
+ * The bot is registered AT INSTALL (owner ask: there are no portals predating the `imbot` scope, so
+ * nothing has to discover its bot later). This resolver stays the safety net for the case that
+ * matters anyway — the install-time registration was refused, so the send path must decide again.
+ *
+ * Any failure resolves to 0, i.e. «send the old way». Bot plumbing must never break a notification.
+ */
+export async function resolveBotId(memberId: string, deps: BotIdDeps, cache: BotIdCache): Promise<number> {
+  const now = deps.now ?? Date.now
+  try {
+    const stored = await deps.getBotId(memberId)
+    if (stored > 0) return stored
+    if ((cache.noBotUntil.get(memberId) ?? 0) > now()) return 0
+    const running = cache.inFlight.get(memberId)
+    if (running) return await running
+    const task = (async () => {
+      const id = await registerBot(await deps.call(), deps.log)
+      if (!id) {
+        // Evict the oldest remembered refusal first: Map keeps insertion order, so the head is the
+        // stalest entry. Without this the map is unbounded on a fleet of free-plan portals.
+        if (cache.noBotUntil.size >= NO_BOT_CACHE_MAX) {
+          const oldest = cache.noBotUntil.keys().next().value
+          if (oldest !== undefined) cache.noBotUntil.delete(oldest)
+        }
+        cache.noBotUntil.set(memberId, now() + NO_BOT_TTL_MS)
+        return 0
+      }
+      await deps.saveBotId(memberId, id)
+      cache.noBotUntil.delete(memberId)
+      return id
+    })()
+    cache.inFlight.set(memberId, task)
+    try {
+      return await task
+    } finally {
+      cache.inFlight.delete(memberId)
+    }
+  } catch {
+    return 0
   }
 }

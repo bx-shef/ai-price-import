@@ -7,7 +7,7 @@ import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAl
 import { deletePortal, getBotId, getToken, saveBotId, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
-import { registerBot } from '../utils/chatBot'
+import { createBotIdCache, resolveBotId } from '../utils/chatBot'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
@@ -153,7 +153,23 @@ export function liveKeepAliveDeps(infra: LiveInfra): KeepAliveDeps {
 /** b24-events deps: the SINGLE writer of portal_tokens (install/uninstall). */
 export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
   return {
-    savePortal: job => saveToken(eventJobToSaveInput(job), infra.query, job.ts),
+    savePortal: async (job) => {
+      const saved = await saveToken(eventJobToSaveInput(job), infra.query, job.ts)
+      // Register the chat bot AT INSTALL, not at the first message (#316, owner ask — there are no
+      // portals installed before the `imbot` scope, so nothing needs the lazy path as its only
+      // chance). Doing it here rather than on the `/install` page keeps it server-side, where the
+      // portal token already lives. Best-effort: a portal that cannot have a bot (free plan, bot
+      // limit) must still install — the send path falls back on its own.
+      if (saved) {
+        const memberId = eventJobToSaveInput(job).memberId
+        await resolvePortalBotId(memberId, infra, async () => {
+          const t = await restResolver(infra)(memberId)
+          if (!t) throw new Error('нет транспорта портала')
+          return t.call
+        }).catch(() => 0)
+      }
+      return saved
+    },
     deletePortal: (m, ts) => deletePortal(m, infra.query, ts),
     purgeFiles: m => purgePortalFiles(m)
   }
@@ -172,42 +188,19 @@ export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
  * Best-effort throughout — a chat hiccup must not turn a recorded failure into an unrecorded one.
  */
 /**
- * Bot id for a portal, registering it once if needed (#316).
- *
- * Two caches, and both earn their keep:
- *   • a POSITIVE answer is already durable — it lives in `portal_tokens.bot_id`;
- *   • a NEGATIVE one («this portal cannot have a bot») is held in memory for a while, because it is
- *     the normal state of a free-plan portal and re-registering on every single job would spend a
- *     REST call per document forever, against the portal's own rate limit.
- * The negative cache expires so a portal that upgrades its plan starts signing messages by itself,
- * without anyone remembering to restart the worker.
+ * Bot id for a portal (#316) — pure resolution lives in `chatBot.resolveBotId`; here it is only
+ * bound to the live token store. The cache is module-level ON PURPOSE: it must outlive a single job
+ * so a batch of documents from one portal does not re-ask the portal about its bot per document.
  */
-const NO_BOT_TTL_MS = 6 * 60 * 60 * 1000
-const noBotUntil = new Map<string, number>()
+const botIdCache = createBotIdCache()
 
-export async function resolvePortalBotId(
-  memberId: string,
-  infra: LiveInfra,
-  call: () => Promise<RestCall>,
-  now: () => number = Date.now
-): Promise<number> {
-  try {
-    const stored = await getBotId(memberId, infra.query)
-    if (stored > 0) return stored
-    const until = noBotUntil.get(memberId) ?? 0
-    if (until > now()) return 0
-    const id = await registerBot(await call(), console.warn)
-    if (!id) {
-      noBotUntil.set(memberId, now() + NO_BOT_TTL_MS)
-      return 0
-    }
-    await saveBotId(memberId, id, infra.query)
-    noBotUntil.delete(memberId)
-    return id
-  } catch {
-    // Never let bot plumbing break a notification: 0 simply means «send the old way».
-    return 0
-  }
+export function resolvePortalBotId(memberId: string, infra: LiveInfra, call: () => Promise<RestCall>): Promise<number> {
+  return resolveBotId(memberId, {
+    getBotId: m => getBotId(m, infra.query),
+    saveBotId: (m, id) => saveBotId(m, id, infra.query),
+    call,
+    log: console.warn
+  }, botIdCache)
 }
 
 export async function notifyImportFailure(
@@ -360,7 +353,8 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
   let botIdMemo: number | null = null
   const botId = async (): Promise<number> => {
     if (botIdMemo !== null) return botIdMemo
-    botIdMemo = await resolvePortalBotId(memberId, infra, () => need().then(t => t.call))
+    // Reuse the job's transport instead of resolving a second one — same portal, same client.
+    botIdMemo = await resolvePortalBotId(memberId, infra, async () => (await need()).call)
     return botIdMemo
   }
   // Auto-create measure state (Q11): the portal's existing measures indexed once per job — codes

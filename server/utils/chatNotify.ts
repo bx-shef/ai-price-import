@@ -1,5 +1,5 @@
 import type { RestCall } from './b24Rest'
-import { buildBotSend, messageIdFromBotSend } from './chatBot'
+import { buildBotSend, errorCode, messageIdFromBotSend } from './chatBot'
 
 // Chat notifications for crm-sync (im.message.add — scope `im`, live-verified).
 // Success → mapping.notifyChatId, hard errors → mapping.errorChatId.
@@ -125,13 +125,23 @@ export async function sendChatMessage(
   if (!dialogId || !text) return null
   const bot = botId && botId > 0 ? buildBotSend(botId, dialogId, text) : null
   if (bot) {
+    let answered = false
     try {
-      const id = messageIdFromBotSend(await call(bot.method, bot.params))
+      const res = await call(bot.method, bot.params)
+      answered = true
+      const id = messageIdFromBotSend(res)
       if (id) return id
-      // Answered, but not with an id we understand — fall through rather than report a phantom send.
-      log?.('[chat-bot] send returned no message id, falling back to im.message.add')
     } catch (e) {
-      log?.(`[chat-bot] send refused: ${(e as Error)?.message?.slice(0, 120) ?? 'unknown'}`)
+      // Code only: the rejected call carries the message text, and a REST error can echo it.
+      log?.(`[chat-bot] send refused: ${errorCode(e)}`)
+    }
+    // ⚠ Fall back ONLY when the call THREW. A call that answered with a shape we do not recognise
+    // most likely DELIVERED the message — resending it through im.message.add would post the same
+    // notice twice, in the very chat this feature exists to keep readable. An unknown envelope is
+    // reported as «sent, id unknown» (null), which no caller treats as an error.
+    if (answered) {
+      log?.('[chat-bot] sent, but the response carried no message id')
+      return null
     }
   }
   const res = await call('im.message.add', { DIALOG_ID: dialogId, MESSAGE: text, URL_PREVIEW: 'N' })
