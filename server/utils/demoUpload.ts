@@ -1,6 +1,8 @@
 // Pure helpers for the public demo endpoint (extension/size validation + text decode).
 // Kept out of the .post.ts handler so they can be unit-tested without an h3 event.
 
+import { FORMATS_HUMAN, SUPPORTED_EXT } from '~/config/uploadFormats'
+
 export const MAX_DEMO_BYTES = 5 * 1024 * 1024 // 5 MB — fits a scanned-invoice PDF; rate-limited 3/10min
 /** Deterministic (instant, free) formats — decoded/parsed in-process. */
 export const DEMO_TEXT_EXT = ['txt', 'csv', 'tsv', 'text']
@@ -10,7 +12,12 @@ export const DEMO_XLSX_EXT = ['xlsx']
  *  the legacy binary Excel (BIFF8, what old accounting exports emit) — exceljs can't read it, so it goes through the
  *  libreoffice office path like .doc, not the deterministic xlsx reader (GH #64). */
 export const DEMO_AI_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'doc', 'xls']
-export const DEMO_ALLOWED_EXT = [...DEMO_TEXT_EXT, ...DEMO_XLSX_EXT, ...DEMO_AI_EXT]
+/** What the demo accepts = what the PRODUCT accepts (#341): the two lists used to be independent, and
+ *  the demo's extra formats turned into a promise the installed app then refused. `text` is a demo-only
+ *  legacy alias for a `.text` file — it routes like plain text and costs nothing to keep.
+ *  The buckets above are ROUTING, not admission: a supported extension missing from all three would be
+ *  decoded as plain text and produce garbage, so a test asserts they cover the shared list exactly. */
+export const DEMO_ALLOWED_EXT: string[] = [...new Set<string>([...SUPPORTED_EXT, 'text'])]
 
 /** Lower-case extension without the dot, or '' when the name has none. */
 export function ext(name: string): string {
@@ -33,7 +40,7 @@ export function validateDemoFile(name: string, size: number): DemoFileVerdict {
     return {
       ok: false,
       status: 415,
-      error: 'Демо понимает текст (.txt/.csv), Excel (.xlsx/.xls), PDF, сканы (.png/.jpg) и Word (.doc/.docx).'
+      error: `Демо понимает те же форматы, что и приложение: ${FORMATS_HUMAN}.`
     }
   }
   return { ok: true }
