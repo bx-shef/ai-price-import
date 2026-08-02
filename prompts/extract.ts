@@ -7,8 +7,9 @@
 // model reasons about them in Russian; only this comment/JSDoc is English.
 //
 // ⚠ THIS TEXT IS MEASURED, NOT DRAFTED — and the measurement is honest about what it does not
-// show. `pnpm ab:prompt` (scripts/ab-prompt.mjs) A/B'd it against origin/main over 33 distinct
-// real documents, 2 runs per side, 66 runs each (#336/#337):
+// show. `pnpm ab:prompt --dir <корпус> --runs 2` (scripts/ab-prompt.mjs) A/B'd it against
+// origin/main over 33 distinct real documents OUTSIDE the repo, 2 runs per side, 66 runs each
+// (#336/#337) — NOT the bare `pnpm ab:prompt`, which since #342 runs the small committed corpus:
 //
 //   итог не сошёлся      7 → 4   ← парно по документам: лучше на 2, хуже на 0, McNemar p = 0.500
 //   флаг правился по итогу 23 → 34  ← ХУЖЕ
@@ -26,8 +27,19 @@
 //
 // Rule NUMBERING is 1,2,3,8,7,4,5,6: the stray `7` predates #336, and the new rule was appended
 // as `8` rather than renumbering, because renumbering edits the text and any text edit
-// invalidates the numbers above. Re-measure (`pnpm ab:prompt --dir <корпус> --runs 2`) before
-// changing a word — including "just tidying".
+// invalidates the numbers above. Re-measure before changing a word — including "just tidying".
+//
+// TWO DIFFERENT RUNS, do not confuse them (#342):
+//   pnpm ab:prompt                       — SMOKE TEST on the small anonymised corpus in the
+//                                          repo (corpus/prompt-ab). Runs in one line, needs no
+//                                          client documents, and can only tell you the prompt did
+//                                          not break on the covered classes. It CANNOT justify
+//                                          editing the numbers above: a corpus this small makes McNemar
+//                                          insignificant by construction, and whole classes are
+//                                          missing (no total at all, kk/be, OCR — see its README).
+//   pnpm ab:prompt --dir <корпус> --runs 2 — the REAL measurement, on a corpus of comparable size
+//                                          OUTSIDE the repository. Only this one may replace the
+//                                          numbers above, and it must replace ALL of them at once.
 
 /** The strict output contract shown to the agent (mirrors app/types/document.ts). */
 const OUTPUT_SCHEMA = `{
