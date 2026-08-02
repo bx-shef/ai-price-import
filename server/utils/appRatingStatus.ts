@@ -15,7 +15,7 @@ export interface RatingStatusRow {
 
 /** Derived lifecycle state, in priority order. */
 export type RatingState
-  = | 'reviewed' // отзыв подтверждён вручную — терминально
+  = | 'reviewed' // отзыв подтверждён вручную; отменяется только вручную из консоли (#318 п.2)
     | 'opened' // нажал «Оценить» → ждёт ручной проверки факта отзыва
     | 'prompted' // попап показывали, но не открыл Маркет
     | 'none' // ещё не показывали

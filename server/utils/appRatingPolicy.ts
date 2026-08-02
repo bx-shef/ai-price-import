@@ -31,7 +31,7 @@ export interface ShouldPromptOptions {
  */
 export function shouldPrompt(state: AppRatingState | null, now: Date, opts: ShouldPromptOptions = {}): boolean {
   if (!state) return true // no row yet → first-ever prompt
-  if (state.reviewed) return false // confirmed review → done forever
+  if (state.reviewed) return false // confirmed review → silent (the operator can undo it, #318 п.2)
   if (state.openedAt) return false // clicked «Оценить» → wait for manual verification
   if (!state.promptedAt) return true // row exists but never actually shown
   const intervalMs = (opts.repromptDays ?? RATING_REPROMPT_DAYS) * DAY_MS
