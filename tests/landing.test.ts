@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appBriefUrl, canonicalUrl, copyrightYears, LANDING_FEATURES, LANDING_SITE_URL, LANDING_STEPS, LANDING_SUBTITLE, ogImageUrl, siteBaseUrl } from '../app/utils/landing'
+import { appBriefUrl, canonicalUrl, copyrightYears, DESCRIPTION_MAX, DESCRIPTION_MIN, LANDING_DESCRIPTION, LANDING_FEATURES, LANDING_SITE_URL, LANDING_STEPS, LANDING_SUBTITLE, ogImageUrl, siteBaseUrl } from '../app/utils/landing'
 
 describe('landing content', () => {
   it('has 3 how-it-works steps in order and 4 features', () => {
@@ -112,5 +112,19 @@ describe('appBriefUrl — кнопка баннера в портале всег
   it('UTM стоит ДО якоря — за решёткой он уехал бы в хеш и не долетел до аналитики', () => {
     const u = appBriefUrl('')
     expect(u.indexOf('utm_source=b24app')).toBeLessThan(u.indexOf('#brief'))
+  })
+})
+
+describe('LANDING_DESCRIPTION (#329)', () => {
+  it('укладывается в окно 90–155 знаков, которое проверяют валидаторы карточек', () => {
+    expect(LANDING_DESCRIPTION.length).toBeGreaterThanOrEqual(DESCRIPTION_MIN)
+    expect(LANDING_DESCRIPTION.length).toBeLessThanOrEqual(DESCRIPTION_MAX)
+  })
+  it('это САМОСТОЯТЕЛЬНАЯ строка, а не псевдоним подзаголовка', () => {
+    // Псевдоним и был причиной: подзаголовок вырос до 195 знаков и утащил за собой description.
+    expect(LANDING_DESCRIPTION).not.toBe(LANDING_SUBTITLE)
+  })
+  it('всё ещё описывает продукт, а не просто укладывается в длину', () => {
+    expect(LANDING_DESCRIPTION).toMatch(/Bitrix24/)
   })
 })

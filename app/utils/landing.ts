@@ -26,8 +26,18 @@ export const LANDING_CTA_BRIEF = 'Обсудить интеграцию'
 export const LANDING_CTA_MARKET = 'Открыть в Маркете Bitrix24'
 export const LANDING_PUBLISHER = 'ИП Шевчик И.С.'
 
-/** Alias of the subtitle for SEO/OG description (single source). */
-export const LANDING_DESCRIPTION = LANDING_SUBTITLE
+/**
+ * SEO/OG description — its OWN string, no longer an alias of the subtitle (#329).
+ * Share-card validators want 90–155 characters: below that it reads as too short, above it gets
+ * truncated mid-sentence. The hero subtitle is written for the page (195 chars, and fine there);
+ * as a description it was cut. Length is pinned by a test — a copy edit must not silently break it.
+ */
+export const LANDING_DESCRIPTION
+  = 'AI-импорт накладных, счетов, КП и прайсов в Bitrix24: контрагент и товары подбираются по вашей базе, суммы и НДС — 1-в-1.'
+
+/** The window share-card validators check `description` against. */
+export const DESCRIPTION_MIN = 90
+export const DESCRIPTION_MAX = 155
 
 /** Small reassurance note under the hero CTAs. */
 export const LANDING_HERO_NOTE = 'Бесплатное приложение закрывает импорт. Настройку под ваш процесс берём на себя.'
