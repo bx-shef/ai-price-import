@@ -19,7 +19,7 @@ import { LANDING_PUBLISHER } from '../app/utils/landing'
 const ROOT = new URL('../', import.meta.url).pathname
 const CODE_ROOTS = ['app', 'server']
 const SOURCE_FILE = 'app/config/publisher.ts'
-const LEGAL_DOCS = ['docs/privacy-policy.md', 'docs/PRICING.md']
+const LEGAL_DOCS = ['docs/privacy-policy.md', 'docs/PRICING.md', 'docs/eula.md']
 
 /** Все .ts/.vue в коде приложения и сервера, кроме самого источника. */
 function codeSources(dir: string, acc: string[] = []): string[] {
@@ -75,6 +75,16 @@ describe('реквизиты издателя — один источник (#29
       }
     }
     expect(wrong, `в документах издатель назван иначе, чем в app/config/publisher.ts:\n${wrong.join('\n')}`).toEqual([])
+  })
+
+  it('лицензия называет правообладателя ровно так, как источник', () => {
+    // Полное юридическое имя и адрес — это то, чем документ идентифицирует лицензиара; расхождение
+    // с кодом здесь дороже любого другого: на сайте одно лицо, в договоре другое.
+    const eula = readFileSync(join(ROOT, 'docs/eula.md'), 'utf8')
+    expect(eula).toContain(PUBLISHER.legalName)
+    expect(eula).toContain(PUBLISHER.address)
+    expect(eula).toContain(PUBLISHER.unp)
+    expect(eula).toContain(PUBLISHER.email)
   })
 
   it('подпись УНП строится из самого номера — иначе они разойдутся', () => {

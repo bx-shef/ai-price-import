@@ -61,7 +61,8 @@ function isCalendarDate(d: string): boolean {
   return parsed.getUTCFullYear() > 0 // `Date` accepts year 0000; XSD 1.0 `xsd:date` does not
 }
 
-/** `sitemap.xml` body. One entry — the landing is the only indexable page (see `DISALLOWED_PATHS`).
+/** `sitemap.xml` body. Three entries: the landing and the two legal documents (#297) — the only
+ *  indexable pages (see `DISALLOWED_PATHS`).
  *  `lastmod` is injected (build date) so the file stays deterministic and testable; an absent or
  *  malformed date omits the element rather than emitting an invalid one. */
 export function buildSitemapXml(baseUrl: string, lastmod?: string, canonicalHost = true): string {
@@ -78,15 +79,22 @@ export function buildSitemapXml(baseUrl: string, lastmod?: string, canonicalHost
       ''
     ].join('\n')
   }
+  // The landing plus the two legal documents (#297): the Market requires them at permanent public
+  // addresses, so they are indexable — everything else on this host carries `noindex`.
+  const page = (path: string, priority: string, changefreq: string) => [
+    '  <url>',
+    `    <loc>${xmlEscape(baseUrl)}${path}</loc>`,
+    ...(iso ? [`    <lastmod>${iso}</lastmod>`] : []),
+    `    <changefreq>${changefreq}</changefreq>`,
+    `    <priority>${priority}</priority>`,
+    '  </url>'
+  ]
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-    '  <url>',
-    `    <loc>${xmlEscape(baseUrl)}/</loc>`,
-    ...(iso ? [`    <lastmod>${iso}</lastmod>`] : []),
-    '    <changefreq>weekly</changefreq>',
-    '    <priority>1.0</priority>',
-    '  </url>',
+    ...page('/', '1.0', 'weekly'),
+    ...page('/eula', '0.3', 'yearly'),
+    ...page('/privacy', '0.3', 'yearly'),
     '</urlset>',
     ''
   ].join('\n')

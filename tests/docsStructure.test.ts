@@ -11,12 +11,14 @@ const ROOT = new URL('..', import.meta.url).pathname
 const abs = (p: string) => resolve(ROOT, p)
 
 /**
- * Files allowed in docs/. Three project documents + three hand-off materials for third parties.
+ * Files allowed in docs/. Three project documents + four hand-off materials for third parties.
  *
  * The list is a whitelist, not a cap: a new file needs a decision, not just a `git add`. `PRICING.md`
  * was added by an explicit owner decision (#301) — it is a commercial document (revenue model, rates,
  * packages), addressed outward like `ui-spec.md` and `privacy-policy.md`, and merging it into any of
- * the three project documents would put price negotiation into engineering notes.
+ * the three project documents would put price negotiation into engineering notes. `eula.md` was added the same way (#297): the
+ * Market requires a licence agreement at a permanent public address, the project had none, and it is
+ * the SOURCE the `/eula` page renders — merging it into another document would break that page.
  */
 const ALLOWED_DOCS = [
   'PROCESS.md', // как работает продукт
@@ -24,7 +26,8 @@ const ALLOWED_DOCS = [
   'BACKLOG.md', // что делаем потом
   'ui-spec.md', // дизайнеру
   'privacy-policy.md', // юристу и на публикацию
-  'PRICING.md' // модель заработка + калькулятор кастомной работы (#301)
+  'PRICING.md', // модель заработка + калькулятор кастомной работы (#301)
+  'eula.md' // лицензионное соглашение — публикуется на лендинге (#297, решение владельца)
 ]
 
 const docsFiles = () => readdirSync(abs('docs'))

@@ -47,12 +47,20 @@ const shaHref = computed(() => commitUrl(commitSha as string))
         rel="noopener noreferrer"
         class="hover:text-white hover:underline"
       >Реквизиты</a>
-      <a
-        href="https://offer.bx-shef.by/privacy"
-        target="_blank"
-        rel="noopener noreferrer"
+      <!-- Юридические документы ЭТОГО приложения (#297) — свои страницы, не соседского сайта:
+           Маркет Bitrix24 требует постоянные адреса, и по ним должны лежать документы про него. -->
+      <NuxtLink
+        to="/eula"
         class="hover:text-white hover:underline"
-      >Политика конфиденциальности</a>
+      >
+        Лицензионное соглашение
+      </NuxtLink>
+      <NuxtLink
+        to="/privacy"
+        class="hover:text-white hover:underline"
+      >
+        Политика конфиденциальности
+      </NuxtLink>
       <a
         :href="shaHref"
         target="_blank"

@@ -16,3 +16,10 @@ deploy
 .env.*
 !.env.example
 scratch*
+# The legal pages RENDER these two files (`?raw` import) instead of holding a second copy of the
+# text — so they are build inputs, not documentation. Without the re-include the app builds fine
+# outside Docker and the image build fails at `pnpm build` with ENOENT.
+# `tests/legalPages.test.ts` derives the required list from the pages themselves and fails if a
+# page imports a document that is not re-included here.
+!docs/eula.md
+!docs/privacy-policy.md

@@ -63,7 +63,9 @@ export default defineNuxtConfig({
       // Landing + in-portal + operator pages (static shells; data/actions via /api).
       // /install is the B24 Marketplace install handler — must be prerendered so a HEAD
       // request returns 200 for B24's URL validation.
-      routes: ['/', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install']
+      // `/eula` и `/privacy` — публичные юридические документы (#297): Маркет Bitrix24 требует
+      // постоянные HTTPS-адреса, поэтому они пререндерятся и попадают в sitemap.
+      routes: ['/', '/eula', '/privacy', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install']
     }
   },
 
