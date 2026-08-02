@@ -2,7 +2,7 @@ import type { ExtractedDocument } from '~/types/document'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { ENTITY_TYPE_ID } from '~/config/b24'
 import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
-import { reconcilePricing } from '~/utils/pricing'
+import { describeTotalMismatch, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
@@ -181,7 +181,27 @@ export async function runCrmSync(
     warnings.push('Итог документа совпадает с суммой строк, поэтому по цифрам не отличить «цены с НДС» от «цены без НДС». Взяли вариант «цены с НДС» — откройте созданную запись и сверьте сумму с документом.')
   }
   if (pricing.totalMismatch) {
-    warnings.push('Итог, напечатанный в документе, не сошёлся с суммой строк. Откройте созданную запись и сверьте сумму вручную.')
+    // #336: назвать НОМЕРА, а не факт. Разница — поисковый ключ: неверно прочитанная ячейка
+    // (не та ценовая колонка, количество, съеденное названием) сдвигает ровно одну строку.
+    warnings.push(describeTotalMismatch(doc.total, pricing.grossTotal, doc.currency))
+  }
+  // #337: флаг «цены с НДС» ничем не подтверждён, а он меняет сумму сделки ровно на ставку налога.
+  // Раньше здесь была тишина: тот же документ с однозначным итогом получал предупреждение
+  // (totalAmbiguous), а этот — ничего, хотя знаем мы РОВНО СТОЛЬКО ЖЕ. Прайс и КП — половина
+  // поддерживаемых типов входа, и итога у них часто нет по жанру. Флаг НЕ трогаем (в обе стороны
+  // это гадание), но молчать нельзя.
+  //
+  // ⚠ ПРИЧИНА берётся из `hasPrintedTotal`, а НЕ выводится из `!usedStatedTotal`: не подтверждён —
+  // не значит «не напечатан». Документ, где итог совпал с суммой строк без НДС, читается как «Итого»
+  // и намеренно не якорится (reconcilePricing), то есть `usedStatedTotal` false при живой строке
+  // «Всего к оплате» на бумаге — первая редакция этого предупреждения уверенно сообщала оператору,
+  // что строки нет, ровно когда он на неё смотрел.
+  if (hasVat && doc.priceIncludesVat !== undefined && !pricing.usedStatedTotal
+    && !pricing.totalMismatch && !pricing.totalAmbiguous) {
+    const taken = `Взяли вариант «${priceIncludesVat ? 'цены с НДС' : 'цены без НДС'}» — откройте созданную запись и сверьте сумму с документом.`
+    warnings.push(pricing.hasPrintedTotal
+      ? `Итог документа совпал с суммой строк без НДС, поэтому подтвердить цифрами, включён ли НДС в цены, нечем. ${taken}`
+      : `В документе нет строки «Всего к оплате», поэтому проверить нечем, включён ли НДС в цены. ${taken}`)
   }
 
   // PRE-PASS: validate every line's VAT rate against the portal BEFORE any catalog write. The create
