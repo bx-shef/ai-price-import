@@ -1,8 +1,9 @@
 import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
 import { getBotId } from '../utils/tokenStore'
+import { botIsReady } from '../utils/chatBot'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
-import { query } from '../db/client'
+import { dbEnabled, query } from '../db/client'
 
 // GET /api/chat-bot-status → { ready } — does this portal have the app's chat bot (#316/#360)?
 //
@@ -30,7 +31,10 @@ export default defineEventHandler(async (event) => {
         setResponseStatus(event, resolved.status ?? 401)
         return { error: 'frame verification failed' }
       }
-      return { ready: (await getBotId(resolved.memberId, query)) > 0 }
+      // No database → we simply do not know. Fail-open («бот есть») keeps the banner silent: it must
+      // never accuse a healthy portal because OUR storage is down.
+      if (!dbEnabled()) return { ready: true }
+      return { ready: botIsReady(await getBotId(resolved.memberId, query)) }
     }
   )
 })
