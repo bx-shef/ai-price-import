@@ -10,9 +10,13 @@
  *
  * `tests/publisher.test.ts` fails if any component re-introduces its own literal.
  *
- * ⚠ NOT here on purpose: legal address, full legal name and the legally-significant e-mail. They are
- * open questions on the owner (#297 п.1) and inventing them would put a wrong rights holder into a
- * licence agreement. Add them here — and only here — once decided.
+ * Legal address, legal name and the contact e-mail were confirmed by the owner against the published
+ * requisites page (2026-08-02) — they are no longer «open questions»; the same values must appear in
+ * the EULA and the privacy policy, which is why they live here and nowhere else.
+ *
+ * ⚠ Bank details are deliberately NOT here: the licence is free of charge and the previous agreement
+ * carried none, so putting an account number into a public page would publish more than the document
+ * needs. They stay on the owner's own requisites page.
  */
 export const PUBLISHER = {
   /** Short legal name. ONE spelling — «И. С.» with a space, per Russian typography. */
@@ -26,7 +30,11 @@ export const PUBLISHER = {
   /** Same number in `tel:` form — no spaces or dashes. */
   phoneTel: '+375297360126',
   telegram: '@bxshefby',
-  city: 'Минск, Беларусь'
+  city: 'Минск, Беларусь',
+  /** Full legal name of the rights holder — the form legal documents must use. */
+  legalName: 'Индивидуальный предприниматель Шевчик Игорь Сергеевич',
+  /** Registered address; the postal address is the same one (owner-confirmed). */
+  address: 'пр. Дзержинского, д. 131, оф. 234, г. Минск, Беларусь, 220025'
 } as const
 
 /** The person behind the sole proprietorship — business card and vCard. */
