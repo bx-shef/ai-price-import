@@ -87,13 +87,26 @@ function cells(row: string): string[] {
 const isTableDivider = (line: string) => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line.trim())
 
 /**
+ * Drop the internal preamble — everything above the first `---`.
+ *
+ * The file is BOTH an internal document (it carries the project's `> Last reviewed:` stamp and a
+ * «черновик, вычитать юристу» note for the owner) and the published text. Rendering it verbatim put
+ * the word «ЧЕРНОВИК» on the public legal page — which is exactly the sentence a Market moderator
+ * must not read. The service block is ours; the document starts after it.
+ */
+export function stripInternalPreamble(md: string): string {
+  const marker = md.indexOf('\n---\n')
+  return marker === -1 ? md : md.slice(marker + 5)
+}
+
+/**
  * Render a Markdown document to HTML.
  *
  * The H1 is dropped on purpose: the page renders its own heading (and it must be exactly one), so
  * keeping the file's would produce two.
  */
 export function renderMarkdown(md: string): string {
-  const lines = escapeMarkup(md.replace(/\r\n/g, '\n')).split('\n')
+  const lines = escapeMarkup(stripInternalPreamble(md.replace(/\r\n/g, '\n'))).split('\n')
   const out: string[] = []
   let para: string[] = []
   let list: string[] = []
