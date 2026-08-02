@@ -40,7 +40,18 @@ function escapeMarkup(text: string): string {
 function safeHref(href: string): string | null {
   const h = href.trim()
   if (!h) return null
-  if (h.startsWith('/') || h.startsWith('#')) return h
+  if (h.startsWith('#')) return h
+  if (h.startsWith('/')) {
+    // PARSED, not prefix-matched — the same lesson as `siteBaseUrl`: `//evil.test` and `/\evil.test`
+    // both start with `/` yet resolve to ANOTHER HOST (protocol-relative). A fishy external link on
+    // our own legal page is the worst place for one, so the value is resolved against a sentinel
+    // origin and must still be on it.
+    try {
+      return new URL(h, 'https://relative.invalid').origin === 'https://relative.invalid' ? h : null
+    } catch {
+      return null
+    }
+  }
   return /^https?:\/\//i.test(h) ? h : null
 }
 

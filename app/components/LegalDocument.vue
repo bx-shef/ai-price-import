@@ -30,12 +30,27 @@ useSeoMeta({
   ogDescription: props.description,
   ogType: 'article'
 })
-useHead({ link: [{ rel: 'canonical', href: canonicalUrl(props.path) }] })
+// Тёмная брендовая оболочка — та же, что у лендинга: человек приходит сюда по ссылке из подвала
+// (или из карточки Маркета), и страница без бренда читается как чужой сайт. Своего layout у лендинга
+// нет — он выставляет эти же атрибуты сам, поэтому повторяем их, а не заводим третий вариант темы.
+useHead({
+  link: [{ rel: 'canonical', href: canonicalUrl(props.path) }],
+  bodyAttrs: { class: 'bg-[#05010f]' },
+  htmlAttrs: { 'data-force-dark': 'true' }
+})
 </script>
 
 <template>
   <main class="legal-shell mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
-    <h1 class="mb-6 text-2xl font-semibold sm:text-3xl">
+    <!-- Ссылка наверху, а не только внизу: на страницу попадают прямой ссылкой из карточки
+         Маркета, и до нижней навигации пришлось бы пролистать весь документ. -->
+    <p class="mb-6 text-sm">
+      <NuxtLink
+        to="/"
+        class="underline"
+      >← На главную</NuxtLink>
+    </p>
+    <h1 class="mb-6 text-3xl font-semibold sm:text-4xl">
       {{ title }}
     </h1>
     <!-- Источник — наш собственный файл в репозитории, и рендер экранирует ВСЁ до разбора

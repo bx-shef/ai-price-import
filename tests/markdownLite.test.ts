@@ -22,6 +22,15 @@ describe('безопасность рендера', () => {
     expect(html).toContain('[клик]')
   })
 
+  it('ссылка на чужой хост в виде «относительной» не проходит', () => {
+    // `//evil.test` и `/\evil.test` начинаются со слэша, но браузер уводит по ним на ДРУГОЙ хост.
+    // Фишинговая ссылка с нашей же юридической страницы — худшее место для такой ошибки.
+    for (const bad of ['//evil.test/login', '/\\evil.test/login', '//evil.test']) {
+      const html = renderMarkdown(`[кабинет](${bad})`)
+      expect(html, bad).not.toContain('<a ')
+    }
+  })
+
   it('внутренние и внешние ссылки работают', () => {
     expect(renderMarkdown('[политика](/privacy)')).toContain('<a href="/privacy">политика</a>')
     expect(renderMarkdown('[сайт](https://example.com)')).toContain('<a href="https://example.com">сайт</a>')
@@ -79,10 +88,11 @@ describe('реальные документы рендерятся без пот
   const eula = readDoc('eula.md')
   const privacy = readDoc('privacy-policy.md')
 
-  it('лицензия: все восемь разделов на месте', () => {
+  it('лицензия: все разделы на месте, включая применимое право', () => {
     const html = renderMarkdown(eula)
     for (const n of ['Основные термины', 'Предмет Соглашения', 'Авторские права', 'Условия использования',
-      'Ответственность сторон', 'Ограниченная гарантия', 'Действие, изменение', 'Контактная информация']) {
+      'Ответственность сторон', 'Ограниченная гарантия', 'Действие, изменение', 'Применимое право',
+      'непреодолимой силы', 'Контактная информация']) {
       expect(html, n).toContain(n)
     }
   })
@@ -99,5 +109,27 @@ describe('реальные документы рендерятся без пот
       expect(html, `${name}: незакрытые заголовки`).not.toMatch(/<p>#{1,6}\s/)
       expect(html, `${name}: незакрытые таблицы`).not.toMatch(/<p>\|/)
     }
+  })
+})
+
+describe('страницы действительно публикуются (#297)', () => {
+  // Разрыв, который иначе никто не заметит: sitemap объявляет адрес, гард разрешает индексацию —
+  // а страница не собирается статикой и отдаёт 404 ровно там, куда позвали краулера и модератора.
+  it('оба адреса стоят в пререндере', () => {
+    const config = readFileSync(new URL('../nuxt.config.ts', import.meta.url), 'utf8')
+    const routes = /routes:\s*\[([^\]]*)\]/.exec(config)?.[1] ?? ''
+    expect(routes).toContain(`'/eula'`)
+    expect(routes).toContain(`'/privacy'`)
+  })
+
+  it('страница объявляет свой собственный адрес, а не соседний', () => {
+    // Опечатка `path="/eula"` на странице политики дала бы канонический адрес чужого документа —
+    // и поисковик склеил бы два разных юридических текста в один.
+    const eula = readFileSync(new URL('../app/pages/eula.vue', import.meta.url), 'utf8')
+    const privacy = readFileSync(new URL('../app/pages/privacy.vue', import.meta.url), 'utf8')
+    expect(eula).toContain('path="/eula"')
+    expect(eula).toContain('docs/eula.md?raw')
+    expect(privacy).toContain('path="/privacy"')
+    expect(privacy).toContain('docs/privacy-policy.md?raw')
   })
 })
