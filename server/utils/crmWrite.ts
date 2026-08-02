@@ -33,6 +33,8 @@ export function ownerTypeCode(entityTypeId: number): string {
 
 export interface ProductRowInput {
   productId?: number
+  /** DOCUMENT wording. Sent ONLY for an unmatched (free-form) line — a matched row is named by
+   *  the portal's own catalogue entry, see buildProductRow (#348). */
   productName: string
   /** DOCUMENT per-unit price — net or gross per `priceIncludesVat`. The written row's `price`
    *  is always gross (see buildProductRow). */
@@ -88,8 +90,8 @@ export function buildProductRow(input: ProductRowInput, sort: number): Record<st
   const quantity = Math.max(0, round6(finite(input.quantity, 1)))
   const rate = input.taxRate == null ? 0 : finite(input.taxRate)
   const price = input.priceIncludesVat || rate <= 0 ? net : round6(net * (1 + rate / 100))
+  const matched = !!(input.productId && input.productId > 0)
   const row: Record<string, unknown> = {
-    productName: input.productName.slice(0, 500),
     price,
     quantity,
     taxRate: input.taxRate,
@@ -100,7 +102,15 @@ export function buildProductRow(input: ProductRowInput, sort: number): Record<st
     measureCode: input.measureCode,
     sort
   }
-  if (input.productId && input.productId > 0) row.productId = input.productId
+  // #348: the DOCUMENT's wording is only ours to impose on a free-form line. Once the item was
+  // matched in the catalogue, the portal's own name is the right one — sending the supplier's
+  // spelling would overwrite it in the grid and make the same product read differently in every
+  // deal. `productName` is optional whenever `productId` is set: the portal substitutes the
+  // catalogue name (live-verified 2026-08-02 on a base product).
+  // ⚠ Trade offers (SKU) go through the same field — `findProduct` returns an offer id as
+  // `productId` — but the substitution was NOT re-verified for them live; see PROJECT_MAP.
+  if (matched) row.productId = input.productId
+  else row.productName = input.productName.slice(0, 500)
   return row
 }
 

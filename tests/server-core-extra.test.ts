@@ -58,6 +58,23 @@ describe('buildProductRow edge cases', () => {
     expect(buildProductRow({ productId: 42, productName: 'x', price: 1, quantity: 1, taxRate: 0, priceIncludesVat: true, measureCode: 1 }, 10).productId).toBe(42)
     expect(buildProductRow({ productId: 0, productName: 'x', price: 1, quantity: 1, taxRate: 0, priceIncludesVat: true, measureCode: 1 }, 10)).not.toHaveProperty('productId')
   })
+  // #348: найденный товар именует КАТАЛОГ, не документ. Слать своё название — значит переписать
+  // им карточку в гриде, и один и тот же товар читался бы по-разному в каждой сделке.
+  it('найденный товар уходит без названия — портал подставит своё', () => {
+    const row = buildProductRow({ productId: 42, productName: 'Мешок 25кг от поставщика', price: 1, quantity: 1, taxRate: 0, priceIncludesVat: true, measureCode: 1 }, 10)
+    expect(row).not.toHaveProperty('productName')
+    expect(row.productId).toBe(42)
+  })
+  it('ненайденный товар несёт название документа — иначе строка была бы безымянной', () => {
+    const row = buildProductRow({ productName: 'Мешок 25кг', price: 1, quantity: 1, taxRate: 0, priceIncludesVat: true, measureCode: 1 }, 10)
+    expect(row.productName).toBe('Мешок 25кг')
+    expect(row).not.toHaveProperty('productId')
+  })
+  it('productId<=0 — это «не найден», значит название обязано остаться', () => {
+    // Мутация «считать 0 совпадением» дала бы безымянную свободную строку.
+    const row = buildProductRow({ productId: 0, productName: 'Мешок 25кг', price: 1, quantity: 1, taxRate: 0, priceIncludesVat: true, measureCode: 1 }, 10)
+    expect(row.productName).toBe('Мешок 25кг')
+  })
   it('non-finite price/quantity fall back', () => {
     const r = buildProductRow({ productName: 'x', price: Number.POSITIVE_INFINITY, quantity: Number.NaN, taxRate: 0, priceIncludesVat: true, measureCode: 1 }, 10)
     expect(r.price).toBe(0)
