@@ -118,6 +118,8 @@ export interface BotIdDeps {
   call: () => Promise<RestCall>
   now?: () => number
   log?: (msg: string) => void
+  /** Called once when the portal refuses to register — used to count the degradation (#360). */
+  onRefused?: (memberId: string) => void
 }
 
 /** How long «this portal cannot have a bot» is believed before asking the portal again. */
@@ -174,6 +176,7 @@ export async function resolveBotId(memberId: string, deps: BotIdDeps, cache: Bot
           if (oldest !== undefined) cache.noBotUntil.delete(oldest)
         }
         cache.noBotUntil.set(memberId, now() + NO_BOT_TTL_MS)
+        deps.onRefused?.(memberId)
         return 0
       }
       await deps.saveBotId(memberId, id)
@@ -189,4 +192,55 @@ export async function resolveBotId(memberId: string, deps: BotIdDeps, cache: Bot
   } catch {
     return 0
   }
+}
+
+/**
+ * Unregistration call (#360). Run it BEFORE the portal row is deleted — afterwards there is no
+ * token left to speak with, and the bot would stay registered on the portal forever, outliving the
+ * app that created it. Personal chats with the bot are removed by the portal along with it.
+ */
+export function buildBotUnregister(botId: number): RestRequest | null {
+  if (!(botId > 0)) return null
+  return { method: 'imbot.v2.Bot.unregister', params: { botId } }
+}
+
+/**
+ * Profile update (#360).
+ *
+ * Needed because registration is idempotent AND overwrites nothing: a portal that already has the
+ * bot will never pick up a new name — or an avatar added later — from `Bot.register`. So the app
+ * pushes its profile explicitly whenever the stored id is known.
+ *
+ * ⚠ The avatar is NOT sent yet: the app has no icon asset (#298), and the exact key for it inside
+ * `properties` is not stated in the reference — only that properties carry «имя, фамилию,
+ * должность, цвет, пол и аватар». Guessing it would fail silently. Name and workPosition are the
+ * documented ones, and they are what the chat actually shows.
+ */
+export function buildBotProfileUpdate(botId: number): RestRequest | null {
+  if (!(botId > 0)) return null
+  return {
+    method: 'imbot.v2.Bot.update',
+    params: { botId, fields: { properties: { ...BOT_PROPERTIES } } }
+  }
+}
+
+/** Push the app's own name/position onto an existing bot. Best-effort — cosmetics never block. */
+export async function pushBotProfile(botId: number, call: () => Promise<RestCall>, log?: (msg: string) => void): Promise<void> {
+  const req = buildBotProfileUpdate(botId)
+  if (!req) return
+  try {
+    await (await call())(req.method, req.params)
+  } catch (e) {
+    log?.(`[chat-bot] profile update refused: ${errorCode(e)}`)
+  }
+}
+
+/**
+ * Forget a portal's remembered refusal (#360 review). Called on uninstall: without it a portal that
+ * was refused, then uninstalled and reinstalled within `NO_BOT_TTL_MS`, would skip registration at
+ * install and silently keep signing its notices with an employee's name for the rest of the window.
+ */
+export function forgetPortalBot(memberId: string, cache: BotIdCache): void {
+  cache.noBotUntil.delete(memberId)
+  cache.inFlight.delete(memberId)
 }
