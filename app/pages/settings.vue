@@ -162,7 +162,18 @@ const currencyLink = computed(() => portalCurrencySettingsUrl(portalDomain.value
 //     not choose behind a tile that is presented as the app's own achievement (#270 removed exactly
 //     such a hard-coded rate). An unknown currency simply gets no hint.
 const rateFormatOptions = computed(() =>
-  baseCurrency.value ? { style: 'currency' as const, currency: baseCurrency.value, currencyDisplay: 'code' as const } : undefined
+  baseCurrency.value
+    ? {
+        style: 'currency' as const,
+        currency: baseCurrency.value,
+        currencyDisplay: 'code' as const,
+        // Currency style forces 2 decimals, so the field printed «9,90 BYN» under a hint saying
+        // «9,9» — the same divergence the pinned locale exists to prevent, just one digit further
+        // in. Both sides now drop a trailing zero and stop at hundredths.
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      }
+    : undefined
 )
 const rateHint = computed(() => hourlyRateHint(baseCurrency.value))
 
@@ -585,11 +596,7 @@ const ON_MISSING_ITEMS = [
                     class="w-56"
                   />
                   <span
-                    v-if="baseCurrency && !rateFormatOptions"
-                    class="text-sm text-(--ui-color-base-2)"
-                  >{{ baseCurrency }} в час</span>
-                  <span
-                    v-else-if="baseCurrency"
+                    v-if="baseCurrency"
                     class="text-sm text-(--ui-color-base-2)"
                   >в час</span>
                 </div>
