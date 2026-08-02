@@ -113,6 +113,20 @@ describe('crmWrite', () => {
     expect(rows[1]!.price).toBe(24) // 20 net @20% → 24 gross (хранится валовая, показывается 20)
     expect(rows[1]!.sort).toBe(20)
   })
+  // #348: единичный buildProductRow покрыт отдельно, но в бою вызывается ИМЕННО этот маппер —
+  // мутация «забыть прокинуть r.productId в buildProductRow» иначе прошла бы молча, и найденный
+  // товар снова уезжал бы с названием поставщика.
+  it('buildProductRows: найденной позиции — id без названия, ненайденной — название', () => {
+    const rows = buildProductRows(
+      [{ name: 'Мешок из накладной', price: 10, quantity: 1 }, { name: 'Чего нет в каталоге', price: 20, quantity: 1 }],
+      (_it, i) => ({ taxRate: 20, measureCode: 796, productId: i === 0 ? 42 : undefined }),
+      false
+    )
+    expect(rows[0]!.productId).toBe(42)
+    expect(rows[0]).not.toHaveProperty('productName')
+    expect(rows[1]).not.toHaveProperty('productId')
+    expect(rows[1]!.productName).toBe('Чего нет в каталоге')
+  })
   // The invariant the live E2E now also holds: what the portal computes from the written rows
   // (Σ price×qty) equals our computeOpportunity over the same rows — header and product tab agree.
   it('row sum computed the portal way equals computeOpportunity (net doc)', () => {
