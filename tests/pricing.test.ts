@@ -127,6 +127,22 @@ describe('reconcilePricing', () => {
     expect(r.usedStatedTotal).toBe(true) // trusted within scaled tolerance
     expect(r.grossTotal).toBe(2408)
   })
+
+  // #337 (ревью): `hasPrintedTotal` заведён ровно потому, что «не доверились итогу» ≠ «итога нет».
+  // Пин держит РАСХОЖДЕНИЕ двух полей, а не каждое по отдельности: тест, проверяющий только
+  // `hasPrintedTotal===true`, переживёт возврат к выводу причины из `!usedStatedTotal`.
+  it('hasPrintedTotal — факт о документе, а не о нашем доверии (расходится с usedStatedTotal)', () => {
+    // Итог напечатан, но выглядит как «Итого» → не якорим (usedStatedTotal false) при живой строке.
+    expect(reconcilePricing(items, false, 8600)).toMatchObject({ hasPrintedTotal: true, usedStatedTotal: false })
+    // Итог напечатан, но не сошёлся ни с одним прочтением → тоже не доверяем, но он есть.
+    expect(reconcilePricing(items, false, 99999)).toMatchObject({ hasPrintedTotal: true, usedStatedTotal: false })
+    // Итога нет вовсе — и его непригодные формы (документ печатает «0,00» / мусор из OCR).
+    for (const bad of [undefined, 0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(reconcilePricing(items, false, bad), `statedTotal=${bad}`).toMatchObject({ hasPrintedTotal: false, usedStatedTotal: false })
+    }
+    // И совпадает с usedStatedTotal там, где итогу поверили.
+    expect(reconcilePricing(items, false, 10320)).toMatchObject({ hasPrintedTotal: true, usedStatedTotal: true })
+  })
 })
 
 describe('печатный итог, совпавший с суммой строк, не считается подтверждением (#302)', () => {

@@ -147,6 +147,26 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(rExcl.warnings.some(w => /нет строки «Всего к оплате»/.test(w) && /цены без НДС/.test(w))).toBe(true)
   })
 
+  // #337 (ревью): «флаг не подтверждён» ≠ «итога нет». Печатный итог, совпавший с суммой строк без
+  // НДС, читается как «Итого» и намеренно НЕ якорится — usedStatedTotal остаётся false при живой
+  // строке «Всего к оплате» на бумаге. Предупреждение, выводившее причину из !usedStatedTotal,
+  // уверенно сообщало оператору, что строки нет, ровно когда он на неё смотрел.
+  it('итог НАПЕЧАТАН, но флага не подтверждает → предупреждаем, НЕ утверждая, что итога нет', async () => {
+    const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '6', name: 'НДС 20%', rate: 20 }]) })
+    const d: ExtractedDocument = {
+      currency: 'BYN', priceIncludesVat: false, total: 100, // = Σ цена×кол: это либо «Итого», либо «Всего к оплате»
+      supplier: { name: 'X', taxId: '190000000' },
+      items: [{ name: 'Товар', price: 100, quantity: 1, unit: 'шт', vatRate: 20 }]
+    }
+    const r = await runCrmSync('j', d, mapping(), {}, deps)
+    expect(r.errors).toHaveLength(0)
+    // Читаем как «Итого» → НДС сверху, сделка 120 (поведение reconcilePricing не меняем).
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 120 }))
+    // Предупредить обязаны — но ЛОЖЬ про отсутствие строки недопустима.
+    expect(r.warnings.some(w => /нет строки «Всего к оплате»/.test(w))).toBe(false)
+    expect(r.warnings.some(w => /совпал с суммой строк без НДС/.test(w) && /цены без НДС/.test(w))).toBe(true)
+  })
+
   it('НЕТ итога, но и НДС нет → предупреждения быть не должно (флаг ни на что не влияет)', async () => {
     const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '1', name: 'Без НДС', rate: null }]) })
     const d: ExtractedDocument = {

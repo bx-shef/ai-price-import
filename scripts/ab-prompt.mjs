@@ -33,7 +33,7 @@
 // The paired block at the end is what actually decides: a NET difference proves nothing, only the
 // count of documents that DISAGREE between the two sides does (McNemar over the discordant pairs).
 import { readFileSync } from 'node:fs'
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -80,11 +80,23 @@ const BASE = arg('base')
 async function baselinePrompt() {
   if (BASE) return (await import(pathToFileURL(BASE).href)).buildExtractionPrompt()
   const { execFileSync } = await import('node:child_process')
-  const src = execFileSync('git', ['show', 'origin/main:prompts/extract.ts'], { encoding: 'utf8' })
+  let src
+  try {
+    src = execFileSync('git', ['show', 'origin/main:prompts/extract.ts'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch {
+    // A shallow clone, a missing remote, a renamed default branch — all land here, and the raw git
+    // error («fatal: invalid object name») says nothing about what this script needed.
+    throw new Error('не удалось прочитать базовый промпт из origin/main (git fetch origin main?) — либо укажи базу явно: --base <файл.ts>')
+  }
   const dir = await mkdtemp(join(tmpdir(), 'ab-base-'))
   const tmp = join(dir, 'extract.ts')
   await writeFile(tmp, src, 'utf8')
-  return (await import(pathToFileURL(tmp).href)).buildExtractionPrompt()
+  try {
+    return (await import(pathToFileURL(tmp).href)).buildExtractionPrompt()
+  } finally {
+    // The module is already evaluated and cached by the loader, so the file is dead weight from here.
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
 }
 
 /** Dedupe by CONTENT: a corpus often holds the same document under two names, and a flip on a
@@ -109,6 +121,11 @@ console.log(`provider=${cfg.label} model=${cfg.model} · документов ${
 /** One run's observable outcome. `mismatch` is the only per-document quality signal we have; the
  *  flag counters describe how often the safety net in reconcilePricing had to act. */
 const rows = []
+/** Persist after EVERY document, not once at the end. A full run is hundreds of LLM calls over tens
+ *  of minutes, and a rate-limit, a dropped connection or a Ctrl-C used to take the whole measurement
+ *  with it — which is precisely how the first version's numbers became unreproducible. `partial`
+ *  marks a file whose run has not finished, so nobody quotes half a corpus as the result. */
+const save = partial => writeFile(OUT, JSON.stringify({ model: cfg.model, runs: RUNS, docs, partial, rows }, null, 2), 'utf8')
 for (const f of docs) {
   const text = await readFile(join(DIR, f), 'utf8')
   for (const [side, instructions] of SIDES) {
@@ -138,9 +155,10 @@ for (const f of docs) {
   const line = side => rows.filter(r => r.f === f && r.side === side)
   const cl = side => line(side).filter(r => !r.err && !r.mismatch).length
   console.log(`${f.slice(0, 38).padEnd(38)} old ${cl('old')}/${RUNS}  new ${cl('new')}/${RUNS}`)
+  await save(true)
 }
 
-await writeFile(OUT, JSON.stringify({ model: cfg.model, runs: RUNS, docs, rows }, null, 2), 'utf8')
+await save(false)
 
 const agg = (side) => {
   const r = rows.filter(x => x.side === side && !x.err)
