@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeTotalMismatch, lineGross, computeGrossTotal, reconcilePricing } from '../app/utils/pricing'
+import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, lineGross, computeGrossTotal, reconcilePricing } from '../app/utils/pricing'
 // Осознанная связка app→server в тесте: бюджет длины предупреждения задаёт именно чат-лимит,
 // и держать его копию тут значило бы разъехаться с ним при первой же правке.
 import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
@@ -268,5 +268,137 @@ describe('describeTotalMismatch', () => {
     // Числа идут ПЕРВЫМИ: даже если экзотическая сумма выйдет за лимит, режется только совет.
     const huge = describeTotalMismatch(-999999999999.99, 999999999999.99, 'KZT')
     expect(huge.indexOf('разница')).toBeLessThan(MAX_CHAT_REASON)
+  })
+})
+
+// ── #336: назвать подозрительную строку ─────────────────────────────────────────────────────────
+describe('#336: разница итога указывает на конкретную строку', () => {
+  const line = (name: string, price: number, quantity: number, vatRate: number | null = null) => ({ name, price, quantity, unit: 'шт', vatRate })
+  /** Тот же допуск, что передаёт crm-sync. */
+  const tol = (items: unknown[], stated: number) => pricingTolerance(items.length, stated)
+
+  it('разница равна сумме одной строки — называем её', () => {
+    const items = [line('a', 100, 1), line('b', 250, 1), line('c', 40, 1)]
+    expect(findTotalGapSuspect(items, 250, true, 0.5)).toEqual({ index: 1, kind: 'extra' })
+  })
+
+  it('потерянное количество: разница = сумма строки × (k−1)', () => {
+    // Находка 2 из #336: число из колонки «Кол-во» прилипло к названию, в строку попала единица.
+    const items = [line('a', 100, 2), line('b', 250, 1)]
+    expect(findTotalGapSuspect(items, 750, true, 0.5)).toEqual({ index: 1, kind: 'quantity', quantity: 4 })
+  })
+
+  it('под разницу подходят ДВЕ строки — молчим', () => {
+    // Главный гард: послать человека проверять не ту позицию хуже, чем не посылать никуда.
+    const items = [line('a', 250, 1), line('b', 250, 1)]
+    expect(findTotalGapSuspect(items, 250, true, 0.5)).toBeNull()
+  })
+
+  it('задвоенную строку поймать нельзя — и это не оплошность', () => {
+    // У двойника та же сумма ⇒ совпадений два ⇒ молчим. Записано явно, чтобы следующий не «починил»
+    // это ослаблением гарда уникальности.
+    const items = [line('a', 250, 1), line('a', 250, 1), line('b', 10, 1)]
+    expect(findTotalGapSuspect(items, 250, true, 0.5)).toBeNull()
+  })
+
+  it('ничего не сходится — молчим', () => {
+    expect(findTotalGapSuspect([line('a', 100, 1)], 37, true, 0.5)).toBeNull()
+  })
+
+  it('разница в пределах допуска — подозревать некого', () => {
+    expect(findTotalGapSuspect([line('a', 100, 1)], 0, true, 0.5)).toBeNull()
+    expect(findTotalGapSuspect([line('a', 100, 1)], 0.4, true, 0.5)).toBeNull()
+  })
+
+  it('копеечная строка не объясняет ЛЮБУЮ разницу', () => {
+    // Ревью, воспроизведено: допуск гипотезы «потеряно количество» — это допуск на k, то есть
+    // tol/сумма_строки. У строки в 0,01 он больше единицы ⇒ подходит любая разница, и она же
+    // единственная — гард уникальности не спасает. Бухгалтеру говорили «количество не 1, а 123457».
+    expect(findTotalGapSuspect([line('пакет', 0.01, 1), line('b', 37.13, 2)], 37.0, true, 0.5)).toBeNull()
+    expect(findTotalGapSuspect([line('пакет', 0.01, 1), line('b', 500, 3)], 1234.56, true, 0.5)).toBeNull()
+    // ⚠ Ловушка проверки: на больших разницах копеечную строку отсекает ПОТОЛОК количества, а не
+    // порог суммы, — и мутация «убрать порог» проходила бы мимо. Разница 5,00 даёт k=501, потолок
+    // её пропускает, и вердикт держится только на пороге правдоподобия строки.
+    expect(findTotalGapSuspect([line('пакет', 0.01, 1), line('b', 77.7, 3)], 5, true, 0.5)).toBeNull()
+  })
+
+  it('шестизначное количество — не находка, а подгонка', () => {
+    // Потолок правдоподобия: в счёте такого количества не бывает.
+    expect(findTotalGapSuspect([line('a', 1, 1), line('b', 7.77, 3)], 5000, true, 0.5)).toBeNull()
+  })
+
+  it('скидочная строка не объясняет ПОЛОЖИТЕЛЬНУЮ разницу', () => {
+    // Ревью, воспроизведено: по модулю −250 «объясняла» разницу +250, хотя убери её — и наш итог
+    // ВЫРАСТЕТ, то есть разница только увеличится. Документ с неучтённой скидкой — один из двух
+    // типичных источников самого расхождения, то есть вход ожидаемый, а не краевой.
+    const items = [line('скидка', -250, 1), line('b', 99.37, 3)]
+    expect(findTotalGapSuspect(items, 250, true, 0.5)).toBeNull()
+    expect(findTotalGapSuspect(items, 750, true, 0.5)).toBeNull()
+    // В свою сторону — объясняет: наш итог МЕНЬШЕ бумаги ровно на скидку, которой на бумаге нет.
+    expect(findTotalGapSuspect(items, -250, true, 0.5)).toEqual({ index: 0, kind: 'extra' })
+  })
+
+  it('допуск тот же, что у сверки итога — иначе показываем не на ту строку', () => {
+    // Ревью: полукопеечный допуск отсекал настоящего виновника на документе с НДС, округлённым на
+    // итог, и оставлял единственным совпадением постороннюю строку.
+    const items = [line('a', 300, 1), line('b', 300.03, 1)]
+    // Полкопейки: настоящая строка «a» (300,00) не проходит, «b» (300,03) проходит → ложный вердикт.
+    expect(findTotalGapSuspect(items, 300.03, true, 0.005)).toEqual({ index: 1, kind: 'extra' })
+    // Настоящий допуск: подходят обе → молчим, а не показываем на постороннюю.
+    expect(findTotalGapSuspect(items, 300.03, true, tol(items, 600))).toBeNull()
+  })
+
+  it('НДС строки входит в разницу — считаем по валовой сумме, не по цене', () => {
+    // Первая строка нарочно «некруглая»: при 50 → 60 разница 120 дала бы ей гипотезу «количество 3».
+    const items = [line('a', 33, 1, 20), line('b', 100, 1, 20)]
+    expect(findTotalGapSuspect(items, 120, false, 0.5)).toEqual({ index: 1, kind: 'extra' })
+    expect(findTotalGapSuspect(items, 100, false, 0.5)).toBeNull()
+  })
+
+  it('строка с количеством НЕ 1 под «потерянное количество» не идёт', () => {
+    const items = [line('a', 250, 3)]
+    expect(findTotalGapSuspect(items, 1500, true, 0.5)).toBeNull()
+  })
+
+  it('нулевая строка не делится на ноль и подозреваемой не становится', () => {
+    expect(findTotalGapSuspect([line('a', 0, 1), line('b', 0, 1)], 500, true, 0.5)).toBeNull()
+  })
+
+  it('текст зовёт строку ПО НАЗВАНИЮ, а не по номеру', () => {
+    // Ревью: наш номер — позиция в разобранном списке, и он расходится с бумагой ровно тогда,
+    // когда строка при разборе потерялась, то есть в том самом случае, ради которого ветка `extra`
+    // и существует. Своих номеров человек нигде не видит; название совпадает с бумагой всегда.
+    const s = describeTotalMismatch(1000, 1250, 'BYN', { index: 1, kind: 'extra' }, 'Гвоздь 3×70')
+    expect(s).toContain('«Гвоздь 3×70»')
+    expect(s).not.toMatch(/строки 2|строке 2/)
+    // И подсказка стоит ПЕРВОЙ: хвост режется, а действие терять нельзя.
+    expect(s.startsWith('Разница совпадает с суммой строки')).toBe(true)
+  })
+
+  it('текст про количество называет и количество', () => {
+    const s = describeTotalMismatch(1000, 1750, 'BYN', { index: 0, kind: 'quantity', quantity: 4 }, 'Шуруп')
+    expect(s).toContain('«Шуруп»')
+    expect(s).toContain('не 1, а 4')
+  })
+
+  it('названия нет — падаем на общий текст, а не печатаем пустые кавычки', () => {
+    expect(describeTotalMismatch(1000, 1250, 'BYN', { index: 1, kind: 'extra' }, '   ')).toContain('проверьте позиции')
+    expect(describeTotalMismatch(1000, 1250, 'BYN', { index: 1, kind: 'extra' })).toContain('проверьте позиции')
+  })
+
+  it('подозреваемого нет — прежний общий текст', () => {
+    expect(describeTotalMismatch(1000, 1250, 'BYN', null)).toContain('проверьте позиции')
+  })
+
+  it('текст со строкой влезает в предел чата даже в худшем случае', () => {
+    // Ревью: подсказка стала ХВОСТОМ, а хвост режется первым. Проверяем предельные числа И длинное
+    // название товара — иначе тест зелен, а в чате обрывается «…проверьте эту стро».
+    const worst = describeTotalMismatch(9876543210.99, 1234567890.11, 'BYN', { index: 60, kind: 'quantity', quantity: 999 }, 'Кабель ВВГнг(А)-LS 5х16 мк(N,PE) ГОСТ 31996-2012 бухта')
+    expect(worst.length).toBeLessThanOrEqual(MAX_CHAT_REASON)
+  })
+
+  it('длинное название обрезается, а не выносит сообщение за предел', () => {
+    const s = describeTotalMismatch(1000, 1250, 'BYN', { index: 0, kind: 'extra' }, 'я'.repeat(300))
+    expect(s.length).toBeLessThanOrEqual(MAX_CHAT_REASON)
   })
 })

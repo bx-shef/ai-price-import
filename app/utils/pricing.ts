@@ -42,6 +42,18 @@ export function computeGrossTotal(items: DocumentItem[], priceIncludesVat: boole
   return round2(sum)
 }
 
+/**
+ * Допуск сверки итога: законный построчный дрейф округления (~0,5 минорной единицы на строку), но
+ * не больше 1% итога (чтобы у крупного счёта тот же процент не проглотился как «округление»).
+ *
+ * Вынесен из `reconcilePricing`, чтобы им же пользовался поиск подозреваемой строки (#336): полу-
+ * копеечный допуск там показывал не на ту строку — настоящий виновник в него не укладывался на
+ * документе с НДС, округлённым на итог, а посторонняя строка попадала точно.
+ */
+export function pricingTolerance(itemCount: number, statedTotal: number): number {
+  return Math.min(Math.max(0.5, itemCount * 0.5), Math.abs(finite(statedTotal)) * 0.01)
+}
+
 export interface PricingReconciliation {
   /** The authoritative VAT-inclusion flag (model's, or corrected by the printed total). */
   priceIncludesVat: boolean
@@ -102,7 +114,7 @@ export function reconcilePricing(items: DocumentItem[], modelFlag: boolean | und
 
   // Tolerance = the legit per-line rounding drift (~0.5 minor unit per line), never more than 1% of the
   // total (so a big invoice's 1% isn't silently accepted as "rounding"). Beyond it, don't trust the number.
-  const tol = Math.min(Math.max(0.5, items.length * 0.5), statedTotal * 0.01)
+  const tol = pricingTolerance(items.length, statedTotal)
   const matchesExcl = Math.abs(statedTotal - grossExclusive) <= tol
   const matchesIncl = Math.abs(statedTotal - grossInclusive) <= tol
 
@@ -173,10 +185,114 @@ function formatAmount(n: number): string {
  * for realistic amounts, and the numbers come FIRST so even a pathological one loses only the
  * advice tail. Pure → tested (including the length budget).
  */
-export function describeTotalMismatch(statedTotal: number | undefined, grossTotal: number, currency?: string): string {
-  const tail = 'Обычно всю разницу даёт одна строка с неверной ценой или количеством — проверьте позиции.'
+/**
+ * Строка, на которую АРИФМЕТИЧЕСКИ указывает расхождение итога (#336).
+ *
+ * Предупреждение с тремя числами уже сильно помогает, но на документе в 44 или 61 позицию человек
+ * всё равно ищет одну неверную строку глазами. Между тем разница — это поисковый ключ: неверно
+ * прочитанная ячейка сдвигает ровно ОДНУ строку, и в двух случаях её видно прямой арифметикой.
+ *
+ * - **`extra`** — разница совпадает с суммой одной строки: строка либо лишняя, либо, наоборот,
+ *   потеряна при разборе. (Задвоенную строку так поймать НЕЛЬЗЯ, и это не оплошность: у двойника
+ *   та же сумма, значит совпадений будет два и мы промолчим. Ветка ловит «строка не та / её нет».)
+ * - **`quantity`** — разница равна `сумма_строки × (k−1)` при целом k, а количество строки равно 1.
+ *   Это буквально находка 2 из #336: количество из колонки «Кол-во» прилипло к названию товара, а
+ *   в строку попала единица. Тогда k — то количество, которое стояло в документе.
+ *
+ * ⚠ Совпадение обязано быть ЕДИНСТВЕННЫМ. Если под разницу подходят две строки, мы молчим: послать
+ * человека проверять не ту позицию хуже, чем не послать никуда, — он поверит и закроет документ.
+ * По той же причине не угадываем «не ту ценовую колонку» (находка 1): там неизвестна верная цена,
+ * любая догадка была бы подгонкой под ответ.
+ *
+ * Три ограничения, каждое из которых закрывает найденный ревью способ уверенно соврать:
+ *
+ * 1. **Порог правдоподобия `MIN_SUSPECT_LINE`.** Допуск гипотезы «потеряно количество» — это допуск
+ *    на k, то есть `tol / сумма_строки`. У копеечной строки (упаковка за 0,01, «округление»,
+ *    заглушка нераспознанной цены) он больше единицы — ей подходит ЛЮБАЯ разница, и она же обычно
+ *    единственная, то есть гард уникальности её не ловит. Живой замер: строка 0,01 при разнице
+ *    1234,56 давала вердикт «количество не 1, а 123457».
+ * 2. **Знак.** `lineGross` намеренно не клампит негативы — скидка это законная отрицательная
+ *    строка. По модулю она «объясняла» бы положительную разницу, хотя убери её — и наш итог
+ *    ВЫРАСТЕТ, то есть разница только увеличится. А документ с неучтённой скидкой — один из двух
+ *    типичных источников самого расхождения, то есть вход не редкий, а ожидаемый.
+ * 3. **Потолок `MAX_SUSPECT_QTY`.** Шестизначное количество в счёте не встречается; такой вердикт
+ *    означает, что мы подогнали числа, а не нашли ошибку.
+ *
+ * Допуск берётся ТОТ ЖЕ, которым `reconcilePricing` признала расхождение. Полкопейки здесь были
+ * ошибкой: документ, где НДС округлён на итог, а не построчно, несёт законный дрейф в несколько
+ * копеек — настоящий виновник в полкопейки не укладывался, зато посторонняя строка попадала
+ * точно, и мы уверенно показывали на неё.
+ */
+export interface TotalGapSuspect {
+  /** Индекс строки в `items` (0-based). */
+  index: number
+  kind: 'extra' | 'quantity'
+  /** Для `quantity` — количество, которое объясняет разницу. */
+  quantity?: number
+}
+
+/** Ниже этой суммы строка в подозреваемые не идёт — см. п.1 в шапке. */
+const MIN_SUSPECT_LINE = 1
+
+/** Правдоподобный потолок количества в строке счёта — см. п.3 в шапке. */
+const MAX_SUSPECT_QTY = 1000
+
+export function findTotalGapSuspect(items: DocumentItem[], gap: number, inclusive: boolean, tolerance: number): TotalGapSuspect | null {
+  const g = round2(finite(gap))
+  const tol = Math.max(finite(tolerance), 0.005)
+  // Разница в пределах допуска — расхождения по сути нет, подозревать некого.
+  if (Math.abs(g) <= tol) return null
+  const found: TotalGapSuspect[] = []
+  items.forEach((it, index) => {
+    const gross = lineGross(it.price, it.quantity, it.vatRate ?? null, inclusive)
+    // Знак обязан совпасть: строку можно «убрать» только в ту сторону, в которую она тянет итог.
+    if (Math.abs(gross) < MIN_SUSPECT_LINE || Math.sign(gross) !== Math.sign(g)) return
+    const size = Math.abs(gross)
+    const need = Math.abs(g)
+    if (Math.abs(size - need) <= tol) {
+      found.push({ index, kind: 'extra' })
+      return
+    }
+    // Потерянное количество: в строке 1, а в документе было k. Тогда разница = сумма_строки × (k−1).
+    // Считаем через `lineGross`, а не через сырую цену: ставка НДС строки входит в разницу.
+    if (finite(it.quantity, 1) === 1) {
+      const k = Math.round(need / size) + 1
+      if (k >= 2 && k <= MAX_SUSPECT_QTY && Math.abs(size * (k - 1) - need) <= tol) {
+        found.push({ index, kind: 'quantity', quantity: k })
+      }
+    }
+  })
+  return found.length === 1 ? found[0]! : null
+}
+
+/**
+ * Хвост предупреждения, когда разницу объясняет ровно одна строка.
+ *
+ * ⚠ Строку зовём ПО НАЗВАНИЮ ТОВАРА, а не по номеру. Номер у нас свой — позиция в том списке,
+ * который вернул разбор, — и он расходится с бумагой ровно в том случае, ради которого ветка
+ * `extra` и существует: если строка при разборе потерялась, все последующие бумажные строки у нас
+ * сдвинуты на единицу, и «проверьте строку 12» отправляет человека к тринадцатой. Своих номеров он
+ * при этом нигде не видит: в товарной вкладке сделки нумерации нет, пропущенные строки не
+ * записываются вовсе, — то есть «строку 12» он может отсчитать только по документу, где нумерация
+ * и сбита. Название совпадает с бумагой всегда.
+ */
+function suspectTail(s: TotalGapSuspect | null | undefined, name?: string): string | null {
+  if (!s) return null
+  const who = (name ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_SUSPECT_NAME)
+  if (!who) return null
+  return s.kind === 'quantity'
+    ? `Сходится, если у строки «${who}» количество не 1, а ${s.quantity}.`
+    : `Разница совпадает с суммой строки «${who}» — проверьте её.`
+}
+
+/** Кап названия в тексте: сообщение целиком обязано влезть в предел чата (см. `describeTotalMismatch`). */
+const MAX_SUSPECT_NAME = 28
+
+export function describeTotalMismatch(statedTotal: number | undefined, grossTotal: number, currency?: string, suspect?: TotalGapSuspect | null, suspectName?: string): string {
+  const named = suspectTail(suspect, suspectName)
+  const generic = 'Обычно всю разницу даёт одна строка с неверной ценой или количеством — проверьте позиции.'
   if (!isPrintableAmount(statedTotal) || !isPrintableAmount(grossTotal)) {
-    return `Итог, напечатанный в документе, не сошёлся с суммой по строкам. ${tail}`
+    return `Итог, напечатанный в документе, не сошёлся с суммой по строкам. ${named ?? generic}`
   }
   const cur = typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency) ? ` ${currency.toUpperCase()}` : ''
   // Round BOTH amounts once, then subtract the rounded pair: the difference must be the difference
@@ -185,5 +301,11 @@ export function describeTotalMismatch(statedTotal: number | undefined, grossTota
   const stated = round2(statedTotal)
   const gross = round2(grossTotal)
   const diff = Math.abs(round2(gross - stated))
-  return `Итог документа — ${formatAmount(stated)}${cur}, по строкам вышло ${formatAmount(gross)}${cur}: разница ${formatAmount(diff)}${cur}. ${tail}`
+  const numbers = `Итог документа — ${formatAmount(stated)}${cur}, по строкам вышло ${formatAmount(gross)}${cur}: разница ${formatAmount(diff)}${cur}.`
+  // ⚠ ПОРЯДОК. Прежде числа стояли первыми, потому что хвостом был необязательный совет «проверьте
+  // позиции» — его было не жалко потерять на обрезке. Теперь хвостом стала бы НАЗВАННАЯ строка, то
+  // есть самое действие, ради которого всё и затевалось (замер ревью: 214 знаков при пределе 200 —
+  // в чат уезжало «…проверьте эту стро»). Поэтому названная строка идёт ПЕРВОЙ, а числа —
+  // подтверждением: они полезны, но человек и так открывает документ.
+  return named ? `${named} ${numbers}` : `${numbers} ${generic}`
 }
