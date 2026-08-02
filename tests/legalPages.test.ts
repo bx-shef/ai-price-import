@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -11,15 +11,29 @@ import { describe, expect, it } from 'vitest'
 // The invariant is stated over the PAGES, not over a hand-written list: a third legal page added
 // tomorrow gets the same guard for free, which is the whole failure mode here.
 const ROOT = new URL('../', import.meta.url).pathname
-const PAGES_DIR = join(ROOT, 'app/pages')
 
-/** `~~/docs/<file>.md?raw` → `docs/<file>.md`, over every page. */
+/**
+ * Every `docs/<file>.md?raw` import anywhere in the app or the server.
+ *
+ * Замечание ревью: первая редакция читала ОДИН каталог (`app/pages`, без вложенности) и требовала
+ * буквального написания `'~~/docs/x.md?raw'`. Страница в подкаталоге, тот же импорт из компонента
+ * или относительный путь воспроизводят ровно ту же аварию сборки образа — то есть инвариант был
+ * заявлен над страницами, а проверялся над одним каталогом и одним написанием.
+ *
+ * Поэтому: рекурсивный обход `app/` и `server/`, и путь берётся из ХВОСТА совпадения, каким бы
+ * алиасом он ни был записан.
+ */
+const ROOTS = ['app', 'server']
+
 function rawDocImports(): string[] {
   const found = new Set<string>()
-  for (const name of readdirSync(PAGES_DIR)) {
-    if (!name.endsWith('.vue')) continue
-    const text = readFileSync(join(PAGES_DIR, name), 'utf8')
-    for (const m of text.matchAll(/['"]~~\/(docs\/[\w.-]+\.md)\?raw['"]/g)) found.add(m[1]!)
+  for (const root of ROOTS) {
+    for (const name of readdirSync(join(ROOT, root), { recursive: true }) as string[]) {
+      if (!/\.(vue|ts|mts|js)$/.test(name)) continue
+      const full = join(ROOT, root, name)
+      if (statSync(full).isDirectory()) continue
+      for (const m of readFileSync(full, 'utf8').matchAll(/(docs\/[\w.-]+\.md)\?raw/g)) found.add(m[1]!)
+    }
   }
   return [...found].sort()
 }

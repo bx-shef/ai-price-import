@@ -16,6 +16,7 @@
 //                          for the current glyph (content well inside the circle) and the plate
 //                          corners match the background, so a mask clips nothing visible
 //   site.webmanifest       names + icon list (theme colours match the logo backdrop)
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -110,6 +111,15 @@ try {
   // and dev. `tests/botAvatar.test.ts` re-encodes the PNG and compares, so editing the logo
   // without running `pnpm icons` turns CI red instead of shipping a stale avatar.
   await writeFile(join(ROOT, 'server/utils/botAvatar.ts'), `${AVATAR_HEADER}export const BOT_AVATAR_BASE64 = '${rendered.get(192).toString('base64')}'\n`)
+
+  // Stamp: sha256 of the SOURCE svg + of every derived artefact the guard checks. Without the
+  // SOURCE hash the guard compared two files this same script writes — editing favicon.svg and
+  // forgetting `pnpm icons` left both stale AND equal, i.e. green CI with an old logo everywhere.
+  const sha = b => createHash('sha256').update(b).digest('hex')
+  await writeFile(join(PUB, 'icons.stamp.json'), `${JSON.stringify({
+    source: sha(svg),
+    icon192: sha(rendered.get(192))
+  }, null, 2)}\n`)
 
   console.log('✓ favicon.ico, favicon-16/32.png, apple-touch-icon.png, icon-192/512.png, icon-maskable-512.png, site.webmanifest')
 } finally {
