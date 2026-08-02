@@ -40,7 +40,7 @@ export function validateDemoFile(name: string, size: number): DemoFileVerdict {
     return {
       ok: false,
       status: 415,
-      error: `Демо понимает те же форматы, что и приложение: ${FORMATS_HUMAN}.`
+      error: `Демо понимает ${FORMATS_HUMAN} — ровно те же форматы, что и приложение в Битрикс24.`
     }
   }
   return { ok: true }

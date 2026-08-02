@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EXT_MIME, FORMATS_HUMAN, SUPPORTED_EXT, buildAccept } from '../app/config/uploadFormats'
-import { ALLOWED_EXT } from '../app/utils/importUpload'
+import { ALLOWED_EXT, validateUploadFile } from '../app/utils/importUpload'
 import { DEMO_AI_EXT, DEMO_ALLOWED_EXT, DEMO_TEXT_EXT, DEMO_XLSX_EXT, validateDemoFile } from '../server/utils/demoUpload'
 import { planExtraction } from '../server/utils/textExtract'
 
@@ -9,8 +9,27 @@ import { planExtraction } from '../server/utils/textExtract'
 // refused right after install — promise before the install, refusal after. These tests are what keeps
 // the two gates (and the extraction pipeline behind them) from drifting apart again.
 describe('форматы демо и приложения — один список', () => {
-  it('приложение принимает ровно то, что заявлено общим источником', () => {
-    expect([...ALLOWED_EXT]).toEqual([...SUPPORTED_EXT])
+  // Мутационная проверка показала: все остальные тесты берут SUPPORTED_EXT как ВХОД, поэтому
+  // потеря формата им невидима — циклы просто делают меньше работы. Расширение списка ловилось,
+  // сужение — нет, а это ровно тот отказ, который #341 и чинит. Пин делает список осознанным.
+  it('список форматов меняется только осознанно (пин против тихой потери формата)', () => {
+    expect([...SUPPORTED_EXT]).toEqual([
+      'pdf', 'png', 'jpg', 'jpeg',
+      'xlsx', 'xls', 'docx', 'doc',
+      'csv', 'tsv', 'txt'
+    ])
+  })
+
+  // Прежняя версия сверяла ALLOWED_EXT с SUPPORTED_EXT — а это буквально один и тот же объект
+  // (реэкспорт), то есть сравнение массива с его же копией: тавтология. Проверяем ЖИВОЙ гейт —
+  // он переживёт рефактор, в котором ALLOWED_EXT перестанет быть реэкспортом.
+  it('гейт приложения пропускает каждый заявленный формат (в любом регистре) и режет чужой', () => {
+    for (const ext of SUPPORTED_EXT) {
+      expect(validateUploadFile({ name: `прайс.${ext}`, size: 1000 }).ok, `.${ext}`).toBe(true)
+      expect(validateUploadFile({ name: `ПРАЙС.${ext.toUpperCase()}`, size: 1000 }).ok, `.${ext} прописью`).toBe(true)
+    }
+    expect(validateUploadFile({ name: 'архив.zip', size: 1000 }).ok).toBe(false)
+    expect([...ALLOWED_EXT]).toEqual([...SUPPORTED_EXT]) // на случай возврата к отдельному массиву
   })
 
   it('демо принимает то же самое (плюс легаси-алиас .text)', () => {
@@ -37,7 +56,15 @@ describe('форматы демо и приложения — один спис�
   it('accept выдаёт каждое расширение и не забывает MIME (мобильный выбирает по MIME)', () => {
     const tokens = buildAccept().split(',')
     for (const ext of SUPPORTED_EXT) expect(tokens).toContain(`.${ext}`)
-    for (const mime of Object.values(EXT_MIME)) expect(tokens).toContain(mime)
+    // Требование выводится из SUPPORTED_EXT, а НЕ из самого EXT_MIME: прежний цикл шёл по
+    // проверяемому объекту, поэтому удаление записи просто укорачивало цикл и проходило молча —
+    // а это ровно тот отказ, ради которого MIME здесь и лежат («на телефоне файл не выбрать»).
+    const COVERED_BY_IMAGE = new Set(['png', 'jpg', 'jpeg'])
+    for (const ext of SUPPORTED_EXT) {
+      if (COVERED_BY_IMAGE.has(ext)) continue
+      expect(EXT_MIME[ext], `.${ext} без MIME — мобильный пикер его не покажет`).toBeTruthy()
+      expect(tokens).toContain(EXT_MIME[ext] as string)
+    }
     expect(tokens).toContain('image/*') // камера на телефоне
   })
 

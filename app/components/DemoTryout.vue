@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { extractDemo, type DemoResult } from '~/utils/demoExtract'
+import { FORMATS_HUMAN, buildAccept } from '~/config/uploadFormats'
 import { pollDemoJob, type DemoPollResponse } from '~/utils/demoPoll'
 
 // Public landing tryout: attach a document → see who the supplier is + goods table.
@@ -145,7 +146,7 @@ async function upload(file: File) {
     }
   } catch (err: unknown) {
     const data = (err as { data?: { error?: string, retryAfterSec?: number } })?.data
-    error.value = data?.error || (err as Error)?.message || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx/.xls), PDF, скан (.png/.jpg) или Word (.doc/.docx).'
+    error.value = data?.error || (err as Error)?.message || `Ошибка обработки. Подойдёт ${FORMATS_HUMAN}.`
     // 429 → quota spent: hide the upload form and show the retry countdown.
     if (data?.retryAfterSec !== undefined) blockUploads(data.retryAfterSec)
   } finally {
@@ -153,6 +154,10 @@ async function upload(file: File) {
     scrollToResult()
   }
 }
+
+// Один источник форматов на демо и приложение (#341): рукописная строка accept здесь была
+// последней копией, которую гард из #338 проверял постфактум вместо того, чтобы её не было.
+const DEMO_ACCEPT = buildAccept()
 
 const dragOver = ref(false)
 async function onDrop(e: DragEvent) {
@@ -242,10 +247,10 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
         @drop.prevent="onDrop"
       >
         <span class="text-slate-300">Перетащите файл сюда или нажмите, чтобы выбрать</span>
-        <span class="mt-1 text-xs text-slate-500">Текст, Excel, PDF, скан (фото) или Word · до 5 МБ. PDF/сканы разбирает AI (пара секунд).</span>
+        <span class="mt-1 text-xs text-slate-500">{{ FORMATS_HUMAN }} · до 5 МБ. PDF/сканы разбирает AI (пара секунд).</span>
         <input
           type="file"
-          accept=".txt,.csv,.tsv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.docx,.doc,text/plain,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          :accept="DEMO_ACCEPT"
           class="hidden"
           @change="onFile"
         >
