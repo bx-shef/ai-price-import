@@ -1,22 +1,15 @@
 // Pure upload validation core (P5). No DOM/I/O. See docs/PROCESS.md
 
+import { FORMATS_HUMAN, SUPPORTED_EXT, buildAccept } from '~/config/uploadFormats'
+
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024 // 20 MB
 export const MAX_UPLOAD_FILES = 10
-export const ALLOWED_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'xlsx', 'xls', 'docx'] as const
+/** Formats come from the SHARED list (#341) — the portal used to accept fewer than the landing demo,
+ *  so a CSV price-list that «worked» on the landing was rejected right after install. */
+export const ALLOWED_EXT = SUPPORTED_EXT
 
-/** `accept` for the file `<input>`. Includes MIME TYPES first, then the extensions. On MOBILE (Bitrix24
- *  app / phone browser) an extension-only accept greys out otherwise-valid files (the OS matches by MIME,
- *  not extension) — so a phone user «can't pick a file». Listing MIME types fixes that; `image/*` also
- *  surfaces the camera so a document can be photographed. The server still re-validates by extension
- *  (validateUploadFile), so this only widens what the picker OFFERS, never what is accepted. */
-export const UPLOAD_ACCEPT = [
-  'application/pdf',
-  'image/*',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-  'application/vnd.ms-excel', // .xls
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-  '.pdf', '.png', '.jpg', '.jpeg', '.xlsx', '.xls', '.docx'
-].join(',')
+/** `accept` for the file `<input>` — built from the same shared list (MIME first, see the module). */
+export const UPLOAD_ACCEPT = buildAccept()
 
 /** Human file size for a staged row («1,2 МБ»). Russian decimal comma, one decimal for МБ/КБ.
  *  Pure — no Intl dependency so the string is stable across environments/tests. */
@@ -41,7 +34,7 @@ export function fileExtension(name: string): string {
 export function validateUploadFile(file: UploadFileMeta, maxBytes = MAX_UPLOAD_BYTES): UploadValidation {
   const ext = fileExtension(file.name)
   if (!(ALLOWED_EXT as readonly string[]).includes(ext)) {
-    return { ok: false, error: `Такой формат не подходит${ext ? ` (.${ext})` : ''}. Загрузите PDF, фото, Excel или Word.` }
+    return { ok: false, error: `Такой формат не подходит${ext ? ` (.${ext})` : ''}. Загрузите ${FORMATS_HUMAN}.` }
   }
   if (!Number.isFinite(file.size) || file.size <= 0) {
     return { ok: false, error: 'Файл пустой. Проверьте его на компьютере и загрузите ещё раз.' }

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { DEMO_ALLOWED_EXT, decodeText, ext, MAX_DEMO_BYTES, validateDemoFile } from '../server/utils/demoUpload'
+import { buildAccept } from '../app/config/uploadFormats'
 
 describe('ext', () => {
   it('lower-cases the extension, ignores path, handles dotfiles/no-ext', () => {
@@ -41,17 +42,23 @@ describe('decodeText', () => {
   })
 })
 
-describe('accept демо-инпута покрывает все принимаемые сервером форматы (#338)', () => {
+describe('accept демо-инпута покрывает все принимаемые сервером форматы (#338/#341)', () => {
   // .xls был принят сервером, но отсутствовал в accept — диалог выбора файла прятал такие
   // файлы, и пользователь читал это как «не поддерживается» (drag-drop при этом работал).
-  it('каждое расширение из DEMO_ALLOWED_EXT есть в accept у <input> лендинга', () => {
-    const src = readFileSync(new URL('../app/components/DemoTryout.vue', import.meta.url), 'utf8')
-    const accept = src.match(/accept="([^"]+)"/)?.[1] ?? ''
-    const tokens = accept.split(',')
+  // С #341 строка не пишется руками вовсе: компонент зовёт общий buildAccept(), поэтому
+  // проверяем И результат билдера, И то, что копии в разметке не завелось снова.
+  it('каждое расширение из DEMO_ALLOWED_EXT есть в общем accept', () => {
+    const tokens = buildAccept().split(',')
     for (const ext of DEMO_ALLOWED_EXT) {
       // 'text' — служебный синоним .txt, у файлов такого расширения на практике нет
       if (ext === 'text') continue
       expect(tokens, `.${ext} отсутствует в accept`).toContain(`.${ext}`)
     }
+  })
+
+  it('компонент лендинга берёт accept из общего билдера, а не из рукописной строки', () => {
+    const src = readFileSync(new URL('../app/components/DemoTryout.vue', import.meta.url), 'utf8')
+    expect(src).toContain('buildAccept()')
+    expect(src, 'в разметке снова завелась рукописная строка accept').not.toMatch(/accept="\.[a-z]/)
   })
 })

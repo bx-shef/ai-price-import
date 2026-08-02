@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import AttachIcon from '@bitrix24/b24icons-vue/outline/AttachIcon'
 import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_GENERIC_ERROR, formatBytes, validateUploadFile, type UploadOutcome } from '~/utils/importUpload'
+import { FORMATS_HUMAN } from '~/config/uploadFormats'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
 
@@ -315,7 +316,7 @@ function cancelImport(): void {
         Нажмите, чтобы выбрать файл или сделать фото. Можно просто перетащить файлы сюда
       </span>
       <span class="text-sm text-(--ui-color-base-3)">
-        {{ importing ? 'Заблокировано, пока идёт импорт' : 'PDF, фото, Excel, Word · до 20 МБ · чтобы начать, нажмите «Импортировать» внизу' }}
+        {{ importing ? 'Заблокировано, пока идёт импорт' : `${FORMATS_HUMAN} · до 20 МБ · чтобы начать, нажмите «Импортировать» внизу` }}
       </span>
       <input
         ref="fileInput"

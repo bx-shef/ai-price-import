@@ -7,7 +7,7 @@ export const LANDING_SUBTITLE
 
 export interface LandingStep { n: number, title: string, text: string }
 export const LANDING_STEPS: LandingStep[] = [
-  { n: 1, title: 'Загрузите документ', text: 'Прямо в портале — PDF, скан, фото, Excel или Word. Одним файлом или пачкой.' },
+  { n: 1, title: 'Загрузите документ', text: 'Прямо в портале — PDF, скан, фото, Excel, Word или CSV. Одним файлом или пачкой.' },
   { n: 2, title: 'AI разбирает', text: 'Распознаёт контрагента (ИНН/УНП/БИН), позиции, единицы и НДС — на русском, белорусском или казахском.' },
   { n: 3, title: 'Товары в CRM', text: 'Создаётся целевая сущность (сделка / лид / счёт / смарт-процесс) с товарными позициями — 1-в-1 с документом.' }
 ]
@@ -44,7 +44,7 @@ export const LANDING_HERO_NOTE = 'Бесплатное приложение за
 
 /** «Tech-string» под hero — какие ФАЙЛЫ понимает разбор. */
 export const LANDING_FORMATS: string[] = [
-  'PDF', 'Скан / фото (OCR)', 'Excel', 'Word'
+  'PDF', 'Скан / фото (OCR)', 'Excel', 'Word', 'CSV'
 ]
 
 /** Виды документов — отдельной строкой: у них своя ось (что за бумага, а не чем открывается),
