@@ -13,40 +13,13 @@ import { resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedback
 import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { downloadDiskFile, type BinaryFetchFn } from '../utils/diskDownload'
 import { checkFeedbackRate, feedbackRateMessage } from '../utils/uploadRateLimit'
+import { feedbackIntakeGate, parseClientFile } from '../utils/feedbackIntake'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import type { FetchFn } from '../utils/b24Rest'
 
 /** jobId shape accepted for the DB lookup (matches the builder's context validation). */
 const JOB_ID_RE = /^[A-Za-z0-9-]{1,64}$/
 
-/** Cap on a client-sent feedback file. Same 5 MB the Disk fallback uses — a feedback attachment is
- *  for reproducing a run, not for archiving; larger documents go without one (the widget says so). */
-const MAX_FEEDBACK_FILE_BYTES = 5 * 1024 * 1024
-
-/** Cap on the whole JSON body: the attachment as base64 (×4/3) plus the comment and context. */
-const MAX_FEEDBACK_BODY_BYTES = 8 * 1024 * 1024
-
-/**
- * Validate the file the PAGE sent along with a rating (#349). Untrusted input on an authenticated
- * route: accept only a base64 string of sane size, and let `feedbackFilePath` sanitise the name (it
- * already strips directories and non-allowlisted chars, so no path traversal into the repo).
- * Anything odd → null, i.e. the feedback is filed without a file rather than refused.
- */
-function parseClientFile(raw: unknown): { name: string, base64: string } | null {
-  if (!raw || typeof raw !== 'object') return null
-  const { name, base64 } = raw as { name?: unknown, base64?: unknown }
-  if (typeof base64 !== 'string' || !base64) return null
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return null // not base64 → refuse rather than store junk
-  if (Math.ceil((base64.length * 3) / 4) > MAX_FEEDBACK_FILE_BYTES) return null
-  return { name: typeof name === 'string' && name ? name : '', base64 }
-}
-
-// POST /api/feedback — employee 👍/👎 + comment on the import result → a GitHub issue in the
-// configured PRIVATE receiving repo (#182 channel «сотрудник»). Frame-token authenticated (the
-// submitter is in-portal). Channel-gated: no config → 503 (widget is hidden client-side too).
-//
-// Wrapped in a manual OTel span (телеметрия, DEFAULT OFF): latency + a PII-safe outcome + hashed
-// portal id. The comment / context / file is NEVER attached to the span.
 export default defineEventHandler(async (event) => {
   const auth = extractFrameAuth(getHeaders(event) as Record<string, string | undefined>)
   return withFrameRouteSpan(
@@ -71,24 +44,18 @@ export default defineEventHandler(async (event) => {
         return { error: 'authorization failed', reason: member.reason }
       }
 
-      // Rate limit + body cap BEFORE buffering the body (#349 review). The route stopped being cheap
-      // once the source file rides WITH the rating: one authenticated employee could loop «issue +
-      // 5 MB commit» and burn the publisher's GitHub quota. The privacy probe bounds WHAT can be
-      // written and the path scoping WHERE — this bounds HOW OFTEN and HOW BIG.
-      const rate = checkFeedbackRate(member.memberId, member.userId, Date.now())
-      if (!rate.allowed) {
-        span.outcome = 'rate_limited'
-        setResponseStatus(event, 429)
-        setResponseHeader(event, 'retry-after', Math.ceil(rate.retryAfterMs / 1000))
-        return { error: feedbackRateMessage(rate.retryAfterMs) }
-      }
-      // Declared length is checked before the body is materialised: a 5 MB attachment is ~6.7 MB of
-      // base64 plus the rating itself, so anything past 8 MB is not a feedback we can use.
-      const declared = Number(getHeader(event, 'content-length') || 0)
-      if (Number.isFinite(declared) && declared > MAX_FEEDBACK_BODY_BYTES) {
-        span.outcome = 'bad_request'
-        setResponseStatus(event, 413)
-        return { error: 'Отзыв слишком большой. Отправьте его без файла.' }
+      // Rate + size gate BEFORE the body is read (#349/#351 review) — the decision itself is a pure
+      // function so it can be tested; the handler only performs its verdict.
+      const refusal = feedbackIntakeGate({
+        rate: checkFeedbackRate(member.memberId, member.userId, Date.now()),
+        declaredLength: Number(getHeader(event, 'content-length') || 0),
+        rateMessage: feedbackRateMessage
+      })
+      if (refusal) {
+        span.outcome = refusal.outcome
+        setResponseStatus(event, refusal.status)
+        if (refusal.retryAfterSec !== undefined) setResponseHeader(event, 'retry-after', refusal.retryAfterSec)
+        return { error: refusal.error }
       }
 
       const raw = await readBody(event).catch(() => null) as

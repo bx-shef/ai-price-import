@@ -48,3 +48,14 @@ export function buildAccept(): string {
 /** Human-readable format list for UI copy («PDF, фото, Excel, Word, CSV»). Kept next to the list so
  *  a new format can't be added without deciding how it is named to the user. */
 export const FORMATS_HUMAN = 'PDF, фото, Excel, Word, CSV'
+
+/**
+ * Cap on the file a 👍/👎 may carry (#349 review). ONE number for both ends: the widget refuses to
+ * promise an attachment it cannot send, and the route refuses to store one it did not expect. Two
+ * independent constants would drift silently — and the failure is invisible, because an oversized
+ * attachment is simply dropped and the feedback still files «successfully».
+ *
+ * Deliberately far below MAX_UPLOAD_BYTES (20 MB): an attachment exists to REPRODUCE a run, not to
+ * archive it, and it rides inside a JSON body (base64 is ~4/3 of the bytes).
+ */
+export const MAX_FEEDBACK_FILE_BYTES = 5 * 1024 * 1024

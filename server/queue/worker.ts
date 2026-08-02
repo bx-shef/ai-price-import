@@ -199,7 +199,7 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
   // `writesToCrm` only for crm-sync: the «не удалось внести документ в …, выберите другую цель»
   // wording presumes the document reached the portal. A failure in extract/agent (OCR, LLM, storage)
   // never got there, so naming a target — let alone advising to change it — would be a wrong lead.
-  onExhausted(extract, infra, job => cleanupUpload(job as ExtractJob))
+  onExhausted(extract, infra, cleanupUpload)
   onExhausted(agent, infra)
   onExhausted(crm, infra, undefined, true)
 
@@ -238,8 +238,10 @@ function onExhausted(
   })
 }
 
-/** Drop the uploaded bytes once text is extracted (data minimisation, #349). */
-async function cleanupUpload(job: ExtractJob): Promise<void> {
+/** Drop the uploaded bytes once text is extracted (data minimisation, #349). Takes only what it
+ *  needs — the retry-exhaustion path hands it a bare {memberId, jobId}, and widening the parameter
+ *  to ExtractJob just to satisfy that call meant an `as` cast that would hide a real missing field. */
+async function cleanupUpload(job: { memberId: string, jobId: string }): Promise<void> {
   const { uploadPath } = await import('../utils/fileStore')
   await unlink(uploadPath(job.memberId, job.jobId)).catch(() => {})
 }

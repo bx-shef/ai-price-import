@@ -66,7 +66,7 @@ const notice = ref('')
 //
 // Remembered for the TAB (#349, sessionStorage — see app/utils/targetMemory.ts): a person importing
 // invoices all day sends them to the same place, and re-picking сущность → направление → стадию on
-// every batch was pure friction. Only identifiers are stored, keyed by portal+employee, and the
+// every batch was pure friction. Only identifiers are stored, keyed by the portal domain, and the
 // memory dies with the tab — a shared office computer keeps nothing for the next person.
 const target = ref<TargetRef | null>(null)
 const memoryKey = computed(() => targetMemoryKey(props.portalDomain))
@@ -79,10 +79,11 @@ onMounted(() => {
   if (restored) target.value = restored
 })
 
+// No `deep` — TargetRef is a flat object of primitives and the picker always assigns a NEW one.
 watch(target, (t) => {
   if (typeof window === 'undefined') return
   writeTarget(window.sessionStorage, memoryKey.value, t)
-}, { deep: true })
+})
 // Set by «Отменить»; checked between uploads and inside the wait loop.
 const cancelled = ref(false)
 

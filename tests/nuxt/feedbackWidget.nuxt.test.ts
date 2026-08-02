@@ -190,4 +190,27 @@ describe('FeedbackWidget', () => {
     expect(w.text()).toContain('счёт-7.pdf')
     expect(w.text()).toContain('на сервере он не хранится')
   })
+
+  // Ветка «файл есть, но слишком большой» — её отметил тестировщик как непокрытую, хотя соседние
+  // (файла нет / файл есть) закрыты. Импорт принимает 20 МБ, вложение к отзыву — 5 МБ, поэтому
+  // случай реальный: без гарда виджет обещал бы отправить скан, сервер молча выбросил бы вложение,
+  // а на 19+ МБ запрос не прошёл бы кап тела и терялась бы ВСЯ оценка.
+  it('файл больше капа: честный текст, вложение не уходит, но отзыв отправить можно', async () => {
+    const w = await mountSuspended(FeedbackWidget, {
+      props: { jobId: 'job-big', file: new File([new Uint8Array(6 * 1024 * 1024)], 'скан.pdf') }
+    })
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(w.text()).toContain('слишком большой')
+    expect(w.text()).toContain('скан.pdf')
+    // «С файлом» недоступна — обещать отправку того, что не уйдёт, нельзя.
+    const withFile = w.findAll('button').find(b => b.text().includes('Отправить с файлом'))
+    expect(withFile?.attributes('disabled')).toBeDefined()
+    // …а сам отзыв отправить можно — потеря вложения не должна лишать нас оценки.
+    await clickText(w, 'Отправить без файла')
+    await tick()
+    expect(h.submit).toHaveBeenCalledWith('down', undefined, expect.any(Object), false, null)
+  })
 })
