@@ -1,4 +1,5 @@
 import { Worker } from 'bullmq'
+import { unlink } from 'node:fs/promises'
 import { connectionOptions } from './connection'
 import { QUEUES } from './topology'
 import type { AgentJob, CrmSyncJob, EventJob, ExtractJob } from './topology'
@@ -152,11 +153,14 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
       'portal.hash': portalHash(data.memberId)
     }, async () => {
       // Handled failures set 'error' and return {ok:false}; only an infra throw propagates (→ retry).
-      // NB: the uploaded bytes are NOT dropped here any more (#200). They are what a 👎 on «документ
-      // не распознан» needs to attach, and that case creates neither a CRM entity nor a Disk archive,
-      // so deleting on the way out left the most important feedback with nothing to reproduce from.
-      // The bytes now expire with the job (retention sweep); uninstall still purges them at once.
-      return await handleFileExtractJob(data, fileExtract)
+      const res = await handleFileExtractJob(data, fileExtract)
+      // Drop the uploaded bytes as soon as the text is out — data minimisation, owner's decision
+      // (#349): the client's document must not sit on our disk for a day just so a 👎 can attach it.
+      // #200 had kept them for the job's whole TTL for exactly that reason; the feedback widget now
+      // sends the bytes it still holds in PAGE MEMORY instead, so nothing is retained server-side and
+      // the «документ не распознан» case still has a file to reproduce from while the tab is open.
+      await cleanupUpload(data)
+      return res
     }, res => ({ 'job.ok': res.ok }))
   }, { connection, concurrency: cc.extract })
 
@@ -195,7 +199,7 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
   // `writesToCrm` only for crm-sync: the «не удалось внести документ в …, выберите другую цель»
   // wording presumes the document reached the portal. A failure in extract/agent (OCR, LLM, storage)
   // never got there, so naming a target — let alone advising to change it — would be a wrong lead.
-  onExhausted(extract, infra)
+  onExhausted(extract, infra, job => cleanupUpload(job as ExtractJob))
   onExhausted(agent, infra)
   onExhausted(crm, infra, undefined, true)
 
@@ -232,4 +236,10 @@ function onExhausted(
     await notifyImportFailure(infra, data.memberId, data.jobId, reason)
     if (cleanup) await cleanup({ memberId: data.memberId, jobId: data.jobId }).catch(() => {})
   })
+}
+
+/** Drop the uploaded bytes once text is extracted (data minimisation, #349). */
+async function cleanupUpload(job: ExtractJob): Promise<void> {
+  const { uploadPath } = await import('../utils/fileStore')
+  await unlink(uploadPath(job.memberId, job.jobId)).catch(() => {})
 }

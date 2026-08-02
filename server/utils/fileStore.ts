@@ -2,17 +2,15 @@
 // in a queue payload — file-extract reads them by (memberId, jobId). Path building is
 // traversal-safe and pure (tested); the fs ops are injected (FileIO) → also testable.
 //
-// RETENTION (#200). The raw file used to be deleted the moment text was extracted. That made the ONE
-// case feedback exists for — «документ не распознан», where no CRM entity is created and no Disk
-// archive is written either — impossible to reproduce: the employee pressed 👎 and there was nothing
-// to attach. The bytes now live until the job itself expires (`sweepOldUploads`, window = the job
-// TTL): while a job can still be rated, its file exists; when the job record is gone, so is the file.
-// Uninstall still purges a portal's files immediately (`purgePortalFiles`).
+// RETENTION (#349 — the #200 retention was REVERTED). The raw file is deleted the moment its text is
+// extracted, so it lives on our disk for seconds. #200 had kept it for the job's whole TTL to give
+// «документ не распознан» something to attach to a 👎 (that case writes neither a CRM entity nor a
+// Disk archive) — the owner is not willing to hold клиентские документы that long, and the feedback
+// widget now sends the copy the PAGE still holds instead. `sweepOldUploads` is back to being an
+// orphan backstop for jobs that never reached extraction; uninstall purges a portal at once.
 //
-// ⚠ ОПЕРАЦИОННОЕ ПОСЛЕДСТВИЕ: раньше диск держал файлы минуты, теперь — до суток с лишним. Пиковый
-// объём = поток документов за TTL × средний размер (25 МБ — потолок одной загрузки). При росте
-// нагрузки это первое, что упрётся в место на диске: либо уменьшать `IMPORT_JOB_TTL_HOURS`, либо
-// выносить хранилище. Мониторить свободное место на разделе `UPLOAD_DIR`.
+// Consequence for ops: peak disk is bounded by files in flight, not by a retention window, so the
+// old «watch UPLOAD_DIR, shrink IMPORT_JOB_TTL_HOURS» advice no longer applies.
 
 export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/tmp/procure-uploads'
 
