@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BOT_CODE, BOT_PROPERTIES, NO_BOT_CACHE_MAX, NO_BOT_TTL_MS, botIdFromRegister, buildBotProfileUpdate, buildBotRegister, buildBotSend, buildBotUnregister, createBotIdCache, errorCode, pushBotProfile, messageIdFromBotSend, registerBot, resolveBotId, type BotIdDeps } from '../server/utils/chatBot'
+import { BOT_CODE, BOT_PROPERTIES, NO_BOT_CACHE_MAX, NO_BOT_TTL_MS, botIdFromRegister, buildBotProfileUpdate, buildBotRegister, buildBotSend, buildBotUnregister, createBotIdCache, errorCode, pushBotProfile, messageIdFromBotSend, registerBot, resolveBotId, type BotIdDeps, buildChatJoin } from '../server/utils/chatBot'
 import { sendChatMessage } from '../server/utils/chatNotify'
 import { getBotId, saveBotId } from '../server/utils/tokenStore'
 import { liveEventDeps } from '../server/queue/liveDeps'
@@ -82,12 +82,17 @@ describe('отправка сообщения', () => {
   it('отказ бота — фолбэк на старый путь, а не потерянное сообщение', async () => {
     // Главный сценарий: портал на бесплатном тарифе или установлен до появления скоупа `imbot`.
     // Сообщение об отказе — единственный канал до сотрудника (#288), молчать нельзя.
+    //
+    // Между отказом и фолбэком теперь стоит попытка вступить в чат (бот пишет только туда, где
+    // состоит). Здесь она тоже отвергнута — то есть проверяем именно фолбэк, а не её.
     const call = vi.fn()
       .mockRejectedValueOnce(new Error('ACCESS_DENIED'))
+      .mockRejectedValueOnce(new Error('ACCESS_ERROR'))
       .mockResolvedValueOnce(42)
     expect(await sendChatMessage('chat5', 'текст', call, 456)).toBe(42)
     expect(call.mock.calls[0]![0]).toBe('imbot.v2.Chat.Message.send')
-    expect(call.mock.calls[1]![0]).toBe('im.message.add')
+    expect(call.mock.calls[1]![0]).toBe('im.chat.user.add')
+    expect(call.mock.calls[2]![0]).toBe('im.message.add')
   })
 
   it('пустой текст или пустой диалог не порождают вызова', async () => {
@@ -397,5 +402,92 @@ describe('бот уже есть на портале — забираем его
     await registerBot(call, m => logs.push(m))
     expect(logs.join('\n')).not.toContain('Ромашка')
     expect(logs.join('\n')).toContain('BOT_CODE_ALREADY_TAKEN')
+  })
+})
+
+describe('бот пишет только в чат, где он состоит (#316 live-fix)', () => {
+  it('групповой чат — строим добавление бота', () => {
+    const r = buildChatJoin('chat9', 19)
+    expect(r?.method).toBe('im.chat.user.add')
+    expect(r?.params).toEqual({ CHAT_ID: 9, USERS: [19], HIDE_HISTORY: 'Y' })
+  })
+
+  it('личный диалог — добавлять некуда', () => {
+    // Сообщение об отказе уходит загрузившему в личку: там нет участия, которое можно выдать,
+    // а CHAT_ID был бы бессмыслицей.
+    expect(buildChatJoin('42', 19)).toBeNull()
+    expect(buildChatJoin('', 19)).toBeNull()
+  })
+
+  it('без бота или с мусорным id — ничего не строим', () => {
+    expect(buildChatJoin('chat9', 0)).toBeNull()
+    expect(buildChatJoin('chat0', 19)).toBeNull()
+    expect(buildChatJoin('chatX', 19)).toBeNull()
+  })
+})
+
+describe('отправка: отказ → вступить в чат → повторить (#316 live-fix)', () => {
+  /** Портал, который отвергает сообщение бота, пока тот не в чате. */
+  function portal() {
+    const seen: string[] = []
+    let joined = false
+    const call = (async (m: string) => {
+      seen.push(m)
+      if (m === 'im.chat.user.add') {
+        joined = true
+        return true
+      }
+      if (m === 'imbot.v2.Chat.Message.send') {
+        if (!joined) throw new Error('ACCESS_DENIED')
+        return { id: 555 }
+      }
+      return 777
+    }) as never
+    return { seen, call }
+  }
+
+  it('первый отказ лечится вступлением, сообщение уходит ОТ БОТА', async () => {
+    // Ровно живой случай: бот заведён, аватар на месте, id сохранён — а в чате его нет, поэтому
+    // каждое уведомление падало в фолбэк и приходило от имени сотрудника.
+    const p = portal()
+    const id = await sendChatMessage('chat9', 'привет', p.call, 19)
+    expect(id).toBe(555)
+    expect(p.seen).toEqual(['imbot.v2.Chat.Message.send', 'im.chat.user.add', 'imbot.v2.Chat.Message.send'])
+    expect(p.seen).not.toContain('im.message.add')
+  })
+
+  it('в личный диалог не вступаем, а честно уходим в фолбэк', async () => {
+    const seen: string[] = []
+    const call = (async (m: string) => {
+      seen.push(m)
+      if (m === 'imbot.v2.Chat.Message.send') throw new Error('ACCESS_DENIED')
+      return 777
+    }) as never
+    const id = await sendChatMessage('42', 'привет', call, 19)
+    expect(id).toBe(777)
+    expect(seen).toEqual(['imbot.v2.Chat.Message.send', 'im.message.add'])
+  })
+
+  it('вступление не помогло — сообщение всё равно доставляем старым путём', async () => {
+    // Уведомление важнее авторства: сотрудник обязан узнать об отказе импорта.
+    const seen: string[] = []
+    const call = (async (m: string) => {
+      seen.push(m)
+      if (m === 'imbot.v2.Chat.Message.send') throw new Error('ACCESS_DENIED')
+      if (m === 'im.chat.user.add') throw new Error('ACCESS_ERROR')
+      return 777
+    }) as never
+    expect(await sendChatMessage('chat9', 'привет', call, 19)).toBe(777)
+    expect(seen[seen.length - 1]).toBe('im.message.add')
+  })
+
+  it('бот пишет с первого раза — в чат не лезем', async () => {
+    const seen: string[] = []
+    const call = (async (m: string) => {
+      seen.push(m)
+      return { id: 5 }
+    }) as never
+    expect(await sendChatMessage('chat9', 'привет', call, 19)).toBe(5)
+    expect(seen).toEqual(['imbot.v2.Chat.Message.send'])
   })
 })
