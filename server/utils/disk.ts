@@ -16,6 +16,89 @@ export function sanitizeFileName(name: string): string {
   return base.slice(0, 255)
 }
 
+/**
+ * Предел имени архивной копии — в БАЙТАХ UTF-8, а не в знаках.
+ *
+ * ⚠ Ревью #346 поймало это живым замером: `'я'.repeat(400).slice(0,255)` — это 255 знаков, но
+ * **468 байт**. Ограничения на имя файла (и у файловых систем, и у портала) считаются в байтах,
+ * поэтому портал сохранил бы обрезанное имя, оно перестало бы совпадать с запрошенным — и рушились
+ * бы сразу обе гарантии: `findChildFile` не нашёл бы свою же копию (каждый повтор задания грузил бы
+ * новую), а сконструированная ссылка «Исходный файл» вела бы на несуществующий путь. Кириллица тут
+ * не экзотика, а норма домена, так что это не теоретический случай.
+ */
+export const MAX_DISK_NAME = 255
+
+/**
+ * Предел «расширения». Настоящее расширение короткое; всё длиннее — это точка внутри имени.
+ *
+ * ⚠ Без этого предела ломалась уникальность (ревью #346, воспроизведено): расширение бралось от
+ * ПОСЛЕДНЕЙ точки без всякой проверки, а «акт 01.<длинный хвост>» — обычное имя. Суффикс
+ * `__<jobId><ext>` тогда сам перерастал предел, обрезка возвращала его ХВОСТ, и `jobId` из имени
+ * пропадал. Два разных задания получали одно и то же имя: второе находило чужой файл, пропускало
+ * загрузку и записывало себе ссылку на ЧУЖОЙ документ — то есть кнопка «Исходный файл» открывала
+ * не тот счёт, а свой файл терялся молча.
+ */
+const MAX_EXT = 16
+
+/** Обрезка по БАЙТАМ UTF-8 с сохранением границы кодовой точки.
+ *
+ * ⚠ Границу приходится держать руками: `'🧾'.repeat(140).slice(...)` разрывает суррогатную пару,
+ * а `encodeURIComponent` на «половине» символа БРОСАЕТ `URIError`. Ссылка строится до загрузки,
+ * поэтому падал бы весь архив — и падал бы молча (ошибку глотает best-effort обёртка). Эмодзи в
+ * именах файлов приезжают с телефонов регулярно. */
+function sliceBytes(s: string, maxBytes: number): string {
+  if (Buffer.byteLength(s) <= maxBytes) return s
+  let out = ''
+  let used = 0
+  for (const ch of s) {
+    const size = Buffer.byteLength(ch)
+    if (used + size > maxBytes) break
+    out += ch
+    used += size
+  }
+  return out
+}
+
+/**
+ * Имя архивной копии на Диске: `накладная__<jobId>.pdf` (#346).
+ *
+ * Раньше было `<jobId>__накладная.pdf`, и первые 38 знаков имени у ВСЕХ файлов совпадали: в списке
+ * папки человек видел столбец одинаковых UUID, сортировка шла по случайному идентификатору, а найти
+ * свою загрузку глазами было нельзя.
+ *
+ * Три вещи, которые схема обязана сохранить, — каждая ломалась «упрощением» имени:
+ *
+ * 1. **Уникальность.** `jobId` тут не украшение: перед загрузкой идёт `findChildFile` по точному
+ *    имени, и именно оно не даёт повторному прогону задания задвоить файл. Поэтому идентификатор
+ *    остаётся в имени целиком — он просто переезжает в конец, и жертвуют им в последнюю очередь.
+ * 2. **Расширение.** Оно должно остаться ПОСЛЕДНИМ, иначе портал и операционная система перестают
+ *    понимать тип файла.
+ * 3. **Обрезка.** Режется только именная часть, а `__<jobId>` и расширение дописываются ПОСЛЕ
+ *    обрезки. Прежняя схема резала строку целиком, и это было безопасно лишь потому, что длинное
+ *    имя стояло в хвосте. Перенеси его в начало, оставь `slice(255)` — и у длинного имени отвалятся
+ *    и идентификатор, и расширение, то есть ровно те две вещи, ради которых схема существует.
+ */
+export function archiveFileName(jobId: string, fileName: string): string {
+  // ⚠ Сюда НЕЛЬЗЯ подставить `sanitizeFileName`: он режет строку по 255 ПЕРЕД тем, как мы разберём
+  // расширение, — у имени длиннее предела расширение отваливается ещё до разбора, и файл уходит на
+  // Диск без него. Поэтому чистим то же самое (разделители пути, пробелы по краям, пустое имя), но
+  // БЕЗ обрезки: длину доводим ниже, уже зная, что жертвовать можно только именной частью.
+  const clean = (fileName ?? '').replace(/[/\\]/g, '_').trim() || 'document'
+  // Расширение — только настоящее: точка в конце имени («отчёт.»), файл без точки вовсе и точка
+  // посреди длинного имени дают пустой суффикс, а не «расширение» из хвоста имени.
+  const dot = clean.lastIndexOf('.')
+  const hasExt = dot > 0 && dot < clean.length - 1 && clean.length - dot - 1 <= MAX_EXT
+  const ext = hasExt ? clean.slice(dot) : ''
+  const stem = hasExt ? clean.slice(0, dot) : clean
+  const suffix = `__${jobId}${ext}`
+  // Даже на один знак имени не осталось (сверхдлинный jobId) ⇒ режем суффикс С НАЧАЛА, сохраняя
+  // идентификатор и жертвуя расширением: неуникальное имя ведёт к чужому файлу в чужой карточке,
+  // а имя без расширения — всего лишь к неудобству.
+  const room = MAX_DISK_NAME - Buffer.byteLength(suffix)
+  if (room <= 0) return sliceBytes(suffix, MAX_DISK_NAME)
+  return `${sliceBytes(stem, room)}${suffix}`
+}
+
 /** Pick the common ("Общий диск") storage from disk.storage.getlist result. */
 export function pickCommonStorage(storages: DiskStorage[]): DiskStorage | null {
   return storages.find(s => s.ENTITY_TYPE === 'common') ?? null
@@ -105,7 +188,13 @@ export async function saveSourceFileToDisk(
   const appFolderId = await ensureSubfolder(rootId, DISK_APP_FOLDER, call)
   const monthName = monthlySubfolderName(input.date)
   const monthId = await ensureSubfolder(appFolderId, monthName, call)
-  const name = sanitizeFileName(input.fileName)
+  // ⚠ `sanitizeFileName` режет по 255 ЗНАКОВ вслепую, а имя сюда приходит уже собранным
+  // (`archiveFileName`) и уже уложенным в 255 БАЙТ. Сегодня слепой срез безвреден только потому,
+  // что 255 байт всегда ≤ 255 знаков; но подними предел в одном месте — и он молча вернёт ровно
+  // тот дефект, который чинил #346 (у длинного имени отвалятся идентификатор и расширение), причём
+  // ни один тест не покраснеет: билдер проверяется отдельно, а тест проводки берёт короткое имя.
+  // Поэтому здесь только чистка разделителей, без второй обрезки.
+  const name = input.fileName.replace(/[/\\]/g, '_').trim() || 'document'
   // The OPEN link is CONSTRUCTED from the human path (not the API's DETAIL_URL, which didn't open the
   // file). Same for a freshly-uploaded and an already-archived file → the id from REST, the URL from us.
   const detailUrl = commonDiskFileUrl(DISK_APP_FOLDER, monthName, name)
@@ -141,9 +230,16 @@ export interface SaveSourceFileDeps {
 /**
  * Build the best-effort `saveSourceFile(memberId, jobId, fileId)` hook wired for file-extract.
  * Resolves ONE portal transport and reuses it for both the mapping read and the Disk upload
- * (no double token-load/SDK-build). Gated on the portal's `saveFile` toggle. The archived name
- * is job-scoped (`<jobId>__<fileId>`), and the Disk write runs under an optional per-portal
- * serializer, so both a sequential job retry AND concurrent scale-out workers are idempotent.
+ * (no double token-load/SDK-build). Gated on the portal's `saveFile` toggle. The archived name is
+ * job-scoped (`<имя>__<jobId>.<ext>`, см. `archiveFileName`), and the Disk write runs under an
+ * optional per-portal serializer, so both a sequential job retry AND concurrent scale-out workers
+ * are idempotent.
+ *
+ * ⚠ Файлы, загруженные до #346, лежат под старым именем `<jobId>__<имя>` — миграция им не нужна:
+ * ссылка «Исходный файл» в деле строится из СОХРАНЁННОГО в задании `diskFile`, а не пересобирается
+ * из имени на лету. Единственное следствие — повторный прогон СТАРОГО задания не найдёт свою
+ * прежнюю копию по новому имени и загрузит вторую. Это возможно лишь пока живо задание тех суток
+ * (TTL 48 ч), и цена — одна лишняя копия, а не потеря.
  */
 export function makeSaveSourceFile(deps: SaveSourceFileDeps): (memberId: string, jobId: string, fileId: string) => Promise<void> {
   return async (memberId, jobId, fileId) => {
@@ -155,7 +251,7 @@ export function makeSaveSourceFile(deps: SaveSourceFileDeps): (memberId: string,
     let ref: DiskFileRef | null = null
     const write = async (): Promise<void> => {
       ref = await saveSourceFileToDisk(
-        { base64: Buffer.from(bytes).toString('base64'), fileName: `${jobId}__${fileId}`, date: new Date(deps.now()) },
+        { base64: Buffer.from(bytes).toString('base64'), fileName: archiveFileName(jobId, fileId), date: new Date(deps.now()) },
         t.call
       )
     }
