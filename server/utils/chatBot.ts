@@ -1,4 +1,5 @@
 import type { RestCall } from './b24Rest'
+import { BOT_AVATAR_BASE64 } from './botAvatar'
 
 /**
  * Chat messages sent AS THE APP, not as the employee whose OAuth token we happen to hold (#316).
@@ -211,27 +212,57 @@ export function buildBotUnregister(botId: number): RestRequest | null {
  * bot will never pick up a new name — or an avatar added later — from `Bot.register`. So the app
  * pushes its profile explicitly whenever the stored id is known.
  *
- * ⚠ The avatar is NOT sent yet: the app has no icon asset (#298), and the exact key for it inside
- * `properties` is not stated in the reference — only that properties carry «имя, фамилию,
- * должность, цвет, пол и аватар». Guessing it would fail silently. Name and workPosition are the
- * documented ones, and they are what the chat actually shows.
+ * The AVATAR rides here and ONLY here — deliberately not in `Bot.register` (#298). The portal can
+ * reject a picture on its own terms (`BOT_AVATAR_INCORRECT_TYPE` / `BOT_AVATAR_INCORRECT_SIZE`),
+ * and inside registration that rejection would take the whole call down: no bot at all, and every
+ * notice back to being signed with an employee's name. That is a far worse outcome than a bot with
+ * a default picture, so the risky field is confined to the call that is already best-effort.
+ *
+ * Key and format come from the v2 reference pages for `Bot.register`/`Bot.update`, which list the
+ * profile sub-fields as name / lastName / workPosition / color / gender / **avatar**, the picture
+ * being base64 WITHOUT the `data:` prefix, image only, up to 5000×5000. Ours is 192×192 — the same
+ * render as the favicon bundle, so the tab icon, the home-screen icon and the bot are one product.
+ * ⚠ Not confirmed against a live portal yet, and an unknown key inside `properties` is ignored
+ * silently, so a wrong key would be a no-op rather than an error. Hence the retry below.
  */
-export function buildBotProfileUpdate(botId: number): RestRequest | null {
+export function buildBotProfileUpdate(botId: number, opts: { withAvatar?: boolean } = {}): RestRequest | null {
   if (!(botId > 0)) return null
-  return {
-    method: 'imbot.v2.Bot.update',
-    params: { botId, fields: { properties: { ...BOT_PROPERTIES } } }
-  }
+  const properties = opts.withAvatar === false
+    ? { ...BOT_PROPERTIES }
+    : { ...BOT_PROPERTIES, avatar: BOT_AVATAR_BASE64 }
+  return { method: 'imbot.v2.Bot.update', params: { botId, fields: { properties } } }
 }
 
-/** Push the app's own name/position onto an existing bot. Best-effort — cosmetics never block. */
+/**
+ * Push the app's own name / position / avatar onto an existing bot. Best-effort — cosmetics never
+ * block an import.
+ *
+ * ⚠ Name and picture travel in ONE call, so a portal that rejects the picture
+ * (`BOT_AVATAR_INCORRECT_TYPE` / `_SIZE`) applies NOTHING — and since registration overwrites
+ * nothing and this runs once per install, the bot would keep its default name forever. That is not
+ * «a bot with a default picture», it is a partial return of the very symptom #316 fixed: notices
+ * signed by something that isn't the app. So a failure retries once WITHOUT the avatar — the field
+ * that can be refused is also the one we can afford to drop.
+ *
+ * The retry is unconditional rather than keyed on the avatar error codes: the same «lost the name»
+ * outcome follows from any refusal of that first call, and one extra cosmetic call at install time
+ * costs nothing.
+ */
 export async function pushBotProfile(botId: number, call: () => Promise<RestCall>, log?: (msg: string) => void): Promise<void> {
   const req = buildBotProfileUpdate(botId)
   if (!req) return
   try {
     await (await call())(req.method, req.params)
+    return
   } catch (e) {
     log?.(`[chat-bot] profile update refused: ${errorCode(e)}`)
+  }
+  const plain = buildBotProfileUpdate(botId, { withAvatar: false })
+  if (!plain) return
+  try {
+    await (await call())(plain.method, plain.params)
+  } catch (e) {
+    log?.(`[chat-bot] profile update refused without avatar: ${errorCode(e)}`)
   }
 }
 
