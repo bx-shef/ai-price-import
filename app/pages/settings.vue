@@ -177,6 +177,23 @@ const rateFormatOptions = computed(() =>
 )
 const rateHint = computed(() => hourlyRateHint(baseCurrency.value))
 
+// Prefill the field with the reference rate for the portal's currency (#311, owner's call: the hint
+// names a number, so the field must carry it — a caption that says «9,9» over an empty box asks the
+// admin to retype what the app already knows).
+//
+// PREFILL, not a stored default: it is written into the form only while the admin has entered
+// nothing at all, and it is saved only if they press «Сохранить» — the value they see is the value
+// that is kept, and one that was never confirmed is never in the portal's settings. That is also
+// why it runs on `loaded` rather than on mount: before the server copy arrives, «ставки нет» and
+// «настройки ещё не пришли» look identical, and seeding into the second one would overwrite a rate
+// the admin had set earlier.
+watch([loaded, baseCurrency], ([isLoaded]) => {
+  if (!isLoaded || !isAdmin.value) return
+  if (mapping.value.savings?.ratePerHour) return
+  const hint = rateHint.value
+  if (hint) savingsRate.value = hint.rate
+}, { immediate: true })
+
 // Seed each picker's selected option so a SAVED id shows before the chat list is fetched
 // (the mapping stores only the id, not the title → the raw `chat<id>` is the fallback label
 // until the user re-picks). Mirrors the article-field seed.

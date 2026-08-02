@@ -112,5 +112,5 @@ export function hourlyRateHint(baseCurrency: string | null | undefined): { rate:
   const shown = rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
   // Код валюты идёт ПОСЛЕ числа, как в русском письме: «ориентир для BYN» читалось бы как
   // «ориентир для валюты», хотя ориентир — для ставки, а BYN лишь единица измерения.
-  return { rate, text: `Ориентир: ${shown} ${code} в час (данные на ${HOURLY_RATE_AS_OF}) — из открытых источников, не рекомендация: ставку решаете вы.` }
+  return { rate, text: `Подставлен ориентир: ${shown} ${code} в час (данные на ${HOURLY_RATE_AS_OF}) — из открытых источников. Поставьте свою ставку, если она отличается.` }
 }
