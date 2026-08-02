@@ -145,7 +145,7 @@ async function upload(file: File) {
     }
   } catch (err: unknown) {
     const data = (err as { data?: { error?: string, retryAfterSec?: number } })?.data
-    error.value = data?.error || (err as Error)?.message || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx), PDF, скан (.png/.jpg) или Word (.docx).'
+    error.value = data?.error || (err as Error)?.message || 'Ошибка обработки. Подойдёт текст (.txt/.csv), Excel (.xlsx/.xls), PDF, скан (.png/.jpg) или Word (.doc/.docx).'
     // 429 → quota spent: hide the upload form and show the retry countdown.
     if (data?.retryAfterSec !== undefined) blockUploads(data.retryAfterSec)
   } finally {
@@ -245,7 +245,7 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
         <span class="mt-1 text-xs text-slate-500">Текст, Excel, PDF, скан (фото) или Word · до 5 МБ. PDF/сканы разбирает AI (пара секунд).</span>
         <input
           type="file"
-          accept=".txt,.csv,.tsv,.xlsx,.pdf,.png,.jpg,.jpeg,.docx,.doc,text/plain,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          accept=".txt,.csv,.tsv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.docx,.doc,text/plain,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           class="hidden"
           @change="onFile"
         >

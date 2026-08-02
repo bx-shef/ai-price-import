@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { decodeText, ext, MAX_DEMO_BYTES, validateDemoFile } from '../server/utils/demoUpload'
+import { DEMO_ALLOWED_EXT, decodeText, ext, MAX_DEMO_BYTES, validateDemoFile } from '../server/utils/demoUpload'
 
 describe('ext', () => {
   it('lower-cases the extension, ignores path, handles dotfiles/no-ext', () => {
@@ -37,5 +38,20 @@ describe('decodeText', () => {
     // «Тест» in Windows-1251 (0xD2 0xE5 0xF1 0xF2) is invalid UTF-8 → CP1251 path.
     const cp1251 = new Uint8Array([0xD2, 0xE5, 0xF1, 0xF2])
     expect(decodeText(cp1251)).toBe('Тест')
+  })
+})
+
+describe('accept демо-инпута покрывает все принимаемые сервером форматы (#338)', () => {
+  // .xls был принят сервером, но отсутствовал в accept — диалог выбора файла прятал такие
+  // файлы, и пользователь читал это как «не поддерживается» (drag-drop при этом работал).
+  it('каждое расширение из DEMO_ALLOWED_EXT есть в accept у <input> лендинга', () => {
+    const src = readFileSync(new URL('../app/components/DemoTryout.vue', import.meta.url), 'utf8')
+    const accept = src.match(/accept="([^"]+)"/)?.[1] ?? ''
+    const tokens = accept.split(',')
+    for (const ext of DEMO_ALLOWED_EXT) {
+      // 'text' — служебный синоним .txt, у файлов такого расширения на практике нет
+      if (ext === 'text') continue
+      expect(tokens, `.${ext} отсутствует в accept`).toContain(`.${ext}`)
+    }
   })
 })
