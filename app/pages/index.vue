@@ -20,6 +20,7 @@ import {
   canonicalUrl,
   ogImageUrl
 } from '~/utils/landing'
+import { PUBLISHER_PERSON } from '~/config/publisher'
 import { B24_BOOKING_URL } from '~/utils/booking'
 
 // Public marketing landing. Composition + look mirror the sibling client-bank
@@ -139,7 +140,7 @@ onMounted(async () => {
                 >
                   <img
                     src="/igor.jpg"
-                    alt="Игорь Шевчик"
+                    :alt="PUBLISHER_PERSON.fullName"
                     width="240"
                     height="240"
                     class="size-44 rounded-full object-cover shadow-[0_0_64px_rgba(34,211,238,0.20)] ring-2 ring-cyan-400/45 sm:size-52 lg:size-60"

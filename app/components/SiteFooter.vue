@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { PUBLISHER } from '~/config/publisher'
 import { shortSha, commitUrl } from '~/utils/build'
 import { copyrightYears } from '~/utils/landing'
 
 // Rich landing footer (ported from client-bank / offer.bx-shef.by): publisher legal,
 // contact + legal links, build sha, and cross-ecosystem free tools. Native HTML —
-// styled for the dark vibecode landing. Same publisher (ИП Шевчик И.С.).
+// styled for the dark vibecode landing. Same publisher across the ecosystem.
 const { public: { commitSha } } = useRuntimeConfig()
 
+// Requisites come from the ONE source (#297) — a local copy had already drifted in spelling.
 const legal = {
-  short: 'ИП Шевчик И. С.',
-  unp: 'УНП 192049017',
-  email: 'offer@bx-shef.by',
-  city: 'Минск, Беларусь'
+  short: PUBLISHER.shortName,
+  unp: PUBLISHER.unpLabel,
+  email: PUBLISHER.email,
+  city: PUBLISHER.city
 }
 
 interface ToolLink { id: string, label: string, href: string }
