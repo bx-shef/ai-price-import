@@ -21,6 +21,11 @@ const props = defineProps<{
 // status, so this is purely the employee tidying their own history. Emitted with the jobId.
 const emit = defineEmits<{ remove: [jobId: string] }>()
 
+/** Сколько предупреждений печатать на СТРОКЕ С ОШИБКОЙ (#373). В ветке успеха их всё так же
+ *  показываем целиком: там это редкие штучные замечания, а здесь — по одному на каждую позицию
+ *  документа, и сотня строк растянула бы карточку задания на весь экран. */
+const MAX_ERROR_WARNINGS = 5
+
 const meta = computed(() => jobStatusMeta(props.job.status))
 // «в Сделку» / «в Смарт-счёт» — только для РУЧНОГО выбора; когда цель определили правила, показывать
 // нечего (и незачем: правило видно в настройках).
@@ -237,12 +242,29 @@ const stepDot: Record<string, string> = {
     </div>
 
     <!-- ERROR: the failure reason. -->
-    <p
-      v-else
-      class="border-l-[3px] border-(--ui-color-accent-main-alert) pl-2.5 text-xs leading-relaxed text-(--ui-color-accent-main-alert)"
-    >
-      {{ result.errors[0] || result.message || 'Не удалось обработать документ. Проверьте, что файл открывается и в нём есть таблица с товарами, затем загрузите его снова.' }}
-    </p>
+    <div v-else>
+      <p class="border-l-[3px] border-(--ui-color-accent-main-alert) pl-2.5 text-xs leading-relaxed text-(--ui-color-accent-main-alert)">
+        {{ result.errors[0] || result.message || 'Не удалось обработать документ. Проверьте, что файл открывается и в нём есть таблица с товарами, затем загрузите его снова.' }}
+      </p>
+      <!-- #373: предупреждения показывались ТОЛЬКО в ветке успеха. На отказе «ни одна позиция не
+           найдена» это ровно тот список, который человеку и нужен — названия товаров, которых нет
+           в каталоге. Без него на экране остаётся общий приговор и ни одного названия. Кап — чтобы
+           документ на сотню строк не превратил строку списка в простыню. -->
+      <div
+        v-if="result.warnings.length"
+        class="mt-1.5 flex flex-col gap-1 border-l-[3px] border-(--ui-color-accent-main-warning) pl-2.5 text-xs"
+      >
+        <span
+          v-for="(w, i) in result.warnings.slice(0, MAX_ERROR_WARNINGS)"
+          :key="i"
+          class="leading-relaxed text-(--ui-color-base-2)"
+        >{{ w }}</span>
+        <span
+          v-if="result.warnings.length > MAX_ERROR_WARNINGS"
+          class="text-(--ui-color-base-3)"
+        >…и ещё {{ result.warnings.length - MAX_ERROR_WARNINGS }}</span>
+      </div>
+    </div>
 
     <!-- Отзыв 👍/👎 — только по завершённым, если канал включён на сервере. На строке с истёкшим
          статусом не спрашиваем: приложение уже не знает её результата, и отзыв уехал бы без контекста. -->

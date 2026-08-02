@@ -15,6 +15,7 @@ import { rulesToRows, rowsToRules } from '~/utils/routingRulesEditor'
 import { MAX_SAVINGS_RATE, isPortalConfigured, parsePortalSettings } from '~/utils/portalSettings'
 import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
+import { ON_MISSING_FIELD_LABEL, ON_MISSING_ITEMS } from '~/config/onMissing'
 import { portalCurrencySettingsUrl } from '~/utils/entityLink'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
@@ -331,11 +332,6 @@ const ARTICLE_KIND_ITEMS = [
   { label: 'построчно (текст)', value: 'text' },
   { label: 'через разделитель', value: 'string' }
 ]
-
-const ON_MISSING_ITEMS = [
-  { label: 'Пропустить строку и предупредить', value: 'skip-warn' },
-  { label: 'Внести строку как есть, без товара из каталога', value: 'freeform' }
-]
 </script>
 
 <template>
@@ -469,12 +465,19 @@ const ON_MISSING_ITEMS = [
               </B24FormField>
 
               <!-- Стратегия товара -->
-              <B24FormField label="Что делать, если товар не найден в каталоге">
+              <B24FormField :label="ON_MISSING_FIELD_LABEL">
                 <B24Select
                   v-model="mapping.product.onMissing"
                   :items="ON_MISSING_ITEMS"
                   class="w-full"
                 />
+                <!-- #373: у поля не было подсказки вовсе, а «пропустить» стояло первым в списке и
+                     читалось как дефолт. На пустом каталоге оно пропускало ВЕСЬ документ. -->
+                <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                  По умолчанию строка вносится как есть. «Пропустить» подходит только при
+                  заполненном каталоге: если не найдётся ни один товар, импорт остановится с
+                  ошибкой и запись не создастся.
+                </p>
               </B24FormField>
 
               <!-- Единицы измерения -->

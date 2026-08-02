@@ -30,4 +30,24 @@ describe('writeMapping', () => {
     expect(method).toBe('app.option.set')
     expect(JSON.parse((params as { options: Record<string, string> }).options[SETTINGS_KEY]!).defaultTarget.entityTypeId).toBe(2)
   })
+
+  it('#373: отмечает портал настроенным — сам факт записи и есть «админ сохранил»', async () => {
+    const call = vi.fn().mockResolvedValue(true)
+    const out = await writeMapping(call, {})
+    expect(out.configured).toBe(true)
+    const params = call.mock.calls[0]![1] as { options: Record<string, string> }
+    expect(JSON.parse(params.options[SETTINGS_KEY]!).configured).toBe(true)
+  })
+
+  it('#373: клиентскому полю не верим — флаг ставит только сама запись', async () => {
+    // Иначе портал объявил бы себя настроенным, ничего не настроив, и гейт `/app` погас бы зря.
+    // Проверяем через чтение: разобранный блоб с `configured:false` после записи всё равно true,
+    // а вот прочитать чужое `true` без записи нельзя — это покрыто в portalSettings.
+    const call = vi.fn().mockResolvedValue(true)
+    expect((await writeMapping(call, { configured: false })).configured).toBe(true)
+  })
+
+  it('#373: прочитанные настройки без флага остаются ненастроенными', async () => {
+    expect((await readMapping(vi.fn().mockResolvedValue({ saveFile: false }))).configured).toBe(false)
+  })
 })

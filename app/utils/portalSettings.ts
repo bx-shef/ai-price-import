@@ -34,7 +34,8 @@ export function defaultMapping(): PortalMapping {
     // have client files copied to its Disk. The admin turns it on in settings.
     saveFile: true, // #328: по умолчанию ВКЛЮЧЕНО — файл привязывается к делу (решение владельца)
     routingRules: [],
-    defaultTarget: { ...DEFAULT_TARGET }
+    defaultTarget: { ...DEFAULT_TARGET },
+    configured: false
   }
 }
 
@@ -109,6 +110,9 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     ...(typeof o.errorChatId === 'string' ? { errorChatId: o.errorChatId } : {}),
     routingRules: asRules(o.routingRules),
     defaultTarget: asTarget(o.defaultTarget, DEFAULT_TARGET),
+    // Только литеральный `true` (#373): флаг решает, показывать ли гейт настройки, поэтому любой
+    // мусор в блобе должен читаться как «не настроен» — лишний баннер безобиден, пропущенный нет.
+    configured: o.configured === true,
     ...asSavings(o.savings)
   }
 }
@@ -123,13 +127,22 @@ function asSavings(v: unknown): { savings?: { ratePerHour: number } } {
   return { savings: { ratePerHour: Math.min(Math.round(rate * 100) / 100, MAX_SAVINGS_RATE) } }
 }
 
-/** Whether the admin has configured ANYTHING beyond the pristine defaults. Returns false only when
- *  the mapping is byte-for-byte the out-of-the-box default (defaultMapping) — i.e. the portal admin
- *  has never touched settings. The in-portal home page uses this to nudge an admin to set things up
- *  (and to tell a non-admin the app isn't configured yet) before the first import. Pure — any single
- *  meaningful setting (article field, a chat, a routing rule, a custom target/strategy/unit) flips it
- *  to true, so a partially-configured portal is never falsely reported as «not configured». */
+/**
+ * Настраивал ли админ приложение. Гейтит рабочий экран `/app`: не настроено ⇒ админу баннер
+ * «Настроить», не-админу «обратитесь к администратору», весь остальной контент скрыт.
+ *
+ * Признак — ФАКТ сохранения (`configured`, ставится в `writeMapping`). Всё, что ниже, — эвристики
+ * ТОЛЬКО для порталов, сохранявшихся до появления флага (#373): у них его в блобе нет, и без
+ * эвристик они разом получили бы баннер настройки.
+ *
+ * ⚠ Почему флаг вообще понадобился. Прежде признак вычислялся сравнением с дефолтами, и это
+ * работало ровно до первой смены дефолта: `onMissing` стал `freeform`, и портал, где админ ВЫБРАЛ
+ * `freeform` руками, мгновенно перестал считаться настроенным — деплой закрыл рабочий экран
+ * тенанту, у которого ничего не менялось. Новые признаки настройки сюда добавлять не нужно: флага
+ * достаточно, эвристики — исторический хвост.
+ */
 export function isPortalConfigured(m: PortalMapping): boolean {
+  if (m.configured) return true
   if (m.article.field.trim()) return true
   if (m.notifyChatId || m.errorChatId) return true
   if (m.routingRules.length > 0) return true

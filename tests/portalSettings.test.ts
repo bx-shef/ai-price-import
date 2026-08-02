@@ -98,12 +98,44 @@ describe('isPortalConfigured', () => {
     expect(cfg({ product: { by: 'article', onMissing: 'freeform' } })).toBe(false)
     // А «пропустить» стало осознанным выбором админа — вот оно и есть признак настройки.
     expect(cfg({ product: { by: 'article', onMissing: 'skip-warn' } })).toBe(true)
+    // Стратегия подбора — своя половина проверки: раньше её выбивало парное `onMissing`, и мутация
+    // «убрать сравнение product.by» не роняла ни одного теста.
+    expect(cfg({ product: { by: 'name', onMissing: 'freeform' } })).toBe(true)
     expect(cfg({ units: { defaultCode: 166 } })).toBe(true)
     expect(cfg({ units: { autoCreate: true } })).toBe(true)
     expect(cfg({ defaultTarget: { entityTypeId: 31 } })).toBe(true) // moved off the deal anchor
     expect(cfg({ defaultTarget: { entityTypeId: 2, categoryId: 3 } })).toBe(true) // non-default funnel
     expect(cfg({ defaultTarget: { entityTypeId: 2, categoryId: 0, stageId: 'NEW' } })).toBe(true)
   })
+  describe('#373: факт сохранения, а не сравнение с дефолтами', () => {
+    // Смена дефолта `onMissing` вскрыла, что признак настройки был РЕТРОАКТИВНЫМ: портал, где админ
+    // выбрал `freeform` руками, после деплоя стал «ненастроенным» — не-админу закрылся рабочий
+    // экран на портале, где ничего не менялось. Флаг `configured` снимает весь класс: сохранение —
+    // это событие, а не значение.
+    it('сохранённые настройки считаются настройкой, даже если все значения дефолтные', () => {
+      expect(isPortalConfigured(parsePortalSettings({ configured: true }))).toBe(true)
+      // Именно тот портал, который ломался: единственное осознанное действие — выбор freeform.
+      expect(isPortalConfigured(parsePortalSettings({ configured: true, product: { by: 'article', onMissing: 'freeform' } }))).toBe(true)
+    })
+
+    it('без флага работают прежние эвристики — порталы, сохранявшиеся до его появления', () => {
+      expect(isPortalConfigured(parsePortalSettings({ article: { field: 'PROP' } }))).toBe(true)
+      expect(isPortalConfigured(parsePortalSettings({ notifyChatId: 'chat1' }))).toBe(true)
+    })
+
+    it('нетронутый портал — по-прежнему не настроен', () => {
+      expect(isPortalConfigured(parsePortalSettings({}))).toBe(false)
+      expect(isPortalConfigured(parsePortalSettings({ configured: false }))).toBe(false)
+    })
+
+    it('флагом считается только литеральный true', () => {
+      // Мусор в блобе должен читаться как «не настроен»: лишний баннер безобиден, пропущенный нет.
+      for (const junk of ['true', 1, {}, [], 'yes']) {
+        expect(isPortalConfigured(parsePortalSettings({ configured: junk })), String(junk)).toBe(false)
+      }
+    })
+  })
+
   it('an empty article field / whitespace stays not-configured', () => {
     expect(isPortalConfigured(parsePortalSettings({ article: { field: '   ' } }))).toBe(false)
   })
