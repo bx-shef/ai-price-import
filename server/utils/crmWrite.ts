@@ -47,14 +47,22 @@ export interface ProductRowInput {
 /**
  * Build one crm.item.productrow.set row.
  *
- * B24 semantics (live-verified 2026-08-01, #302): the row `price` is ALWAYS the gross per-unit
- * price — the docs say «цена … с учетом скидок и налогов» — and `taxIncluded` does NOT affect
- * the computation at all (the same price sent with 'N' and with 'Y' produced identical
- * priceExclusive/priceBrutto; the portal always derives net = price / (1 + rate)). Writing the
- * document's NET price with `taxIncluded:'N'` therefore undershot every row by the whole VAT,
- * while the manually-set entity `opportunity` (correct) masked it: the deal header said 10 320
- * and its product tab summed to 8 600. So the net→gross conversion happens HERE, and the row
- * carries `taxIncluded:'Y'` so the visible flag agrees with the number.
+ * B24 semantics (live-verified 2026-08-01 #302, refined 2026-08-02 #347): the row `price` is
+ * ALWAYS the gross per-unit price — the docs say «цена … с учетом скидок и налогов» — and it is
+ * the ONLY writable price field (`priceExclusive`/`priceNetto`/`priceBrutto` are read-only; sent
+ * without `price` they yield a zero row). So the net→gross conversion happens HERE. Writing the
+ * document's NET price undershot every row by the whole VAT, while the manually-set entity
+ * `opportunity` (correct) masked it: the deal header said 10 320 and its product tab summed 8 600.
+ *
+ * `taxIncluded` does NOT touch the arithmetic — the same price with 'N' and with 'Y' stores
+ * identical priceExclusive/priceBrutto/opportunity/taxValue (live-verified across lead, deal,
+ * quote and smart-invoice). What it DOES decide is which of the two stored numbers the product
+ * grid PRINTS in the «Цена» column: 'N' → priceExclusive (net), 'Y' → priceBrutto (gross).
+ * So it must MIRROR THE DOCUMENT'S OWN convention, not our storage format: a net-priced invoice
+ * gets 'N' and the card then shows 0,86 with VAT on top, exactly as printed on paper; a
+ * VAT-inclusive one gets 'Y' and shows the gross price, also as printed. #302 hardcoded 'Y' on the
+ * theory that the flag merely labels the number we send — it does not, and the операторы reading
+ * 1,032 against a document printing 0,860 concluded the import had miscounted (#347).
  *
  * NO kopeck quantization anywhere in this function — neither on the converted price NOR on the
  * inputs. The header math (lineGross/grossTotal) works on RAW document precision and rounds the
@@ -79,9 +87,10 @@ export function buildProductRow(input: ProductRowInput, sort: number): Record<st
     price,
     quantity,
     taxRate: input.taxRate,
-    // Informational only (computation-neutral, see above) — but 'N' next to a gross price would
-    // be a caption contradicting the number, so it is always 'Y' now that `price` is always gross.
-    taxIncluded: 'Y',
+    // Display only (see above): picks WHICH stored number the grid prints as «Цена». Mirrors the
+    // document so the card reads like the paper. ⚠ Nothing downstream may infer the price format
+    // from this flag — `price` is gross either way (see computeOpportunity).
+    taxIncluded: input.priceIncludesVat ? 'Y' : 'N',
     measureCode: input.measureCode,
     sort
   }
@@ -150,20 +159,25 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
  * standard accounting use the per-line figure, so we do too. (crm-sync prefers the document's
  * printed grand total when it states one — see reconcilePricing — this is the fallback/partial path.)
  *
- * Since #302, rows built by buildProductRow always carry a GROSS price + taxIncluded:'Y', so for
- * them this reduces to Σ round2(price×qty) per line. NB the portal's own tab total was observed
- * (live, auto-recalc deal) to equal rounding the SUM of unrounded row products — whether it also
- * rounds per row is NOT verified; the two differ by ≤ a cent per line, which is why the live
- * check compares in whole kopecks with a per-line allowance rather than exact equality. The 'N'
- * branch stays for generality (the function accepts arbitrary rows) and for the discount note in
- * crmSyncCore (clamped rows).
+ * ⚠ CONTRACT: rows come from `buildProductRow`, whose `price` is ALWAYS the gross per-unit price
+ * (#302). So the sum is Σ round2(price × qty) and NOTHING here may add VAT on top.
+ *
+ * This used to read `taxIncluded` to decide that — harmless only while the flag was hardcoded
+ * 'Y'. Since #347 the flag mirrors the DOCUMENT (it is what the grid prints in «Цена»), so a
+ * net-priced invoice now carries 'N' next to an already-gross price: the old branch would have
+ * added the VAT a second time and set the deal to 12 384 instead of 10 320. The lesson is the
+ * comment above the flag — nothing may infer the price FORMAT from a DISPLAY setting.
+ *
+ * NB the portal's own tab total was observed (live, auto-recalc deal) to equal rounding the SUM
+ * of unrounded row products — whether it also rounds per row is NOT verified; the two differ by
+ * ≤ a cent per line, which is why the live check compares in whole kopecks with a per-line
+ * allowance rather than exact equality.
  */
 export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
   let sum = 0
   for (const r of rows) {
-    const inclusive = r.taxIncluded === 'Y'
-    const rate = r.taxRate == null ? 0 : finite(Number(r.taxRate))
-    sum += lineGross(finite(Number(r.price)), finite(Number(r.quantity), 1), rate, inclusive)
+    // `true` = «price already includes VAT» → lineGross returns round2(price × qty) as-is.
+    sum += lineGross(finite(Number(r.price)), finite(Number(r.quantity), 1), null, true)
   }
   return round2(sum)
 }

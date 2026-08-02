@@ -77,10 +77,10 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const r = await runCrmSync('j', d, mapping(), {}, deps)
     expect(r.errors).toHaveLength(0)
     expect(r.created).toBe(true)
-    // taxIncluded is always 'Y' since #302 (row price is always gross); with a null rate the
-    // price is unchanged — nothing to add.
+    // Флаг зеркалит документ (#347): здесь цены без НДС → 'N', и портал напечатает в «Цене»
+    // ровно 100. Ставка null — конвертировать нечего, цена и так валовая.
     expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
-      expect.objectContaining({ taxRate: null, taxIncluded: 'Y', price: 100, quantity: 1 })
+      expect.objectContaining({ taxRate: null, taxIncluded: 'N', price: 100, quantity: 1 })
     ]))
   })
 
@@ -89,8 +89,8 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     // the model wrongly says prices INCLUDE VAT, the printed total (10320) matches the NET reading →
     // correct the document-level flag to «без НДС», and set opportunity to the paper's 10320 (not 10300
     // that per-unit rounding, nor 8600 that the wrong flag, would give). The WRITTEN row then carries
-    // the GROSS unit price 1.032 with taxIncluded 'Y' (#302: the portal reads `price` as gross and
-    // ignores the flag in its math — net-as-is undershot the row sum by the whole VAT).
+    // the GROSS unit price 1.032 (#302: the portal reads `price` as gross — net-as-is undershot the
+    // row sum by the whole VAT), while the flag follows the CORRECTED document reading (#347).
     const deps = baseDeps({ portalVatRates: vi.fn(async () => [{ id: '1', name: 'Без НДС', rate: null }, { id: '6', name: 'НДС 20%', rate: 20 }]) })
     const d: ExtractedDocument = {
       currency: 'BYN', priceIncludesVat: true, total: 10320,
@@ -100,7 +100,9 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const r = await runCrmSync('j', d, mapping(), {}, deps)
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 10320, isManualOpportunity: 'Y' }))
     expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
-      expect.objectContaining({ taxIncluded: 'Y', price: 1.032, quantity: 10000, taxRate: 20 })
+      // Модель сказала «с НДС», но печатный итог это опроверг → флаг документа стал «без НДС»,
+      // значит и в карточке показываем нетто-цену 0,86 (taxIncluded 'N') при валовой 1,032.
+      expect.objectContaining({ taxIncluded: 'N', price: 1.032, quantity: 10000, taxRate: 20 })
     ]))
     expect(r.warnings.some(w => /уточнили НДС/.test(w))).toBe(true)
   })
@@ -559,13 +561,13 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(deps.findCompanyByTaxId).not.toHaveBeenCalled() // искать было не по чему
   })
 
-  it('no supplier.taxId → no lookup; net doc → row written gross with taxIncluded Y (#302)', async () => {
+  it('no supplier.taxId → no lookup; net doc → gross price, flag mirrors the document (#302/#347)', async () => {
     const deps = baseDeps()
     const d: ExtractedDocument = { ...doc, priceIncludesVat: false, supplier: { name: 'X' } }
     await runCrmSync('j', d, mapping(), {}, deps)
     expect(deps.findCompanyByTaxId).not.toHaveBeenCalled()
     const row = (deps.setRows.mock.calls[0]![2] as Array<Record<string, unknown>>)[0]!
-    expect(row.taxIncluded).toBe('Y')
+    expect(row.taxIncluded).toBe('N') // документ печатает цены без НДС → карточка покажет 100
     expect(row.price).toBe(122) // 100 net @22% → gross; the portal reads `price` as gross
   })
 })

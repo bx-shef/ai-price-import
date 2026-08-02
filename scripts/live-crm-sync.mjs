@@ -188,6 +188,21 @@ try {
     const rowSum = Math.round(rows.reduce((s, r) => s + Number(r.price) * Number(r.quantity), 0) * 100) / 100
     const opp = Number(item.opportunity)
     console.log(`rows: ${rows.length}, Σ price×qty = ${rowSum}`)
+    // #347: what the OPERATOR sees in the «Цена» column. `taxIncluded` picks which stored number
+    // the grid prints — 'N' → priceExclusive — so for a net-priced document that column must equal
+    // the document's own price. Sums alone cannot catch a regression here: flipping the flag back
+    // to 'Y' leaves every total identical and only changes the printed number, which is exactly
+    // the complaint (#347: operator read 1,032 against a document printing 0,860).
+    if (!doc.priceIncludesVat) {
+      const off = rows
+        .map((r, i) => ({ i, want: Number(doc.items[i]?.price), got: Number(r.priceExclusive) }))
+        .filter(x => Number.isFinite(x.want) && Math.abs(x.got - x.want) > 0.005)
+      if (rows.every(r => r.taxIncluded === 'N') && !off.length) {
+        console.log('✓ в колонке «Цена» портал покажет нетто-цены документа (taxIncluded=N, priceExclusive = цена из документа)')
+      } else {
+        throw new Error(`колонка «Цена» разошлась с документом: флаги=${rows.map(r => r.taxIncluded).join(',')} расхождения=${JSON.stringify(off)}`)
+      }
+    }
     // A discount line is BY DESIGN not representable in rows (negative price clamps to 0, the
     // header keeps the discount — crmSyncCore), so Σ rows > opportunity is correct there: skip.
     const hasDiscount = doc.items.some(i => Number(i.price) < 0)
