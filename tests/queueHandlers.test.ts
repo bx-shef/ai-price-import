@@ -11,7 +11,7 @@ const doc: ExtractedDocument = {
   items: [{ name: 'a', price: 10, quantity: 1, unit: 'шт', vatRate: null }]
 }
 
-function crmDeps() {
+function crmDeps(over: Record<string, unknown> = {}) {
   return {
     findExisting: vi.fn(async () => null as number | null),
     findCompanyByTaxId: vi.fn(async () => 42),
@@ -19,7 +19,8 @@ function crmDeps() {
     portalVatRates: vi.fn(async () => [{ id: '1', name: 'Без НДС', rate: null }]),
     createTarget: vi.fn(async () => 555),
     setRows: vi.fn(async () => {}),
-    reportErrors: vi.fn(async () => {})
+    reportErrors: vi.fn(async () => {}),
+    ...over
   }
 }
 
@@ -90,19 +91,42 @@ describe('handleCrmSyncJob', () => {
     expect(bumpMetrics).toHaveBeenCalledWith('m', { skipped: 1 })
   })
 
-  it('lines uses rows actually written, not doc.items.length (skip-warn drops a line)', async () => {
-    const bumpMetrics = vi.fn(async () => {})
-    // 2 items, product missing + onMissing skip-warn → both rows skipped → rowCount 0.
-    const twoItem: ExtractedDocument = { ...doc, items: [
-      { name: 'a', price: 10, quantity: 1, unit: 'шт', vatRate: null },
-      { name: 'b', price: 5, quantity: 2, unit: 'шт', vatRate: null }
-    ] }
+  const twoItem: ExtractedDocument = { ...doc, items: [
+    { name: 'a', price: 10, quantity: 1, unit: 'шт', vatRate: null },
+    { name: 'b', price: 5, quantity: 2, unit: 'шт', vatRate: null }
+  ] }
+
+  function skipWarnMapping() {
     const m = defaultMapping()
     m.units.dictionary = { шт: 796 }
     m.product.onMissing = 'skip-warn'
-    const d = deps({ bumpMetrics, getMapping: vi.fn(async () => m), getDocument: vi.fn(async () => ({ doc: twoItem, signals: {} })) })
+    return m
+  }
+
+  it('lines uses rows actually written, not doc.items.length (skip-warn drops a line)', async () => {
+    const bumpMetrics = vi.fn(async () => {})
+    // 2 позиции, каталог знает только «a» → вторая пропущена → записана 1 строка из 2.
+    const m = skipWarnMapping()
+    const d = deps({
+      bumpMetrics,
+      getMapping: vi.fn(async () => m),
+      getDocument: vi.fn(async () => ({ doc: twoItem, signals: {} })),
+      crmSyncDeps: () => crmDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'a' ? 7 : null) })
+    })
     await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
-    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 0, unmatched: 0 })
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 1, lines: 1, unmatched: 0 })
+  })
+
+  it('#373: пропущены ВСЕ строки → created 0 и статус «Ошибка», а не «Готово»', async () => {
+    // Раньше здесь считалось `created:1, lines:0` — то есть счётчик успехов рос на импорте, после
+    // которого в CRM не появилось ни одной строки. Это и есть #373 на уровне метрик.
+    const bumpMetrics = vi.fn(async () => {})
+    const setJobStatus = vi.fn(async () => {})
+    const m = skipWarnMapping()
+    const d = deps({ bumpMetrics, setJobStatus, getMapping: vi.fn(async () => m), getDocument: vi.fn(async () => ({ doc: twoItem, signals: {} })) })
+    await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    expect(bumpMetrics).toHaveBeenCalledWith('m', { docs: 1, created: 0, lines: 0, unmatched: 0 })
+    expect(setJobStatus).toHaveBeenCalledWith('m', 'j', 'error', expect.any(String))
   })
 
   it('a metrics-write failure never fails the job', async () => {

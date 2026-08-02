@@ -6,6 +6,7 @@ import { describeTotalMismatch, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
+import { allLinesSkippedError } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
@@ -295,6 +296,24 @@ export async function runCrmSync(
       measureCode
     }, sort))
     sort += 10
+  }
+
+  // EVERY line was skipped (skip-warn + not a single product matched the catalogue) — #373. Before
+  // this guard the import created an entity with NO rows, sum 0 and no company, and reported it as
+  // «Готово»: the operator saw five green imports and five useless deals to delete by hand. The
+  // per-line «строка пропущена» warnings did say it, but they sat inside a successful-looking result.
+  //
+  // We create NOTHING rather than an empty entity: with no rows there is nothing in the entity that
+  // the document contributed, so it is pure noise in the funnel — and the operator would have to
+  // delete it before re-importing anyway. The hard-error path already gives the honest outcome for
+  // free: status «Ошибка», error chat message, no timeline дело about a document that didn't land.
+  //
+  // ⚠ Guarded by `doc.items.length > 0`: a document with NO positions at all is a different case
+  // (nothing was skipped, nothing to warn about) and must keep its current behaviour.
+  if (doc.items.length > 0 && rows.length === 0) {
+    errors.push(allLinesSkippedError(doc.items.length))
+    await deps.reportErrors(errors, doc.supplier?.name)
+    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: false, warnings, errors }
   }
 
   // Idempotency: the created entity carries a job-id MARKER (originId/originatorId for deal,

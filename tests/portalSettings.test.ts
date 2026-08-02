@@ -26,8 +26,21 @@ describe('parsePortalSettings', () => {
     // Product creation was removed; a portal that still has 'create' stored must degrade to the
     // closest non-dropping behaviour (free-form line), not silently start skipping lines.
     expect(parsePortalSettings({ product: { by: 'article', onMissing: 'create' } }).product.onMissing).toBe('freeform')
-    // Anything unrecognised → the safe default.
-    expect(parsePortalSettings({ product: { onMissing: 'nonsense' } }).product.onMissing).toBe('skip-warn')
+    // Anything unrecognised → the safe default (#373: дефолт теперь «произвольная позиция»).
+    expect(parsePortalSettings({ product: { onMissing: 'nonsense' } }).product.onMissing).toBe('freeform')
+    // «Пропустить» отдаётся только по явно сохранённому значению.
+    expect(parsePortalSettings({ product: { onMissing: 'skip-warn' } }).product.onMissing).toBe('skip-warn')
+  })
+
+  it('#373: пустые настройки не перебивают новый дефолт «произвольная позиция»', () => {
+    // Это и есть та мутация, ради которой тест написан: если вернуть в `parsePortalSettings` прежний
+    // порядок (`… ? 'freeform' : 'skip-warn'`), правка `defaultMapping` не изменит НИЧЕГО — свежий
+    // портал читается через разбор пустых настроек, и он же вернул бы «пропустить».
+    expect(defaultMapping().product.onMissing).toBe('freeform')
+    expect(parsePortalSettings({}).product.onMissing).toBe('freeform')
+    expect(parsePortalSettings(null).product.onMissing).toBe('freeform')
+    // И нетронутый портал обязан по-прежнему считаться НЕнастроенным.
+    expect(isPortalConfigured(parsePortalSettings({}))).toBe(false)
   })
 
   it('drops routing rules with empty condition, keeps valid', () => {
@@ -80,7 +93,11 @@ describe('isPortalConfigured', () => {
     expect(cfg({ saveFile: true })).toBe(false)
     expect(cfg({ saveFile: false })).toBe(false)
     expect(cfg({ product: { by: 'name', onMissing: 'skip-warn' } })).toBe(true)
-    expect(cfg({ product: { by: 'article', onMissing: 'freeform' } })).toBe(true)
+    // #373: «внести произвольной позицией» — теперь ДЕФОЛТ, значит признаком настройки быть не может
+    // (иначе гейт «сначала настройте приложение» погас бы у каждого нетронутого портала).
+    expect(cfg({ product: { by: 'article', onMissing: 'freeform' } })).toBe(false)
+    // А «пропустить» стало осознанным выбором админа — вот оно и есть признак настройки.
+    expect(cfg({ product: { by: 'article', onMissing: 'skip-warn' } })).toBe(true)
     expect(cfg({ units: { defaultCode: 166 } })).toBe(true)
     expect(cfg({ units: { autoCreate: true } })).toBe(true)
     expect(cfg({ defaultTarget: { entityTypeId: 31 } })).toBe(true) // moved off the deal anchor

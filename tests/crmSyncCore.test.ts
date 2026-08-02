@@ -676,6 +676,98 @@ describe('runCrmSync — products / units / routing', () => {
     expect(deps.setRows).not.toHaveBeenCalled()
   })
 
+  // #373. Живой прогон дал пять сделок с суммой 0, без строк и с зелёным «Готово»: каталог портала
+  // был пуст, а «Если товар не найден» стояло в «пропустить» — то есть пропускалось ВСЁ.
+  describe('#373: пропущены ВСЕ строки — отдельный исход, а не успех', () => {
+    const twoItems: ExtractedDocument = {
+      ...doc,
+      items: [
+        { name: 'Гвоздь', price: 100, quantity: 2, unit: 'шт', vatRate: 22 },
+        { name: 'Шуруп', price: 50, quantity: 1, unit: 'шт', vatRate: 22 }
+      ]
+    }
+
+    it('запись в CRM не создаётся вовсе', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps() // findProduct → null для обеих позиций
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      expect(r.created).toBe(false)
+      expect(r.entityId).toBe(0)
+      expect(r.rowCount).toBe(0)
+      expect(deps.createTarget).not.toHaveBeenCalled()
+      expect(deps.setRows).not.toHaveBeenCalled()
+    })
+
+    it('исход — ошибка, поэтому статус задания не «Готово»', async () => {
+      // Ровно это и просил #373: `handleCrmSyncJob` ставит 'done' при `created || !errors.length`,
+      // поэтому непустой `errors` при `created:false` — единственный способ получить «Ошибка».
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
+      expect(r.errors.length).toBeGreaterThan(0)
+      expect(r.created || !r.errors.length).toBe(false)
+    })
+
+    it('текст говорит «ни одна позиция», а не «часть строк»', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
+      expect(r.errors.some(e => /ни одна позиция не перенесена/i.test(e))).toBe(true)
+      // Прежний текст про «часть строк» тут — прямая неправда: пропущена не часть, а всё.
+      expect(r.errors.concat(r.warnings).some(t => /Часть строк пропущена/i.test(t))).toBe(false)
+    })
+
+    it('сообщение уходит в чат ошибок — молчать нельзя', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps()
+      await runCrmSync('j', twoItems, m, {}, deps)
+      expect(deps.reportErrors).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.stringMatching(/ни одна позиция не перенесена/i)]),
+        'ООО Ромашка'
+      )
+    })
+
+    it('дело на таймлайне не пишется — сущности, к которой его привязать, нет', async () => {
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const writeActivity = vi.fn(async () => {})
+      await runCrmSync('j', twoItems, m, {}, baseDeps({ writeActivity }))
+      expect(writeActivity).not.toHaveBeenCalled()
+    })
+
+    it('пропущена ЧАСТЬ строк — импорт по-прежнему проходит', async () => {
+      // Граница исхода: убери из гарда `rows.length === 0`, и этот случай тоже начнёт падать.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      expect(r.created).toBe(true)
+      expect(r.rowCount).toBe(1)
+      expect(r.errors).toEqual([])
+    })
+
+    it('в документе НЕТ позиций вовсе — это другой случай, ошибку не выдумываем', async () => {
+      // Граница с другой стороны: `doc.items.length > 0` в гарде. Пустой документ ничего не
+      // пропускал, и «ни один товар не найден в каталоге» было бы про несуществующие товары.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps()
+      const r = await runCrmSync('j', { ...doc, items: [] }, m, {}, deps)
+      expect(r.errors.some(e => /ни одна позиция/i.test(e))).toBe(false)
+      expect(r.created).toBe(true)
+    })
+
+    it('дефолт портала до этого исхода не доводит', async () => {
+      // Смысл второго пункта #373: у нетронутого портала ненайденный товар становится произвольной
+      // позицией, поэтому «пропустить всё» вообще не может случиться без явной настройки.
+      const r = await runCrmSync('j', twoItems, defaultMapping(), {}, baseDeps())
+      expect(r.created).toBe(true)
+      expect(r.rowCount).toBe(2)
+    })
+  })
+
   it('freeform: product not found → row written WITHOUT productId (free-form position)', async () => {
     const m = mapping()
     m.product.onMissing = 'freeform'
