@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { commonDiskFileUrl, DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
+import { archiveFileName, commonDiskFileUrl, MAX_DISK_NAME, DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
 import { buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
 
 describe('disk — common storage + monthly folder', () => {
@@ -77,6 +77,64 @@ describe('disk — saveSourceFileToDisk (composition)', () => {
   })
 })
 
+describe('#346: имя архивной копии читается человеком', () => {
+  const JOB = '2f941553-dfc1-437d-beee-c868d97aec2b'
+
+  it('документ впереди, идентификатор задания сзади, расширение последним', () => {
+    // Симптом: в папке приложения все имена начинались с 38 одинаково бессмысленных знаков —
+    // в списке был виден столбец UUID, сортировка шла по нему, свою загрузку было не найти.
+    expect(archiveFileName(JOB, 'накладная.pdf')).toBe(`накладная__${JOB}.pdf`)
+    expect(archiveFileName(JOB, 'накладная.pdf').startsWith('накладная')).toBe(true)
+    expect(archiveFileName(JOB, 'накладная.pdf').endsWith('.pdf')).toBe(true)
+  })
+
+  it('идентификатор остаётся в имени целиком — на нём держится защита от дубля', () => {
+    // `saveSourceFileToDisk` ищет файл по ТОЧНОМУ имени перед загрузкой. «Упрости» имя до одного
+    // лишь названия документа — и два разных задания с одинаковым именем файла (а «счёт.pdf» это
+    // норма) стали бы одним файлом: второй просто не загрузился бы.
+    expect(archiveFileName(JOB, 'счёт.pdf')).toContain(JOB)
+    expect(archiveFileName('a', 'счёт.pdf')).not.toBe(archiveFileName('b', 'счёт.pdf'))
+  })
+
+  it('длинное имя режется по ИМЕННОЙ части — идентификатор и расширение уцелели', () => {
+    // Главная ловушка правки: прежняя схема резала строку целиком, и это было безопасно только
+    // потому, что длинное имя стояло в хвосте. Теперь оно впереди — наивный slice(255) отрезал бы
+    // и UUID, и расширение, то есть ровно то, ради чего схема существует.
+    const out = archiveFileName(JOB, `${'я'.repeat(400)}.pdf`)
+    expect(out.length).toBeLessThanOrEqual(MAX_DISK_NAME)
+    expect(out.endsWith(`__${JOB}.pdf`)).toBe(true)
+  })
+
+  it('файл без расширения не выдумывает его', () => {
+    expect(archiveFileName(JOB, 'документ')).toBe(`документ__${JOB}`)
+    // Точка в конце — не расширение, иначе получили бы имя, кончающееся на голую точку.
+    expect(archiveFileName(JOB, 'документ.')).toBe(`документ.__${JOB}`)
+    // Скрытый файл: ведущая точка — часть имени, а не разделитель расширения.
+    expect(archiveFileName(JOB, '.gitignore')).toBe(`.gitignore__${JOB}`)
+  })
+
+  it('двойное расширение сохраняет последнее — по нему портал понимает тип', () => {
+    expect(archiveFileName(JOB, 'архив.tar.gz')).toBe(`архив.tar__${JOB}.gz`)
+  })
+
+  it('разделители пути по-прежнему вычищаются', () => {
+    // Имя попадает в путь ссылки «Исходный файл»; слэш там развалил бы адрес.
+    expect(archiveFileName(JOB, 'папка/счёт.pdf')).toBe(`папка_счёт__${JOB}.pdf`)
+  })
+
+  it('пустое имя не даёт имени из одного идентификатора без документа', () => {
+    expect(archiveFileName(JOB, '')).toBe(`document__${JOB}`)
+  })
+
+  it('пробелы и скобки в имени сохраняются как есть — кодирует их ссылка, а не имя', () => {
+    // `commonDiskFileUrl` кодирует посегментно; портить имя заранее нельзя, иначе оно перестанет
+    // совпадать с тем, что лежит на Диске, и `findChildFile` не найдёт свою же копию.
+    const name = archiveFileName(JOB, 'счёт (копия) 2.pdf')
+    expect(name).toBe(`счёт (копия) 2__${JOB}.pdf`)
+    expect(commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', name)).toContain('%28')
+  })
+})
+
 describe('disk — makeSaveSourceFile (file-extract wiring)', () => {
   function diskCall() {
     return vi.fn(async (method: string, params: { data?: { NAME?: string } }) => {
@@ -114,7 +172,8 @@ describe('disk — makeSaveSourceFile (file-extract wiring)', () => {
     await hook('m', 'j1', 'doc.pdf')
     expect(resolveCall).toHaveBeenCalledTimes(1) // transport built once (no double token-load)
     expect(loadMapping).toHaveBeenCalledWith(call) // SAME call handed to the mapping read...
-    expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 77, data: { NAME: 'j1__doc.pdf' }, fileContent: ['j1__doc.pdf', 'QQ=='] }) // ...and the upload
+    // #346: имя начинается с ДОКУМЕНТА, идентификатор задания уехал в конец, расширение последнее.
+    expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 77, data: { NAME: 'doc__j1.pdf' }, fileContent: ['doc__j1.pdf', 'QQ=='] }) // ...and the upload
   })
   it('runs the Disk write under the per-portal serializer when provided', async () => {
     const call = diskCall()
@@ -149,8 +208,8 @@ describe('disk — makeSaveSourceFile (file-extract wiring)', () => {
       now: () => Date.UTC(2026, 6, 1)
     })
     await hook('m', 'j1', 'doc.pdf')
-    // The recorded ref carries the id from REST but the CONSTRUCTED open URL (job-scoped name j1__doc.pdf).
-    expect(recordDiskFile).toHaveBeenCalledWith('m', 'j1', { id: 45, detailUrl: commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'j1__doc.pdf') })
+    // The recorded ref carries the id from REST but the CONSTRUCTED open URL (job-scoped name).
+    expect(recordDiskFile).toHaveBeenCalledWith('m', 'j1', { id: 45, detailUrl: commonDiskFileUrl(DISK_APP_FOLDER, '2026-07', 'doc__j1.pdf') })
   })
 })
 

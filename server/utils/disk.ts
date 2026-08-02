@@ -16,6 +16,49 @@ export function sanitizeFileName(name: string): string {
   return base.slice(0, 255)
 }
 
+/** Максимальная длина имени архивной копии — тот же предел, что у `sanitizeFileName`. */
+export const MAX_DISK_NAME = 255
+
+/**
+ * Имя архивной копии на Диске: `накладная__<jobId>.pdf` (#346).
+ *
+ * Раньше было `<jobId>__накладная.pdf`, и первые 38 знаков имени у ВСЕХ файлов совпадали: в списке
+ * папки человек видел столбец одинаковых UUID, сортировка шла по случайному идентификатору, а найти
+ * свою загрузку глазами было нельзя.
+ *
+ * Три вещи, которые схема обязана сохранить, — каждая ломалась «упрощением» имени:
+ *
+ * 1. **Уникальность.** `jobId` тут не украшение: перед загрузкой идёт `findChildFile` по точному
+ *    имени, и именно оно не даёт повторному прогону задания задвоить файл. Поэтому идентификатор
+ *    остаётся в имени целиком — он просто переезжает в конец.
+ * 2. **Расширение.** Оно должно остаться ПОСЛЕДНИМ, иначе портал и операционная система перестают
+ *    понимать тип файла.
+ * 3. **Обрезка.** Режется только именная часть, а `__<jobId>` и расширение дописываются ПОСЛЕ
+ *    обрезки. Прежняя схема резала строку целиком, и это было безопасно лишь потому, что длинное
+ *    имя стояло в хвосте. Перенеси его в начало, оставь `slice(255)` — и у длинного имени отвалятся
+ *    и идентификатор, и расширение, то есть ровно те две вещи, ради которых схема существует.
+ */
+export function archiveFileName(jobId: string, fileName: string): string {
+  // ⚠ Сюда НЕЛЬЗЯ подставить `sanitizeFileName`: он режет строку по 255 ПЕРЕД тем, как мы разберём
+  // расширение, — у имени длиннее предела расширение отваливается ещё до разбора, и файл уходит на
+  // Диск без него. Поэтому чистим то же самое (разделители пути, пробелы по краям, пустое имя), но
+  // БЕЗ обрезки: длину доводим ниже, уже зная, что жертвовать можно только именной частью.
+  const clean = (fileName ?? '').replace(/[/\\]/g, '_').trim() || 'document'
+  // Расширение — только настоящее: точка в конце имени («отчёт.») и файл без точки вовсе дают
+  // пустой суффикс, а не «расширение» из хвоста имени.
+  const dot = clean.lastIndexOf('.')
+  const hasExt = dot > 0 && dot < clean.length - 1
+  const ext = hasExt ? clean.slice(dot) : ''
+  const stem = hasExt ? clean.slice(0, dot) : clean
+  const suffix = `__${jobId}${ext}`
+  // Имя целиком не влезает ⇒ жертвуем именной частью, а не идентификатором с расширением. Если
+  // даже на один знак имени не осталось (сверхдлинный jobId), возвращаем суффикс как есть:
+  // нечитаемое имя лучше, чем неуникальное или без расширения.
+  const room = MAX_DISK_NAME - suffix.length
+  if (room <= 0) return suffix.slice(-MAX_DISK_NAME)
+  return `${stem.slice(0, room)}${suffix}`
+}
+
 /** Pick the common ("Общий диск") storage from disk.storage.getlist result. */
 export function pickCommonStorage(storages: DiskStorage[]): DiskStorage | null {
   return storages.find(s => s.ENTITY_TYPE === 'common') ?? null
@@ -141,9 +184,16 @@ export interface SaveSourceFileDeps {
 /**
  * Build the best-effort `saveSourceFile(memberId, jobId, fileId)` hook wired for file-extract.
  * Resolves ONE portal transport and reuses it for both the mapping read and the Disk upload
- * (no double token-load/SDK-build). Gated on the portal's `saveFile` toggle. The archived name
- * is job-scoped (`<jobId>__<fileId>`), and the Disk write runs under an optional per-portal
- * serializer, so both a sequential job retry AND concurrent scale-out workers are idempotent.
+ * (no double token-load/SDK-build). Gated on the portal's `saveFile` toggle. The archived name is
+ * job-scoped (`<имя>__<jobId>.<ext>`, см. `archiveFileName`), and the Disk write runs under an
+ * optional per-portal serializer, so both a sequential job retry AND concurrent scale-out workers
+ * are idempotent.
+ *
+ * ⚠ Файлы, загруженные до #346, лежат под старым именем `<jobId>__<имя>` — миграция им не нужна:
+ * ссылка «Исходный файл» в деле строится из СОХРАНЁННОГО в задании `diskFile`, а не пересобирается
+ * из имени на лету. Единственное следствие — повторный прогон СТАРОГО задания не найдёт свою
+ * прежнюю копию по новому имени и загрузит вторую. Это возможно лишь пока живо задание тех суток
+ * (TTL 48 ч), и цена — одна лишняя копия, а не потеря.
  */
 export function makeSaveSourceFile(deps: SaveSourceFileDeps): (memberId: string, jobId: string, fileId: string) => Promise<void> {
   return async (memberId, jobId, fileId) => {
@@ -155,7 +205,7 @@ export function makeSaveSourceFile(deps: SaveSourceFileDeps): (memberId: string,
     let ref: DiskFileRef | null = null
     const write = async (): Promise<void> => {
       ref = await saveSourceFileToDisk(
-        { base64: Buffer.from(bytes).toString('base64'), fileName: `${jobId}__${fileId}`, date: new Date(deps.now()) },
+        { base64: Buffer.from(bytes).toString('base64'), fileName: archiveFileName(jobId, fileId), date: new Date(deps.now()) },
         t.call
       )
     }
