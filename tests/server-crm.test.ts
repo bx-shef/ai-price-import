@@ -14,7 +14,6 @@ describe('computeOpportunity', () => {
     ])).toBe(320)
   })
   it('пустой список = 0', () => {
-    expect(computeOpportunity([{ price: 50, quantity: 3, taxRate: null, taxIncluded: 'N' }])).toBe(150)
     expect(computeOpportunity([])).toBe(0)
   })
   it('non-finite price → 0; missing quantity → 1 (matches buildProductRow clamps)', () => {

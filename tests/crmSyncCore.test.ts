@@ -232,6 +232,11 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const r = await runCrmSync('j', d, m, {}, deps)
     expect(r.rowCount).toBe(1) // discount line skipped
     expect(r.warnings.some(w => /сумма записи меньше итога/i.test(w))).toBe(true)
+    // Число, а не только текст предупреждения: это ЕДИНСТВЕННЫЙ тест файла, доходящий до
+    // computeOpportunity (частичная запись), и без этой строки денежная регрессия #347 —
+    // возврат к добавлению НДС по флагу — оставила бы весь файл зелёным (проверено мутацией:
+    // сумма стала бы 144 вместо 120, а падений не было бы ни одного).
+    expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ opportunity: 120 }))
   })
 
   it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {

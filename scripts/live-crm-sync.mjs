@@ -189,27 +189,36 @@ try {
     const opp = Number(item.opportunity)
     console.log(`rows: ${rows.length}, Σ price×qty = ${rowSum}`)
     // #347: what the OPERATOR sees in the «Цена» column. `taxIncluded` picks which stored number
-    // the grid prints — 'N' → priceExclusive — so for a net-priced document that column must equal
-    // the document's own price. Sums alone cannot catch a regression here: flipping the flag back
-    // to 'Y' leaves every total identical and only changes the printed number, which is exactly
-    // the complaint (#347: operator read 1,032 against a document printing 0,860).
+    // the grid prints, so that column must equal the document's own price — in BOTH directions.
+    // Sums alone cannot catch a regression here: flipping the flag leaves every total identical
+    // and only changes the printed number, which is exactly the complaint (#347: operator read
+    // 1,032 against a document printing 0,860).
     // Rows are matched to document items BY `sort` (the builder stamps (i+1)*10), not by the order
     // the portal happened to return them in — and only when every line was written, since a
     // skip-warn drop shifts the pairing and would compare unrelated rows.
-    if (!doc.priceIncludesVat && rows.length === doc.items.length) {
-      const ordered = [...rows].sort((a, b) => Number(a.sort) - Number(b.sort))
-      const off = ordered
-        .map((r, i) => ({ i, want: Number(doc.items[i]?.price), got: Number(r.priceExclusive) }))
-        .filter(x => Number.isFinite(x.want) && Math.abs(x.got - x.want) > 0.005)
-      if (rows.every(r => r.taxIncluded === 'N') && !off.length) {
-        console.log('✓ в колонке «Цена» портал покажет нетто-цены документа (taxIncluded=N, priceExclusive = цена из документа)')
-      } else {
-        throw new Error(`колонка «Цена» разошлась с документом: флаги=${rows.map(r => r.taxIncluded).join(',')} расхождения=${JSON.stringify(off)}`)
-      }
-    }
+    // ⚠ The crafted documents in this script are all net-priced, so the 'Y' side of this check is
+    // written but NOT exercised by `pnpm live:crm` today — it guards the day one is added.
     // A discount line is BY DESIGN not representable in rows (negative price clamps to 0, the
     // header keeps the discount — crmSyncCore), so Σ rows > opportunity is correct there: skip.
     const hasDiscount = doc.items.some(i => Number(i.price) < 0)
+    if (rows.length === doc.items.length) {
+      // Which stored number the grid prints, and therefore which one must equal the paper:
+      // 'N' → priceExclusive (net document), 'Y' → priceBrutto (VAT-inclusive document).
+      const wantFlag = doc.priceIncludesVat ? 'Y' : 'N'
+      const shown = r => Number(doc.priceIncludesVat ? r.priceBrutto : r.priceExclusive)
+      const ordered = [...rows].sort((a, b) => Number(a.sort) - Number(b.sort))
+      const off = ordered
+        .map((r, i) => ({ i, want: Number(doc.items[i]?.price), got: shown(r) }))
+        // A discount line is written clamped to 0 while the document keeps it negative — comparing
+        // it here would fail on a correct import. Everything else must match to the kopeck.
+        .filter(x => Number.isFinite(x.want) && x.want >= 0 && Math.abs(x.got - x.want) > 0.005)
+      const flags = rows.map(r => r.taxIncluded)
+      if (flags.every(f => f === wantFlag) && !off.length) {
+        console.log(`✓ в колонке «Цена» портал покажет цены документа (taxIncluded=${wantFlag}, ${doc.priceIncludesVat ? 'priceBrutto' : 'priceExclusive'} = цена из документа)`)
+      } else {
+        throw new Error(`колонка «Цена» разошлась с документом: ожидали флаг ${wantFlag}, получили ${flags.join(',')}; расхождения=${JSON.stringify(off)}`)
+      }
+    }
     // Dynamic smart-processes may not expose opportunity at all (supportsOpportunity=false —
     // we don't set it, the portal may report 0/null there) — compare only when it is meaningful.
     if (hasDiscount) {

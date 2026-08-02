@@ -1,7 +1,6 @@
 import type { RestCall } from './b24Rest'
 import type { DocumentItem } from '~/types/document'
 import type { TargetRef } from '~/types/mapping'
-import { lineGross } from '~/utils/pricing'
 
 // Pure builders + thin callers for creating the target CRM entity and its rows.
 // VAT model validated live: crm.item.productrow.set computes НДС 1-в-1 (no kernel patch).
@@ -160,19 +159,16 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
  * parent `opportunity` (it stays 0). Setting `opportunity` = this sum + `isManualOpportunity:'Y'`
  * at create time makes the entity total correct regardless of portal auto-recalc.
  *
- * VAT is added on the LINE total (round once per line — `lineGross`), the way invoices print
- * «Сумма НДС» = Сумма × ставка. A tiny unit price × large qty (0.86 × 10000 @20%) is 10 320
- * per-line but 10 300 if the per-unit gross (1.032→1.03) is rounded first — the document and
- * standard accounting use the per-line figure, so we do too. (crm-sync prefers the document's
- * printed grand total when it states one — see reconcilePricing — this is the fallback/partial path.)
- *
  * ⚠ CONTRACT: rows come from `buildProductRow`, whose `price` is ALWAYS the gross per-unit price
- * (#302). So the sum is Σ round2(price × qty) and NOTHING here may add VAT on top.
+ * (#302). So this is Σ round2(price × qty) and NOTHING here adds VAT — the net→gross conversion,
+ * with its once-per-line rounding, already happened in the builder. (crm-sync prefers the
+ * document's printed grand total when it states one — see reconcilePricing — this is the
+ * fallback/partial path.)
  *
- * This used to read `taxIncluded` to decide that — harmless only while the flag was hardcoded
- * 'Y'. Since #347 the flag mirrors the DOCUMENT (it is what the grid prints in «Цена»), so a
- * net-priced invoice now carries 'N' next to an already-gross price: the old branch would have
- * added the VAT a second time and set the deal to 12 384 instead of 10 320. The lesson is the
+ * It used to read `taxIncluded` to decide whether to add VAT — harmless only while the flag was
+ * hardcoded 'Y'. Since #347 the flag mirrors the DOCUMENT (it is what the grid prints in «Цена»),
+ * so a net-priced invoice now carries 'N' next to an already-gross price: the old branch would
+ * have added the VAT a second time and set the deal to 12 384 instead of 10 320. The lesson is the
  * comment above the flag — nothing may infer the price FORMAT from a DISPLAY setting.
  *
  * NB the portal's own tab total was observed (live, auto-recalc deal) to equal rounding the SUM
@@ -183,8 +179,10 @@ export async function setProductRows(entityTypeId: number, ownerId: number, rows
 export function computeOpportunity(rows: Array<Record<string, unknown>>): number {
   let sum = 0
   for (const r of rows) {
-    // `true` = «price already includes VAT» → lineGross returns round2(price × qty) as-is.
-    sum += lineGross(finite(Number(r.price)), finite(Number(r.quantity), 1), null, true)
+    // Deliberately NOT `lineGross(…, null, true)`: passing two constants to hide the tax branch
+    // leaves the double-VAT one refactor away — if lineGross ever read `rate` before checking
+    // `inclusive`, this would silently start adding it again. The arithmetic is one line; say it.
+    sum += round2(finite(Number(r.price)) * finite(Number(r.quantity), 1))
   }
   return round2(sum)
 }
