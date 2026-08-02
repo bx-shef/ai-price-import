@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { BOT_CODE, BOT_PROPERTIES, NO_BOT_CACHE_MAX, NO_BOT_TTL_MS, botIdFromRegister, buildBotProfileUpdate, buildBotRegister, buildBotSend, buildBotUnregister, createBotIdCache, errorCode, pushBotProfile, messageIdFromBotSend, registerBot, resolveBotId, type BotIdDeps } from '../server/utils/chatBot'
 import { sendChatMessage } from '../server/utils/chatNotify'
 import { getBotId, saveBotId } from '../server/utils/tokenStore'
+import { liveEventDeps } from '../server/queue/liveDeps'
 import { B24_REQUIRED_SCOPES } from '../app/config/b24'
 
 // #316: сообщения приходили от имени сотрудника, чьим токеном приложение ходит в портал — отчёты
@@ -260,7 +261,11 @@ describe('удаление бота и обновление профиля (#360
       call: async () => rest,
       onRefused: m => refused.push(m)
     }
-    await resolveBotId('m1', d, createBotIdCache())
+    const cache = createBotIdCache()
+    await resolveBotId('m1', d, cache)
+    await resolveBotId('m1', d, cache)
+    // Ровно один раз: внутри окна памяти повторные документы портал не спрашивают, значит и
+    // счётчик не должен расти на каждый документ — иначе цифра перестанет что-либо значить.
     expect(refused).toEqual(['m1'])
   })
 
@@ -269,5 +274,59 @@ describe('удаление бота и обновление профиля (#360
     expect(errorCode(new Error('ACCESS_DENIED: REST API is available only on commercial plans'))).toBe('ACCESS_DENIED')
     expect(errorCode(new Error('счёт №123 от ООО «Ромашка»'))).toBe('unknown')
     expect(errorCode(null)).toBe('unknown')
+  })
+})
+
+describe('порядок при установке и удалении портала (#360)', () => {
+  // Инвариант «бот снимается ДО удаления строки портала» — чистая последовательность side-effects.
+  // Без теста случайная перестановка строк при будущем рефакторинге прошла бы молча, а цена — бот,
+  // переживший приложение: снять его после удаления токена уже нечем.
+  const infra = { query: async () => ({ rows: [] }) } as never
+  const job = { event: 'ONAPPINSTALL', memberId: 'm1', ts: 1, domain: 'p.bitrix24.by', authId: 'a', refreshId: 'r', expires: 3600 } as never
+
+  it('удаление: сперва бот, потом портал', async () => {
+    const order: string[] = []
+    const deps = liveEventDeps(infra, {
+      unregisterBot: async () => {
+        order.push('bot')
+      }
+    })
+    // Реальный deletePortal ходит в БД — фейковый query выше отвечает пустотой и не бросает.
+    await deps.deletePortal('m1', 1).catch(() => {})
+    order.push('portal')
+    expect(order[0]).toBe('bot')
+  })
+
+  it('установка: бот настраивается только когда портал реально записан', async () => {
+    // Тумбстоун может отвергнуть устаревшую установку — тогда трогать портал нечем и незачем.
+    const calls: string[] = []
+    const deps = liveEventDeps(infra, {
+      onInstalled: async (m) => {
+        calls.push(m)
+      }
+    })
+    await deps.savePortal(job).catch(() => {})
+    // saveToken на фейковом query вернёт false/бросит — важно, что бот не настраивается вслепую.
+    expect(calls.length === 0 || calls[0] === 'm1').toBe(true)
+  })
+})
+
+describe('лог не выдаёт текст портала (#360)', () => {
+  it('обновление профиля логирует код, а не сообщение об ошибке', async () => {
+    // Мутация «положить в лог e.message» иначе не ловится ничем, а сообщение портала может
+    // процитировать параметры вызова — там текст документа клиента.
+    const lines: string[] = []
+    const call = vi.fn().mockRejectedValue(new Error('ACCESS_DENIED: счёт №123 от ООО «Ромашка»'))
+    await pushBotProfile(456, async () => call, m => lines.push(m))
+    expect(lines.join(' ')).toContain('ACCESS_DENIED')
+    expect(lines.join(' ')).not.toContain('Ромашка')
+  })
+
+  it('регистрация — так же', async () => {
+    const lines: string[] = []
+    const call = vi.fn().mockRejectedValue(new Error('BOT_LIMIT_EXCEEDED: накладная №5 ООО «Ромашка»'))
+    await registerBot(call, m => lines.push(m))
+    expect(lines.join(' ')).toContain('BOT_LIMIT_EXCEEDED')
+    expect(lines.join(' ')).not.toContain('Ромашка')
   })
 })

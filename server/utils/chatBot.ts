@@ -234,3 +234,13 @@ export async function pushBotProfile(botId: number, call: () => Promise<RestCall
     log?.(`[chat-bot] profile update refused: ${errorCode(e)}`)
   }
 }
+
+/**
+ * Forget a portal's remembered refusal (#360 review). Called on uninstall: without it a portal that
+ * was refused, then uninstalled and reinstalled within `NO_BOT_TTL_MS`, would skip registration at
+ * install and silently keep signing its notices with an employee's name for the rest of the window.
+ */
+export function forgetPortalBot(memberId: string, cache: BotIdCache): void {
+  cache.noBotUntil.delete(memberId)
+  cache.inFlight.delete(memberId)
+}

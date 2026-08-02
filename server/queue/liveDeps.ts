@@ -7,7 +7,7 @@ import { selectTokensNearExpiry, type KeepAliveDeps } from '../utils/tokenKeepAl
 import { deletePortal, getBotId, getToken, saveBotId, saveToken, updateTokensOnRefresh } from '../utils/tokenStore'
 import { withAdvisoryLock } from '../utils/dbLock'
 import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTransport, type PortalSdkResolver, type SdkTransport } from '../utils/b24Sdk'
-import { buildBotUnregister, createBotIdCache, errorCode, pushBotProfile, resolveBotId } from '../utils/chatBot'
+import { buildBotUnregister, createBotIdCache, errorCode, forgetPortalBot, pushBotProfile, resolveBotId } from '../utils/chatBot'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
@@ -151,7 +151,18 @@ export function liveKeepAliveDeps(infra: LiveInfra): KeepAliveDeps {
 }
 
 /** b24-events deps: the SINGLE writer of portal_tokens (install/uninstall). */
-export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
+/**
+ * Install/uninstall wiring. `opts` exists ONLY as a test seam: the bot side of both events is pure
+ * ordering (bot before the portal row is deleted, profile after registration), and without a seam
+ * that ordering could only be checked against a live portal — i.e. never (#360 review).
+ */
+export function liveEventDeps(
+  infra: LiveInfra,
+  opts: {
+    onInstalled?: (memberId: string) => Promise<void>
+    unregisterBot?: (memberId: string) => Promise<void>
+  } = {}
+): EventHandlerDeps {
   return {
     savePortal: async (job) => {
       const saved = await saveToken(eventJobToSaveInput(job), infra.query, job.ts)
@@ -160,23 +171,12 @@ export function liveEventDeps(infra: LiveInfra): EventHandlerDeps {
       // chance). Doing it here rather than on the `/install` page keeps it server-side, where the
       // portal token already lives. Best-effort: a portal that cannot have a bot (free plan, bot
       // limit) must still install — the send path falls back on its own.
-      if (saved) {
-        const memberId = eventJobToSaveInput(job).memberId
-        const call = async () => {
-          const t = await restResolver(infra)(memberId)
-          if (!t) throw new Error('нет транспорта портала')
-          return t.call
-        }
-        const botId = await resolvePortalBotId(memberId, infra, call).catch(() => 0)
-        // Registration is idempotent AND overwrites nothing, so a REINSTALL onto an existing bot
-        // would keep whatever name it was first given. Push the profile explicitly (#360).
-        if (botId) await pushBotProfile(botId, call).catch(() => {})
-      }
+      if (saved) await (opts.onInstalled ?? (m => setUpPortalBot(m, infra)))(eventJobToSaveInput(job).memberId)
       return saved
     },
     deletePortal: async (m, ts) => {
       // Bot first: after the row is gone there is no token left to remove it with (#360).
-      await unregisterPortalBot(m, infra)
+      await (opts.unregisterBot ?? (id => unregisterPortalBot(id, infra)))(m)
       await deletePortal(m, infra.query, ts)
     },
     purgeFiles: m => purgePortalFiles(m)
@@ -216,11 +216,33 @@ export function resolvePortalBotId(memberId: string, infra: LiveInfra, call: () 
 }
 
 /**
+ * Register the portal's bot and push the app's profile onto it (#316/#360).
+ *
+ * The profile push is NOT redundant with registration: `Bot.register` is idempotent and overwrites
+ * nothing, so a portal that already has the bot would keep whatever name it was first given —
+ * a rename (or, later, an avatar) would never reach it. Best-effort throughout: a portal that
+ * cannot have a bot must still install.
+ */
+export async function setUpPortalBot(memberId: string, infra: LiveInfra): Promise<void> {
+  const call = async () => {
+    const t = await restResolver(infra)(memberId)
+    if (!t) throw new Error('нет транспорта портала')
+    return t.call
+  }
+  const botId = await resolvePortalBotId(memberId, infra, call).catch(() => 0)
+  // `log` is not optional in practice: without it a refused profile update leaves no trace at
+  // all — no log line, no counter. The function swallows the error itself, so no outer catch.
+  if (botId) await pushBotProfile(botId, call, console.warn)
+}
+
+/**
  * Remove the portal's bot BEFORE its row is deleted (#360) — afterwards there is no token to speak
  * with, and the bot would outlive the app that created it. Best-effort: uninstall must complete
  * even if the portal refuses, and a bot we cannot remove is a leftover, not a failure.
  */
 export async function unregisterPortalBot(memberId: string, infra: LiveInfra): Promise<void> {
+  // Drop the remembered refusal too: a reinstall within the TTL must try registration again.
+  forgetPortalBot(memberId, botIdCache)
   try {
     const botId = await getBotId(memberId, infra.query)
     const req = buildBotUnregister(botId)
