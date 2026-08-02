@@ -50,6 +50,20 @@ const settingsResolved = ref(false)
 // Одно правило на три состояния экрана — чистое и покрыто тестом (appScreenState).
 const screen = computed(() => appScreenState({ launch: launch.value, settingsResolved: settingsResolved.value, needsSetup: needsSetup.value }))
 
+// #360: у портала может не быть чат-бота (бесплатный тариф, предел ботов, права не выданы) — тогда
+// сообщения в чат подписаны именем сотрудника, а не приложения. Раньше это было видно только
+// счётчиком, который никто не открывает.
+const { ready: chatBotReady, load: loadChatBotStatus } = useChatBotStatus()
+// Кнопка баннера ведёт в карточку Маркета — там и переустановка, и смена тарифа. Берём готовый
+// открыватель слайдера у модалки оценки: он ничего не опрашивает, пока не позовут `check()`.
+const { openMarket } = useAppRating()
+const warnUnsignedChat = computed(() => shouldWarnUnsignedChat({
+  screen: screen.value,
+  isAdmin: isAdmin.value,
+  botReady: chatBotReady.value,
+  notifyChatId: mapping.value.notifyChatId
+}))
+
 // Open settings in a B24 SLIDER (native overlay), like the official b24-ai-starter reference:
 // `openSliderAppPage({ place })` re-opens THIS app in a slider carrying `place='app-options'`, and the
 // global middleware routes that slider frame to /settings. We do NOT use `slider.openPath` — that opens
@@ -151,6 +165,7 @@ onMounted(async () => {
   }
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
+  void loadChatBotStatus() // фоном: баннер не должен задерживать рабочий экран
   await loadSettings()
   // Loaded successfully inside the portal (a frame error means standalone/no-auth → don't nudge).
   settingsLoaded.value = !settingsError.value
@@ -297,6 +312,28 @@ watch(jobs, (list) => {
               label="Настроить импорт"
               size="sm"
               @click="openSettings"
+            />
+          </template>
+        </B24Alert>
+
+        <!-- Бот не завёлся (#360): сообщения уходят, но подписаны сотрудником, а не приложением.
+         Показываем ТОЛЬКО админу и ТОЛЬКО когда чат уведомлений реально настроен — иначе сообщений
+         нет вовсе и предупреждать не о чем. Не блокирует работу: это качество подписи, не отказ. -->
+        <B24Alert
+          v-if="warnUnsignedChat"
+          class="mb-4"
+          color="air-secondary"
+          size="sm"
+          :icon="WarningAlarmIcon"
+          title="Сообщения в чат подписаны сотрудником"
+          description="Импорт работает как обычно, но отчёты и сообщения об ошибках приходят от имени сотрудника, который ставил приложение: своего чат-бота у приложения на этом портале пока нет. Обычно причина одна из двух — на тарифе портала чат-боты недоступны либо при установке не выдали право на них. В первом случае поможет коммерческий тариф, во втором — переустановка с полным набором прав."
+        >
+          <template #actions>
+            <B24Button
+              label="Открыть в Маркете"
+              size="sm"
+              color="air-tertiary"
+              @click="openMarket"
             />
           </template>
         </B24Alert>

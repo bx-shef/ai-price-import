@@ -244,3 +244,8 @@ export function forgetPortalBot(memberId: string, cache: BotIdCache): void {
   cache.noBotUntil.delete(memberId)
   cache.inFlight.delete(memberId)
 }
+
+/** «У портала есть бот?» — one place, so an inversion cannot be reintroduced inline in a route. */
+export function botIsReady(botId: number): boolean {
+  return botId > 0
+}
