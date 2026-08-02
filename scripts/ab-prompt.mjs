@@ -1,17 +1,24 @@
-// A/B a change to the EXTRACTION PROMPT against a corpus of real documents (#336/#337).
+// A/B a change to the EXTRACTION PROMPT against a corpus of real documents (#336/#337/#342).
 //
 // Why this exists as a committed script: `prompts/extract.ts` carries measured numbers in its
 // header and forbids editing the text without re-measuring. That instruction is only followable
 // if the harness ships with the repo — the first version of this measurement lived in a scratch
 // directory and its raw output was lost, so none of the published numbers could be re-checked.
 //
-//   pnpm ab:prompt --dir <каталог с .txt>            # текущий промпт против origin/main
+//   pnpm ab:prompt                                   # обезличенный корпус в репозитории
+//   pnpm ab:prompt --dir <каталог с .txt>            # свой корпус
 //   pnpm ab:prompt --dir <…> --base <файл.ts>        # против произвольной базы
 //   pnpm ab:prompt --dir <…> --runs 3                # N прогонов на сторону (по умолчанию 1)
 //   pnpm ab:prompt --dir <…> --out ab.json           # куда сложить сырой результат
 //
-// The corpus is CLIENT DOCUMENTS — keep it OUT of the repository (a git-ignored directory or a
-// path outside the tree). The script only reads `.txt`; produce them with the same runners the
+// `--dir` defaults to the committed ANONYMISED corpus (corpus/prompt-ab, see its README) — a
+// re-measurement rule that first requires hunting down someone else's invoices does not survive
+// the first urgent edit, it just gets skipped. A handful of documents is too few to prove anything;
+// they exist so the command runs in one line and shows the prompt did not break on the classes
+// the rules were written for. A REAL measurement still needs a bigger corpus.
+//
+// That bigger corpus is CLIENT DOCUMENTS — keep it OUT of the repository (a git-ignored directory
+// or a path outside the tree). The script only reads `.txt`; produce them with the same runners the
 // worker uses (server/utils/extractRunners.ts) so the text matches production. The `--out`
 // artefact carries the same client data (sums, file names) — its default is git-ignored and
 // guarded by tests/noLocalArtifacts.test.ts; if you point `--out` elsewhere, keep it out of git.
@@ -58,15 +65,41 @@ try {
   }
 } catch { /* no .env — rely on the ambient environment */ }
 
+/**
+ * Read `--name <value>`.
+ *
+ * A flag PRESENT but without a usable value throws instead of falling back: `--dir --runs 3`
+ * (path forgotten) or `--dir=corpus/x` (the `=` form this parser does not support) would
+ * otherwise silently measure the committed corpus while the operator believes they
+ * pointed at their own — and the report looks identical either way. Absent flag ⇒ default,
+ * that is the intended one-line invocation.
+ */
 const arg = (name, dflt = '') => {
+  const hits = process.argv.filter(a => a === `--${name}` || a.startsWith(`--${name}=`))
+  // Repeating a flag used to keep the FIRST value and drop the rest without a word — the same
+  // silent-wrong-corpus failure the checks below exist to stop.
+  if (hits.length > 1) throw new Error(`--${name} указан ${hits.length} раза — оставь один`)
   const i = process.argv.indexOf(`--${name}`)
-  return i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : dflt
+  if (i < 0) {
+    if (hits.length) throw new Error(`--${name}=… не поддерживается, пиши через пробел: --${name} <значение>`)
+    return dflt
+  }
+  const v = process.argv[i + 1]
+  if (!v || v.startsWith('--')) throw new Error(`у --${name} нет значения`)
+  return v
 }
-const DIR = arg('dir')
-if (!DIR) throw new Error('нужен --dir <каталог с .txt документами>')
-const RUNS = Math.max(1, Number(arg('runs', '1')))
+const DIR = arg('dir', 'corpus/prompt-ab')
 const OUT = arg('out', 'ab-prompt.json')
 const BASE = arg('base')
+// `Math.max(1, Number('abc'))` is NaN, and `for (…; run < NaN; …)` simply never runs: the model
+// is never called and the script still prints a complete, all-zero «report». Every silent-zero
+// path in this script is a lie about a measurement — reject the input instead.
+const RUNS = (() => {
+  const raw = arg('runs', '1')
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) throw new Error(`--runs должен быть целым ≥ 1, а не «${raw}»`)
+  return n
+})()
 
 /**
  * Baseline prompt: an explicit --base module, else origin/main's committed prompt.
@@ -103,7 +136,15 @@ async function baselinePrompt() {
  *  duplicate moves every count by 2 — inflating both the effect and the apparent noise. */
 async function uniqueDocs() {
   const seen = new Map()
-  for (const f of (await readdir(DIR)).filter(f => f.endsWith('.txt')).sort()) {
+  let entries
+  try {
+    entries = await readdir(DIR)
+  } catch {
+    // A raw `ENOENT … scandir` says nothing about what this script needed — and the two most
+    // likely causes (typo in --dir, launched from a subdirectory) are both actionable.
+    throw new Error(`не нашёл каталог «${DIR}» — проверь --dir и что команда запущена из корня репозитория`)
+  }
+  for (const f of entries.filter(f => f.endsWith('.txt')).sort()) {
     const h = createHash('md5').update(await readFile(join(DIR, f))).digest('hex')
     if (seen.has(h)) console.log(`  дубль пропущен: ${f} ≡ ${seen.get(h)}`)
     else seen.set(h, f)
@@ -115,6 +156,11 @@ const cfg = resolveLlmConfig(process.env)
 if (!cfg.apiKey) throw new Error(`нет ключа для провайдера '${cfg.label}'`)
 const chat = makeChatFn(cfg)
 const docs = await uniqueDocs()
+// An empty corpus does NOT stop this script by itself: the main loop just never runs, and the
+// tail still prints a full report — «итог не сошёлся: 0» on both sides, McNemar p = 1.000. That
+// reads as «nothing broke» when in fact nothing was measured, which is the worst possible outcome
+// for a harness whose whole job is to keep the numbers in prompts/extract.ts honest.
+if (!docs.length) throw new Error(`в каталоге «${DIR}» нет ни одного .txt — замерять нечего`)
 const SIDES = [['old', await baselinePrompt()], ['new', buildExtractionPrompt()]]
 console.log(`provider=${cfg.label} model=${cfg.model} · документов ${docs.length} · прогонов на сторону ${RUNS}\n`)
 
