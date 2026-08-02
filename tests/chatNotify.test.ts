@@ -8,6 +8,7 @@ import {
   neutralizeBb,
   sendChatMessage
 } from '../server/utils/chatNotify'
+import { describeTotalMismatch } from '../app/utils/pricing'
 
 describe('neutralizeBb', () => {
   it('folds BB brackets to fullwidth (blocks [url]/mentions injection)', () => {
@@ -67,6 +68,25 @@ describe('buildSuccessMessage', () => {
   it('omits the warnings block entirely when there are none', () => {
     const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 1, created: true, rowCount: 1, warnings: [] })
     expect(msg).not.toContain('Предупреждения')
+  })
+
+  // #337: САМА СБОРКА, а не длина строки. Первая редакция предупреждения о расхождении итога была
+  // 261 символ при кэпе 200, и `chatSafeText` срезал её голым `slice` без многоточия — в чат уходило
+  // обезглавленное предложение. Тест тогда молчал, потому что проверял текст ДО обрезки. Проверять
+  // длину «до» — тот же приём: он держится только на том, что chatSafeText не удлиняет строку,
+  // а это нигде не закреплено. Здесь предупреждение идёт через настоящий buildSuccessMessage.
+  it('предупреждение о расхождении итога доезжает в чат ЦЕЛИКОМ, вместе с советом', () => {
+    const w = describeTotalMismatch(373198, 390344.56, 'RUB')
+    const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 5, created: true, rowCount: 9, warnings: [w] })
+    // Все три числа — они и есть поисковый ключ для оператора.
+    expect(msg).toContain('373 198,00 RUB')
+    expect(msg).toContain('390 344,56 RUB')
+    expect(msg).toContain('разница 17 146,56 RUB')
+    // И хвост с действием — именно он терялся при обрезке.
+    expect(msg).toContain('проверьте позиции.')
+    // Никакого обрыва на полуслове: строка предупреждения кончается точкой.
+    const line = msg.split('\n').find(l => l.startsWith('• Итог документа'))!
+    expect(line.endsWith('.')).toBe(true)
   })
   it('caps the warnings block at 10 lines', () => {
     const warnings = Array.from({ length: 15 }, (_, i) => `w${i}`)

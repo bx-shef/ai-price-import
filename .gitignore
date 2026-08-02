@@ -46,3 +46,8 @@ dump.rdb
 *.rdb
 appendonly.aof
 appendonlydir/
+
+# A/B-замер промпта (pnpm ab:prompt). Артефакт несёт суммы и имена файлов РЕАЛЬНЫХ клиентских
+# документов, а репозиторий публичный. Дефолтный --out кладёт его прямо в корень.
+# Гард индекса — tests/noLocalArtifacts.test.ts.
+ab-prompt*.json

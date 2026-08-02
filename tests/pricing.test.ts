@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { lineGross, computeGrossTotal, reconcilePricing } from '../app/utils/pricing'
+import { describeTotalMismatch, lineGross, computeGrossTotal, reconcilePricing } from '../app/utils/pricing'
+// Осознанная связка app→server в тесте: бюджет длины предупреждения задаёт именно чат-лимит,
+// и держать его копию тут значило бы разъехаться с ним при первой же правке.
+import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
 import type { DocumentItem } from '../app/types/document'
 
 const item = (over: Partial<DocumentItem> = {}): DocumentItem => ({ name: 'x', price: 1, quantity: 1, ...over })
@@ -124,6 +127,22 @@ describe('reconcilePricing', () => {
     expect(r.usedStatedTotal).toBe(true) // trusted within scaled tolerance
     expect(r.grossTotal).toBe(2408)
   })
+
+  // #337 (ревью): `hasPrintedTotal` заведён ровно потому, что «не доверились итогу» ≠ «итога нет».
+  // Пин держит РАСХОЖДЕНИЕ двух полей, а не каждое по отдельности: тест, проверяющий только
+  // `hasPrintedTotal===true`, переживёт возврат к выводу причины из `!usedStatedTotal`.
+  it('hasPrintedTotal — факт о документе, а не о нашем доверии (расходится с usedStatedTotal)', () => {
+    // Итог напечатан, но выглядит как «Итого» → не якорим (usedStatedTotal false) при живой строке.
+    expect(reconcilePricing(items, false, 8600)).toMatchObject({ hasPrintedTotal: true, usedStatedTotal: false })
+    // Итог напечатан, но не сошёлся ни с одним прочтением → тоже не доверяем, но он есть.
+    expect(reconcilePricing(items, false, 99999)).toMatchObject({ hasPrintedTotal: true, usedStatedTotal: false })
+    // Итога нет вовсе — и его непригодные формы (документ печатает «0,00» / мусор из OCR).
+    for (const bad of [undefined, 0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(reconcilePricing(items, false, bad), `statedTotal=${bad}`).toMatchObject({ hasPrintedTotal: false, usedStatedTotal: false })
+    }
+    // И совпадает с usedStatedTotal там, где итогу поверили.
+    expect(reconcilePricing(items, false, 10320)).toMatchObject({ hasPrintedTotal: true, usedStatedTotal: true })
+  })
 })
 
 describe('печатный итог, совпавший с суммой строк, не считается подтверждением (#302)', () => {
@@ -147,5 +166,107 @@ describe('печатный итог, совпавший с суммой стро
   it('без НДС двусмысленности нет — сумма одна и та же при любом флаге', () => {
     const noVat = [item({ price: 10, quantity: 5, vatRate: 0 })]
     expect(reconcilePricing(noVat, true, 50).totalAmbiguous).toBe(false)
+  })
+})
+
+// #336: живой прогон реальных документов показал, что сам факт «итог не сошёлся» бесполезен —
+// на счёте в 44 или 61 строку искать нечего. Поисковый ключ — разница: неверно прочитанная ячейка
+// (не та ценовая колонка, количество, съеденное названием) сдвигает ровно одну строку.
+describe('describeTotalMismatch', () => {
+  it('называет напечатанный итог, посчитанный по строкам и разницу — в русском формате', () => {
+    // Реальный случай из прогона: одна строка из девяти взяла цену за м³ вместо цены за упаковку.
+    const s = describeTotalMismatch(373198, 390344.56, 'RUB')
+    expect(s).toContain('373 198,00 RUB')
+    expect(s).toContain('390 344,56 RUB')
+    expect(s).toContain('разница 17 146,56 RUB')
+  })
+
+  it('разница печатается модулем — направление видно по двум названным числам', () => {
+    const less = describeTotalMismatch(1000, 900)
+    const more = describeTotalMismatch(900, 1000)
+    expect(less).toContain('разница 100,00')
+    expect(more).toContain('разница 100,00')
+    expect(less).toContain('1 000,00')
+    expect(more).toContain('1 000,00')
+    // Ни один из вариантов не печатает «−» перед разницей.
+    expect(less).not.toContain('разница −')
+    expect(more).not.toContain('разница −')
+  })
+
+  it('отрицательный итог (скидочный документ) сохраняет знак у самой суммы', () => {
+    expect(describeTotalMismatch(100, -50)).toContain('−50,00')
+  })
+
+  it('валюта эхом идёт ТОЛЬКО кодом ISO — всё остальное от модели отбрасывается', () => {
+    expect(describeTotalMismatch(100, 200, 'byn')).toContain('100,00 BYN')
+    for (const bad of ['', ' ', 'BY', 'BYNN', 'B1N', 'руб.', '[url=x]y[/url]', 'BYN\nDisallow']) {
+      const s = describeTotalMismatch(100, 200, bad)
+      expect(s).toContain('100,00,') // сумма, сразу запятая предложения — валюты нет
+      expect(s).not.toContain(bad.trim() || 'НИЧЕГО-НЕ-ИЩЕМ')
+    }
+  })
+
+  it('без пригодного напечатанного итога — общая формулировка, без NaN', () => {
+    for (const v of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const s = describeTotalMismatch(v, 120, 'BYN')
+      expect(s).not.toMatch(/NaN|Infinity/)
+      expect(s).toMatch(/не сошёлся с суммой по строкам/)
+    }
+  })
+
+  it('всегда говорит, что делать дальше', () => {
+    for (const s of [describeTotalMismatch(1, 2), describeTotalMismatch(undefined, 2)]) {
+      expect(s).toMatch(/проверьте позиции/)
+    }
+  })
+
+  // Сумма ≥1e21 уводит toFixed в экспоненту, и «1,2345678901234568e+21» читается как «1,23…» —
+  // уверенно неверное число хуже отсутствия числа. Бесконечность приходила как «0,00», то есть
+  // сообщение заявляло, что строки дают ноль. Оба случая теперь уходят в общую формулировку.
+  it('непечатаемая сумма (экспонента, бесконечность, NaN) → общая формулировка, без чисел', () => {
+    const bad: Array<[number | undefined, number]> = [
+      [1e24, 24], [24, 1e24], [1e21, 1], // ровно граница экспоненты
+      // Отрицательная сторона границы: без `Math.abs` в isPrintableAmount проверка `n < 1e21`
+      // пропускала любое большое ОТРИЦАТЕЛЬНОЕ значение обратно в toFixed — тот же дефект с
+      // экспонентой, только зеркальный. Скидочный документ считается в минус, так что достижимо.
+      [-1e24, 1], [1, -1e24], [-1e21, 1], [100, Number.NEGATIVE_INFINITY],
+      [100, Number.POSITIVE_INFINITY], [Number.POSITIVE_INFINITY, 100],
+      [Number.NaN, 100], [undefined, 100]
+    ]
+    for (const [a, b] of bad) {
+      const s = describeTotalMismatch(a, b, 'BYN')
+      expect(s, `${a} / ${b}`).toMatch(/не сошёлся с суммой по строкам/)
+      expect(s).not.toMatch(/e\+|undefined|NaN|Infinity/)
+      // и никакой выдуманной точной суммы
+      expect(s).not.toMatch(/\d,\d\d BYN/)
+    }
+    // сразу под границей — числа печатаются
+    expect(describeTotalMismatch(1e21 - 1e6, 1, 'BYN')).toMatch(/разница/)
+  })
+
+  it('три числа согласованы между собой (округляем печатный итог ОДИН раз)', () => {
+    // Раньше показывали round2(итога), а разницу считали от сырого — три числа не сходились.
+    // Возмущать надо ОБА аргумента: пока дробная часть была только у печатного итога, мутант
+    // `Math.abs(round2(grossTotal) − stated)` выживал, а на [0.005, 100.005] он врёт на копейку.
+    for (const [a, b] of [[100.005, 200], [0.005, 1], [12345.674, 12345.671], [0.005, 100.005], [1.005, 2.005]] as const) {
+      const s = describeTotalMismatch(a, b)
+      const nums = [...s.matchAll(/(−?[\d ]+),(\d\d)/g)].map(m => Number(m[1]!.replace(/ /g, '') + '.' + m[2]))
+      expect(nums).toHaveLength(3)
+      expect(Math.abs(Math.abs(nums[1]! - nums[0]!) - nums[2]!)).toBeLessThan(0.005)
+    }
+  })
+
+  // Чат режет каждое предупреждение ровно на MAX_CHAT_REASON БЕЗ многоточия (chatSafeText → slice),
+  // поэтому длинная фраза молча теряет хвост. Первая редакция этого текста была 261 символ.
+  it('реалистичный текст умещается в лимит строки предупреждения в чате', () => {
+    const real: Array<[number, number, string | undefined]> = [
+      [373198, 390344.56, 'RUB'], [10320, 8600, 'BYN'], [232176.45, 220400.04, 'RUB'],
+      [99999, 120, 'BYN'], [1519.2, 1519.21, undefined], [4092.82, 4092.83, 'BYN']
+    ]
+    for (const c of real) expect(describeTotalMismatch(...c).length, JSON.stringify(c)).toBeLessThanOrEqual(MAX_CHAT_REASON)
+    expect(describeTotalMismatch(undefined, 1).length).toBeLessThanOrEqual(MAX_CHAT_REASON)
+    // Числа идут ПЕРВЫМИ: даже если экзотическая сумма выйдет за лимит, режется только совет.
+    const huge = describeTotalMismatch(-999999999999.99, 999999999999.99, 'KZT')
+    expect(huge.indexOf('разница')).toBeLessThan(MAX_CHAT_REASON)
   })
 })
