@@ -150,6 +150,33 @@ const savingsRate = computed<number | undefined>({
 const portalDomain = ref('')
 const currencyLink = computed(() => portalCurrencySettingsUrl(portalDomain.value))
 
+// #311. Two separate things, deliberately not merged:
+//   • the FORMAT — the portal's own currency code inside the field, so «в чём я ввожу» is answered
+//     where the answer is needed; the decimal and group separators come from the ru locale, which
+//     is how the admin actually types («9,9»). No base currency ⇒ no format-options at all: an
+//     Intl currency format needs a valid code, and a wrong guess would print someone else's money.
+//     `locale="ru"` is pinned rather than left to the browser: the hint below the field prints
+//     «9,9», and a field formatting the same number as «9.9» would make a correct entry look wrong;
+//   • the HINT — a reference figure for that currency, shown as text UNDER the field and never
+//     written into the model. Owner's decision: seeding a default would put a number the admin did
+//     not choose behind a tile that is presented as the app's own achievement (#270 removed exactly
+//     such a hard-coded rate). An unknown currency simply gets no hint.
+const rateFormatOptions = computed(() =>
+  baseCurrency.value
+    ? {
+        style: 'currency' as const,
+        currency: baseCurrency.value,
+        currencyDisplay: 'code' as const,
+        // Currency style forces 2 decimals, so the field printed «9,90 BYN» under a hint saying
+        // «9,9» — the same divergence the pinned locale exists to prevent, just one digit further
+        // in. Both sides now drop a trailing zero and stop at hundredths.
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      }
+    : undefined
+)
+const rateHint = computed(() => hourlyRateHint(baseCurrency.value))
+
 // Seed each picker's selected option so a SAVED id shows before the chat list is fetched
 // (the mapping stores only the id, not the title → the raw `chat<id>` is the fallback label
 // until the user re-picks). Mirrors the article-field seed.
@@ -563,14 +590,22 @@ const ON_MISSING_ITEMS = [
                     v-model="savingsRate"
                     :min="0"
                     :max="MAX_SAVINGS_RATE"
-                    :step="1"
-                    class="w-48"
+                    :step="0.01"
+                    :format-options="rateFormatOptions"
+                    locale="ru"
+                    class="w-56"
                   />
                   <span
                     v-if="baseCurrency"
                     class="text-sm text-(--ui-color-base-2)"
-                  >{{ baseCurrency }} в час</span>
+                  >в час</span>
                 </div>
+                <p
+                  v-if="rateHint"
+                  class="mt-1 text-xs text-(--ui-color-base-2)"
+                >
+                  {{ rateHint.text }}
+                </p>
                 <p class="mt-1 text-xs text-(--ui-color-base-3)">
                   Нужна только для плитки «Сэкономлено денег»: сэкономленное время × эта ставка.
                   Валюта — базовая валюта вашего портала, приложение берёт её из Битрикс24, вводить
