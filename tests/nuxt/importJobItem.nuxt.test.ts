@@ -77,6 +77,21 @@ describe('ImportJobItem', () => {
     expect(w.text()).toContain('НДС не найден')
   })
 
+  it('совет показан отдельно от списка проблем и открывается словами «Что делать» (#388)', async () => {
+    // Мутация «убрать блок совета из разметки» не роняла НИЧЕГО: поле доезжало до клиента, но
+    // никто не проверял, что оно нарисовано. А выехало оно из `warnings` именно потому, что там
+    // раздувало счётчик и читалось как ещё одна поломка документа.
+    const raw = '{"entityId":5,"warnings":["Товар «Гвоздь» не найден в каталоге — строка пропущена."],"advice":"Что делать: заведите товары в каталоге."}'
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', raw) } })
+    expect(w.text()).toContain('Что делать: заведите товары в каталоге.')
+    expect(w.text()).toContain('Гвоздь')
+  })
+
+  it('без совета лишнего блока нет', async () => {
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":[],"errors":[]}') } })
+    expect(w.text()).not.toContain('Что делать')
+  })
+
   it('error → shows the failure reason', async () => {
     const w = await mountSuspended(ImportJobItem, { props: { job: job('error', '{"warnings":[],"errors":["не распознан формат"]}') } })
     expect(w.text()).toContain('не распознан формат')

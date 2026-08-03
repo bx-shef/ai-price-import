@@ -240,10 +240,16 @@ const stepDot: Record<string, string> = {
         >{{ w }}</span>
       </div>
       <!-- Совет — ОТДЕЛЬНО от списка проблем (#388): это подсказка, что делать дальше, а не дефект
-           документа. В общем списке он раздувал счётчик и читался как ещё одна поломка. -->
+           документа. В общем списке он раздувал счётчик и читался как ещё одна поломка. Цвет полосы
+           тут не единственный признак: текст открывается словами «Что делать:» — на 3 px полосы
+           роль не прочитать ни при цветовой слепоте, ни в чёрно-белом скриншоте.
+           ⚠ В ветке ОШИБКИ такого блока нет и быть не может: ядро возвращает `errors` раньше, чем
+           считает совет (валидации и отказ «пропущено всё» выходят до его вычисления), поэтому
+           `advice` и `errors` взаимоисключающи по построению. Совет для этого случая уже несёт сам
+           текст отказа. -->
       <p
         v-if="result.advice"
-        class="mt-1.5 border-l-[3px] border-(--ui-color-accent-main-primary) pl-2.5 text-(--ui-color-base-2)"
+        class="mt-1.5 border-l-[3px] border-(--ui-color-accent-main-primary) pl-2.5 leading-relaxed text-(--ui-color-base-2)"
       >
         {{ result.advice }}
       </p>
@@ -272,13 +278,6 @@ const stepDot: Record<string, string> = {
           class="text-(--ui-color-base-3)"
         >…и ещё {{ result.warnings.length - MAX_ERROR_WARNINGS }}</span>
       </div>
-      <!-- И здесь тоже вне обрезки: на отказе «ни одна позиция не найдена» совет нужнее всего. -->
-      <p
-        v-if="result.advice"
-        class="mt-1.5 border-l-[3px] border-(--ui-color-accent-main-primary) pl-2.5 text-xs leading-relaxed text-(--ui-color-base-2)"
-      >
-        {{ result.advice }}
-      </p>
     </div>
 
     <!-- Отзыв 👍/👎 — только по завершённым, если канал включён на сервере. На строке с истёкшим
