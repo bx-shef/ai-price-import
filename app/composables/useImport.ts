@@ -108,7 +108,7 @@ export function useImport() {
     }
     const h = await headers()
     if (!h) {
-      listError.value = frameAuthMessage(inFrame(), 'Импорт')
+      listError.value = frameAuthMessage(inFrame(), 'Импорт доступен')
       error.value = listError.value
       return
     }
@@ -150,7 +150,7 @@ export function useImport() {
   async function upload(file: File, target?: TargetRef | null, jobId?: string): Promise<UploadOutcome> {
     const h = await headers()
     if (!h) {
-      const msg = frameAuthMessage(inFrame(), 'Импорт')
+      const msg = frameAuthMessage(inFrame(), 'Импорт доступен')
       error.value = msg
       // Не про файл, а про то, где мы открыты: остальные строки упрутся в то же самое.
       return { ok: false, stop: true, message: msg }

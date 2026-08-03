@@ -35,6 +35,41 @@ export function useB24() {
     return initPromise
   }
 
+  /**
+   * One refresh for everybody, and never an unbounded wait.
+   *
+   * ⚠ Two measured defects, both introduced by the naive version.
+   *
+   * 1. `refreshAuth()` sends a postMessage to the parent and — unlike the SDK's own HTTP path —
+   *    arms NO timeout for it (`send()` only does that for `isSafely` calls). If the parent never
+   *    answers (the portal went to a login page, the tab is dead, the origin was rejected) the
+   *    promise simply never settles: not a rejection, silence. Measured: `ensureAuth()` did not
+   *    finish at all, where the old code returned null synchronously. Composables that guard with
+   *    an `inFlight` promise then keep it forever and hand the same pending promise to every future
+   *    caller — pickers spin for good, and an upload batch hangs under «не закрывайте страницу»
+   *    with no error at all. That is worse than the wrong message this issue set out to fix.
+   *
+   * 2. Thirteen composables mount together on `/app`, so an expired hour produced thirteen
+   *    simultaneous refreshes. The SDK's own HTTP layer deliberately coalesces in-flight refreshes;
+   *    the frame layer does not. Measured with a realistic round-trip: 13 calls. (A synchronous
+   *    fake shows 1 — a comfortable lie worth knowing about.)
+   */
+  const REFRESH_TIMEOUT_MS = 10_000
+  let refreshPromise: Promise<void> | null = null
+
+  function refreshOnce(f: B24Frame): Promise<void> {
+    if (!refreshPromise) {
+      refreshPromise = Promise.race([
+        f.auth.refreshAuth().then(() => undefined),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('refreshAuth timed out')), REFRESH_TIMEOUT_MS))
+      ]).finally(() => {
+        refreshPromise = null
+      })
+    }
+    return refreshPromise
+  }
+
   function get(): B24Frame | null {
     return frame
   }
@@ -66,11 +101,18 @@ export function useB24() {
   async function ensureAuth(): Promise<{ accessToken: string, domain: string } | null> {
     const current = auth()
     if (current) return current
-    if (!inFrame() || !frame) return null
+    // Own `init()`, not «the caller surely did it»: `useAppRating.report()` already relies on an
+    // earlier `check()` having run, so a first call in the wrong order would silently get null
+    // without a single attempt.
+    const f = await init()
+    if (!inFrame() || !f) return null
     try {
-      await frame.auth.refreshAuth()
-    } catch {
-      // A refused refresh is not an error we can act on — fall through to the honest null.
+      await refreshOnce(f)
+    } catch (e) {
+      // Nothing here is actionable for the user — but three different causes (portal refused,
+      // parent never answered, SDK not ready) otherwise look identical from the browser, and there
+      // is no live debugging inside a portal frame. The token itself is never logged.
+      console.warn('[b24] frame auth refresh failed:', e instanceof Error ? e.message : e)
     }
     return auth()
   }

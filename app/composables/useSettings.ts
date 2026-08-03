@@ -40,7 +40,7 @@ export function useSettings() {
   async function load(): Promise<void> {
     const h = await headers()
     if (!h) {
-      error.value = frameAuthMessage(inFrame(), 'Настройки')
+      error.value = frameAuthMessage(inFrame(), 'Настройки доступны')
       return
     }
     loading.value = true
@@ -63,7 +63,7 @@ export function useSettings() {
   async function save(): Promise<void> {
     const h = await headers()
     if (!h) {
-      error.value = frameAuthMessage(inFrame(), 'Настройки')
+      error.value = frameAuthMessage(inFrame(), 'Настройки доступны')
       return
     }
     if (!isAdmin.value) {

@@ -24,9 +24,14 @@ export function fetchErrorMessage(e: unknown, fallback: string): string {
  * message says that instead of naming our own subsystem.
  *
  * `inFrame` is what separates the cases, and it was available all along.
+ *
+ * ⚠ `subject` is the WHOLE phrase («Импорт доступен», «Настройки доступны»), not a bare noun.
+ * Gluing a fixed «доступен» onto a caller-supplied noun produced «Настройки доступен» — Russian
+ * agreement broke exactly where the old code had it right, and the first version of the test pinned
+ * the broken form, so fixing the grammar would have failed CI.
  */
-export function frameAuthMessage(inFrame: boolean, what: string): string {
+export function frameAuthMessage(inFrame: boolean, subject: string): string {
   return inFrame
     ? 'Сессия портала истекла. Обновите страницу и повторите.'
-    : `${what} доступен только внутри портала Bitrix24`
+    : `${subject} только внутри портала Bitrix24`
 }

@@ -118,7 +118,7 @@ async function send(withFile: boolean): Promise<void> {
       sent.value = true
       notice.value = res.notice ?? ''
     } else {
-      error.value = frameAuthMessage(inFrame(), 'Отзыв')
+      error.value = frameAuthMessage(inFrame(), 'Отзыв доступен')
     }
   } catch {
     error.value = 'Не удалось отправить отзыв'
