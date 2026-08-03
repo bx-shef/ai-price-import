@@ -46,6 +46,35 @@ export function useB24() {
     return { accessToken: a.access_token, domain: a.domain }
   }
 
+  /**
+   * Frame auth, refreshing it once when it has expired (#345).
+   *
+   * Frame authorisation lives about an hour. When it runs out the SDK's `getAuthData()` returns
+   * `false` — not a stale token — so `auth()` above yields null, every frame-token path takes its
+   * «not in a portal» branch, and a person looking at the app INSIDE the portal is told the app is
+   * not open in Bitrix24. The information to tell the two apart was there all along (`inFrame()` is
+   * still true); it simply was not used, and each caller had its own copy of the wrong message.
+   *
+   * `refreshAuth()` is exactly the SDK call for this (wrapper over `BX24.refreshAuth`). Fixing it
+   * here fixes uploads, settings, metrics, feedback, rating and the pickers at once — six
+   * half-fixes were the alternative.
+   *
+   * Still null after the refresh ⇒ the PORTAL's own session ended (the person logged out, the
+   * portal reloaded). That is a different situation and gets a different message; see
+   * `frameAuthMessage`.
+   */
+  async function ensureAuth(): Promise<{ accessToken: string, domain: string } | null> {
+    const current = auth()
+    if (current) return current
+    if (!inFrame() || !frame) return null
+    try {
+      await frame.auth.refreshAuth()
+    } catch {
+      // A refused refresh is not an error we can act on — fall through to the honest null.
+    }
+    return auth()
+  }
+
   /** The `place` this frame was opened with (from `openSliderAppPage({ place })` → PLACEMENT_OPTIONS).
    *  Undefined for a normally-opened app page. The global middleware uses it to route a slider frame. */
   function placementPlace(): string | undefined {
@@ -100,5 +129,5 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
+  return { init, get, auth, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
 }

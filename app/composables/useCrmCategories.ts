@@ -9,13 +9,13 @@ import type { CrmCategoryOption } from '~/utils/categoryPicker'
 // `CrmCategoryOption` lives in ~/utils/categoryPicker (import it from there).
 
 export function useCrmCategories() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
 
   /** Fetch categories for an entity type. Non-positive/absent id or no frame auth → []. */
   async function load(entityTypeId: number | null | undefined): Promise<CrmCategoryOption[]> {
     if (!entityTypeId || !Number.isInteger(entityTypeId) || entityTypeId <= 0) return []
     await init()
-    const headers = buildFrameHeaders(auth())
+    const headers = buildFrameHeaders(await ensureAuth())
     if (!headers) return []
     try {
       const res = await $fetch<{ categories?: CrmCategoryOption[] }>('/api/crm-categories', {

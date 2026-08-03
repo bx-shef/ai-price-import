@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { frameAuthMessage } from '~/utils/frameHeaders'
+import { useB24 } from '~/composables/useB24'
 import { computed, onMounted, ref } from 'vue'
 import LikeIcon from '@bitrix24/b24icons-vue/outline/LikeIcon'
 import DislikeIcon from '@bitrix24/b24icons-vue/outline/DislikeIcon'
@@ -42,6 +44,7 @@ const comment = ref('')
 // Спрашиваем про файл после нажатия «Отправить»: `null` — вопрос ещё не задан.
 const asking = ref(false)
 const sending = ref(false)
+const { inFrame } = useB24()
 const sent = ref(false)
 /** «Отзыв принят, но файл не приложен» — общий предел приёмника (#354). Молчание тут читалось бы
  *  как «документ ушёл». */
@@ -115,7 +118,7 @@ async function send(withFile: boolean): Promise<void> {
       sent.value = true
       notice.value = res.notice ?? ''
     } else {
-      error.value = 'Отзыв доступен только внутри портала Bitrix24'
+      error.value = frameAuthMessage(inFrame(), 'Отзыв')
     }
   } catch {
     error.value = 'Не удалось отправить отзыв'

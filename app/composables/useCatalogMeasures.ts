@@ -15,13 +15,13 @@ export interface MeasureOption {
 }
 
 export function useCatalogMeasures() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
   const measures = ref<MeasureOption[]>([])
   const loaded = ref(false)
 
   async function load() {
     await init()
-    const headers = buildFrameHeaders(auth())
+    const headers = buildFrameHeaders(await ensureAuth())
     if (!headers) {
       loaded.value = true
       return
