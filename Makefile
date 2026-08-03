@@ -1,5 +1,5 @@
 .PHONY: dev build-local check \
-        prod-up prod-down prod-pull prod-redeploy logs ps \
+        prod-up prod-env prod-down prod-pull prod-redeploy logs ps \
         server-up server-down watchtower-up watchtower-down proxy-tune proxy-untune proxy-check
 
 # Обёртки над командами разработки и деплоя. Подробности — docs/redesign/09-deploy.md.
@@ -32,6 +32,17 @@ build-local:
 prod-up:
 	docker compose -f docker-compose.prod.yml up -d
 	@$(MAKE) --no-print-directory proxy-tune || echo "⚠ proxy-tune не применён (прокси :443 не найден?) — примени вручную: make proxy-tune"
+
+## Применить правку .env (новые переменные окружения) — ПЕРЕСОЗДАЁТ контейнеры.
+## ⚠ `docker compose restart` для этого НЕ годится и это главная ловушка: он перезапускает
+## процесс в СТАРОМ контейнере, а переменные окружения фиксируются в момент СОЗДАНИЯ
+## контейнера. Команда отработает, контейнер поднимется — и правка останется невидимой.
+## Диагностировать это тяжело: выглядит как «переменную не приняли», и время уходит на
+## проверку самой переменной, а не способа применения.
+## `--force-recreate` вместо голого `up -d` намеренно: compose умеет замечать смену env_file
+## сам, но полагаться на это в цели, вся задача которой — применить env, не стоит.
+prod-env:
+	docker compose -f docker-compose.prod.yml up -d --force-recreate backend
 
 prod-down:
 	docker compose -f docker-compose.prod.yml down
