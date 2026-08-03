@@ -855,6 +855,11 @@ describe('runCrmSync — products / units / routing', () => {
       m.product.onMissing = 'skip-warn'
       const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
       expect(r.errors[0]).toContain('Внести строку как есть')
+      // ⚠ И НЕ вторым экземпляром рядом: совет уже внутри текста отказа. Мутация «дописать его в
+      // errors отдельной строкой» проходила незамеченной, а в чате ошибок он печатался бы дважды —
+      // вторая половина требования «ровно один раз на документ».
+      expect(r.errors.filter(e => e === skippedLinesAdvice())).toHaveLength(0)
+      expect(r.advice).toBeUndefined()
       expect(r.warnings.filter(w => w.includes('Внести строку как есть'))).toEqual([])
       expect(r.warnings.some(w => w.includes('Гвоздь'))).toBe(true)
     })

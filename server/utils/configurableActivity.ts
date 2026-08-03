@@ -47,6 +47,43 @@ export interface ActivityLayoutInput {
 }
 
 /** Build the crm.activity.configurable.add params. Pure. */
+/**
+ * How many text blocks the дело body may carry.
+ *
+ * Named, not inlined, because the caller has to BUDGET against it: the body is «Позиций» +
+ * «Поставщик» + «Проблемы (N):» + N предупреждений + совет, and the advice sits LAST. With the
+ * magic number buried here the budget added up to exactly 10 — zero slack — so one extra header
+ * line, or raising the warnings cap by one, would have silently dropped the advice out of the дело
+ * and restored the very defect #388 was filed for, in the consumer the issue names first.
+ */
+export const MAX_ACTIVITY_BLOCKS = 10
+
+/**
+ * Body lines of the дело: header, the problems block, and the advice LAST.
+ *
+ * Pure and exported so the budget is testable. It used to live inline in the live wiring, where
+ * nothing could reach it: a mutation removing the advice line, or putting it back INSIDE the sliced
+ * problems list — literally the state before #388, counter lie and all — left the whole suite
+ * green.
+ *
+ * The problems cap is derived from `MAX_ACTIVITY_BLOCKS`, never written as a number: the advice is
+ * last, so any line added above it silently pushes it out of the body — restoring the very defect
+ * #388 was filed for, in the consumer the issue names first.
+ */
+export function buildActivityLines(input: {
+  rowCount: number
+  supplierName?: string
+  warnings: string[]
+  advice?: string
+}): string[] {
+  const header = [`Позиций: ${input.rowCount}`, ...(input.supplierName ? [`Поставщик: ${input.supplierName}`] : [])]
+  const budget = Math.max(0, MAX_ACTIVITY_BLOCKS - header.length - 1 - (input.advice ? 1 : 0))
+  const problems = input.warnings.length
+    ? [`Проблемы (${input.warnings.length}):`, ...input.warnings.slice(0, budget).map(w => `• ${w}`)]
+    : []
+  return [...header, ...problems, ...(input.advice ? [input.advice] : [])]
+}
+
 export function buildConfigurableActivity(input: ActivityLayoutInput): Record<string, unknown> {
   // Footer carries ONE button — «Открыть» (opt). The source file used to be a second button; it is
   // now bound INTO the activity body instead (#328, owner ask): a document belongs with the record,
@@ -107,7 +144,7 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
         // B24 requires 1..20 blocks — guarantee at least one so an empty `lines` can't 400.
         blocks: {
           ...Object.fromEntries(
-            (input.lines.length ? input.lines : ['—']).slice(0, 10).map((text, i) => [
+            (input.lines.length ? input.lines : ['—']).slice(0, MAX_ACTIVITY_BLOCKS).map((text, i) => [
               `line${i}`,
               { type: 'text', properties: { value: neutralizeBb(String(text)).slice(0, 500) } }
             ])

@@ -29,7 +29,7 @@ import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_ME
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
+import { buildActivityLines, buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
@@ -598,12 +598,10 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
       // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
       // stays within B24's block limit (buildConfigurableActivity slices to 10 total).
-      const problems = warnings.length
-        ? [`Проблемы (${warnings.length}):`, ...warnings.slice(0, 6).map(w => `• ${w}`)]
-        : []
-      // Совет — отдельной строкой ПОСЛЕ блока проблем и вне его обрезки (#388): это подсказка, а
-      // не дефект документа, и в счётчик «Проблемы (N)» он попадать не должен.
-      const lines = [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : []), ...problems, ...(advice ? [advice] : [])]
+      // Сборка тела дела — чистая функция (`buildActivityLines`): здесь она была невидима для
+      // тестов, и мутация «убрать совет» или «вернуть его внутрь обрезаемого списка» проходила
+      // при всех зелёных проверках.
+      const lines = buildActivityLines({ rowCount, supplierName, warnings, advice })
       const title = `Импорт: ${supplierName ?? 'документ'}`
       const hasCompany = !!companyId && companyId > 0
       const call = (await need()).call
