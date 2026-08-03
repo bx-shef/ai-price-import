@@ -94,45 +94,67 @@ describe('evaluateQueueHealth', () => {
   // Отказ Redis раньше отдавался нулями — то есть тотальная авария рисовалась пустой здоровой
   // очередью. Отдельный вид тревоги: без данных любой другой вердикт был бы выдуман.
   describe('очередь не читается', () => {
-    it('сообщаем именно об этом', () => {
-      const alerts = evaluateQueueHealth([q({ unreadable: true })], NOW)
-      expect(alerts.map(a => a.kind)).toEqual(['unreadable'])
-      expect(alerts[0]?.text).toMatch(/не чита/)
-    })
-
-    // Живой прогон 2026-08-02: остановили Redis — в чат пришло ЧЕТЫРЕ сообщения подряд, по одному
-    // на очередь. Одна авария, четыре сообщения; а на подъёме пришло бы ещё четыре «восстановилось».
-    // Это ровно тот шум, против которого написан весь модуль: канал, который повторяется,
-    // перестают читать — и он не сработает в тот единственный раз, ради которого заведён.
-    it('ВСЕ очереди не читаются → одна тревога, а не по штуке на очередь', () => {
-      const alerts = evaluateQueueHealth([
+    it('нечитаемость — ОДИН эпизод на конвейер, при любом числе выпавших очередей', () => {
+      // Живой прогон 2026-08-02: остановили Redis — пришло ЧЕТЫРЕ сообщения подряд, по одному на
+      // очередь, и столько же пришло бы «восстановилось». Очереди не независимы: они в одном Redis.
+      const all = evaluateQueueHealth([
         q({ queue: 'b24-events', unreadable: true }),
         q({ queue: 'file-extract', unreadable: true }),
         q({ queue: 'agent-run', unreadable: true }),
         q({ queue: 'crm-sync', unreadable: true })
       ], NOW)
-      expect(alerts).toHaveLength(1)
-      expect(alerts[0]?.queue).toBe(ALL_QUEUES)
-      // Текст обязан говорить про очереди во множественном числе и звать чинить Redis: имени
-      // конкретной очереди тут нет, и «очередь «*»» читалось бы как поломка самого сообщения.
-      expect(alerts[0]?.text).toContain('очереди не читаются')
-      expect(alerts[0]?.text).toMatch(/Redis/)
+      expect(all).toHaveLength(1)
+      expect(all[0]?.kind).toBe('unreadable')
+      expect(all[0]?.queue).toBe(ALL_QUEUES)
+      expect(all[0]?.text).toContain('очереди не читаются')
+      expect(all[0]?.text).toMatch(/Redis/)
     })
 
-    it('нечитаема ЧАСТЬ очередей → имена называем: причина у них разная', () => {
-      // Схлопывать тут нельзя. «Все не читаются» — это про общий Redis; одна выпавшая очередь при
-      // живых остальных — про неё саму, и её имя единственное, что помогает.
+    it('КЛЮЧ эпизода не меняется от формы аварии — иначе зелёная галочка посреди поломки', () => {
+      // Вторая находка, тяжелее первой. Пока частичная авария давала пер-очередные эпизоды, ключ
+      // зависел от ЧИСЛА выпавших очередей: полная → частичная → снова полная, и на третьем шаге
+      // канал слал «✅ очереди снова читаются» при мёртвом конвейере, а сама тревога глохла в
+      // окне повторного объявления. Ключ обязан быть один и тот же во всех формах.
+      const partial = evaluateQueueHealth([q({ queue: 'a', unreadable: true }), q({ queue: 'b' })], NOW)
+      const total = evaluateQueueHealth([q({ queue: 'a', unreadable: true }), q({ queue: 'b', unreadable: true })], NOW)
+      expect(partial[0]?.queue).toBe(ALL_QUEUES)
+      expect(total[0]?.queue).toBe(ALL_QUEUES)
+    })
+
+    it('частичная авария называет ИМЕНА выпавших очередей в тексте', () => {
+      // Схлопнут только ключ, не смысл: при частичной аварии имя выпавшей очереди — единственное,
+      // что помогает, и оно обязано остаться на виду.
       const alerts = evaluateQueueHealth([
         q({ queue: 'b24-events', unreadable: true }),
         q({ queue: 'crm-sync' })
       ], NOW)
       expect(alerts).toHaveLength(1)
-      expect(alerts[0]?.queue).toBe('b24-events')
       expect(alerts[0]?.text).toContain('«b24-events»')
+      expect(alerts[0]?.text).not.toContain('очереди не читаются —')
+    })
+
+    it('много выпавших очередей — список имён свёрнут, а не растёт без предела', () => {
+      const alerts = evaluateQueueHealth([
+        q({ queue: 'a', unreadable: true }),
+        q({ queue: 'b', unreadable: true }),
+        q({ queue: 'c', unreadable: true }),
+        q({ queue: 'd', unreadable: true }),
+        q({ queue: 'e' })
+      ], NOW)
+      expect(alerts[0]?.text).toContain('и ещё 1')
+    })
+
+    it('ЧИТАЕМЫЕ очереди проверяются как обычно даже при аварии соседней', () => {
+      // Ранний выход похоронил бы настоящий простой на живой очереди. Сегодня недостижимо (счётчики
+      // нечитаемой очереди обнуляются), но «все очереди в одном Redis» — утверждение, а не гарантия.
+      const alerts = evaluateQueueHealth([
+        q({ queue: 'a', unreadable: true }),
+        q({ queue: 'b', oldestPendingAgeMs: STALL_AGE_MS + 60_000, pending: 7 })
+      ], NOW)
+      expect(alerts.map(a => a.kind).sort()).toEqual(['stalled', 'unreadable'])
     })
 
     it('очередей нет вовсе → тревог нет (пустой список не «все нечитаемы»)', () => {
-      // `[].every(...)` истинно — без явной проверки длины пустой замер объявил бы полную аварию.
       expect(evaluateQueueHealth([], NOW)).toEqual([])
     })
 
@@ -379,5 +401,37 @@ describe('queueAlertState', () => {
     recordQueueHealth([{ kind: 'stalled', queue: 'crm-sync', text: 'x' }], NOW)
     queueAlertState().alerts.push({ kind: 'failing', queue: 'подделка', text: 'y' })
     expect(queueAlertState().alerts.map(a => a.queue)).toEqual(['crm-sync'])
+  })
+})
+
+// #алертинг: задержка тревоги на 15 минут (живой прогон 2026-08-02). BullMQ строит ioredis с
+// дефолтными 20 повторами и растущей паузой, а `enableOfflineQueue` держит команды в очереди вместо
+// отказа — одна команда на мёртвом Redis отвергается примерно через 4 минуты. Очереди читались
+// ПОСЛЕДОВАТЕЛЬНО, четыре штуки ⇒ ~16 минут, что и наблюдалось. Всё это время проверка висела,
+// следующие тики отбрасывались, а `/queues` показывал доаварийный вердикт «всё хорошо».
+describe('#алертинг: чтение очередей ограничено по времени', () => {
+  const never = () => new Promise<never>(() => {})
+
+  it('зависшее чтение становится «не читается», а не ждёт милости ioredis', async () => {
+    const out = await readQueueHealth({ pending: never, failed: never }, NOW, 20)
+    expect(out.length).toBeGreaterThan(0)
+    expect(out.every(q => q.unreadable)).toBe(true)
+  })
+
+  it('весь замер укладывается в ОДИН таймаут, а не в сумму по очередям', async () => {
+    // Ровно та арифметика, что дала 15 минут: последовательный обход складывал задержки очередей.
+    const started = Date.now()
+    await readQueueHealth({ pending: never, failed: never }, NOW, 60)
+    const spent = Date.now() - started
+    // Четыре очереди последовательно дали бы ≥240 мс; параллельно — около одного таймаута.
+    expect(spent).toBeLessThan(180)
+  })
+
+  it('живое чтение таймаутом не портится', async () => {
+    const out = await readQueueHealth({
+      pending: async () => [],
+      failed: async () => []
+    }, NOW, 1000)
+    expect(out.every(q => !q.unreadable)).toBe(true)
   })
 })

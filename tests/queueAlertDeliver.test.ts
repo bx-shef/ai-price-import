@@ -5,6 +5,7 @@ import {
   emptyDeliveryState,
   episodeKey,
   markAnnounced,
+  markRecovered,
   planAlertDelivery,
   recoveryMessage,
   type DeliveryState
@@ -16,18 +17,23 @@ import {
   sendTelegramAlert,
   type TelegramConfig
 } from '../server/utils/telegramAlert'
-import { evaluateQueueHealth, type QueueAlert } from '../server/utils/queueAlert'
+import { ALL_QUEUES, evaluateQueueHealth, type QueueAlert } from '../server/utils/queueAlert'
 
 const stalled = (queue = 'crm-sync'): QueueAlert => ({ kind: 'stalled', queue, text: `очередь «${queue}» не разгребается` })
 const failing = (queue = 'crm-sync'): QueueAlert => ({ kind: 'failing', queue, text: `очередь «${queue}»: 20 задач упало` })
 
 const T = 1_000_000_000
 
-/** Один замер: посчитать план и отметить всё отправленным (успешная доставка). */
+/** Один замер: посчитать план и отметить всё отправленным (успешная доставка).
+ *
+ * ⚠ Отмечаются ОБА исхода — и тревога, и восстановление. Помощник обязан вести себя как настоящий
+ * отправитель (`server/plugins/queue.ts`): с тех пор как ключ выбывает из ожидания только по факту
+ * доставки, помощник, отмечающий одни тревоги, моделировал бы вечно падающий Телеграм. */
 function tick(state: DeliveryState, alerts: QueueAlert[], now: number) {
   const plan = planAlertDelivery(alerts, state, now)
   let next = plan.state
   for (const a of plan.opened) next = markAnnounced(next, episodeKey(a), now)
+  for (const key of plan.recovered) next = markRecovered(next, key)
   return { plan, state: next }
 }
 
@@ -260,36 +266,90 @@ describe('sendTelegramAlert', () => {
 // Живой прогон 2026-08-02: Redis остановили — пришло четыре тревоги подряд, по одной на очередь.
 // Тот же счёт получило бы и «восстановилось» на подъёме. Схлопывание сделано в `evaluateQueueHealth`
 // (одна авария — один эпизод), а здесь проверяется, что доставка это видит именно так.
-describe('#алертинг: общая авария Redis — один эпизод от поломки до восстановления', () => {
-  const ALL_DOWN = [
-    { queue: 'b24-events', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 },
-    { queue: 'file-extract', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 },
-    { queue: 'agent-run', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 },
-    { queue: 'crm-sync', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 }
-  ]
-  const HEALTHY = ALL_DOWN.map(q => ({ ...q, unreadable: false }))
+describe('#алертинг: авария конвейера — один эпизод от поломки до восстановления', () => {
+  const down = (...names: string[]) => ['b24-events', 'file-extract', 'agent-run', 'crm-sync']
+    .map(queue => ({ queue, unreadable: names.includes(queue), oldestPendingAgeMs: null, pending: 0, recentFailures: 0 }))
+  const ALL = ['b24-events', 'file-extract', 'agent-run', 'crm-sync']
 
   it('поломка объявляется ОДИН раз, восстановление — тоже один', () => {
-    const down = evaluateQueueHealth(ALL_DOWN, 0)
-    const first = planAlertDelivery(down, emptyDeliveryState(), 0)
+    const first = planAlertDelivery(evaluateQueueHealth(down(...ALL), 0), emptyDeliveryState(), 0)
     expect(first.opened).toHaveLength(1)
 
-    // Доставили — и следующая проверка при той же поломке молчит.
     let state = markAnnounced(first.state, episodeKey(first.opened[0]!), 0)
-    const second = planAlertDelivery(down, state, 5 * 60_000)
+    const second = planAlertDelivery(evaluateQueueHealth(down(...ALL), 5 * 60_000), state, 5 * 60_000)
     expect(second.opened).toEqual([])
 
-    // Redis подняли: ровно одно «восстановилось», а не по штуке на очередь.
     state = second.state
-    const up = planAlertDelivery(evaluateQueueHealth(HEALTHY, 10 * 60_000), state, 10 * 60_000)
+    const up = planAlertDelivery(evaluateQueueHealth(down(), 10 * 60_000), state, 10 * 60_000)
     expect(up.recovered).toHaveLength(1)
     expect(recoveryMessage(up.recovered[0]!)).toContain('очереди снова читаются')
   })
 
-  it('сообщение о восстановлении не показывает служебное имя «*»', () => {
-    // Иначе в чат уходит «очередь «*»» — читается как поломка самого сообщения, а не как новость.
-    const msg = recoveryMessage('unreadable:*')
-    expect(msg).not.toContain('«*»')
-    expect(msg).toContain('очереди снова читаются')
+  it('полная → частичная → полная: ни одной ложной галочки, тревога не глохнет', () => {
+    // Главная находка разбора. Пока ключ зависел от формы аварии, на третьем шаге канал слал
+    // «✅ восстановилось» при мёртвом конвейере, а настоящая тревога тонула в окне повтора.
+    let state = emptyDeliveryState()
+    const p1 = planAlertDelivery(evaluateQueueHealth(down(...ALL), 0), state, 0)
+    expect(p1.opened).toHaveLength(1)
+    state = markAnnounced(p1.state, episodeKey(p1.opened[0]!), 0)
+
+    const p2 = planAlertDelivery(evaluateQueueHealth(down('crm-sync'), 5 * 60_000), state, 5 * 60_000)
+    expect(p2.recovered).toEqual([]) // авария не кончилась, лишь сузилась
+    state = p2.state
+
+    const p3 = planAlertDelivery(evaluateQueueHealth(down(...ALL), 10 * 60_000), state, 10 * 60_000)
+    expect(p3.recovered).toEqual([])
+    state = p3.state
+
+    // И только когда всё прочиталось — ровно одно «восстановилось».
+    const p4 = planAlertDelivery(evaluateQueueHealth(down(), 15 * 60_000), state, 15 * 60_000)
+    expect(p4.recovered).toHaveLength(1)
+  })
+
+  it('на нечитаемом конвейере простой соседней очереди НЕ объявляется починенным', () => {
+    // Разбор: crm-sync встал, при деплое на полминуты перезапустили Redis — и канал прислал
+    // «✅ простой закончился», после чего настоящий простой молчал час. Мы ничего не знаем о
+    // конвейере, которого не прочитали, и «эпизод пропал из замера» больше не значит «починился».
+    const stalled = [{ queue: 'crm-sync', oldestPendingAgeMs: 40 * 60_000, pending: 7, recentFailures: 0 }]
+    let state = emptyDeliveryState()
+    const p1 = planAlertDelivery(evaluateQueueHealth(stalled, 0), state, 0)
+    expect(p1.opened).toHaveLength(1)
+    state = markAnnounced(p1.state, episodeKey(p1.opened[0]!), 0)
+
+    const blind = [{ queue: 'crm-sync', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 }]
+    const p2 = planAlertDelivery(evaluateQueueHealth(blind, 5 * 60_000), state, 5 * 60_000)
+    expect(p2.recovered).toEqual([])
+    // Простой остаётся открытым: вернулась читаемость — заново его не объявляем, он не прерывался.
+    const p3 = planAlertDelivery(evaluateQueueHealth(stalled, 10 * 60_000), p2.state, 10 * 60_000)
+    expect(p3.opened).toEqual([])
+  })
+
+  it('«восстановилось» выбывает из ожидания только по факту доставки', () => {
+    // Зеркало markAnnounced. Без этого один отказ Телеграма терял бы ✅ навсегда: оператор видит
+    // «сломалось» и не видит закрытия — состояние, неотличимое от продолжающейся аварии.
+    let state = emptyDeliveryState()
+    const p1 = planAlertDelivery(evaluateQueueHealth(down(...ALL), 0), state, 0)
+    state = markAnnounced(p1.state, episodeKey(p1.opened[0]!), 0)
+
+    const p2 = planAlertDelivery(evaluateQueueHealth(down(), 10 * 60_000), state, 10 * 60_000)
+    expect(p2.recovered).toHaveLength(1)
+    // Отправка не удалась ⇒ markRecovered НЕ зовём — ключ всё ещё ждёт закрытия.
+    expect(p2.state.awaitingRecovery).toContain(p2.recovered[0]!)
+    const p3 = planAlertDelivery(evaluateQueueHealth(down(), 15 * 60_000), p2.state, 15 * 60_000)
+    expect(p3.recovered).toHaveLength(1)
+    // Доставили — больше не повторяем.
+    const after = markRecovered(p3.state, p3.recovered[0]!)
+    expect(planAlertDelivery(evaluateQueueHealth(down(), 20 * 60_000), after, 20 * 60_000).recovered).toEqual([])
+  })
+
+  it('текст восстановления согласован по-русски и не печатает служебное имя', () => {
+    // Было «очереди снова читаются — нечитаемая очередь прекратились»: и число не согласовано, и
+    // очередь не может «прекратиться» — прекращается состояние. В три часа ночи это читается как
+    // сломанный шаблон, то есть ровно как то, чего канал должен избегать сильнее всего.
+    const all = recoveryMessage(`unreadable:${ALL_QUEUES}`)
+    expect(all).toBe('✅ AI-импорт прайсов: очереди снова читаются.')
+    expect(all).not.toContain('«*»')
+    expect(recoveryMessage('stalled:crm-sync')).toBe('✅ AI-импорт прайсов: очередь «crm-sync» — простой закончился.')
+    expect(recoveryMessage('failing:crm-sync')).toBe('✅ AI-импорт прайсов: очередь «crm-sync» — падения задач прекратились.')
   })
 })

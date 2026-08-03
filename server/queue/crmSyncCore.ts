@@ -313,11 +313,6 @@ export async function runCrmSync(
     sort += 10
   }
 
-  // Совет «что делать с пропущенными» — РОВНО ОДИН раз на документ, и только при ЧАСТИЧНОМ пропуске.
-  // Пропущено всё ⇒ ниже сработает жёсткая ошибка, и совет несёт её текст; продублировать его здесь
-  // значило бы вернуть ту самую простыню повторов, ради которой совет и убрали из построчных строк.
-  if (skippedLines > 0 && rows.length > 0) warnings.push(skippedLinesAdvice())
-
   // Idempotency: the created entity carries a job-id MARKER (originId/originatorId for deal,
   // xmlId for invoice/smart-processes — originMarker.ts). On retry we SEARCH Bitrix24 for that
   // marker BEFORE creating, so the source of truth is the portal itself (no local DB checkpoint).
@@ -359,6 +354,20 @@ export async function runCrmSync(
     // на самом провальном классе документов значит занижать его именно там, где он важен.
     return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: !companyId, warnings, errors }
   }
+
+  // Совет «что делать с пропущенными» — РОВНО ОДИН раз на документ и только когда импорт всё-таки
+  // состоялся. Стоит ЗДЕСЬ, после жёсткой ошибки, по двум причинам:
+  //
+  //  • пропущено всё и записи нет ⇒ совет уже несёт текст отказа выше; продублировать его значило бы
+  //    вернуть ту самую простыню повторов, ради которой его убрали из построчных строк;
+  //  • но повтор задания, чья первая попытка создала запись, а к ретраю каталог изменился так, что
+  //    строки перестали подбираться, до отказа НЕ доходит (маркер найден) — и на прежнем месте
+  //    (`rows.length > 0`) совет там не появлялся вовсе. Разбор нашёл эту дыру.
+  //
+  // ⚠ `unshift`, а не `push`: потребители режут список предупреждений С НАЧАЛА — дело в таймлайне по
+  // шести, чат по десяти. Совет в хвосте отрезался бы ПЕРВЫМ, причём тем вернее, чем больше строк
+  // пропущено, то есть ровно там, где он нужнее всего.
+  if (skippedLines > 0) warnings.unshift(skippedLinesAdvice())
 
   const entityTypeId = target.entityTypeId
   let entityId: number
