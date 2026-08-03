@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { clearOpened, getRatingState, listRatingStatus, markOpened, markPrompted, markReviewed } from '../server/utils/appRatingStore'
+import { clearOpened, getInstalledAt, getRatingState, listRatingStatus, markOpened, markPrompted, markReviewed } from '../server/utils/appRatingStore'
 
 function fakeQuery(rows: Array<Record<string, unknown>> = []) {
   const calls: Array<{ sql: string, params?: unknown[] }> = []
@@ -72,6 +72,33 @@ describe('writes are member-scoped upserts', () => {
     await clearOpened('m1', q)
     expect(calls[0]!.sql).toContain('opened_at = NULL')
     expect(calls[0]!.sql).toContain('reviewed = false')
+    expect(calls[0]!.params).toEqual(['m1'])
+  })
+})
+
+describe('#380: возраст установки читается из portal_tokens', () => {
+  it('принимает и объект даты, и строку — pg отдаёт по-разному', async () => {
+    // Драйвер отдаёт TIMESTAMPTZ объектом Date, но та же колонка приезжает строкой из ручных
+    // прогонов и из фейков в тестах. Разбор обязан пережить оба.
+    const d = new Date('2026-07-01T10:00:00Z')
+    expect((await getInstalledAt('m', fakeQuery([{ created_at: d }]).q))?.getTime()).toBe(d.getTime())
+    expect((await getInstalledAt('m', fakeQuery([{ created_at: '2026-07-01T10:00:00Z' }]).q))?.getTime()).toBe(d.getTime())
+  })
+
+  it('нет строки, пусто или мусор → null, а не «сегодня»', () => {
+    // ⚠ Это и есть fail-closed: null читается политикой как «рано». Любое «додумывание» даты
+    // означало бы показ попапа порталу, чей возраст мы не знаем.
+    return Promise.all([
+      expect(getInstalledAt('m', fakeQuery([]).q)).resolves.toBeNull(),
+      expect(getInstalledAt('m', fakeQuery([{ created_at: null }]).q)).resolves.toBeNull(),
+      expect(getInstalledAt('m', fakeQuery([{ created_at: 'не дата' }]).q)).resolves.toBeNull()
+    ])
+  })
+
+  it('спрашивает именно свой портал и именно ту колонку', async () => {
+    const { q, calls } = fakeQuery([{ created_at: new Date() }])
+    await getInstalledAt('m1', q)
+    expect(calls[0]!.sql).toMatch(/created_at\s+FROM\s+portal_tokens/i)
     expect(calls[0]!.params).toEqual(['m1'])
   })
 })

@@ -7,6 +7,23 @@ import type { RatingStatusRow } from './appRatingStatus'
 // portal with no row yet is handled transparently.
 
 /** Read the rating state for a portal, or null when there is no row yet. */
+/**
+ * When this portal installed the app — `portal_tokens.created_at` (#380).
+ *
+ * ⚠ The UPSERT of tokens deliberately does NOT touch `created_at` (only domain, tokens, expiry and
+ * `updated_at` are in its `DO UPDATE SET`), so the value survives token refreshes and repeated
+ * install events. Uninstall deletes the row, so a re-installation legitimately restarts the clock.
+ *
+ * `null` = no row (install race, purge) ⇒ the caller must read it as «too early», not «go ahead».
+ */
+export async function getInstalledAt(memberId: string, query: QueryFn): Promise<Date | null> {
+  const { rows } = await query('SELECT created_at FROM portal_tokens WHERE member_id=$1', [memberId])
+  const v = rows[0]?.created_at
+  if (!v) return null
+  const d = v instanceof Date ? v : new Date(String(v))
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
 export async function getRatingState(memberId: string, query: QueryFn): Promise<AppRatingState | null> {
   const { rows } = await query(
     'SELECT prompted_at, opened_at, reviewed FROM portal_app_rating WHERE member_id=$1',

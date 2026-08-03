@@ -10,6 +10,9 @@ function deps() {
   return { markReviewed: vi.fn(async () => {}), reset: vi.fn(async () => {}), unreview: vi.fn(async () => {}) }
 }
 
+/** Портал установлен давно — возраст установки (#380) не должен влиять на этот разбор. */
+const OLD_INSTALL = new Date('2020-01-01T00:00:00Z')
+
 describe('handleAppRatingOp', () => {
   it('rejects a non-hex memberId (before any write)', async () => {
     const d = deps()
@@ -92,24 +95,24 @@ describe('что на самом деле даёт снятие отметки (
 
   it('пока срок не вышел — молчим', () => {
     const justPrompted = { reviewed: false, promptedAt: new Date(now.getTime() - day), openedAt: null }
-    expect(shouldPrompt(justPrompted, now)).toBe(false)
+    expect(shouldPrompt(justPrompted, now, { installedAt: OLD_INSTALL })).toBe(false)
   })
 
   it('срок вышел — показываем снова', () => {
     const longAgo = { reviewed: false, promptedAt: new Date(now.getTime() - 30 * day), openedAt: null }
-    expect(shouldPrompt(longAgo, now)).toBe(true)
+    expect(shouldPrompt(longAgo, now, { installedAt: OLD_INSTALL })).toBe(true)
   })
 
   it('пока отметка стоит — молчим при любом сроке', () => {
     const reviewed = { reviewed: true, promptedAt: new Date(now.getTime() - 30 * day), openedAt: null }
-    expect(shouldPrompt(reviewed, now)).toBe(false)
+    expect(shouldPrompt(reviewed, now, { installedAt: OLD_INSTALL })).toBe(false)
   })
 
   it('снятия мало: строка «открывал Маркет» молчит и через месяц — нужен «Сбросить»', () => {
     const afterUndo = { reviewed: false, promptedAt: new Date(now.getTime() - 30 * day), openedAt: new Date(now.getTime() - 30 * day) }
-    expect(shouldPrompt(afterUndo, now)).toBe(false)
+    expect(shouldPrompt(afterUndo, now, { installedAt: OLD_INSTALL })).toBe(false)
     // А вот «Сбросить» (чистит обе метки) действительно возвращает попап.
-    expect(shouldPrompt({ reviewed: false, promptedAt: null, openedAt: null }, now)).toBe(true)
+    expect(shouldPrompt({ reviewed: false, promptedAt: null, openedAt: null }, now, { installedAt: OLD_INSTALL })).toBe(true)
   })
 })
 
