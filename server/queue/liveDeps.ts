@@ -44,6 +44,8 @@ import type { AgentRunDeps, EventHandlerDeps, FileExtractDeps, HandlerDeps } fro
 import { eventJobToSaveInput } from './topology'
 import type { CrmSyncDeps } from './crmSyncCore'
 import type { PortalMapping } from '~/types/mapping'
+import { portalAppUrl } from '~/config/b24'
+import { LANDING_MARKET_CODE } from '~/utils/landing'
 
 // Live wiring: bind the pure handlers' DI to real stores / portal REST / extractor / queues.
 // The chat extractor transport, file-extract runners and the OAuth refresh HTTP are INJECTED
@@ -298,7 +300,7 @@ export async function notifyImportFailure(
       errorChatId,
       alsoErrorChat: opts.alsoErrorChat !== false,
       jobId,
-      appUrl: appImportUrl()
+      appUrl: appImportUrl((await getToken(memberId, infra.query))?.domain)
     })
     for (const m of planned) {
       try {
@@ -329,10 +331,10 @@ export async function notifyImportFailure(
   }
 }
 
-/** Absolute link back to the app, when the deployment knows its own address. */
-function appImportUrl(): string | null {
-  const base = String(process.env.NUXT_PUBLIC_SITE_URL ?? '').trim().replace(/\/+$/, '')
-  return /^https:\/\//i.test(base) ? `${base}/app` : null
+/** Absolute link back to the app INSIDE the portal (#385). Built from the portal's own domain —
+ *  our host cannot open the app the way the portal does (no frame, no frame token). */
+function appImportUrl(portalDomain?: string | null): string | null {
+  return portalAppUrl(portalDomain, LANDING_MARKET_CODE)
 }
 
 export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {

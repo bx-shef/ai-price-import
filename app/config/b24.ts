@@ -55,6 +55,28 @@ export function marketDetailPath(code: string): string | null {
   return c ? `/marketplace/detail/${c}/` : null
 }
 
+/**
+ * Absolute link that opens THIS app inside the portal (#385).
+ *
+ * ⚠ Not to be confused with `marketDetailPath` above: `/marketplace/detail/<code>/` is the Market
+ * LISTING (where a rating is left), `/marketplace/view/<code>/` is the app ITSELF. The failure
+ * message in chat used to point at `NUXT_PUBLIC_SITE_URL + '/app'`, i.e. at our own host — opened
+ * outside the portal there is no frame, no frame token and no member_id, so the promised way back
+ * was a dead end. The address must be built from the PORTAL's domain, never from ours.
+ *
+ * The symbolic-code form is used rather than the numeric `/marketplace/app/<ID>/`: `ID` is local to
+ * each portal (it comes from `app.info`, which additionally only answers in application context),
+ * while the code is the same everywhere and needs no REST call.
+ *
+ * Returns null when the portal host or the code is unknown — the caller then sends the text without
+ * a link. A broken link is worse than no link: it promises a way back and leads nowhere.
+ */
+export function portalAppUrl(portalDomain: string | undefined | null, code: string): string | null {
+  const host = String(portalDomain ?? '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim().toLowerCase()
+  const c = code.trim()
+  return host && c ? `https://${host}/marketplace/view/${c}/` : null
+}
+
 /** Bitrix24 entityTypeId constants used as import targets.
  *  quote (7) is intentionally excluded — no filterable external-marker field, and an incoming
  *  counterparty document has nothing to import into an outgoing offer (see #135).
