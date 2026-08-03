@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ON_MISSING_ITEMS, ON_MISSING_LABEL } from '../app/config/onMissing'
 import { allLinesSkippedError, lineSkippedWarning, MAX_OUTCOME_TEXT, skippedLinesAdvice } from '../app/utils/importOutcome'
-import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
+import { MAX_CHAT_REASON, buildSuccessMessage } from '../server/utils/chatNotify'
 
 describe('#373: текст исхода «ни одна позиция не перенесена»', () => {
   it('доезжает до чата целиком — это контракт, а не стиль', () => {
@@ -91,5 +91,34 @@ describe('#373: список вариантов настройки', () => {
     for (const item of ON_MISSING_ITEMS) {
       expect(item.label).toBe(ON_MISSING_LABEL[item.value])
     }
+  })
+})
+
+describe('#388: совет — подсказка, а не проблема', () => {
+  it('не попадает в список предупреждений и не считается в нём', () => {
+    // Симптом: документ с тремя пропущенными строками показывал «Проблемы (4)» — совет лежал в том
+    // же массиве и раздувал счётчик, а человеку подавался как четвёртая поломка документа.
+    const warnings = [1, 2, 3].map(i => lineSkippedWarning(`Товар ${i}`))
+    const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 5, created: true, rowCount: 3, warnings, advice: skippedLinesAdvice() })
+    expect(msg).toContain('Предупреждения (3):')
+    expect(msg).not.toContain('Предупреждения (4):')
+    expect(msg).toContain(skippedLinesAdvice())
+  })
+
+  it('переживает обрезку списка — от неё он и переехал', () => {
+    // Прежде совет стоял ПЕРВЫМ в списке именно потому, что потребители режут его с начала (чат по
+    // десяти, дело по шести): в хвосте он терялся тем вернее, чем больше строк пропущено, то есть
+    // ровно там, где нужнее. Отдельное поле снимает вопрос — проверяем на 12 строках.
+    const warnings = Array.from({ length: 12 }, (_, i) => lineSkippedWarning(`Товар ${i + 1}`))
+    const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 5, created: true, rowCount: 12, warnings, advice: skippedLinesAdvice() })
+    expect(msg).toContain('Предупреждения (12):')
+    expect(msg).toContain(skippedLinesAdvice())
+    // И ровно один раз: дубль вернул бы простыню повторов, ради которой совет и убирали из строк.
+    expect(msg.split(skippedLinesAdvice()).length - 1).toBe(1)
+  })
+
+  it('без пропущенных строк совета нет вовсе', () => {
+    const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 5, created: true, rowCount: 2, warnings: [] })
+    expect(msg).not.toMatch(/настройк/i)
   })
 })

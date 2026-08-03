@@ -60,6 +60,11 @@ export interface CrmSyncDeps {
     created: boolean
     rowCount: number
     warnings: string[]
+    /** Совет «что делать с пропущенными строками» — ОТДЕЛЬНО от `warnings` (#388). Это подсказка,
+     *  а не дефект документа: в общем списке она и раздувала счётчик («Проблемы (4)» при трёх
+     *  пропущенных строках), и подавалась человеку как ещё одна поломка. Печатается отдельной
+     *  строкой ПОСЛЕ списка и вне его обрезки. */
+    advice?: string
   }) => Promise<void>
   /** Optional: record a configurable activity («настраиваемое дело») on the created entity's
    *  timeline. Best-effort — a failure must not fail the import. */
@@ -74,6 +79,8 @@ export interface CrmSyncDeps {
     /** Import problems (товар не найден / единица / НДС уточнён / итог не сошёлся …) to record on the
      *  timeline дело so the operator sees what needed attention — not just the success counts. */
     warnings: string[]
+    /** См. `notifySuccess.advice` (#388): подсказка, не проблема — отдельной строкой и вне обрезки. */
+    advice?: string
   }) => Promise<void>
   /** Optional: atomically CLAIM the one-time finalize (success chat + timeline дело) for this
    *  job (#164). Returns true for the FIRST run to claim, false for any later resume/redelivery.
@@ -95,6 +102,11 @@ export interface CrmSyncResult {
    * dashboard counter so the operator sees how often supplier resolution fails. */
   unmatched: boolean
   warnings: string[]
+  /** Совет «что делать с пропущенными строками» — подсказка, НЕ проблема (#388). Отдельно от
+   *  `warnings`: там он раздувал счётчик («Проблемы (4)» на трёх пропущенных строках) и подавался
+   *  человеку как ещё одна поломка документа. Потребители печатают его отдельной строкой после
+   *  списка и вне его обрезки. */
+  advice?: string
   errors: string[]
 }
 
@@ -364,10 +376,12 @@ export async function runCrmSync(
   //    строки перестали подбираться, до отказа НЕ доходит (маркер найден) — и на прежнем месте
   //    (`rows.length > 0`) совет там не появлялся вовсе. Разбор нашёл эту дыру.
   //
-  // ⚠ `unshift`, а не `push`: потребители режут список предупреждений С НАЧАЛА — дело в таймлайне по
-  // шести, чат по десяти. Совет в хвосте отрезался бы ПЕРВЫМ, причём тем вернее, чем больше строк
-  // пропущено, то есть ровно там, где он нужнее всего.
-  if (skippedLines > 0) warnings.unshift(skippedLinesAdvice())
+  // ⚠ Совет НЕ кладётся в `warnings` (#388). Прежде он стоял там первым — потребители режут список
+  // с начала (дело по шести, чат по десяти), и в хвосте он отрезался бы тем вернее, чем больше строк
+  // пропущено, то есть ровно там, где нужнее. Но место в списке проблем стоило дороже: счётчик
+  // печатал «Проблемы (4)» на трёх пропущенных строках, а сама подсказка читалась как четвёртая
+  // поломка документа. Отдельное поле снимает и обрезку, и счётчик разом.
+  const advice = skippedLines > 0 ? skippedLinesAdvice() : undefined
 
   const entityTypeId = target.entityTypeId
   let entityId: number
@@ -437,7 +451,8 @@ export async function runCrmSync(
         entityId,
         created,
         rowCount: rows.length,
-        warnings
+        warnings,
+        advice
       })
     } catch {
       warnings.push('Документ внесён, но сообщение в чат отправить не удалось. Проверьте, что чат уведомлений выбран в настройках и приложение имеет к нему доступ.')
@@ -451,13 +466,13 @@ export async function runCrmSync(
   // no-op only on the dev webhook path, never in prod.
   if (deps.writeActivity && finalize) {
     try {
-      await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings })
+      await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings, advice })
     } catch {
       warnings.push('Документ внесён, но запись в таймлайне создать не удалось. На сам импорт это не влияет — товары в CRM записаны.')
     }
   }
 
-  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId, unmatched: !companyId, warnings, errors }
+  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId, unmatched: !companyId, warnings, errors, advice }
 }
 
 function clampNonNeg(n: number, fallback = 0): number {

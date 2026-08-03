@@ -36,6 +36,9 @@ export interface JobResultView {
   /** Product lines actually written. */
   lines?: number
   warnings: string[]
+  /** Подсказка «что делать с пропущенными строками» — НЕ проблема (#388): показывается отдельно,
+   *  не входит в счётчик и не режется вместе со списком. */
+  advice?: string
   errors: string[]
   /** Plain-text message when the result column holds a bare error string, not JSON. */
   message?: string
@@ -69,6 +72,7 @@ export function parseJobResult(result: string): JobResultView {
       ...(typeof o.supplier === 'string' && o.supplier.trim() ? { supplier: o.supplier.trim() } : {}),
       ...(typeof o.lines === 'number' && o.lines >= 0 ? { lines: o.lines } : {}),
       warnings: Array.isArray(o.warnings) ? o.warnings.map(String) : [],
+      ...(typeof o.advice === 'string' && o.advice.trim() ? { advice: o.advice.trim() } : {}),
       errors: Array.isArray(o.errors) ? o.errors.map(String) : []
     }
   } catch {

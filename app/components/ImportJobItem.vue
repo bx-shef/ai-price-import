@@ -239,6 +239,14 @@ const stepDot: Record<string, string> = {
           class="leading-relaxed text-(--ui-color-base-2)"
         >{{ w }}</span>
       </div>
+      <!-- Совет — ОТДЕЛЬНО от списка проблем (#388): это подсказка, что делать дальше, а не дефект
+           документа. В общем списке он раздувал счётчик и читался как ещё одна поломка. -->
+      <p
+        v-if="result.advice"
+        class="mt-1.5 border-l-[3px] border-(--ui-color-accent-main-primary) pl-2.5 text-(--ui-color-base-2)"
+      >
+        {{ result.advice }}
+      </p>
     </div>
 
     <!-- ERROR: the failure reason. -->
@@ -264,6 +272,13 @@ const stepDot: Record<string, string> = {
           class="text-(--ui-color-base-3)"
         >…и ещё {{ result.warnings.length - MAX_ERROR_WARNINGS }}</span>
       </div>
+      <!-- И здесь тоже вне обрезки: на отказе «ни одна позиция не найдена» совет нужнее всего. -->
+      <p
+        v-if="result.advice"
+        class="mt-1.5 border-l-[3px] border-(--ui-color-accent-main-primary) pl-2.5 text-xs leading-relaxed text-(--ui-color-base-2)"
+      >
+        {{ result.advice }}
+      </p>
     </div>
 
     <!-- Отзыв 👍/👎 — только по завершённым, если канал включён на сервере. На строке с истёкшим
