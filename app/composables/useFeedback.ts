@@ -20,7 +20,7 @@ const enabled = ref<boolean | null>(null) // null = not probed yet; shared acros
 let probing: Promise<void> | null = null
 
 export function useFeedback() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
 
   /** Probe whether the channel is on (once). Failure → treated as OFF (widget stays hidden). */
   async function ensureEnabled(): Promise<void> {
@@ -54,7 +54,7 @@ export function useFeedback() {
     file?: { name: string, base64: string } | null
   ): Promise<{ ok: boolean, notice?: string }> {
     await init()
-    const headers = buildFrameHeaders(auth())
+    const headers = buildFrameHeaders(await ensureAuth())
     if (!headers) return { ok: false } // outside a portal — no frame token
     const r = await $fetch<{ ok?: boolean, notice?: string }>('/api/feedback', {
       method: 'POST',

@@ -13,7 +13,7 @@ let loaded = false
 let inFlight: Promise<void> | null = null
 
 export function useCrmMode() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
 
   /** Fetch once and cache. Idempotent — concurrent callers share one request. Inert outside a portal
    *  (no frame auth → keep the default true). */
@@ -21,7 +21,7 @@ export function useCrmMode() {
     if (loaded || inFlight) return inFlight ?? undefined
     inFlight = (async () => {
       await init()
-      const headers = buildFrameHeaders(auth())
+      const headers = buildFrameHeaders(await ensureAuth())
       if (!headers) return // standalone / no auth → keep default (leads shown)
       try {
         const res = await $fetch<{ leadsEnabled?: boolean }>('/api/crm-mode', { headers })

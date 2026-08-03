@@ -7,14 +7,14 @@ import type { CrmStageOption } from '~/utils/stagePicker'
 // Inert outside a portal → empty list. The row type `CrmStageOption` lives in ~/utils/stagePicker.
 
 export function useCrmStages() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
 
   /** Fetch stages for an entity type + optional category. Non-positive/absent entity or no frame
    *  auth → []. categoryId is omitted from the query when null (lead / deal default funnel). */
   async function load(entityTypeId: number | null | undefined, categoryId: number | null | undefined): Promise<CrmStageOption[]> {
     if (!entityTypeId || !Number.isInteger(entityTypeId) || entityTypeId <= 0) return []
     await init()
-    const headers = buildFrameHeaders(auth())
+    const headers = buildFrameHeaders(await ensureAuth())
     if (!headers) return []
     try {
       const res = await $fetch<{ stages?: CrmStageOption[] }>('/api/crm-stages', {

@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { useB24 } from './useB24'
-import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
+import { buildFrameHeaders, fetchErrorMessage, frameAuthMessage } from '~/utils/frameHeaders'
 import { defaultMapping } from '~/utils/portalSettings'
 import type { PortalMapping } from '~/types/mapping'
 
@@ -11,7 +11,7 @@ import type { PortalMapping } from '~/types/mapping'
 // over the newer edit.
 
 export function useSettings() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth, inFrame } = useB24()
   const mapping = ref<PortalMapping>(defaultMapping())
   const loading = ref(false)
   const saving = ref(false)
@@ -34,13 +34,13 @@ export function useSettings() {
 
   async function headers(): Promise<Record<string, string> | null> {
     await init()
-    return buildFrameHeaders(auth())
+    return buildFrameHeaders(await ensureAuth())
   }
 
   async function load(): Promise<void> {
     const h = await headers()
     if (!h) {
-      error.value = 'Настройки доступны только внутри портала Bitrix24'
+      error.value = frameAuthMessage(inFrame(), 'Настройки доступны')
       return
     }
     loading.value = true
@@ -63,7 +63,7 @@ export function useSettings() {
   async function save(): Promise<void> {
     const h = await headers()
     if (!h) {
-      error.value = 'Настройки доступны только внутри портала Bitrix24'
+      error.value = frameAuthMessage(inFrame(), 'Настройки доступны')
       return
     }
     if (!isAdmin.value) {

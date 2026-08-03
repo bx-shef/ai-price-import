@@ -13,7 +13,7 @@ import { LANDING_MARKET_CODE } from '~/utils/landing'
 // Inert outside a portal (no frame auth) and when no Market code is configured (b24MarketCode empty).
 
 export function useAppRating() {
-  const { init, get, auth } = useB24()
+  const { init, get, ensureAuth } = useB24()
   // Default to the app's real Market slug (single source of truth in landing.ts); an env override
   // (NUXT_PUBLIC_B24_MARKET_CODE) can point at a different listing if the app is ever re-published.
   const marketCode = String(useRuntimeConfig().public.b24MarketCode || LANDING_MARKET_CODE)
@@ -29,7 +29,7 @@ export function useAppRating() {
     if (checked || !path) return
     checked = true
     await init()
-    const headers = buildFrameHeaders(auth())
+    const headers = buildFrameHeaders(await ensureAuth())
     if (!headers) return // outside a portal — never nag
     try {
       const r = await $fetch<{ show?: boolean }>('/api/app-rating', { headers })
@@ -41,7 +41,7 @@ export function useAppRating() {
 
   /** Fire-and-forget lifecycle write (must never break the UX). */
   async function report(action: 'prompted' | 'opened'): Promise<void> {
-    const headers = buildFrameHeaders(auth())
+    const headers = buildFrameHeaders(await ensureAuth())
     if (!headers) return
     try {
       await $fetch('/api/app-rating', { method: 'POST', headers, body: { action } })

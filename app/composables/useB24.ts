@@ -35,6 +35,41 @@ export function useB24() {
     return initPromise
   }
 
+  /**
+   * One refresh for everybody, and never an unbounded wait.
+   *
+   * ⚠ Two measured defects, both introduced by the naive version.
+   *
+   * 1. `refreshAuth()` sends a postMessage to the parent and — unlike the SDK's own HTTP path —
+   *    arms NO timeout for it (`send()` only does that for `isSafely` calls). If the parent never
+   *    answers (the portal went to a login page, the tab is dead, the origin was rejected) the
+   *    promise simply never settles: not a rejection, silence. Measured: `ensureAuth()` did not
+   *    finish at all, where the old code returned null synchronously. Composables that guard with
+   *    an `inFlight` promise then keep it forever and hand the same pending promise to every future
+   *    caller — pickers spin for good, and an upload batch hangs under «не закрывайте страницу»
+   *    with no error at all. That is worse than the wrong message this issue set out to fix.
+   *
+   * 2. Thirteen composables mount together on `/app`, so an expired hour produced thirteen
+   *    simultaneous refreshes. The SDK's own HTTP layer deliberately coalesces in-flight refreshes;
+   *    the frame layer does not. Measured with a realistic round-trip: 13 calls. (A synchronous
+   *    fake shows 1 — a comfortable lie worth knowing about.)
+   */
+  const REFRESH_TIMEOUT_MS = 10_000
+  let refreshPromise: Promise<void> | null = null
+
+  function refreshOnce(f: B24Frame): Promise<void> {
+    if (!refreshPromise) {
+      refreshPromise = Promise.race([
+        f.auth.refreshAuth().then(() => undefined),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('refreshAuth timed out')), REFRESH_TIMEOUT_MS))
+      ]).finally(() => {
+        refreshPromise = null
+      })
+    }
+    return refreshPromise
+  }
+
   function get(): B24Frame | null {
     return frame
   }
@@ -44,6 +79,42 @@ export function useB24() {
     const a = frame?.auth.getAuthData()
     if (!a || !a.access_token) return null
     return { accessToken: a.access_token, domain: a.domain }
+  }
+
+  /**
+   * Frame auth, refreshing it once when it has expired (#345).
+   *
+   * Frame authorisation lives about an hour. When it runs out the SDK's `getAuthData()` returns
+   * `false` — not a stale token — so `auth()` above yields null, every frame-token path takes its
+   * «not in a portal» branch, and a person looking at the app INSIDE the portal is told the app is
+   * not open in Bitrix24. The information to tell the two apart was there all along (`inFrame()` is
+   * still true); it simply was not used, and each caller had its own copy of the wrong message.
+   *
+   * `refreshAuth()` is exactly the SDK call for this (wrapper over `BX24.refreshAuth`). Fixing it
+   * here fixes uploads, settings, metrics, feedback, rating and the pickers at once — six
+   * half-fixes were the alternative.
+   *
+   * Still null after the refresh ⇒ the PORTAL's own session ended (the person logged out, the
+   * portal reloaded). That is a different situation and gets a different message; see
+   * `frameAuthMessage`.
+   */
+  async function ensureAuth(): Promise<{ accessToken: string, domain: string } | null> {
+    const current = auth()
+    if (current) return current
+    // Own `init()`, not «the caller surely did it»: `useAppRating.report()` already relies on an
+    // earlier `check()` having run, so a first call in the wrong order would silently get null
+    // without a single attempt.
+    const f = await init()
+    if (!inFrame() || !f) return null
+    try {
+      await refreshOnce(f)
+    } catch (e) {
+      // Nothing here is actionable for the user — but three different causes (portal refused,
+      // parent never answered, SDK not ready) otherwise look identical from the browser, and there
+      // is no live debugging inside a portal frame. The token itself is never logged.
+      console.warn('[b24] frame auth refresh failed:', e instanceof Error ? e.message : e)
+    }
+    return auth()
   }
 
   /** The `place` this frame was opened with (from `openSliderAppPage({ place })` → PLACEMENT_OPTIONS).
@@ -100,5 +171,5 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
+  return { init, get, auth, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
 }

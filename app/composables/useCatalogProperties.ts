@@ -19,11 +19,11 @@ export interface PropertyOption {
 }
 
 export function useCatalogProperties() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
 
   const fetcher: RemoteSearchFetcher<PropertyOption> = async (query, _offset, signal) => {
     await init()
-    const headers = buildFrameHeaders(auth())
+    const headers = buildFrameHeaders(await ensureAuth())
     if (!headers) return { items: [], hasMore: false }
     const res = await $fetch<{ items?: PropertyOption[], hasMore?: boolean }>('/api/catalog-properties', {
       headers,

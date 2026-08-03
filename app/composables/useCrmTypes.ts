@@ -16,7 +16,7 @@ let loaded = false
 let inFlight: Promise<void> | null = null
 
 export function useCrmTypes() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
 
   /** Fetch and cache on SUCCESS. Idempotent — concurrent callers share one in-flight request; a FAILED
    *  load isn't cached, so the next mounted picker retries (best-effort). Inert outside a portal. */
@@ -24,7 +24,7 @@ export function useCrmTypes() {
     if (loaded || inFlight) return inFlight ?? undefined
     inFlight = (async () => {
       await init()
-      const headers = buildFrameHeaders(auth())
+      const headers = buildFrameHeaders(await ensureAuth())
       if (!headers) return // standalone / no auth → keep [] (no SPA options)
       try {
         const res = await $fetch<{ types?: SmartProcessOption[], smartInvoice?: boolean }>('/api/crm-types', { headers })

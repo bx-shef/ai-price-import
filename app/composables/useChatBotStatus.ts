@@ -18,14 +18,14 @@ let loaded = false
 let inFlight: Promise<void> | null = null
 
 export function useChatBotStatus() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
 
   /** Fetch once and cache. Concurrent callers share one request. Inert outside a portal. */
   async function load(): Promise<void> {
     if (loaded || inFlight) return inFlight ?? undefined
     inFlight = (async () => {
       await init()
-      const headers = buildFrameHeaders(auth())
+      const headers = buildFrameHeaders(await ensureAuth())
       if (!headers) return // standalone → keep the default, no banner
       try {
         const res = await $fetch<{ ready?: boolean }>('/api/chat-bot-status', { headers })

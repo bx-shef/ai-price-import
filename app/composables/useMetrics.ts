@@ -10,7 +10,7 @@ import type { MoneyBlocker, Savings } from '~/utils/savings'
 export interface MetricsView { counters: Record<string, number>, savings: Savings, moneyBlocker?: MoneyBlocker | null }
 
 export function useMetrics() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth } = useB24()
   const counters = ref<Record<string, number>>({})
   const savings = ref<Savings | null>(null)
   // Why there is no money tile (server-decided) — so the dashboard can say it instead of
@@ -22,7 +22,7 @@ export function useMetrics() {
 
   async function headers(): Promise<Record<string, string> | null> {
     await init()
-    return buildFrameHeaders(auth())
+    return buildFrameHeaders(await ensureAuth())
   }
 
   async function load(): Promise<void> {

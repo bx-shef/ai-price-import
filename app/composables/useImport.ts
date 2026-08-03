@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { useB24 } from './useB24'
-import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
+import { buildFrameHeaders, fetchErrorMessage, frameAuthMessage } from '~/utils/frameHeaders'
 import { jobStatusMeta, type JobStatus } from '~/utils/jobStatus'
 import { nextPollDelay } from '~/utils/pollBackoff'
 import { truncationWarning } from '~~/server/utils/importStatusIds'
@@ -42,7 +42,7 @@ const EXPIRE_UNKNOWN_AFTER_MS = 60_000
 const REMEMBERED_BYTES_MAX = 60 * 1024 * 1024
 
 export function useImport() {
-  const { init, auth } = useB24()
+  const { init, ensureAuth, inFrame } = useB24()
   /** jobId → the File the employee picked. Deliberately NOT reactive: it is a side table for the
    *  feedback widget, never rendered, and making it reactive would deep-track File objects. */
   const files = new Map<string, File>()
@@ -97,7 +97,7 @@ export function useImport() {
 
   async function headers(): Promise<Record<string, string> | null> {
     await init()
-    return buildFrameHeaders(auth())
+    return buildFrameHeaders(await ensureAuth())
   }
 
   async function refresh(): Promise<void> {
@@ -108,7 +108,7 @@ export function useImport() {
     }
     const h = await headers()
     if (!h) {
-      listError.value = 'Импорт доступен только внутри портала Bitrix24'
+      listError.value = frameAuthMessage(inFrame(), 'Импорт доступен')
       error.value = listError.value
       return
     }
@@ -150,7 +150,7 @@ export function useImport() {
   async function upload(file: File, target?: TargetRef | null, jobId?: string): Promise<UploadOutcome> {
     const h = await headers()
     if (!h) {
-      const msg = 'Импорт доступен только внутри портала Bitrix24'
+      const msg = frameAuthMessage(inFrame(), 'Импорт доступен')
       error.value = msg
       // Не про файл, а про то, где мы открыты: остальные строки упрутся в то же самое.
       return { ok: false, stop: true, message: msg }
