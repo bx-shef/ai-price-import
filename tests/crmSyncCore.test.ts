@@ -340,7 +340,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ writeActivity, findCompanyByTaxId: vi.fn(async () => null) })
     await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(writeActivity).toHaveBeenCalledWith(expect.objectContaining({
-      warnings: expect.arrayContaining([expect.stringMatching(/Поставщик не найден в CRM по /)])
+      warnings: expect.arrayContaining([expect.stringMatching(/Контрагент .* не найден/)])
     }))
   })
 
@@ -545,17 +545,23 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
     const r = await runCrmSync('job1', doc, mapping(), {}, deps)
     expect(r.created).toBe(true)
-    expect(r.warnings.some(w => /Поставщик не найден в CRM по /.test(w))).toBe(true)
+    expect(r.warnings.some(w => /Контрагент .* не найден/.test(w))).toBe(true)
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyId: expect.anything() }))
   })
 
-  it('#264: номер есть, компании нет → в предупреждении печатается сам номер с его меткой', async () => {
+  it('#384: в предупреждении названы и контрагент, и его номер', async () => {
+    // Без имени человек шёл открывать документ, чтобы понять, о КАКОМ контрагенте речь, — а пачка
+    // накладных давала пачку одинаковых предупреждений.
     const deps = baseDeps({ findCompanyByTaxId: vi.fn(async () => null) })
     const d: ExtractedDocument = { ...doc, supplier: { name: 'ООО Ромашка', taxId: '191234567', taxIdKind: 'UNP' } }
     const r = await runCrmSync('job1', d, mapping(), {}, deps)
-    const w = r.warnings.find(x => /Поставщик не найден/.test(x))!
-    expect(w).toContain('по УНП 191234567')
-    expect(w).not.toContain('УНП/ИНН') // перечисление аббревиатур ушло
+    const w = r.warnings.find(x => /Контрагент/.test(x))!
+    expect(w).toContain('ООО Ромашка')
+    expect(w).toContain('191234567')
+    // #264 не потеряно: перечисления аббревиатур по-прежнему нет.
+    expect(w).not.toContain('УНП/ИНН')
+    // И человек узнаёт последствие, а не только факт неудачи поиска.
+    expect(w).toMatch(/без привязки к компании/)
   })
 
   it('#264: номера в документе нет → другое сообщение, без совета заводить компанию', async () => {

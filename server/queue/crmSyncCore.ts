@@ -165,7 +165,7 @@ export async function runCrmSync(
   // Two different situations, two different messages (#264): a number we searched by and did not
   // find, versus no number in the document at all (nothing was searched — «заведите компанию» would
   // not help). The number itself is printed so the operator can check it against the document.
-  if (!companyId) warnings.push(supplierNotLinkedWarning(doc.supplier?.taxId, doc.supplier?.taxIdKind))
+  if (!companyId) warnings.push(supplierNotLinkedWarning(doc.supplier?.taxId, doc.supplier?.taxIdKind, doc.supplier?.name))
 
   // Build rows. HARD errors (VAT rate not in portal) abort the whole document —
   // we must NOT drop lines (§8 «1-в-1, без потерь строк»); operator fixes the portal, re-imports.
