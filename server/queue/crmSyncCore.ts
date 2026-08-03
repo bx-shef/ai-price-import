@@ -6,7 +6,7 @@ import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, reconcile
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
-import { allLinesSkippedError, lineSkippedWarning } from '~/utils/importOutcome'
+import { allLinesSkippedError, lineSkippedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
@@ -242,6 +242,7 @@ export async function runCrmSync(
 
   const rows: Array<Record<string, unknown>> = []
   const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
+  let skippedLines = 0
   let sort = 10
   for (const item of doc.items) {
     // Only a positive rate is matched (validated in the pre-pass); 0 / absent = «Без НДС» → taxRate
@@ -251,6 +252,7 @@ export async function runCrmSync(
     const productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
       warnings.push(lineSkippedWarning(item.name))
+      skippedLines++
       continue
     }
     // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
@@ -310,6 +312,11 @@ export async function runCrmSync(
     }, sort))
     sort += 10
   }
+
+  // Совет «что делать с пропущенными» — РОВНО ОДИН раз на документ, и только при ЧАСТИЧНОМ пропуске.
+  // Пропущено всё ⇒ ниже сработает жёсткая ошибка, и совет несёт её текст; продублировать его здесь
+  // значило бы вернуть ту самую простыню повторов, ради которой совет и убрали из построчных строк.
+  if (skippedLines > 0 && rows.length > 0) warnings.push(skippedLinesAdvice())
 
   // Idempotency: the created entity carries a job-id MARKER (originId/originatorId for deal,
   // xmlId for invoice/smart-processes — originMarker.ts). On retry we SEARCH Bitrix24 for that

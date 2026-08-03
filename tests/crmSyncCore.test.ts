@@ -787,6 +787,30 @@ describe('runCrmSync — products / units / routing', () => {
       expect(writeActivity).not.toHaveBeenCalled()
     })
 
+    it('совет «что делать» звучит РОВНО ОДИН раз при частичном пропуске', async () => {
+      // Живой прогон 2026-08-02: совет висел на каждой построчной строке, и карточка документа из
+      // трёх позиций несла его четыре раза подряд. Теперь построчные строки только называют товар,
+      // а совет идёт одной строкой на весь документ.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      const advice = r.warnings.filter(w => w.includes('Внести строку как есть'))
+      expect(advice).toHaveLength(1)
+      // И названия пропущенных товаров при этом на месте — блок существует ради них.
+      expect(r.warnings.some(w => w.includes('Шуруп'))).toBe(true)
+    })
+
+    it('пропущено ВСЁ — совет только в отказе, в предупреждениях его нет', async () => {
+      // Иначе вернулась бы та же простыня: красная строка с советом плюс он же под каждым товаром.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
+      expect(r.errors[0]).toContain('Внести строку как есть')
+      expect(r.warnings.filter(w => w.includes('Внести строку как есть'))).toEqual([])
+      expect(r.warnings.some(w => w.includes('Гвоздь'))).toBe(true)
+    })
+
     it('пропущена ЧАСТЬ строк — импорт по-прежнему проходит', async () => {
       // Граница исхода: убери из гарда `rows.length === 0`, и этот случай тоже начнёт падать.
       const m = mapping()
