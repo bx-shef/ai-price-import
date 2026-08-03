@@ -1,4 +1,6 @@
-import { createRateLimiter, type RateLimitDecision } from './demoRateLimit'
+import { connectionOptions } from '../queue/connection'
+import { createSharedLimiter, type WindowLimitDecision } from './sharedRateLimit'
+import { windowCounterStore } from './windowCounterRedis'
 
 // Rate limit for the in-portal upload route (PROCESS.md §6.8 «открытый вектор»).
 //
@@ -28,13 +30,17 @@ export const UPLOAD_LIMIT = 40
 /** Window for `UPLOAD_LIMIT`. */
 export const UPLOAD_WINDOW_MS = 10 * 60 * 1000
 
-// In-process, like the demo limiter. Honest about what that means: the count lives in memory, so it
-// resets on restart, and with several HTTP replicas each keeps its own — the effective limit would
-// be N×40. Today the API is served by one instance (the `worker` role runs with QUEUE_CRON=0 and is
-// not behind nginx), and the point here is to bound an unattended loop, not to enforce an exact
-// quota — a distributed counter would add a Redis round-trip to every upload for accuracy nobody
-// needs. If the HTTP role is ever scaled, this has to move to Redis or the limit becomes a fiction.
-const limiter = createRateLimiter(UPLOAD_LIMIT, UPLOAD_WINDOW_MS)
+// Counted in REDIS (#353). It used to count in process memory, which was a real limit only while
+// the HTTP role was a single instance: replicate it for availability and each replica keeps its own
+// count, so the effective limit becomes N×40 — with no error and no log line, the protection just
+// quietly weakens by the number of replicas. That made scaling a trap rather than a decision.
+// Without Redis the in-process fallback keeps the old behaviour (bounded loop, logged once).
+const store = windowCounterStore(connectionOptions())
+const uploads = createSharedLimiter(
+  { prefix: 'upload', limit: UPLOAD_LIMIT, windowMs: UPLOAD_WINDOW_MS },
+  store,
+  reason => console.warn(`[rate] uploads counted in process memory (${reason}) — the limit is per instance, not shared`)
+)
 
 /**
  * Key for one uploader.
@@ -51,8 +57,8 @@ export function uploadRateKey(memberId: string, userId?: string | null): string 
 }
 
 /** Check (and count) one upload attempt. */
-export function checkUploadRate(memberId: string, userId: string | null | undefined, nowMs: number): RateLimitDecision {
-  return limiter.check(uploadRateKey(memberId, userId), nowMs)
+export async function checkUploadRate(memberId: string, userId: string | null | undefined, nowMs: number): Promise<WindowLimitDecision> {
+  return uploads.check(uploadRateKey(memberId, userId), nowMs)
 }
 
 /** Message for the person who hit the limit — says what to do, not just that they were refused. */
@@ -61,9 +67,9 @@ export function uploadRateMessage(retryAfterMs: number): string {
   return `Слишком много загрузок подряд. Попробуйте снова через ${min} мин.`
 }
 
-/** Test seam — the limiter is process-wide by design. */
+/** Test seam — clears the in-process fallback (the Redis buckets expire on their own). */
 export function resetUploadRateLimit(): void {
-  limiter.sweep(Number.MAX_SAFE_INTEGER)
+  uploads.reset()
 }
 
 // ── Feedback channel (#349 review) ────────────────────────────────────────────
@@ -78,11 +84,17 @@ export function resetUploadRateLimit(): void {
 export const FEEDBACK_LIMIT = 12
 export const FEEDBACK_WINDOW_MS = 10 * 60 * 1000
 
-const feedbackLimiter = createRateLimiter(FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS)
+// Same store, same reasoning as uploads (#353) — and here the memory-only count weakened protection
+// exactly where it costs money: this limit guards the publisher's shared GitHub quota.
+const feedback = createSharedLimiter(
+  { prefix: 'feedback', limit: FEEDBACK_LIMIT, windowMs: FEEDBACK_WINDOW_MS },
+  store,
+  reason => console.warn(`[rate] feedback counted in process memory (${reason}) — the limit is per instance, not shared`)
+)
 
 /** Check (and count) one feedback submission. Same per-person key as uploads (see `uploadRateKey`). */
-export function checkFeedbackRate(memberId: string, userId: string | null | undefined, nowMs: number): RateLimitDecision {
-  return feedbackLimiter.check(uploadRateKey(memberId, userId), nowMs)
+export async function checkFeedbackRate(memberId: string, userId: string | null | undefined, nowMs: number): Promise<WindowLimitDecision> {
+  return feedback.check(uploadRateKey(memberId, userId), nowMs)
 }
 
 /** Message for the person who hit the feedback limit. */
@@ -93,5 +105,5 @@ export function feedbackRateMessage(retryAfterMs: number): string {
 
 /** Test seam. */
 export function resetFeedbackRateLimit(): void {
-  feedbackLimiter.sweep(Number.MAX_SAFE_INTEGER)
+  feedback.reset()
 }

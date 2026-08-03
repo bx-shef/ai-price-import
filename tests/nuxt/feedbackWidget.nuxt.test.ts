@@ -5,7 +5,7 @@ import { ref } from 'vue'
 import FeedbackWidget from '~/components/FeedbackWidget.vue'
 
 // Controllable mock: `enabledValue`/`submit` are read at mount time so each test sets them first.
-const h = vi.hoisted(() => ({ enabledValue: true, submit: vi.fn(async () => true) }))
+const h = vi.hoisted(() => ({ enabledValue: true, submit: vi.fn(async () => ({ ok: true })) }))
 mockNuxtImport('useFeedback', () => () => ({
   enabled: ref(h.enabledValue),
   ensureEnabled: async () => {},
@@ -23,7 +23,7 @@ const sendWith = async (w: Awaited<ReturnType<typeof mountSuspended>>, file: boo
 
 beforeEach(() => {
   h.enabledValue = true
-  h.submit = vi.fn(async () => true)
+  h.submit = vi.fn(async () => ({ ok: true }))
 })
 
 describe('FeedbackWidget', () => {
@@ -130,8 +130,8 @@ describe('FeedbackWidget', () => {
     expect(w.text()).toContain('Спасибо')
   })
 
-  it('outside a portal (submit → false) shows an error, NOT «Спасибо»', async () => {
-    h.submit = vi.fn(async () => false)
+  it('outside a portal (submit → ok:false) shows an error, NOT «Спасибо»', async () => {
+    h.submit = vi.fn(async () => ({ ok: false }))
     const w = await mountSuspended(FeedbackWidget)
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await sendWith(w, false)
@@ -212,5 +212,16 @@ describe('FeedbackWidget', () => {
     await clickText(w, 'Отправить без файла')
     await tick()
     expect(h.submit).toHaveBeenCalledWith('down', undefined, expect.any(Object), false, null)
+  })
+
+  it('файл выброшен общим пределом приёмника → человеку говорят об этом (#354)', async () => {
+    // Молчаливое «Спасибо за отзыв!» здесь читалось бы как «документ ушёл» — а он не ушёл.
+    h.submit = vi.fn(async () => ({ ok: true, notice: 'Отзыв отправлен, но документ приложить не удалось.' }))
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-9' } })
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await sendWith(w, false)
+    await tick()
+    expect(w.text()).toContain('Спасибо')
+    expect(w.text()).toContain('документ приложить не удалось')
   })
 })
