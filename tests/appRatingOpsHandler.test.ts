@@ -95,24 +95,24 @@ describe('что на самом деле даёт снятие отметки (
 
   it('пока срок не вышел — молчим', () => {
     const justPrompted = { reviewed: false, promptedAt: new Date(now.getTime() - day), openedAt: null }
-    expect(shouldPrompt(justPrompted, now, {}, OLD_INSTALL)).toBe(false)
+    expect(shouldPrompt(justPrompted, now, { installedAt: OLD_INSTALL })).toBe(false)
   })
 
   it('срок вышел — показываем снова', () => {
     const longAgo = { reviewed: false, promptedAt: new Date(now.getTime() - 30 * day), openedAt: null }
-    expect(shouldPrompt(longAgo, now, {}, OLD_INSTALL)).toBe(true)
+    expect(shouldPrompt(longAgo, now, { installedAt: OLD_INSTALL })).toBe(true)
   })
 
   it('пока отметка стоит — молчим при любом сроке', () => {
     const reviewed = { reviewed: true, promptedAt: new Date(now.getTime() - 30 * day), openedAt: null }
-    expect(shouldPrompt(reviewed, now, {}, OLD_INSTALL)).toBe(false)
+    expect(shouldPrompt(reviewed, now, { installedAt: OLD_INSTALL })).toBe(false)
   })
 
   it('снятия мало: строка «открывал Маркет» молчит и через месяц — нужен «Сбросить»', () => {
     const afterUndo = { reviewed: false, promptedAt: new Date(now.getTime() - 30 * day), openedAt: new Date(now.getTime() - 30 * day) }
-    expect(shouldPrompt(afterUndo, now, {}, OLD_INSTALL)).toBe(false)
+    expect(shouldPrompt(afterUndo, now, { installedAt: OLD_INSTALL })).toBe(false)
     // А вот «Сбросить» (чистит обе метки) действительно возвращает попап.
-    expect(shouldPrompt({ reviewed: false, promptedAt: null, openedAt: null }, now, {}, OLD_INSTALL)).toBe(true)
+    expect(shouldPrompt({ reviewed: false, promptedAt: null, openedAt: null }, now, { installedAt: OLD_INSTALL })).toBe(true)
   })
 })
 

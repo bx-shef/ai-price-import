@@ -33,7 +33,7 @@ export default defineEventHandler(async (event) => {
         getRatingState(member.memberId, query),
         getInstalledAt(member.memberId, query).catch(() => null)
       ])
-      return { show: shouldPrompt(state, new Date(), {}, installedAt) }
+      return { show: shouldPrompt(state, new Date(), { installedAt }) }
     }
   )
 })

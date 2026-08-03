@@ -21,7 +21,7 @@ import { isCanonicalHost, siteBaseUrl } from '~/utils/landing'
  * tag — so there the crawl-level block is the only available mechanism.
  *
  * NB `Disallow` matches by PREFIX, so `/api/` is narrower than the old `/app` entry — inert static
- * assets under those prefixes (the hint GIF, the prerendered `_payload.json` stubs) are crawlable.
+ * assets under those prefixes (the prerendered `_payload.json` stubs, the OG image) are crawlable.
  * Closing those properly needs an `X-Robots-Tag` header, not a `Disallow`.
  */
 export const DISALLOWED_PATHS = ['/api/'] as const

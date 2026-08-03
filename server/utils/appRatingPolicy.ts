@@ -39,18 +39,22 @@ export interface ShouldPromptOptions {
   repromptDays?: number
   /** Override the minimum install age (days). Defaults to RATING_MIN_INSTALL_AGE_DAYS. */
   minInstallAgeDays?: number
+  /**
+   * When this portal installed the app (`portal_tokens.created_at`).
+   *
+   * Lives in `opts` rather than as a fourth positional parameter: it is input data of the same kind
+   * as `state`, and a trailing position forced every existing call to carry a `{}` placeholder —
+   * which every future call would keep carrying.
+   */
+  installedAt?: Date | null
 }
 
 /**
  * Decide whether to show the rating modal now. `now` is injected so the decision is deterministic
  * and testable. A missing row (never prompted) → show.
  */
-export function shouldPrompt(
-  state: AppRatingState | null,
-  now: Date,
-  opts: ShouldPromptOptions = {},
-  installedAt?: Date | null
-): boolean {
+export function shouldPrompt(state: AppRatingState | null, now: Date, opts: ShouldPromptOptions = {}): boolean {
+  const installedAt = opts.installedAt
   // Install age gates EVERYTHING, including the first-ever prompt (#380).
   //
   // ⚠ Unknown age reads as «too early», not «go ahead»: the token row can be missing during an
@@ -61,7 +65,7 @@ export function shouldPrompt(
   // row, so `created_at` begins anew. That is a CHOICE, not an accident — a returning portal is
   // meeting the product again, and asking it to rate on day one would be the same mistake.
   const ageDays = opts.minInstallAgeDays ?? RATING_MIN_INSTALL_AGE_DAYS
-  if (!installedAt) return true
+  if (!installedAt) return false
   if (now.getTime() - installedAt.getTime() < ageDays * DAY_MS) return false
   if (!state) return true // old enough and no row yet → first-ever prompt
   if (state.reviewed) return false // confirmed review → silent (the operator can undo it, #318 п.2)
