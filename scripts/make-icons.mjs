@@ -11,6 +11,7 @@
 //   favicon-16.png/-32.png explicit small sizes for browsers that prefer PNG links
 //   apple-touch-icon.png   180×180, opaque (iOS composites transparency onto black)
 //   icon-192.png/-512.png  PWA/manifest sizes
+//   icon-market-512.png    512, OPAQUE — the Market listing icon (no transparency allowed)
 //   icon-maskable-512.png  512, glyph scaled to 80% — NB the spec-safe zone is the inscribed
 //                          CIRCLE of that square (radius 0.4·size), not the square itself; safe
 //                          for the current glyph (content well inside the circle) and the plate
@@ -85,6 +86,13 @@ try {
   await writeFile(join(PUB, 'apple-touch-icon.png'), await render(page, svg, 180, { background: '#0b1220' }))
   // Maskable: content inside the inner 80% so any platform mask (circle/squircle) keeps it whole.
   await writeFile(join(PUB, 'icon-maskable-512.png'), await render(page, svg, 512, { scale: 0.8, background: '#0b1220' }))
+  // Market listing icon. The Marketplace requires a SQUARE JPEG/PNG with NO transparency, 250–650px
+  // (apidocs «Требования к оформлению», §1В п.10) — and every icon above fails that by construction:
+  // the master is a rounded plate, so its corners are transparent, and `icon-512.png` is rendered
+  // with omitBackground on top of that. Uploading one would have been rejected at moderation, which
+  // is the worst place to find out. Opaque backdrop in the plate's own colour: the corners simply
+  // become square, the glyph is untouched (unlike the maskable render, which shrinks it to 80%).
+  await writeFile(join(PUB, 'icon-market-512.png'), await render(page, svg, 512, { background: '#0b1220' }))
 
   await writeFile(join(PUB, 'favicon.ico'), packIco([
     { size: 16, png: rendered.get(16) },
@@ -121,7 +129,7 @@ try {
     icon192: sha(rendered.get(192))
   }, null, 2)}\n`)
 
-  console.log('✓ favicon.ico, favicon-16/32.png, apple-touch-icon.png, icon-192/512.png, icon-maskable-512.png, site.webmanifest')
+  console.log('✓ favicon.ico, favicon-16/32.png, apple-touch-icon.png, icon-192/512.png, icon-maskable-512.png, icon-market-512.png, site.webmanifest')
 } finally {
   await browser.close()
 }
