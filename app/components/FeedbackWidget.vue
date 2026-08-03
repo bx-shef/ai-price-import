@@ -43,6 +43,9 @@ const comment = ref('')
 const asking = ref(false)
 const sending = ref(false)
 const sent = ref(false)
+/** «Отзыв принят, но файл не приложен» — общий предел приёмника (#354). Молчание тут читалось бы
+ *  как «документ ушёл». */
+const notice = ref('')
 const error = ref('')
 /** Файл, выбранный вручную, когда страница своей копии уже не держит. */
 const manualFile = ref<File | null>(null)
@@ -104,12 +107,13 @@ async function send(withFile: boolean): Promise<void> {
     // submit() returns false (without throwing) outside a portal frame — do NOT claim success.
     // Файл уходит ТОЛЬКО по явному ответу на вопрос — одинаково для обеих оценок (#299).
     const attachment = withFile && fileToSend.value ? await readAsBase64(fileToSend.value) : null
-    const ok = await submit(kind, comment.value.trim() || undefined, {
+    const res = await submit(kind, comment.value.trim() || undefined, {
       jobId: props.jobId,
       fileName: props.fileName
     }, withFile, attachment)
-    if (ok) {
+    if (res.ok) {
       sent.value = true
+      notice.value = res.notice ?? ''
     } else {
       error.value = 'Отзыв доступен только внутри портала Bitrix24'
     }
@@ -132,6 +136,10 @@ async function send(withFile: boolean): Promise<void> {
       role="status"
     >
       Спасибо за отзыв!
+      <span
+        v-if="notice"
+        class="block text-(--ui-color-accent-main-warning)"
+      >{{ notice }}</span>
     </p>
     <template v-else>
       <div class="flex items-center gap-2 text-(--ui-color-base-4)">

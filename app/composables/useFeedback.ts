@@ -52,18 +52,20 @@ export function useFeedback() {
     context?: FeedbackSubmitContext,
     attachFile?: boolean,
     file?: { name: string, base64: string } | null
-  ): Promise<boolean> {
+  ): Promise<{ ok: boolean, notice?: string }> {
     await init()
     const headers = buildFrameHeaders(auth())
-    if (!headers) return false // outside a portal — no frame token
-    await $fetch('/api/feedback', {
+    if (!headers) return { ok: false } // outside a portal — no frame token
+    const r = await $fetch<{ ok?: boolean, notice?: string }>('/api/feedback', {
       method: 'POST',
       headers,
       // The bytes ride WITH the rating (#349): nothing is retained server-side, so the page is the
       // only place the document still exists. Sent only when the employee answered «с файлом».
       body: { kind, comment, context, attachFile: attachFile === true, ...(attachFile && file ? { file } : {}) }
     })
-    return true
+    // `notice` — отзыв принят, но файл приложить не вышло (общий предел приёмника, #354). Молча
+    // выбросить вложение нельзя: человек будет уверен, что документ ушёл.
+    return { ok: true, ...(r?.notice ? { notice: r.notice } : {}) }
   }
 
   return { enabled, ensureEnabled, submit }

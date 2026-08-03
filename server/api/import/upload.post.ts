@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
       // Bound how fast one person can submit (PROCESS.md §6.8). Checked right after the identity is
       // proven and BEFORE the body is buffered — refusing after reading 25 МБ would do the work the
       // limit exists to avoid. Keyed per portal user, so one colleague's batch cannot throttle another.
-      const rate = checkUploadRate(member.memberId, member.userId, Date.now())
+      const rate = await checkUploadRate(member.memberId, member.userId, Date.now())
       if (!rate.allowed) {
         // Its OWN outcome, not 'forbidden': lumping it with the admin gate would make «нас душит
         // лимит» indistinguishable from «этот сотрудник не админ» in telemetry — and the rate of

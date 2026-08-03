@@ -13,6 +13,7 @@ import { resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedback
 import { makeBareTokenSdkCall } from '../utils/b24Sdk'
 import { downloadDiskFile, type BinaryFetchFn } from '../utils/diskDownload'
 import { checkFeedbackRate, feedbackRateMessage } from '../utils/uploadRateLimit'
+import { ATTACH_MISSING_NOTICE, checkAttachBudget } from '../utils/feedbackRepoBudget'
 import { feedbackIntakeGate, parseClientFile } from '../utils/feedbackIntake'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import type { FetchFn } from '../utils/b24Rest'
@@ -47,7 +48,7 @@ export default defineEventHandler(async (event) => {
       // Rate + size gate BEFORE the body is read (#349/#351 review) — the decision itself is a pure
       // function so it can be tested; the handler only performs its verdict.
       const refusal = feedbackIntakeGate({
-        rate: checkFeedbackRate(member.memberId, member.userId, Date.now()),
+        rate: await checkFeedbackRate(member.memberId, member.userId, Date.now()),
         declaredLength: Number(getHeader(event, 'content-length') || 0),
         rateMessage: feedbackRateMessage
       })
@@ -92,6 +93,9 @@ export default defineEventHandler(async (event) => {
       let entity: { entityType?: string, entityId?: string, entityUrl?: string } = {}
       let outcome: { status?: string, outcome?: string, notes?: string } = {}
       let fileUrl: string | undefined
+      /** Told to the employee whenever the file did NOT go out (#354) — «принято» без оговорки
+       *  прочиталось бы как «документ ушёл». */
+      let attachNotice: string | undefined
       if (jobId) {
         try {
           const job = await getJob(member.memberId, jobId, jobRedis)
@@ -136,16 +140,36 @@ export default defineEventHandler(async (event) => {
                   }
                 }
                 if (base64) {
-                  const commit = await commitFeedbackFile(
-                    config, feedbackFilePath(jobId, name), base64, `feedback file for job ${jobId}`, fetchImpl
-                  )
-                  if (commit.ok && commit.htmlUrl) fileUrl = commit.htmlUrl
+                  // Global hourly ceiling on the RECEIVER (#354) — checked HERE, immediately before
+                  // the commit, and not earlier. Earlier it metered intent instead of cost: a review
+                  // whose bytes never materialised (page sent none, no Disk archive, privacy probe
+                  // said no) still spent the ceiling, so 60 tiny bodies with `attachFile:true` could
+                  // turn attachments off for every tenant at zero cost to whoever sent them. A
+                  // ceiling worth exhausting must cost the sender what it protects.
+                  //
+                  // Over the ceiling the review is still filed — only without its file, and the
+                  // employee is told so: the text of a review is worth more than the file, and a
+                  // silent drop would leave them believing the document went out.
+                  const budget = await checkAttachBudget(member.memberId, Date.now())
+                  if (!budget.allowed) {
+                    attachNotice = budget.notice
+                  } else {
+                    const commit = await commitFeedbackFile(
+                      config, feedbackFilePath(jobId, name), base64, `feedback file for job ${jobId}`, fetchImpl
+                    )
+                    if (commit.ok && commit.htmlUrl) fileUrl = commit.htmlUrl
+                  }
                 }
               }
             }
           }
         } catch { /* best-effort: less context rather than a failed submission */ }
       }
+      // Просили приложить файл, а ссылки на него нет — значит он не ушёл: задание истекло, страница
+      // байт не прислала, архива на Диске нет или приёмник не подтверждён приватным. Причины разные,
+      // исход для человека один, и он обязан быть назван. Ставится ПОСЛЕ всей ветки: раньше здесь
+      // молчали везде, кроме исчерпанного предела.
+      if (attachFile && !fileUrl && !attachNotice) attachNotice = ATTACH_MISSING_NOTICE
       const payload = buildFeedbackIssue(kind, raw?.comment, {
         jobId: c.jobId,
         fileName: c.fileName,
@@ -165,7 +189,8 @@ export default defineEventHandler(async (event) => {
         // must never fail an already-created issue.
         await bumpCounter(member.memberId, kind === 'up' ? METRICS.feedbackUp : METRICS.feedbackDown, 1, query)
           .catch(() => {})
-        return { ok: true, number: result.number }
+        // `notice` тянется до виджета: файл выброшен молча — человек будет уверен, что документ ушёл.
+        return { ok: true, number: result.number, ...(attachNotice ? { notice: attachNotice } : {}) }
       }
       // Never surface GitHub's body/URL/token — only a generic message + the retry hint.
       console.warn(`[feedback] github issue failed: status=${result.status} retryable=${result.retryable}`)
