@@ -1,3 +1,4 @@
+import { ALL_QUEUES } from '~/utils/opsMonitor'
 // Pure decision core for queue alerting (BACKLOG.md §1 «Алертинг очередей»).
 //
 // `/queues` shows a SNAPSHOT: how many jobs are waiting right now. A snapshot cannot tell apart the
@@ -103,18 +104,58 @@ const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000))
  *    `FAILURE_ALERT_THRESHOLD` for why the number is small: rejected documents never reach this
  *    population, so anything here is already abnormal.
  */
+/**
+ * Имя очереди для эпизода «конвейер не читается» — общий источник с экраном оператора.
+ *
+ * `unreadable` — ВСЕГДА один эпизод на весь конвейер, сколько бы очередей ни выпало. Это не
+ * упрощение, а требование к ключу: он обязан быть устойчив к смене ФОРМЫ аварии.
+ */
+export { ALL_QUEUES } from '~/utils/opsMonitor'
+
+/** Сколько имён очередей печатать в тексте частичной аварии, прежде чем свернуть в «и ещё N». */
+const MAX_NAMED_QUEUES = 3
+
 export function evaluateQueueHealth(queues: QueueHealthInput[], _nowMs?: number): QueueAlert[] {
   const out: QueueAlert[] = []
 
+  // ⚠ Нечитаемость — ОДИН эпизод, а не по штуке на очередь. Две живые находки подряд, обе про
+  // «канал шумит громче всего на самой тяжёлой аварии»:
+  //
+  //  1. Прогон 2026-08-02: остановили Redis — пришло ЧЕТЫРЕ тревоги и потом ЧЕТЫРЕ
+  //     «восстановилось». Очереди не независимы, они живут в одном Redis: он лёг — «не читается»
+  //     верно для каждой.
+  //  2. Первая правка схлопывала только ПОЛНУЮ аварию, оставляя пер-очередные эпизоды для
+  //     частичной, — и от этого ключ эпизода стал зависеть от ЧИСЛА выпавших очередей. Разбор
+  //     показал сценарий: полная авария → частичная → снова полная. На третьем шаге весь конвейер
+  //     мёртв, а канал шлёт «✅ очереди снова читаются» (ключ `*` пропал из текущего замера, значит
+  //     «восстановился»), сама же тревога глохнет в `MIN_REANNOUNCE_MS`. Зелёная галочка посреди
+  //     полной аварии — худший из возможных исходов, и до правки его не было.
+  //
+  // Поэтому ключ фиксирован (`ALL_QUEUES`) и не зависит ни от числа выпавших очередей, ни от того,
+  // какие именно выпали. Меняется только ТЕКСТ: он и называет имена, когда их немного.
+  //
+  // ⚠ Гард на `queues.length > 0` обязателен: `[].every(…)` истинно, и пустой замер объявил бы
+  // полную аварию.
+  const unreadable = queues.filter(q => q.unreadable)
+  if (unreadable.length > 0) {
+    const all = unreadable.length === queues.length
+    const names = unreadable.slice(0, MAX_NAMED_QUEUES).map(q => `«${q.queue}»`).join(', ')
+    const rest = unreadable.length - MAX_NAMED_QUEUES
+    out.push({
+      kind: 'unreadable',
+      queue: ALL_QUEUES,
+      text: all
+        ? 'очереди не читаются — состояние конвейера неизвестно (проверьте Redis)'
+        : `не читаются очереди: ${names}${rest > 0 ? ` и ещё ${rest}` : ''} — состояние этой части конвейера неизвестно`
+    })
+  }
+
+  // ⚠ Нечитаемые очереди пропускаем, а ЧИТАЕМЫЕ проверяем как обычно: ранний выход из-за общей
+  // аварии похоронил бы настоящий простой на живой очереди. Сегодня это ещё и недостижимо
+  // (`readQueueHealth` обнуляет счётчики нечитаемой очереди), но премисса «все очереди в одном
+  // Redis» — утверждение, а не гарантия, и держаться за неё в коде не стоит.
   for (const q of queues) {
-    if (q.unreadable) {
-      out.push({
-        kind: 'unreadable',
-        queue: q.queue,
-        text: `очередь «${q.queue}» не читается — состояние конвейера неизвестно (проверьте Redis)`
-      })
-      continue
-    }
+    if (q.unreadable) continue
 
     if (q.oldestPendingAgeMs !== null && q.oldestPendingAgeMs > STALL_AGE_MS) {
       out.push({

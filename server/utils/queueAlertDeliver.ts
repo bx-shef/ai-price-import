@@ -1,4 +1,4 @@
-import type { QueueAlert } from './queueAlert'
+import { ALL_QUEUES, type QueueAlert } from './queueAlert'
 
 // What actually gets PUSHED out of the queue health check, and when (BACKLOG.md §1).
 //
@@ -103,9 +103,19 @@ export function planAlertDelivery(
     opened.push(alert)
   }
 
+  // ⚠ Конвейер не читается ⇒ мы НИЧЕГО не знаем о нём, и «эпизод пропал из замера» больше не
+  // означает «починился». Разбор нашёл сценарий: crm-sync встал (мёртвый токен, зависший разбор),
+  // на 30 секунд перезапустили Redis при деплое — и канал прислал «✅ простой закончился», а
+  // настоящий простой замолчал на час (`MIN_REANNOUNCE_MS`). Две зелёные галочки посреди аварии.
+  //
+  // Поэтому на нечитаемом конвейере эпизоды НЕ закрываются и НЕ переоткрываются: они остаются
+  // открытыми до замера, который действительно что-то прочитал. Молчание тут честнее галочки.
+  const blind = alerts.some(a => a.kind === 'unreadable')
   const recovered: EpisodeKey[] = []
-  for (const key of awaiting) {
-    if (!now.has(key)) recovered.push(key)
+  if (!blind) {
+    for (const key of awaiting) {
+      if (!now.has(key)) recovered.push(key)
+    }
   }
 
   // Prune: keep a timestamp only while it still does work — the episode is ongoing, or it is recent
@@ -119,11 +129,31 @@ export function planAlertDelivery(
     opened,
     recovered,
     state: {
-      open: [...now.keys()],
+      // На слепом замере прежние эпизоды остаются открытыми: иначе следующий читаемый замер
+      // объявил бы их заново, хотя поломка не прерывалась.
+      open: blind ? [...new Set([...previous.open, ...now.keys()])] : [...now.keys()],
       announcedAtMs,
-      // Recovery reported → stop awaiting it. Announcements are added by `markAnnounced`.
-      awaitingRecovery: [...awaiting].filter(k => now.has(k))
+      // ⚠ Ключ выбывает из ожидания ТОЛЬКО через `markRecovered`, то есть по факту доставки.
+      // Прежде он отбрасывался прямо здесь, ещё до отправки, и один отказ Телеграма хоронил «✅»
+      // навсегда: оператор оставался с «сломалось» без закрытия — состояние, неотличимое от
+      // продолжающейся аварии. Ровно та асимметрия с `markAnnounced`, которую разбор и нашёл.
+      awaitingRecovery: [...awaiting]
     }
+  }
+}
+
+/**
+ * Записать, что сообщение о восстановлении действительно ушло.
+ *
+ * Зеркало `markAnnounced`. Без него `planAlertDelivery` выбрасывал ключ из ожидания ещё до отправки,
+ * и один отказ Телеграма терял «✅» навсегда: оператор видел «сломалось» и не видел закрытия —
+ * состояние, неотличимое от продолжающейся аварии.
+ */
+export function markRecovered(state: DeliveryState, key: EpisodeKey): DeliveryState {
+  return {
+    open: state.open,
+    announcedAtMs: state.announcedAtMs,
+    awaitingRecovery: state.awaitingRecovery.filter(k => k !== key)
   }
 }
 
@@ -143,11 +173,18 @@ export function markAnnounced(state: DeliveryState, key: EpisodeKey, nowMs: numb
   }
 }
 
-/** Human name for an episode key in the recovery notice. */
-const KIND_WORD: Record<string, string> = {
-  stalled: 'простой',
-  failing: 'падения задач',
-  unreadable: 'нечитаемая очередь'
+/**
+ * Сказуемое для сообщения о восстановлении — целой фразой, а не существительным.
+ *
+ * ⚠ Раньше здесь лежали имена («простой», «нечитаемая очередь»), которые подставлялись в шаблон
+ * `— ${what} прекратились.`. Согласование ломалось у двух видов из трёх: «простой прекратились»,
+ * «нечитаемая очередь прекратились». В три часа ночи это читается как сломанный шаблон — ровно то
+ * впечатление, которого канал должен избегать сильнее всего.
+ */
+const KIND_RECOVERED: Record<string, string> = {
+  stalled: 'простой закончился',
+  failing: 'падения задач прекратились',
+  unreadable: 'снова читается'
 }
 
 /** Message announcing a new problem. */
@@ -160,6 +197,10 @@ export function alertMessage(a: QueueAlert, appUrl?: string | null): string {
 /** Message announcing that a problem is gone. */
 export function recoveryMessage(key: EpisodeKey): string {
   const [kind, ...rest] = key.split(':')
-  const what = KIND_WORD[kind ?? ''] ?? kind
-  return `✅ AI-импорт прайсов: очередь «${rest.join(':')}» — ${what} прекратились.`
+  const queue = rest.join(':')
+  const what = KIND_RECOVERED[kind ?? ''] ?? kind
+  // Эпизод конвейера (`ALL_QUEUES`) — про Redis, а не про конкретную очередь: «очередь «*»» в чате
+  // читалась бы как поломка самого сообщения, а не как новость.
+  if (queue === ALL_QUEUES) return '✅ AI-импорт прайсов: очереди снова читаются.'
+  return `✅ AI-импорт прайсов: очередь «${queue}» — ${what}.`
 }

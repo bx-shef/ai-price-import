@@ -6,7 +6,7 @@ import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, reconcile
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { normalizeUnitKey } from '~/utils/measureCreate'
-import { allLinesSkippedError, lineSkippedWarning } from '~/utils/importOutcome'
+import { allLinesSkippedError, lineSkippedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
@@ -242,6 +242,7 @@ export async function runCrmSync(
 
   const rows: Array<Record<string, unknown>> = []
   const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
+  let skippedLines = 0
   let sort = 10
   for (const item of doc.items) {
     // Only a positive rate is matched (validated in the pre-pass); 0 / absent = «Без НДС» → taxRate
@@ -251,6 +252,7 @@ export async function runCrmSync(
     const productId = await deps.findProduct(item)
     if (!productId && mapping.product.onMissing === 'skip-warn') {
       warnings.push(lineSkippedWarning(item.name))
+      skippedLines++
       continue
     }
     // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
@@ -352,6 +354,20 @@ export async function runCrmSync(
     // на самом провальном классе документов значит занижать его именно там, где он важен.
     return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: !companyId, warnings, errors }
   }
+
+  // Совет «что делать с пропущенными» — РОВНО ОДИН раз на документ и только когда импорт всё-таки
+  // состоялся. Стоит ЗДЕСЬ, после жёсткой ошибки, по двум причинам:
+  //
+  //  • пропущено всё и записи нет ⇒ совет уже несёт текст отказа выше; продублировать его значило бы
+  //    вернуть ту самую простыню повторов, ради которой его убрали из построчных строк;
+  //  • но повтор задания, чья первая попытка создала запись, а к ретраю каталог изменился так, что
+  //    строки перестали подбираться, до отказа НЕ доходит (маркер найден) — и на прежнем месте
+  //    (`rows.length > 0`) совет там не появлялся вовсе. Разбор нашёл эту дыру.
+  //
+  // ⚠ `unshift`, а не `push`: потребители режут список предупреждений С НАЧАЛА — дело в таймлайне по
+  // шести, чат по десяти. Совет в хвосте отрезался бы ПЕРВЫМ, причём тем вернее, чем больше строк
+  // пропущено, то есть ровно там, где он нужнее всего.
+  if (skippedLines > 0) warnings.unshift(skippedLinesAdvice())
 
   const entityTypeId = target.entityTypeId
   let entityId: number

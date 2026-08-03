@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import SearchIcon from '@bitrix24/b24icons-vue/outline/SearchIcon'
 import { useAuth } from '~/composables/useAuth'
-import { FLASH_MS, QUEUES_REFRESH_MS, QUEUE_HEALTH_STALE_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals, type PortalHealthFilter } from '~/utils/opsMonitor'
+import { ALL_QUEUES, FLASH_MS, QUEUES_REFRESH_MS, QUEUE_HEALTH_STALE_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals, type PortalHealthFilter } from '~/utils/opsMonitor'
 import { copyToClipboard } from '~/utils/clipboard'
 
 // Operator queue monitor (service zone). Auth-gated (server 401 + client redirect).
@@ -43,7 +43,9 @@ const ALERT_TITLES: Record<QueueAlert['kind'], string> = {
   failing: 'Задачи падают',
   unreadable: 'Состояние очереди неизвестно'
 }
-const alertTitle = (a: QueueAlert) => `${ALERT_TITLES[a.kind]} — ${a.queue}`
+// Эпизод конвейера несёт служебное имя `ALL_QUEUES`; печатать его буквально нельзя — «— *» на
+// экране читается как поломка самого экрана. Имена очередей в этом случае живут в тексте тревоги.
+const alertTitle = (a: QueueAlert) => a.queue === ALL_QUEUES ? ALERT_TITLES[a.kind] : `${ALERT_TITLES[a.kind]} — ${a.queue}`
 
 // Возраст проверки — не украшение. Проверка, отработавшая шесть часов назад, ничего не говорит о
 // «сейчас», и рисовать её так же, как свежую, — та же ложь, что показывать непрочитанную очередь
