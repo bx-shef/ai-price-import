@@ -36,8 +36,13 @@ describe('entityChatLink', () => {
   it('normalises a scheme/path off the passed domain', () => {
     expect(entityChatLink(2, 31, 'https://bel.bitrix24.by/')).toBe('[URL=https://bel.bitrix24.by/crm/deal/details/31/]Открыть в CRM[/URL]')
   })
-  it('falls back to a portal-relative BB-link when no host is known', () => {
-    expect(entityChatLink(2, 31)).toBe('[URL=/crm/deal/details/31/]Открыть в CRM[/URL]')
+  it('emits NO link when the host is unknown or substituted (#385)', () => {
+    // Раньше здесь был портало-ОТНОСИТЕЛЬНЫЙ `[URL=/crm/…]`, защищённый доводом «уйти с портала не
+    // может». Но вопрос не куда ведёт, а ведёт ли куда-нибудь: в настольном и мобильном клиенте у
+    // относительного адреса нет базы, и ссылка мертва. Правило теперь одно на все сообщения.
+    expect(entityChatLink(2, 31)).toBeNull()
+    expect(entityChatLink(2, 31, 'bel.bitrix24.by@evil.com')).toBeNull()
+    expect(entityChatLink(2, 31, 'evil.com')).toBeNull()
   })
 })
 
@@ -54,8 +59,10 @@ describe('buildSuccessMessage', () => {
     expect(msg).toContain('✅ Импортирован документ')
     expect(msg).not.toContain('[url=evil]')
     expect(msg).toContain('Позиций: 3')
-    // The entity link is now a clickable BB-link, not a bare path (owner ask).
-    expect(msg).toContain('[URL=/crm/deal/details/5/]Открыть в CRM[/URL]')
+    // Хост не передан ⇒ строки со ссылкой в сообщении нет вовсе (#385): «Открыть в CRM», которое
+    // ничего не открывает, читается как поломка приложения, а её отсутствие — просто как более
+    // короткое сообщение.
+    expect(msg).not.toContain('Открыть в CRM')
   })
   it('emits an absolute clickable link when a portal domain is supplied', () => {
     const msg = buildSuccessMessage({ entityTypeId: 2, entityId: 5, created: true, rowCount: 1, warnings: [] }, 'bel.bitrix24.by')

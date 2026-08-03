@@ -55,6 +55,57 @@ export function marketDetailPath(code: string): string | null {
   return c ? `/marketplace/detail/${c}/` : null
 }
 
+/**
+ * Absolute link that opens THIS app inside the portal (#385).
+ *
+ * ⚠ Not to be confused with `marketDetailPath` above: `/marketplace/detail/<code>/` is the Market
+ * LISTING (where a rating is left), `/marketplace/view/<code>/` is the app ITSELF. The failure
+ * message in chat used to point at `NUXT_PUBLIC_SITE_URL + '/app'`, i.e. at our own host — opened
+ * outside the portal there is no frame, no frame token and no member_id, so the promised way back
+ * was a dead end. The address must be built from the PORTAL's domain, never from ours.
+ *
+ * The symbolic-code form is used rather than the numeric `/marketplace/app/<ID>/`: `ID` is local to
+ * each portal (it comes from `app.info`, which additionally only answers in application context),
+ * while the code is the same everywhere and needs no REST call.
+ *
+ * Returns null when the portal host or the code is unknown — the caller then sends the text without
+ * a link. A broken link is worse than no link: it promises a way back and leads nowhere.
+ */
+export function portalAppUrl(portalDomain: string | undefined | null, code: string): string | null {
+  const host = portalHost(portalDomain)
+  const c = code.trim()
+  return host && c ? `https://${host}/marketplace/view/${c}/` : null
+}
+
+/**
+ * Portal host out of a stored `portal_tokens.domain` — a bare host or a full URL, either case.
+ *
+ * ⚠ Two layers, and both are needed. First `new URL` PARSES (not a regex — the same bar as
+ * `isSafeB24Domain` and the crawler-file base, #304): `.hostname` drops userinfo, port, query and
+ * fragment by construction and normalises the case, so `x.bitrix24.by@evil.com` cannot survive as
+ * a host that READS like the portal and RESOLVES to evil.com. Then the cloud-zone predicate
+ * REJECTS what is left over — parsing alone accepted `evil.com` outright.
+ *
+ * The second layer is the point: the link's caption is fixed («открыть приложение», «Открыть в
+ * CRM»), so a substituted host is invisible to the reader, and they click it exactly when they have
+ * just been told the import failed. Mirrors `portalCurrencySettingsUrl`, which solves the same
+ * problem and was already strict; the first version of this function was below that bar.
+ *
+ * Unknown host ⇒ null ⇒ the caller sends its text without a link.
+ */
+export function portalHost(portalDomain: string | undefined | null): string | null {
+  const raw = String(portalDomain ?? '').trim()
+  if (!raw) return null
+  let host: string
+  try {
+    host = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+  // com.tr/com.br — the two official TWO-label cloud zones (#323), same alternation as the server guard.
+  return /^([a-z0-9-]+\.)+bitrix24\.(com\.(tr|br)|[a-z]{2,})$/.test(host) ? host : null
+}
+
 /** Bitrix24 entityTypeId constants used as import targets.
  *  quote (7) is intentionally excluded — no filterable external-marker field, and an incoming
  *  counterparty document has nothing to import into an outgoing offer (see #135).

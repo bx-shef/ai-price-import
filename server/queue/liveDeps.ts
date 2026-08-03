@@ -44,6 +44,8 @@ import type { AgentRunDeps, EventHandlerDeps, FileExtractDeps, HandlerDeps } fro
 import { eventJobToSaveInput } from './topology'
 import type { CrmSyncDeps } from './crmSyncCore'
 import type { PortalMapping } from '~/types/mapping'
+import { portalAppUrl } from '~/config/b24'
+import { LANDING_MARKET_CODE } from '~/utils/landing'
 
 // Live wiring: bind the pure handlers' DI to real stores / portal REST / extractor / queues.
 // The chat extractor transport, file-extract runners and the OAuth refresh HTTP are INJECTED
@@ -298,7 +300,7 @@ export async function notifyImportFailure(
       errorChatId,
       alsoErrorChat: opts.alsoErrorChat !== false,
       jobId,
-      appUrl: appImportUrl()
+      appUrl: await backLinkUrl(memberId, uploaderId, infra)
     })
     for (const m of planned) {
       try {
@@ -329,10 +331,25 @@ export async function notifyImportFailure(
   }
 }
 
-/** Absolute link back to the app, when the deployment knows its own address. */
-function appImportUrl(): string | null {
-  const base = String(process.env.NUXT_PUBLIC_SITE_URL ?? '').trim().replace(/\/+$/, '')
-  return /^https:\/\//i.test(base) ? `${base}/app` : null
+/**
+ * Absolute link back to the app INSIDE the portal (#385). Built from the portal's own domain — our
+ * host cannot open the app the way the portal does (no frame, no frame token).
+ *
+ * ⚠ Two guards, both found by review of the first version, both about the same thing: the LINK is a
+ * nicety, the NOTICE is the point.
+ *   1. The read is wrapped — `getToken` throws on any DB trouble, and it runs AFTER the once-only
+ *      claim inside an empty `catch`, so a transient Postgres blip meant the employee never learned
+ *      the document failed, with no log and no counter. Measured on a fake query that failed only
+ *      this statement: zero messages sent, and the retry sent nothing either — the right to speak
+ *      was already spent.
+ *   2. It is skipped when there is no personal recipient: only the personal message carries the
+ *      link (the error chat gets a job id), so reading the portal row for the other branch was a
+ *      query per notification that nothing consumed.
+ */
+async function backLinkUrl(memberId: string, uploaderId: string | null, infra: LiveInfra): Promise<string | null> {
+  if (!uploaderId) return null
+  const domain = await getToken(memberId, infra.query).then(t => t?.domain).catch(() => null)
+  return portalAppUrl(domain, LANDING_MARKET_CODE)
 }
 
 export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {

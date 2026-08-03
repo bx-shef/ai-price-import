@@ -1,4 +1,5 @@
 import type { RestCall } from './b24Rest'
+import { portalHost } from '~/config/b24'
 import { buildBotSend, buildChatJoin, errorCode, messageIdFromBotSend } from './chatBot'
 
 // Chat notifications for crm-sync (im.message.add — scope `im`, live-verified).
@@ -20,16 +21,21 @@ export function entityLink(entityTypeId: number, id: number): string {
   return fn ? fn(id) : `/crm/type/${entityTypeId}/details/${id}/`
 }
 
-/** Build a clickable BB-code link to the created entity for the chat message. B24 messenger
- *  renders `[URL=…]текст[/URL]`; a bare path is NOT a link (owner ask). An absolute
- *  `https://<host>/…` is used when the portal host is known (reliable across web/desktop/mobile
- *  clients); with no host we fall back to the portal-relative path (still safe — can't leave the
- *  portal). `portalDomain` is a host or a full URL; the scheme/path are normalised off. */
-export function entityChatLink(entityTypeId: number, id: number, portalDomain?: string): string {
-  const path = entityLink(entityTypeId, id)
-  const host = (portalDomain ?? '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim().toLowerCase()
-  const url = host ? `https://${host}${path}` : path
-  return `[URL=${url}]Открыть в CRM[/URL]`
+/**
+ * Build a clickable BB-code link to the created entity for the chat message.
+ *
+ * B24 messenger renders `[URL=…]текст[/URL]`; a bare path is NOT a link (owner ask). The address is
+ * absolute and built from the PORTAL's host — reliable across web, desktop and mobile clients.
+ *
+ * ⚠ Host unknown ⇒ NO link, only the text. The previous fallback emitted a portal-RELATIVE
+ * `[URL=/crm/…]`, defended as «can't leave the portal» — but the question is not where it leads,
+ * it is whether it leads anywhere: in the desktop and mobile clients a relative URL has no base and
+ * the link is simply dead. The same rule as the failure notice (#385): a dead link promises a way
+ * somewhere and delivers nothing, which is worse than no link at all.
+ */
+export function entityChatLink(entityTypeId: number, id: number, portalDomain?: string): string | null {
+  const host = portalHost(portalDomain)
+  return host ? `[URL=https://${host}${entityLink(entityTypeId, id)}]Открыть в CRM[/URL]` : null
 }
 
 /** Neutralise BB-code brackets in external text (fullwidth) so it can't inject markup. */
@@ -92,7 +98,10 @@ export function buildSuccessMessage(s: SuccessSummary, portalDomain?: string): s
     lines.push(`Предупреждения (${s.warnings.length}):`)
     for (const w of s.warnings.slice(0, 10)) lines.push(`• ${chatSafeText(w, MAX_CHAT_REASON)}`)
   }
-  lines.push(entityChatLink(s.entityTypeId, s.entityId, portalDomain))
+  // No host ⇒ the line is dropped, not degraded: «Открыть в CRM» that opens nothing reads as a
+  // broken app, while its absence just means the message is shorter.
+  const link = entityChatLink(s.entityTypeId, s.entityId, portalDomain)
+  if (link) lines.push(link)
   return lines.join('\n')
 }
 
