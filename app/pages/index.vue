@@ -22,6 +22,7 @@ import {
 } from '~/utils/landing'
 import { PUBLISHER_PERSON } from '~/config/publisher'
 import { B24_BOOKING_URL } from '~/utils/booking'
+import { SHELL_BG_CLASS, SHELL_CLASS } from '~/config/landingShell'
 
 // Public marketing landing. Composition + look mirror the sibling client-bank
 // landing (dark vibecode shell, mouse-glow cards, left-aligned section headers,
@@ -40,7 +41,7 @@ const canonical = canonicalUrl('/')
 
 useHead({
   title: LANDING_TITLE,
-  bodyAttrs: { class: 'bg-[#05010f]' },
+  bodyAttrs: { class: SHELL_BG_CLASS },
   // The landing shell is hardcoded dark (vibecode hex) — pin dark so app.vue's theme-init keeps b24ui
   // components on dark tokens here regardless of the visitor's OS theme (in-portal pages stay auto).
   htmlAttrs: { 'data-force-dark': 'true' },
@@ -105,7 +106,7 @@ onMounted(async () => {
 
     <main
       id="top"
-      class="landing-root relative min-h-screen bg-[#05010f] text-slate-200"
+      :class="`landing-root relative min-h-screen ${SHELL_CLASS}`"
     >
       <!-- radial brand glow (clip blurred blobs here, not on <main>, for the sticky header) -->
       <div
