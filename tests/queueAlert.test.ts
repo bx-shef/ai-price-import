@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  ALL_QUEUES,
   FAILURE_ALERT_THRESHOLD,
   FAILURE_WINDOW_MS,
   STALL_AGE_MS,
@@ -96,7 +97,43 @@ describe('evaluateQueueHealth', () => {
     it('сообщаем именно об этом', () => {
       const alerts = evaluateQueueHealth([q({ unreadable: true })], NOW)
       expect(alerts.map(a => a.kind)).toEqual(['unreadable'])
-      expect(alerts[0]?.text).toContain('не читается')
+      expect(alerts[0]?.text).toMatch(/не чита/)
+    })
+
+    // Живой прогон 2026-08-02: остановили Redis — в чат пришло ЧЕТЫРЕ сообщения подряд, по одному
+    // на очередь. Одна авария, четыре сообщения; а на подъёме пришло бы ещё четыре «восстановилось».
+    // Это ровно тот шум, против которого написан весь модуль: канал, который повторяется,
+    // перестают читать — и он не сработает в тот единственный раз, ради которого заведён.
+    it('ВСЕ очереди не читаются → одна тревога, а не по штуке на очередь', () => {
+      const alerts = evaluateQueueHealth([
+        q({ queue: 'b24-events', unreadable: true }),
+        q({ queue: 'file-extract', unreadable: true }),
+        q({ queue: 'agent-run', unreadable: true }),
+        q({ queue: 'crm-sync', unreadable: true })
+      ], NOW)
+      expect(alerts).toHaveLength(1)
+      expect(alerts[0]?.queue).toBe(ALL_QUEUES)
+      // Текст обязан говорить про очереди во множественном числе и звать чинить Redis: имени
+      // конкретной очереди тут нет, и «очередь «*»» читалось бы как поломка самого сообщения.
+      expect(alerts[0]?.text).toContain('очереди не читаются')
+      expect(alerts[0]?.text).toMatch(/Redis/)
+    })
+
+    it('нечитаема ЧАСТЬ очередей → имена называем: причина у них разная', () => {
+      // Схлопывать тут нельзя. «Все не читаются» — это про общий Redis; одна выпавшая очередь при
+      // живых остальных — про неё саму, и её имя единственное, что помогает.
+      const alerts = evaluateQueueHealth([
+        q({ queue: 'b24-events', unreadable: true }),
+        q({ queue: 'crm-sync' })
+      ], NOW)
+      expect(alerts).toHaveLength(1)
+      expect(alerts[0]?.queue).toBe('b24-events')
+      expect(alerts[0]?.text).toContain('«b24-events»')
+    })
+
+    it('очередей нет вовсе → тревог нет (пустой список не «все нечитаемы»)', () => {
+      // `[].every(...)` истинно — без явной проверки длины пустой замер объявил бы полную аварию.
+      expect(evaluateQueueHealth([], NOW)).toEqual([])
     })
 
     it('нечитаемая очередь не порождает выдуманных вердиктов о простое и падениях', () => {

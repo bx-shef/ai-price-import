@@ -103,8 +103,29 @@ const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000))
  *    `FAILURE_ALERT_THRESHOLD` for why the number is small: rejected documents never reach this
  *    population, so anything here is already abnormal.
  */
+/** Псевдо-имя очереди для аварии, которая накрыла ВСЕ очереди разом (см. ниже). */
+export const ALL_QUEUES = '*'
+
 export function evaluateQueueHealth(queues: QueueHealthInput[], _nowMs?: number): QueueAlert[] {
   const out: QueueAlert[] = []
+
+  // ⚠ ВСЕ очереди не читаются — это ОДНА авария, а не N штук (живой прогон 2026-08-02).
+  //
+  // Очереди не независимы: они живут в одном Redis. Он лёг — «не читается» становится верным для
+  // каждой, и пер-очередной эпизод превращал единственную поломку в четыре сообщения подряд, а
+  // потом ещё в четыре «восстановилось». Это ровно то, против чего весь модуль и написан: канал,
+  // который повторяется, перестают читать, и он не сработает в тот единственный раз, ради которого
+  // заведён. Причём именно на самой тяжёлой аварии он и шумит громче всего.
+  //
+  // Схлопываем только когда нечитаемы ВСЕ: это и есть признак «общая причина». Если часть очередей
+  // читается, а часть нет — причина у них разная, и называть конкретные имена полезно.
+  if (queues.length > 0 && queues.every(q => q.unreadable)) {
+    return [{
+      kind: 'unreadable',
+      queue: ALL_QUEUES,
+      text: `очереди не читаются — состояние конвейера неизвестно (проверьте Redis)`
+    }]
+  }
 
   for (const q of queues) {
     if (q.unreadable) {

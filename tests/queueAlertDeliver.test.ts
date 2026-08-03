@@ -16,7 +16,7 @@ import {
   sendTelegramAlert,
   type TelegramConfig
 } from '../server/utils/telegramAlert'
-import type { QueueAlert } from '../server/utils/queueAlert'
+import { evaluateQueueHealth, type QueueAlert } from '../server/utils/queueAlert'
 
 const stalled = (queue = 'crm-sync'): QueueAlert => ({ kind: 'stalled', queue, text: `очередь «${queue}» не разгребается` })
 const failing = (queue = 'crm-sync'): QueueAlert => ({ kind: 'failing', queue, text: `очередь «${queue}»: 20 задач упало` })
@@ -254,5 +254,42 @@ describe('sendTelegramAlert', () => {
     expect((await at(400)).retryable).toBe(false)
     expect((await at(429)).retryable).toBe(true)
     expect((await at(502)).retryable).toBe(true)
+  })
+})
+
+// Живой прогон 2026-08-02: Redis остановили — пришло четыре тревоги подряд, по одной на очередь.
+// Тот же счёт получило бы и «восстановилось» на подъёме. Схлопывание сделано в `evaluateQueueHealth`
+// (одна авария — один эпизод), а здесь проверяется, что доставка это видит именно так.
+describe('#алертинг: общая авария Redis — один эпизод от поломки до восстановления', () => {
+  const ALL_DOWN = [
+    { queue: 'b24-events', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 },
+    { queue: 'file-extract', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 },
+    { queue: 'agent-run', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 },
+    { queue: 'crm-sync', unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 }
+  ]
+  const HEALTHY = ALL_DOWN.map(q => ({ ...q, unreadable: false }))
+
+  it('поломка объявляется ОДИН раз, восстановление — тоже один', () => {
+    const down = evaluateQueueHealth(ALL_DOWN, 0)
+    const first = planAlertDelivery(down, emptyDeliveryState(), 0)
+    expect(first.opened).toHaveLength(1)
+
+    // Доставили — и следующая проверка при той же поломке молчит.
+    let state = markAnnounced(first.state, episodeKey(first.opened[0]!), 0)
+    const second = planAlertDelivery(down, state, 5 * 60_000)
+    expect(second.opened).toEqual([])
+
+    // Redis подняли: ровно одно «восстановилось», а не по штуке на очередь.
+    state = second.state
+    const up = planAlertDelivery(evaluateQueueHealth(HEALTHY, 10 * 60_000), state, 10 * 60_000)
+    expect(up.recovered).toHaveLength(1)
+    expect(recoveryMessage(up.recovered[0]!)).toContain('очереди снова читаются')
+  })
+
+  it('сообщение о восстановлении не показывает служебное имя «*»', () => {
+    // Иначе в чат уходит «очередь «*»» — читается как поломка самого сообщения, а не как новость.
+    const msg = recoveryMessage('unreadable:*')
+    expect(msg).not.toContain('«*»')
+    expect(msg).toContain('очереди снова читаются')
   })
 })

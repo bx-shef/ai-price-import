@@ -1,4 +1,4 @@
-import type { QueueAlert } from './queueAlert'
+import { ALL_QUEUES, type QueueAlert } from './queueAlert'
 
 // What actually gets PUSHED out of the queue health check, and when (BACKLOG.md §1).
 //
@@ -161,5 +161,9 @@ export function alertMessage(a: QueueAlert, appUrl?: string | null): string {
 export function recoveryMessage(key: EpisodeKey): string {
   const [kind, ...rest] = key.split(':')
   const what = KIND_WORD[kind ?? ''] ?? kind
-  return `✅ AI-импорт прайсов: очередь «${rest.join(':')}» — ${what} прекратились.`
+  const queue = rest.join(':')
+  // Эпизод «накрыло все очереди разом» (ALL_QUEUES) — про Redis, а не про конкретную очередь;
+  // «очередь «*»» в чате читалась бы как поломка самого сообщения.
+  if (queue === ALL_QUEUES) return `✅ AI-импорт прайсов: очереди снова читаются — ${what} прекратились.`
+  return `✅ AI-импорт прайсов: очередь «${queue}» — ${what} прекратились.`
 }
