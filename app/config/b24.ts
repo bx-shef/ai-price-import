@@ -72,9 +72,38 @@ export function marketDetailPath(code: string): string | null {
  * a link. A broken link is worse than no link: it promises a way back and leads nowhere.
  */
 export function portalAppUrl(portalDomain: string | undefined | null, code: string): string | null {
-  const host = String(portalDomain ?? '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim().toLowerCase()
+  const host = portalHost(portalDomain)
   const c = code.trim()
   return host && c ? `https://${host}/marketplace/view/${c}/` : null
+}
+
+/**
+ * Portal host out of a stored `portal_tokens.domain` — a bare host or a full URL, either case.
+ *
+ * ⚠ Two layers, and both are needed. First `new URL` PARSES (not a regex — the same bar as
+ * `isSafeB24Domain` and the crawler-file base, #304): `.hostname` drops userinfo, port, query and
+ * fragment by construction and normalises the case, so `x.bitrix24.by@evil.com` cannot survive as
+ * a host that READS like the portal and RESOLVES to evil.com. Then the cloud-zone predicate
+ * REJECTS what is left over — parsing alone accepted `evil.com` outright.
+ *
+ * The second layer is the point: the link's caption is fixed («открыть приложение», «Открыть в
+ * CRM»), so a substituted host is invisible to the reader, and they click it exactly when they have
+ * just been told the import failed. Mirrors `portalCurrencySettingsUrl`, which solves the same
+ * problem and was already strict; the first version of this function was below that bar.
+ *
+ * Unknown host ⇒ null ⇒ the caller sends its text without a link.
+ */
+export function portalHost(portalDomain: string | undefined | null): string | null {
+  const raw = String(portalDomain ?? '').trim()
+  if (!raw) return null
+  let host: string
+  try {
+    host = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+  // com.tr/com.br — the two official TWO-label cloud zones (#323), same alternation as the server guard.
+  return /^([a-z0-9-]+\.)+bitrix24\.(com\.(tr|br)|[a-z]{2,})$/.test(host) ? host : null
 }
 
 /** Bitrix24 entityTypeId constants used as import targets.

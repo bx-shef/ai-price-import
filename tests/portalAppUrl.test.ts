@@ -46,12 +46,26 @@ describe('#385: ссылка «открыть приложение» ведёт 
     }
   })
 
-  it('наш собственный хост больше не участвует в этом пути', () => {
-    // Гард по исходнику: правка «вернуть как было» проходит все проверки выше, если собрать адрес
-    // от `NUXT_PUBLIC_SITE_URL` — функция-то останется корректной, её просто перестанут звать.
+  it('чужой хост отвергается, а не подставляется в ссылку', () => {
+    // Подпись ссылки фиксированная («открыть приложение»), поэтому подменённый хост читателю не
+    // виден — а кликают по ней ровно тогда, когда человеку сказали «импорт не удался». Разбор
+    // показал: первая версия принимала всё это. `evil.com` ловится ТОЛЬКО вторым слоем (разбор
+    // `new URL` его пропускает — это законный хост), остальное — первым.
+    for (const bad of ['x.bitrix24.by@evil.com', 'evil.com', 'javascript:alert(1)', 'x]злая[URL=https://evil.com', '//evil.com']) {
+      expect(portalAppUrl(bad, 'c'), bad).toBeNull()
+    }
+    // А это не подмена, а формы записи того же портала: порт и ведущие пробелы снимаются.
+    expect(portalAppUrl('x.bitrix24.by:8080', 'c')).toBe('https://x.bitrix24.by/marketplace/view/c/')
+    expect(portalAppUrl('  https://x.bitrix24.by', 'c')).toBe('https://x.bitrix24.by/marketplace/view/c/')
+  })
+
+  it('наш собственный хост больше не участвует в этом пути — НИГДЕ в проводке', () => {
+    // ⚠ Прежний гард резал 400 знаков от имени функции и потому сторожил её ТЕЛО, а регрессия
+    // живёт на МЕСТЕ ВЫЗОВА: мутация `appUrl: … ?? \`${NUXT_PUBLIC_SITE_URL}/app\`` проходила при
+    // пяти зелёных тестах — то есть тупиковая ссылка возвращалась на каждом портале с пустым
+    // доменом. Плюс любое переименование функции давало ложный красный. Теперь — весь файл.
     const live = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
-    const fn = live.slice(live.indexOf('function appImportUrl'), live.indexOf('function appImportUrl') + 400)
-    expect(fn).toContain('portalAppUrl')
-    expect(fn).not.toContain('NUXT_PUBLIC_SITE_URL')
+    expect(live).toContain('portalAppUrl')
+    expect(live).not.toContain('NUXT_PUBLIC_SITE_URL')
   })
 })

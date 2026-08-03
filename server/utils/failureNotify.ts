@@ -7,7 +7,7 @@
 
 // `chatSafeText` and the caps live in chatNotify.ts — the same guard has to cover the crm-sync
 // success/error messages too, and two copies of a sanitiser drift.
-import { MAX_CHAT_FILE_NAME, MAX_CHAT_REASON, chatSafeText } from './chatNotify'
+import { MAX_CHAT_FILE_NAME, MAX_CHAT_REASON, chatSafeText, neutralizeBb } from './chatNotify'
 
 /** Prefixes of reasons that carry tool output rather than an explanation for a human. */
 const TECHNICAL_PREFIX = 'извлечение текста:'
@@ -72,8 +72,13 @@ export function planFailureNotify(input: FailureNotifyInput): PlannedMessage[] {
   if (input.uploaderId) {
     const lines = [`⛔ ${APP_NAME}: не удалось внести в CRM документ «${name}».`]
     if (why) lines.push(why)
-    lines.push(input.appUrl
-      ? `Можно поправить и загрузить снова: [URL=${input.appUrl}]открыть приложение[/URL]`
+    // The URL is neutralised like every other external field here: it is built from a value stored
+    // per portal, and a `]` in it would close the tag early and let the rest of the string render
+    // as markup — a second, attacker-chosen link under our caption. `portalAppUrl` already rejects
+    // such a host, so this is the second layer, not the only one.
+    const back = input.appUrl ? neutralizeBb(input.appUrl) : ''
+    lines.push(back
+      ? `Можно поправить и загрузить снова: [URL=${back}]открыть приложение[/URL]`
       : 'Файл можно загрузить снова в приложении.')
     out.push({ dialogId: input.uploaderId, message: lines.join('\n') })
   }
