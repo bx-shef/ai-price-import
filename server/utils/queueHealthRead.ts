@@ -102,22 +102,64 @@ export function countRecentFailures(jobs: RawFailedAt[], nowMs: number, windowMs
 }
 
 /**
+ * Сколько ждать чтения ОДНОЙ очереди, прежде чем считать её нечитаемой.
+ *
+ * ⚠ Это не перестраховка, а починка живого дефекта. Прогон 2026-08-02: остановили Redis, тревога
+ * пришла через ~15 минут вместо ожидаемых ≤5. Разбор сошёлся с арифметикой: BullMQ строит ioredis
+ * с дефолтными 20 повторами и стратегией `max(min(exp(n),20000),1000)` мс, а `enableOfflineQueue`
+ * держит команды в очереди вместо отказа — одна команда на мёртвом Redis отвергается примерно
+ * через 4 минуты. Очереди читались ПОСЛЕДОВАТЕЛЬНО, четыре штуки ⇒ ~16 минут.
+ *
+ * Всё это время проверка висела внутри, следующие тики отбрасывались охраной от наложения, а
+ * `/queues` продолжал показывать доаварийный вердикт «всё хорошо» — та самая зелёная картинка
+ * посреди полной аварии, против которой написан весь модуль.
+ */
+export const QUEUE_READ_TIMEOUT_MS = 10_000
+
+/** Ограничить ожидание: истекло — считаем нечитаемым, а не ждём милости ioredis. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('queue read timeout')), ms)
+    p.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        reject(e)
+      }
+    )
+  })
+}
+
+/**
  * Read every pipeline queue. One unreachable queue is reported as `unreadable` and does not stop
  * the others — a partial reading is still worth acting on.
+ *
+ * ⚠ Очереди читаются ПАРАЛЛЕЛЬНО и каждая с таймаутом: на мёртвом Redis последовательный обход
+ * складывал задержки очередей друг с другом (см. `QUEUE_READ_TIMEOUT_MS`). Параллельно и с
+ * ограничением весь замер укладывается в один таймаут, каким бы ни было число очередей.
  */
-export async function readQueueHealth(reader: QueueHealthReader, nowMs: number): Promise<QueueHealthInput[]> {
-  const out: QueueHealthInput[] = []
-  for (const queue of Object.values(QUEUES) as QueueName[]) {
+export async function readQueueHealth(
+  reader: QueueHealthReader,
+  nowMs: number,
+  timeoutMs = QUEUE_READ_TIMEOUT_MS
+): Promise<QueueHealthInput[]> {
+  const names = Object.values(QUEUES) as QueueName[]
+  return await Promise.all(names.map(async (queue): Promise<QueueHealthInput> => {
     try {
-      const [pending, failed] = await Promise.all([reader.pending(queue), reader.failed(queue)])
-      out.push({
+      const [pending, failed] = await Promise.all([
+        withTimeout(reader.pending(queue), timeoutMs),
+        withTimeout(reader.failed(queue), timeoutMs)
+      ])
+      return {
         queue,
         ...summarisePending(pending, nowMs),
         recentFailures: countRecentFailures(failed, nowMs)
-      })
+      }
     } catch {
-      out.push({ queue, unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 })
+      return { queue, unreadable: true, oldestPendingAgeMs: null, pending: 0, recentFailures: 0 }
     }
-  }
-  return out
+  }))
 }

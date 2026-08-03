@@ -1,5 +1,5 @@
 .PHONY: dev build-local check \
-        prod-up prod-down prod-pull prod-redeploy logs ps \
+        prod-up prod-env prod-down prod-pull prod-redeploy logs ps \
         server-up server-down watchtower-up watchtower-down proxy-tune proxy-untune proxy-check
 
 # Обёртки над командами разработки и деплоя. Подробности — docs/redesign/09-deploy.md.
@@ -32,6 +32,35 @@ build-local:
 prod-up:
 	docker compose -f docker-compose.prod.yml up -d
 	@$(MAKE) --no-print-directory proxy-tune || echo "⚠ proxy-tune не применён (прокси :443 не найден?) — примени вручную: make proxy-tune"
+
+## Применить правку .env — ПЕРЕСОЗДАЁТ контейнер `backend` (и только его).
+## ⚠ `docker compose restart` для этого НЕ годится и это главная ловушка: он перезапускает
+## процесс в СТАРОМ контейнере, а переменные окружения фиксируются в момент СОЗДАНИЯ
+## контейнера. Команда отработает, контейнер поднимется — и правка останется невидимой.
+## Диагностировать это тяжело: выглядит как «переменную не приняли», и время уходит на
+## проверку самой переменной, а не способа применения.
+## `--force-recreate` вместо голого `up -d` намеренно: смену env_file compose научился замечать
+## сам не сразу, и полагаться на версию в цели, вся задача которой — применить env, не стоит.
+##
+## ⚠ `--no-deps` ОБЯЗАТЕЛЕН. `up SERVICE` втягивает зависимости (у backend это `db` и `redis`), а
+## `--force-recreate` применяется ко ВСЕМУ набору — без флага команда пересоздала бы и Postgres, и
+## Redis. Данные уцелели бы (тома именованные), но перезапуск Redis — ровно то событие, которое
+## подсистема тревог считает аварией: команда, которой ВКЛЮЧАЮТ канал оповещений, сама бы его и
+## вызвала, попутно сбросив locks BullMQ у задач в работе.
+##
+## ⚠ Применяются только переменные, которые читает `backend` (у него `env_file: .env`). `DOMAIN`,
+## `LETSENCRYPT_*` и `POSTGRES_*` подставляются compose-ом в другие сервисы — их правку применяет
+## `make prod-up`. Особенно про пароль БД: сменить `POSTGRES_PASSWORD` и позвать `prod-env` значит
+## пересоздать backend с новым паролем против старого `db` — подключения не будет, а `/api/health`
+## останется зелёным (он liveness, а не readiness).
+##
+## ⚠ Состояние тревог живёт в памяти процесса, поэтому применять env во время АКТИВНОЙ тревоги не
+## стоит: идущая авария объявится второй раз, а «восстановилось» по ней не придёт вовсе.
+##
+## `proxy-tune` здесь намеренно НЕ вызывается: тюнинг живёт на vhost сервиса `app`, backend его не
+## затрагивает. Иначе правка одной переменной роняла бы общий прокси на 1–2 с для всех проектов хоста.
+prod-env:
+	docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate backend
 
 prod-down:
 	docker compose -f docker-compose.prod.yml down

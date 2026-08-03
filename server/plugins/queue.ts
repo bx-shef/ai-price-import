@@ -4,7 +4,7 @@ import type { QueueName } from '../queue/topology'
 import { evaluateQueueHealth } from '../utils/queueAlert'
 import { MAX_FAILED_SCAN, readQueueHealth } from '../utils/queueHealthRead'
 import { recordQueueHealth } from '../utils/queueAlertState'
-import { alertMessage, emptyDeliveryState, episodeKey, markAnnounced, planAlertDelivery, recoveryMessage, type DeliveryState } from '../utils/queueAlertDeliver'
+import { alertMessage, emptyDeliveryState, episodeKey, markAnnounced, markRecovered, planAlertDelivery, recoveryMessage, type DeliveryState } from '../utils/queueAlertDeliver'
 import { resolveTelegramConfig, sendTelegramAlert } from '../utils/telegramAlert'
 import { buildLiveInfra, startEventWorker, startThroughputWorkers } from '../queue/worker'
 import { liveKeepAliveDeps } from '../queue/liveDeps'
@@ -113,7 +113,12 @@ export default defineNitroPlugin((nitroApp) => {
 
     const runHealthCheck = async () => {
       // Ticks must not overlap: a slow Redis read would otherwise stack them up.
-      if (healthRunning) return
+      // ⚠ Пропуск ЛОГИРУЕТСЯ: молчаливое отбрасывание тиков и было половиной живого дефекта —
+      // проверка висела 15 минут, а наружу это выглядело как «проверок просто не было».
+      if (healthRunning) {
+        console.warn('[queue] health check skipped — previous one still running')
+        return
+      }
       healthRunning = true
       try {
         const alerts = evaluateQueueHealth(await readQueueHealth({
@@ -155,7 +160,11 @@ export default defineNitroPlugin((nitroApp) => {
         // forever, since the episode is «ongoing» from the next check onwards.
         if (await push(alertMessage(a, queuesUrl))) delivery = markAnnounced(delivery, episodeKey(a), Date.now())
       }
-      for (const key of recovered) await push(recoveryMessage(key))
+      // Как и у тревоги: ключ выбывает из ожидания ТОЛЬКО по факту доставки. Иначе один отказ
+      // Телеграма терял бы «✅» навсегда, и оператор остался бы с «сломалось» без закрытия.
+      for (const key of recovered) {
+        if (await push(recoveryMessage(key))) delivery = markRecovered(delivery, key)
+      }
     }
     healthTimer = setInterval(() => void runHealthCheck(), QUEUE_HEALTH_INTERVAL_MS)
     void runHealthCheck()

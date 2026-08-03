@@ -3,6 +3,7 @@ import { runCrmSync } from '../server/queue/crmSyncCore'
 import { defaultMapping } from '../app/utils/portalSettings'
 import type { ExtractedDocument } from '../app/types/document'
 import type { PortalMapping } from '../app/types/mapping'
+import { skippedLinesAdvice } from '../app/utils/importOutcome'
 
 const VAT = [{ id: '1', name: 'Без НДС', rate: null }, { id: '5', name: 'НДС 22%', rate: 22 }]
 
@@ -785,6 +786,60 @@ describe('runCrmSync — products / units / routing', () => {
       const writeActivity = vi.fn(async () => {})
       await runCrmSync('j', twoItems, m, {}, baseDeps({ writeActivity }))
       expect(writeActivity).not.toHaveBeenCalled()
+    })
+
+    it('совет «что делать» звучит РОВНО ОДИН раз и стоит ПЕРВЫМ', async () => {
+      // Живой прогон 2026-08-02: совет висел на каждой построчной строке, и карточка документа из
+      // трёх позиций несла его четыре раза подряд. Названия товаров в повторах тонули.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const deps = baseDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      // ⚠ Сверяем с САМИМ текстом, а не с подстрокой названия пункта настроек: подстрока есть и в
+      // тексте жёсткого отказа, и мутация «поставить сюда текст отказа» проходила незамеченной —
+      // импорт, который создал сделку, сообщал бы «запись в CRM не создана».
+      expect(r.warnings.filter(w => w === skippedLinesAdvice())).toHaveLength(1)
+      expect(r.warnings.some(w => /не создана|остановлен/i.test(w))).toBe(false)
+      // ⚠ ПЕРВЫМ: потребители режут список с начала (дело — по шести, чат — по десяти), и совет
+      // в хвосте отрезался бы тем вернее, чем больше строк пропущено.
+      expect(r.warnings[0]).toBe(skippedLinesAdvice())
+      // Названия пропущенных товаров при этом на месте — блок существует ради них.
+      expect(r.warnings.some(w => w.includes('Шуруп'))).toBe(true)
+    })
+
+    it('совет доезжает даже когда пропущенных строк больше, чем влезает в дело', async () => {
+      // Дело в таймлайне печатает первые шесть предупреждений. Совет в хвосте не попадал бы туда
+      // ровно на документах, где он нужнее всего.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const many: ExtractedDocument = { ...doc, items: [
+        ...Array.from({ length: 8 }, (_, i) => ({ name: `Товар ${i}`, price: 10, quantity: 1, unit: 'шт', vatRate: null })),
+        { name: 'Гвоздь', price: 10, quantity: 1, unit: 'шт', vatRate: null }
+      ] }
+      const deps = baseDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })
+      const r = await runCrmSync('j', many, m, {}, deps)
+      expect(r.warnings.slice(0, 6)).toContain(skippedLinesAdvice())
+    })
+
+    it('повтор задания, где ВСЕ строки теперь пропускаются, тоже несёт совет', async () => {
+      // Дыра, найденная разбором: первая попытка создала запись, к ретраю каталог изменился и
+      // строки перестали подбираться. До отказа не доходит (маркер найден), а прежнее условие
+      // `rows.length > 0` совет не выдавало — человек оставался с перечнем «не найден» и без него.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const r = await runCrmSync('j', twoItems, m, {}, baseDeps({ findExisting: vi.fn(async () => 777) }))
+      expect(r.idempotent).toBe(true)
+      expect(r.warnings[0]).toBe(skippedLinesAdvice())
+    })
+
+    it('пропущено ВСЁ — совет только в отказе, в предупреждениях его нет', async () => {
+      // Иначе вернулась бы та же простыня: красная строка с советом плюс он же под каждым товаром.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
+      expect(r.errors[0]).toContain('Внести строку как есть')
+      expect(r.warnings.filter(w => w.includes('Внести строку как есть'))).toEqual([])
+      expect(r.warnings.some(w => w.includes('Гвоздь'))).toBe(true)
     })
 
     it('пропущена ЧАСТЬ строк — импорт по-прежнему проходит', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ON_MISSING_ITEMS, ON_MISSING_LABEL } from '../app/config/onMissing'
-import { allLinesSkippedError, lineSkippedWarning, MAX_OUTCOME_TEXT } from '../app/utils/importOutcome'
+import { allLinesSkippedError, lineSkippedWarning, MAX_OUTCOME_TEXT, skippedLinesAdvice } from '../app/utils/importOutcome'
 import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
 
 describe('#373: текст исхода «ни одна позиция не перенесена»', () => {
@@ -12,6 +12,12 @@ describe('#373: текст исхода «ни одна позиция не пе
     for (const n of [1, 2, 5, 99, 1000]) {
       expect(allLinesSkippedError(n).length, `${n} позиций`).toBeLessThanOrEqual(MAX_OUTCOME_TEXT)
     }
+  })
+
+  it('совет тоже доезжает целиком — он идёт тем же путём', () => {
+    // Выжившая мутация из разбора: длина проверялась только у текста отказа, а совет уходит в тот
+    // же чат через ту же обрезку. Регрессия #373 воспроизводима на нём один в один.
+    expect(skippedLinesAdvice().length).toBeLessThanOrEqual(MAX_OUTCOME_TEXT)
   })
 
   it('предел совпадает с настоящим пределом чата', () => {
@@ -41,8 +47,18 @@ describe('#373: текст исхода «ни одна позиция не пе
     // Прежний текст звал его «Внести как произвольную позицию» — пункта с таким названием нет, и
     // бухгалтер искал в списке несуществующую строку.
     expect(allLinesSkippedError(4)).toContain(ON_MISSING_LABEL.freeform)
-    expect(lineSkippedWarning('Гвоздь')).toContain(ON_MISSING_LABEL.freeform)
+    expect(skippedLinesAdvice()).toContain(ON_MISSING_LABEL.freeform)
     expect(allLinesSkippedError(4)).not.toMatch(/произвольную позицию/i)
+  })
+
+  it('построчная строка НЕ повторяет совет — иначе карточка превращается в простыню', () => {
+    // Живой прогон 2026-08-02: документ из трёх позиций дал красную строку отказа с советом и три
+    // одинаковых абзаца с тем же советом — четыре повтора одной фразы в 45 знаков подряд. Названия
+    // товаров, ради которых блок и существует, в этих повторах тонули.
+    const w = lineSkippedWarning('Гвоздь')
+    expect(w).not.toContain(ON_MISSING_LABEL.freeform)
+    expect(w).not.toMatch(/настройк/i)
+    expect(w).toContain('Гвоздь')
   })
 
   it('число позиций печатается по-русски', () => {

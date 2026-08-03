@@ -31,6 +31,16 @@ export function formatClock(ms: number | null | undefined, locale = 'ru-RU'): st
  */
 export const QUEUE_HEALTH_STALE_MS = 30 * 60 * 1000
 
+/**
+ * Служебное имя очереди у эпизода «конвейер не читается» (`queueAlert.ts`).
+ *
+ * Живёт здесь, а не в `server/`, потому что его читают ОБЕ стороны: серверные правила тревог и
+ * экран оператора. Разбор показал, чем кончается копия: телеграм-сообщение метку скрывало, а
+ * `/queues` печатал её буквально — «Состояние очереди неизвестно — *», то есть ровно то впечатление
+ * поломки самого экрана, ради которого метку и прячут.
+ */
+export const ALL_QUEUES = '*'
+
 export function staleAfter(updatedAt: number | null | undefined, now: number = Date.now(), limit = STALE_AFTER_MS): boolean {
   if (!updatedAt || !Number.isFinite(updatedAt)) return false // обновления ещё не было — это не «устарело»
   return now - updatedAt > limit
