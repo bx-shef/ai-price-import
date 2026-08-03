@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest'
 // @ts-expect-error — .mjs helper shared with scripts/make-og.mjs (plain JS by design, no types)
 import { buildOgHtml } from '../scripts/lib/ogTemplate.mjs'
 import { BRAND_BADGE } from '../app/config/brandBadge'
-import { LANDING_HERO_NOTE, LANDING_MARKET_PROMO, LANDING_TITLE, LANDING_WHY_SUBTITLE } from '../app/utils/landing'
+import {
+  LANDING_DESCRIPTION, LANDING_FEATURES, LANDING_HERO_NOTE, LANDING_HOW_SUBTITLE, LANDING_INTEGRATORS,
+  LANDING_MARKET_PROMO, LANDING_PAIN_RESULT, LANDING_SOURCES, LANDING_STEPS, LANDING_SUBTITLE,
+  LANDING_TITLE, LANDING_WHY_SUBTITLE
+} from '../app/utils/landing'
 
 // `docs/market-graphics.md` is a hand-off brief: an outside designer paints from its numbers without
 // ever opening this repository. That makes every value in it a COPY of something the code owns —
@@ -74,15 +78,64 @@ describe('бриф дизайнеру не расходится с исходн�
   })
 })
 
-describe('пин известного расхождения: лендинг обещает бесплатное приложение (#387)', () => {
-  // §9 брифа запрещает писать цену, ссылаясь на то, что лендинг ПОКА утверждает обратное. В день,
-  // когда лендинг починят, это предупреждение начнёт описывать несуществующее противоречие — и
-  // никто не покраснеет, потому что предупреждение живёт в markdown. Пин по образцу
-  // `tests/markdownLite.test.ts`: незакрытая задача видима, а закрытие требует осознанно вычеркнуть
-  // строку — здесь заодно и §9 брифа, и строку «Тариф» в docs/PROJECT_MAP.md.
-  it('тексты лендинга про бесплатность ещё на месте — починили, вычеркните пин и правьте §9', () => {
-    expect(LANDING_HERO_NOTE).toContain('Бесплатное')
-    expect(LANDING_WHY_SUBTITLE).toContain('Бесплатное')
-    expect(LANDING_MARKET_PROMO.text).toContain('бесплатное')
+describe('#387: лендинг не обещает цену, которой не назначено', () => {
+  // Здесь стоял ПИН: §9 брифа запрещал писать цену, ссылаясь на то, что лендинг ПОКА утверждает
+  // обратное («Бесплатное приложение»). Пин сработал по назначению — покраснел в день починки и
+  // заставил вычеркнуть себя, поправить §9 брифа и строку «Тариф» в карте проекта. На его месте
+  // теперь обратное утверждение: обещание цены на лендинг не возвращается.
+  //
+  // ⚠ Приложение распространяется по подписке в Маркете, а «бесплатное» давалось ДО установки —
+  // то есть до того, как человек увидит счёт. Номинал тарифа ещё не выбран, поэтому формулировки
+  // верны при любом: где ставится приложение и что входит в отдельную работу.
+
+  /**
+   * ⚠ Словарь, а не одно слово. Первая версия пинила корень «бесплатн» — ровно то слово, которое
+   * только что убрали, — и разбор снёс её синонимами: «не потребует оплаты», «без оплаты», «free»,
+   * «даром» проходили насквозь. Обещание живёт в смысле, а не в корне.
+   */
+  const FREE_CLAIM = /бесплатн|бес\s*плат|даром|без\s+оплат|не\s+потребует\s+оплат|не\s+взимае|\bfree\b/i
+  /** Число с валютой: цену не ставим, пока её не назначили — она пережила бы своё решение. */
+  const PRICE = /\d+\s*(₽|руб|BYN|Br|₸|\$|€)/i
+
+  /**
+   * ⚠ ВЕСЬ пользовательский текст лендинга, а не три известные константы. Разбор показал: строка о
+   * бесплатности, дописанная в любой соседний текст (подзаголовок «Как это работает», карточки
+   * «Почему мы», подводка к брифу), проходила молча — гард защищал три строки, а не лендинг.
+   */
+  const COPY: string[] = [
+    LANDING_TITLE, LANDING_SUBTITLE, LANDING_DESCRIPTION, LANDING_HERO_NOTE,
+    LANDING_HOW_SUBTITLE, LANDING_WHY_SUBTITLE, LANDING_INTEGRATORS,
+    LANDING_MARKET_PROMO.badgeCaption, LANDING_MARKET_PROMO.title, LANDING_MARKET_PROMO.text, LANDING_MARKET_PROMO.cta,
+    LANDING_SOURCES.title, LANDING_SOURCES.text, LANDING_SOURCES.note,
+    LANDING_PAIN_RESULT.before, LANDING_PAIN_RESULT.after,
+    ...LANDING_STEPS.flatMap(x => [x.title, x.text]),
+    ...LANDING_FEATURES.flatMap(x => [x.title, x.text])
+  ]
+
+  it('ни один текст лендинга не обещает бесплатность самого приложения', () => {
+    for (const t of COPY) expect(t, t).not.toMatch(FREE_CLAIM)
+  })
+
+  it('и цены нигде нет — её ещё не назначили', () => {
+    for (const t of COPY) expect(t, t).not.toMatch(PRICE)
+  })
+
+  it('инлайновая вёрстка страницы тоже под гардом', () => {
+    // Тексты живут в `landing.ts`, но соседняя подводка к брифу написана прямо в разметке —
+    // значит и обещание можно написать там же, мимо всех констант.
+    const page = readFileSync(new URL('../app/pages/index.vue', import.meta.url), 'utf8')
+    const body = page.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('<!--')).join('\n')
+    expect(body).not.toMatch(FREE_CLAIM)
+    expect(body).not.toMatch(PRICE)
+  })
+
+  it('но точка входа названа — иначе непонятно, где брать приложение', () => {
+    expect(`${LANDING_HERO_NOTE} ${LANDING_MARKET_PROMO.text}`).toMatch(/Маркет/i)
+  })
+
+  it('бренд пишется одинаково — латиницей, как на кнопке рядом', () => {
+    // Кириллический «Битрикс24» появился в hero-note и стоял в одном экране с кнопкой «Открыть в
+    // Маркете Bitrix24»: разнобой виден без прокрутки.
+    for (const t of COPY) expect(t, t).not.toMatch(/Битрикс\s*24/i)
   })
 })

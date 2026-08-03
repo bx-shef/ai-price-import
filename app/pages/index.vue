@@ -366,7 +366,7 @@ onMounted(async () => {
           </div>
         </section>
 
-        <!-- ПРИЛОЖЕНИЕ В МАРКЕТЕ — бесплатная точка входа (вторичный вес) -->
+        <!-- ПРИЛОЖЕНИЕ В МАРКЕТЕ — точка входа (вторичный вес) -->
         <section class="px-[22px] pb-[56px] pt-[8px] sm:pb-[72px] lg:px-8">
           <div class="mx-auto max-w-[600px]">
             <div
