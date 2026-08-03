@@ -11,7 +11,7 @@ const ROOT = new URL('..', import.meta.url).pathname
 const abs = (p: string) => resolve(ROOT, p)
 
 /**
- * Files allowed in docs/. Three project documents + four hand-off materials for third parties.
+ * Files allowed in docs/. Three project documents + five hand-off materials for third parties.
  *
  * The list is a whitelist, not a cap: a new file needs a decision, not just a `git add`. `PRICING.md`
  * was added by an explicit owner decision (#301) — it is a commercial document (revenue model, rates,
@@ -19,6 +19,10 @@ const abs = (p: string) => resolve(ROOT, p)
  * the three project documents would put price negotiation into engineering notes. `eula.md` was added the same way (#297): the
  * Market requires a licence agreement at a permanent public address, the project had none, and it is
  * the SOURCE the `/eula` page renders — merging it into another document would break that page.
+ * `market-graphics.md` is the third such decision (owner, 2026-08-03): the Market listing artwork is
+ * commissioned from an outside designer, so the brief leaves the project the way `ui-spec.md` does —
+ * and it is deliberately NOT part of `ui-spec.md`, which specifies the in-portal screens and says so
+ * in its own scope note (the public site and the listing are «отдельным заданием»).
  */
 const ALLOWED_DOCS = [
   'PROCESS.md', // как работает продукт
@@ -27,7 +31,8 @@ const ALLOWED_DOCS = [
   'ui-spec.md', // дизайнеру
   'privacy-policy.md', // юристу и на публикацию
   'PRICING.md', // модель заработка + калькулятор кастомной работы (#301)
-  'eula.md' // лицензионное соглашение — публикуется на лендинге (#297, решение владельца)
+  'eula.md', // лицензионное соглашение — публикуется на лендинге (#297, решение владельца)
+  'market-graphics.md' // тексты для графики карточки Маркета — дизайнеру (решение владельца)
 ]
 
 const docsFiles = () => readdirSync(abs('docs'))
