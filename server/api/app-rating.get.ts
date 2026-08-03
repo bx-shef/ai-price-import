@@ -1,6 +1,6 @@
 import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
-import { getRatingState } from '../utils/appRatingStore'
+import { getInstalledAt, getRatingState } from '../utils/appRatingStore'
 import { shouldPrompt } from '../utils/appRatingPolicy'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import { query, dbEnabled } from '../db/client'
@@ -27,8 +27,13 @@ export default defineEventHandler(async (event) => {
         span.outcome = 'auth_failed'
         return { show: false }
       }
-      const state = await getRatingState(member.memberId, query)
-      return { show: shouldPrompt(state, new Date()) }
+      // Возраст установки — отдельное условие (#380): портал моложе четырёх суток попапа не
+      // получает даже после успешного импорта. Неизвестный возраст читается как «рано».
+      const [state, installedAt] = await Promise.all([
+        getRatingState(member.memberId, query),
+        getInstalledAt(member.memberId, query).catch(() => null)
+      ])
+      return { show: shouldPrompt(state, new Date(), {}, installedAt) }
     }
   )
 })
