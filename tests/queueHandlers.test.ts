@@ -3,6 +3,8 @@ import { handleCrmSyncJob, handleEventJob } from '../server/queue/handlers'
 import { eventJobToSaveInput, type EventJob } from '../server/queue/topology'
 import { defaultMapping } from '../app/utils/portalSettings'
 import type { ExtractedDocument } from '../app/types/document'
+import { parseJobResult } from '../app/utils/jobStatus'
+import { skippedLinesAdvice } from '../app/utils/importOutcome'
 
 const doc: ExtractedDocument = {
   currency: 'BYN',
@@ -173,6 +175,32 @@ describe('handleCrmSyncJob', () => {
     const d = deps({ getDocument: vi.fn(async () => null), deleteDocument })
     await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
     expect(deleteDocument).not.toHaveBeenCalled()
+  })
+  it('совет доезжает до строки задания через колонку результата (#388)', async () => {
+    // Шов между ядром и экраном: компонент тестируется на сыром JSON, разбор — на сыром JSON, а
+    // что сервер этот JSON действительно формирует с советом, не проверял никто. Мутация «убрать
+    // advice из записи статуса» проходила при всех зелёных тестах — и совет не появился бы ни у
+    // одного пользователя.
+    const m = defaultMapping()
+    m.units.dictionary = { шт: 796 }
+    m.product.onMissing = 'skip-warn'
+    const twoItems: ExtractedDocument = { ...doc, items: [
+      { name: 'Гвоздь', price: 10, quantity: 1, unit: 'шт', vatRate: null },
+      { name: 'Шуруп', price: 10, quantity: 1, unit: 'шт', vatRate: null }
+    ] }
+    const setJobStatus = vi.fn(async () => {})
+    const d = deps({
+      getMapping: vi.fn(async () => m),
+      getDocument: vi.fn(async () => ({ doc: twoItems, signals: {} })),
+      crmSyncDeps: vi.fn(() => crmDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })),
+      setJobStatus
+    })
+    await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
+    const written = String(setJobStatus.mock.calls.at(-1)?.[3] ?? '')
+    const parsed = parseJobResult(written)
+    expect(parsed.advice, 'совет не доехал до строки задания').toBe(skippedLinesAdvice())
+    // И НЕ продублирован в списке проблем — иначе счётчик снова соврёт.
+    expect(parsed.warnings).not.toContain(skippedLinesAdvice())
   })
 })
 

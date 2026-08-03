@@ -83,6 +83,8 @@ export interface SuccessSummary {
   created: boolean
   rowCount: number
   warnings: string[]
+  /** Подсказка «что делать с пропущенными строками». Не проблема и не входит в счётчик (#388). */
+  advice?: string
 }
 
 /** Build the success chat message (BB-safe). External fields are neutralised. `portalDomain`
@@ -98,6 +100,9 @@ export function buildSuccessMessage(s: SuccessSummary, portalDomain?: string): s
     lines.push(`Предупреждения (${s.warnings.length}):`)
     for (const w of s.warnings.slice(0, 10)) lines.push(`• ${chatSafeText(w, MAX_CHAT_REASON)}`)
   }
+  // Совет — ПОСЛЕ списка и ВНЕ его обрезки (#388). В списке он раздувал счётчик и читался как ещё
+  // одна поломка; в хвосте обрезаемого списка он терялся тем вернее, чем больше строк пропущено.
+  if (s.advice) lines.push(chatSafeText(s.advice, MAX_CHAT_REASON))
   // No host ⇒ the line is dropped, not degraded: «Открыть в CRM» that opens nothing reads as a
   // broken app, while its absence just means the message is shorter.
   const link = entityChatLink(s.entityTypeId, s.entityId, portalDomain)

@@ -29,7 +29,7 @@ import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_ME
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
+import { buildActivityLines, buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
@@ -566,8 +566,9 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     notifySuccess: async (summary) => {
       if (!mapping.notifyChatId) return
       const t = await need()
-      // Portal host → an absolute clickable BB-link «Открыть в CRM» in the chat message
-      // (a bare path is not a link). Best-effort: no token row ⇒ relative fallback.
+      // Portal host → an absolute clickable BB-link «Открыть в CRM» in the chat message (a bare
+      // path is not a link). No host ⇒ the link line is omitted entirely (#385) — a relative URL
+      // has no base in the desktop and mobile clients, so it would be a dead link, not a fallback.
       const domain = (await getToken(memberId, infra.query))?.domain
       await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call, await botId(), console.warn)
     },
@@ -578,7 +579,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     //   • no company      → owner = the created entity (nothing else to bind).
     // So exactly ONE activity is written (was two) and it shows in BOTH timelines via the binding.
     // Best-effort; runCrmSync swallows failures.
-    writeActivity: async ({ entityTypeId, entityId, companyId, supplierName, rowCount, warnings }) => {
+    writeActivity: async ({ entityTypeId, entityId, companyId, supplierName, rowCount, warnings, advice }) => {
       // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
       // Best-effort — a lookup failure just omits the button, never fails the import.
       // A read failure here used to be fully silent (`.catch(() => null)`), so a missing «Исходный
@@ -597,10 +598,10 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
       // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
       // stays within B24's block limit (buildConfigurableActivity slices to 10 total).
-      const problems = warnings.length
-        ? [`Проблемы (${warnings.length}):`, ...warnings.slice(0, 6).map(w => `• ${w}`)]
-        : []
-      const lines = [`Позиций: ${rowCount}`, ...(supplierName ? [`Поставщик: ${supplierName}`] : []), ...problems]
+      // Сборка тела дела — чистая функция (`buildActivityLines`): здесь она была невидима для
+      // тестов, и мутация «убрать совет» или «вернуть его внутрь обрезаемого списка» проходила
+      // при всех зелёных проверках.
+      const lines = buildActivityLines({ rowCount, supplierName, warnings, advice })
       const title = `Импорт: ${supplierName ?? 'документ'}`
       const hasCompany = !!companyId && companyId > 0
       const call = (await need()).call

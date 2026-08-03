@@ -329,7 +329,8 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     // несёт предупреждение «подтвердить флаг нечем» — раньше этот случай уходил молча.
     expect(writeActivity).toHaveBeenCalledWith({
       entityTypeId: 2, entityId: 555, companyId: 42, supplierName: 'ООО Ромашка', rowCount: 1,
-      warnings: [expect.stringMatching(/нет строки «Всего к оплате»/)]
+      warnings: [expect.stringMatching(/нет строки «Всего к оплате»/)],
+      advice: undefined
     })
   })
 
@@ -798,11 +799,12 @@ describe('runCrmSync — products / units / routing', () => {
       // ⚠ Сверяем с САМИМ текстом, а не с подстрокой названия пункта настроек: подстрока есть и в
       // тексте жёсткого отказа, и мутация «поставить сюда текст отказа» проходила незамеченной —
       // импорт, который создал сделку, сообщал бы «запись в CRM не создана».
-      expect(r.warnings.filter(w => w === skippedLinesAdvice())).toHaveLength(1)
+      expect(r.advice).toBe(skippedLinesAdvice())
       expect(r.warnings.some(w => /не создана|остановлен/i.test(w))).toBe(false)
-      // ⚠ ПЕРВЫМ: потребители режут список с начала (дело — по шести, чат — по десяти), и совет
-      // в хвосте отрезался бы тем вернее, чем больше строк пропущено.
-      expect(r.warnings[0]).toBe(skippedLinesAdvice())
+      // ⚠ В СПИСКЕ предупреждений его быть не должно (#388): там он раздувал счётчик («Проблемы (4)»
+      // на трёх пропущенных строках) и читался как ещё одна поломка. Отдельное поле заодно снимает
+      // и обрезку — прежде совет ставили первым именно потому, что список режут с начала.
+      expect(r.warnings).not.toContain(skippedLinesAdvice())
       // Названия пропущенных товаров при этом на месте — блок существует ради них.
       expect(r.warnings.some(w => w.includes('Шуруп'))).toBe(true)
     })
@@ -818,7 +820,8 @@ describe('runCrmSync — products / units / routing', () => {
       ] }
       const deps = baseDeps({ findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })
       const r = await runCrmSync('j', many, m, {}, deps)
-      expect(r.warnings.slice(0, 6)).toContain(skippedLinesAdvice())
+      expect(r.advice).toBe(skippedLinesAdvice())
+      expect(r.warnings).not.toContain(skippedLinesAdvice())
     })
 
     it('повтор задания, где ВСЕ строки теперь пропускаются, тоже несёт совет', async () => {
@@ -829,7 +832,21 @@ describe('runCrmSync — products / units / routing', () => {
       m.product.onMissing = 'skip-warn'
       const r = await runCrmSync('j', twoItems, m, {}, baseDeps({ findExisting: vi.fn(async () => 777) }))
       expect(r.idempotent).toBe(true)
-      expect(r.warnings[0]).toBe(skippedLinesAdvice())
+      expect(r.advice).toBe(skippedLinesAdvice())
+    })
+
+    it('совет доезжает до строки задания отдельным полем, а не через список (#388)', async () => {
+      // Приёмка: «совет виден и в деле, и в чате, и на строке задания». Через `warnings` он туда
+      // попадал ценой вранья в счётчике; отдельное поле обязано доезжать до ВСЕХ трёх потребителей.
+      const m = mapping()
+      m.product.onMissing = 'skip-warn'
+      const writeActivity = vi.fn(async () => {})
+      const notifySuccess = vi.fn(async () => {})
+      const deps = baseDeps({ writeActivity, notifySuccess, findProduct: vi.fn(async (it: { name: string }) => it.name === 'Гвоздь' ? 7 : null) })
+      const r = await runCrmSync('j', twoItems, m, {}, deps)
+      expect(r.advice).toBe(skippedLinesAdvice())
+      expect(writeActivity).toHaveBeenCalledWith(expect.objectContaining({ advice: skippedLinesAdvice() }))
+      expect(notifySuccess).toHaveBeenCalledWith(expect.objectContaining({ advice: skippedLinesAdvice() }))
     })
 
     it('пропущено ВСЁ — совет только в отказе, в предупреждениях его нет', async () => {
@@ -838,6 +855,11 @@ describe('runCrmSync — products / units / routing', () => {
       m.product.onMissing = 'skip-warn'
       const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
       expect(r.errors[0]).toContain('Внести строку как есть')
+      // ⚠ И НЕ вторым экземпляром рядом: совет уже внутри текста отказа. Мутация «дописать его в
+      // errors отдельной строкой» проходила незамеченной, а в чате ошибок он печатался бы дважды —
+      // вторая половина требования «ровно один раз на документ».
+      expect(r.errors.filter(e => e === skippedLinesAdvice())).toHaveLength(0)
+      expect(r.advice).toBeUndefined()
       expect(r.warnings.filter(w => w.includes('Внести строку как есть'))).toEqual([])
       expect(r.warnings.some(w => w.includes('Гвоздь'))).toBe(true)
     })

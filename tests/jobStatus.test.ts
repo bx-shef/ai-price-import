@@ -16,6 +16,15 @@ describe('jobStatusMeta', () => {
 })
 
 describe('parseJobResult', () => {
+  it('прокидывает совет отдельным полем, а мусор в нём отбрасывает (#388)', () => {
+    // Совет ушёл из `warnings` в своё поле — если его не разобрать здесь, на экране он просто
+    // исчезнет, и человек останется со списком «не найден» без единой подсказки, что делать.
+    expect(parseJobResult('{"warnings":[],"errors":[],"advice":"  Что делать: ...  "}').advice).toBe('Что делать: ...')
+    expect(parseJobResult('{"warnings":[],"errors":[],"advice":"   "}').advice).toBeUndefined()
+    expect(parseJobResult('{"warnings":[],"errors":[],"advice":42}').advice).toBeUndefined()
+    expect(parseJobResult('{"warnings":[],"errors":[]}').advice).toBeUndefined()
+  })
+
   it('parses crm-sync JSON result', () => {
     const r = parseJobResult(JSON.stringify({ entityId: 555, created: true, warnings: ['w'], errors: [] }))
     expect(r).toEqual({ entityId: 555, created: true, warnings: ['w'], errors: [] })

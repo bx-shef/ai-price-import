@@ -95,6 +95,9 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
       ...(loaded.doc.supplier?.name ? { supplier: loaded.doc.supplier.name.slice(0, 120) } : {}),
       lines: result.rowCount,
       warnings: result.warnings,
+      // Совет отдельным полем, а не строкой в `warnings` (#388): в списке он и раздувал счётчик
+      // проблем, и читался как ещё одна поломка документа.
+      ...(result.advice ? { advice: result.advice } : {}),
       errors: result.errors
     })
   )
