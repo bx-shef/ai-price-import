@@ -6,6 +6,7 @@ import ShieldIcon from '@bitrix24/b24icons-vue/solid/ShieldIcon'
 import ReceiptIcon from '@bitrix24/b24icons-vue/outline/ReceiptIcon'
 import ContactDetailsIcon from '@bitrix24/b24icons-vue/outline/ContactDetailsIcon'
 import { LANDING_CTA_MARKET, LANDING_MARKET_URL } from '~/utils/landing'
+import { SHELL_BG_MOBILE_NAV_CLASS, SHELL_BG_STICKY_CLASS } from '~/config/landingShell'
 
 // Sticky landing navigation (client-bank parity): section anchors + market / legal /
 // operators links with per-item icons, a business-card trigger and a persistent «open
@@ -35,7 +36,7 @@ function openCardMobile() {
 </script>
 
 <template>
-  <header class="sticky top-0 z-30 border-b border-white/5 bg-[#05010f]/85 backdrop-blur">
+  <header :class="`sticky top-0 z-30 border-b border-white/5 backdrop-blur ${SHELL_BG_STICKY_CLASS}`">
     <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
       <a
         href="#top"
@@ -134,7 +135,7 @@ function openCardMobile() {
     <nav
       v-if="mobileOpen"
       id="landing-mobile-menu"
-      class="border-t border-white/5 bg-[#05010f]/95 px-4 py-3 xl:hidden"
+      :class="`border-t border-white/5 px-4 py-3 xl:hidden ${SHELL_BG_MOBILE_NAV_CLASS}`"
       aria-label="Меню лендинга (мобильное)"
     >
       <ul class="flex flex-col gap-0.5">

@@ -1,13 +1,17 @@
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import {
   CONTRAST_MIN_LARGE,
   CONTRAST_MIN_TEXT,
   SHELL_BG_CLASS,
   SHELL_BG_HEX,
+  SHELL_BG_MOBILE_NAV_CLASS,
+  SHELL_BG_STICKY_CLASS,
   SHELL_CLASS,
-  SHELL_COLORS
+  SHELL_COLORS,
+  SHELL_VARS
 } from '../app/config/landingShell'
 
 // #368. `/privacy` и `/eula` открывались и отдавали 200, но текст был тёмно-серым на почти чёрном:
@@ -24,31 +28,18 @@ import {
 const ROOT = new URL('../', import.meta.url).pathname
 const read = (p: string) => readFileSync(ROOT + p, 'utf8')
 
-// Палитра берётся из САМОЙ темы Tailwind, а не из хексов «как помню»: v4 держит цвета в oklch, и
-// v3-хексы заметно отличаются по насыщенности. Тот же приём, что в `tests/brandBadge.test.ts`.
-const resolveSync = (id: string, from: string) => `file://${createRequire(from).resolve(id)}`
-const THEME = readFileSync(new URL(resolveSync('tailwindcss/theme.css', import.meta.url)), 'utf8')
-const themeColor = (name: string) => THEME.match(new RegExp(`--color-${name}:\\s*([^;]+);`))?.[1]?.trim()
-
-/** oklch(L C H) → sRGB. Достаточно для расчёта яркости; палитра Tailwind v4 записана именно так. */
-function oklchToRgb(css: string): [number, number, number] | null {
-  const m = css.match(/oklch\(\s*([\d.]+%?)\s+([\d.]+)\s+([\d.]+)/)
-  if (!m) return null
-  const L = m[1]!.endsWith('%') ? Number.parseFloat(m[1]!) / 100 : Number.parseFloat(m[1]!)
-  const C = Number.parseFloat(m[2]!)
-  const h = (Number.parseFloat(m[3]!) * Math.PI) / 180
-  const a = C * Math.cos(h)
-  const b = C * Math.sin(h)
-  const l_ = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
-  const m_ = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
-  const s_ = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
-  const lin = [
-    4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
-    -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
-    -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_
-  ]
-  return lin.map(v => Math.min(1, Math.max(0, v))) as [number, number, number]
-}
+// Палитра берётся из ОТГРУЖАЕМОЙ темы — из палитры b24ui, а не из `tailwindcss/theme.css`.
+// Первая версия читала стоковую тему Tailwind, и это делало весь расчёт декоративным: b24ui
+// переопределяет палитру целиком (стоковый `slate-500` даёт к нашему фону 4.33, отгружаемый
+// `#93a0b4` — 7.79), то есть числа в тесте описывали цвета, которых на странице нет. Тот же приём,
+// что в `tests/brandBadge.test.ts`: значение читается там, откуда его берёт сборка.
+// Через объявленный в `exports` подпуть `./runtime/*`, а не через `node_modules/…` руками: при
+// pnpm-раскладке рукописный путь ведёт не туда, куда смотрит сборка.
+const PALETTE = readFileSync(
+  createRequire(import.meta.url).resolve('@bitrix24/b24ui-nuxt/runtime/air-design-tokens/tw-style/colors.css'),
+  'utf8'
+)
+const themeColor = (name: string) => PALETTE.match(new RegExp(`--color-${name}:\\s*(#[0-9a-f]{3,8})`, 'i'))?.[1]?.trim()
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
@@ -56,19 +47,17 @@ function hexToRgb(hex: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
 }
 
-/** Относительная яркость (WCAG 2.x). Вход — линейный sRGB для oklch, гамма-кодированный для hex. */
-function luminance(rgb: [number, number, number], gammaEncoded: boolean): number {
-  const lin = rgb.map(v => (gammaEncoded ? (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4) : v))
+/** Относительная яркость (WCAG 2.x). Вход — гамма-кодированный sRGB. */
+function luminance(rgb: [number, number, number]): number {
+  const lin = rgb.map(v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
   return 0.2126 * lin[0]! + 0.7152 * lin[1]! + 0.0722 * lin[2]!
 }
 
 function contrast(fgName: string): number {
-  const css = themeColor(fgName)
-  if (!css) throw new Error(`цвета ${fgName} нет в теме Tailwind`)
-  const rgb = oklchToRgb(css)
-  if (!rgb) throw new Error(`не разобрал цвет ${fgName}: ${css}`)
-  const fg = luminance(rgb, false)
-  const bg = luminance(hexToRgb(SHELL_BG_HEX), true)
+  const hex = themeColor(fgName)
+  if (!hex) throw new Error(`цвета ${fgName} нет в отгружаемой палитре`)
+  const fg = luminance(hexToRgb(hex))
+  const bg = luminance(hexToRgb(SHELL_BG_HEX))
   const [hi, lo] = fg > bg ? [fg, bg] : [bg, fg]
   return (hi! + 0.05) / (lo! + 0.05)
 }
@@ -78,8 +67,7 @@ describe('#368: оболочка публичных страниц читает�
     // Без этой проверки опечатка в имени цвета или смена формата темы дала бы «зелёный» тест,
     // который ничего не считает.
     for (const name of Object.values(SHELL_COLORS)) {
-      expect(themeColor(name), `цвет ${name}`).toBeTruthy()
-      expect(oklchToRgb(themeColor(name)!), `разбор ${name}`).toBeTruthy()
+      expect(themeColor(name), `цвет ${name}`).toMatch(/^#[0-9a-f]{6}$/i)
     }
   })
 
@@ -133,6 +121,41 @@ describe('#368: фон и текст берутся вместе, а не пор
     // (в `app/layouts/` только `clear.vue`, и он для in-portal экранов), поэтому переменные не
     // разворачиваются и цвет остаётся дефолтным. Это и было причиной «чёрным по чёрному».
     expect(read('app/components/LegalDocument.vue')).not.toMatch(/--ui-color-base-/)
+  })
+
+  it('цвета из карты реально доезжают до разметки', () => {
+    // Выжившая мутация из разбора: все цвета в компоненте переписаны на непроходящие — девять
+    // тестов зелены, потому что гард считал контраст константы, которую компонент не читал.
+    // Теперь компонент обязан брать цвета ТОЛЬКО через переменные `--legal-*`.
+    const doc = read('app/components/LegalDocument.vue')
+    for (const role of Object.keys(SHELL_COLORS)) {
+      if (role === 'text') continue // основной текст едет классом `SHELL_CLASS`, не переменной
+      expect(doc, `роль ${role} не подключена`).toContain(`var(--legal-${role})`)
+    }
+    // И ни одного цвета мимо карты: прямой `var(--color-…)`/`text-slate-…` снова сделал бы карту
+    // декоративной.
+    expect(doc, 'цвет мимо карты').not.toMatch(/var\(--color-/)
+    expect(doc, 'цвет мимо карты').not.toMatch(/text-(slate|cyan)-\d/)
+    for (const [key, value] of Object.entries(SHELL_VARS)) {
+      expect(value, key).toBe(`var(--color-${SHELL_COLORS[key.replace('--legal-', '') as keyof typeof SHELL_COLORS]})`)
+    }
+  })
+
+  it('хекс и класс фона не разъезжаются', () => {
+    // Оба написаны литералами (иначе Tailwind не увидит класс-кандидат) — значит связь надо
+    // сторожить: сменили класс, а контраст продолжает считаться к старому фону.
+    for (const cls of [SHELL_BG_CLASS, SHELL_BG_STICKY_CLASS, SHELL_BG_MOBILE_NAV_CLASS]) {
+      expect(cls, cls).toContain(SHELL_BG_HEX)
+    }
+    expect(SHELL_CLASS).toContain(`text-${SHELL_COLORS.text}`)
+  })
+
+  it('хекс фона не написан больше нигде в app/', () => {
+    // Утечка из разбора: шапка лендинга держала свои копии `bg-[#05010f]/85` и `/95`, и смена фона
+    // оставила бы её прежней — видимый шов при прокрутке, при зелёных тестах.
+    const strays = execFileSync('git', ['grep', '-l', SHELL_BG_HEX, '--', 'app/'], { encoding: 'utf8' })
+      .split('\n').filter(Boolean).filter(f => f !== 'app/config/landingShell.ts')
+    expect(strays, 'копия фона мимо общего источника').toEqual([])
   })
 
   it('пара классов неразделима по построению', () => {

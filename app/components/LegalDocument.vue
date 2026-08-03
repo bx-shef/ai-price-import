@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { renderMarkdown } from '~/utils/markdownLite'
 import { canonicalUrl } from '~/utils/landing'
 import { PUBLISHER } from '~/config/publisher'
-import { SHELL_BG_CLASS, SHELL_CLASS } from '~/config/landingShell'
+import { SHELL_BG_CLASS, SHELL_CLASS, SHELL_VARS } from '~/config/landingShell'
 
 // Public legal page (#297, вариант В). The SOURCE is the markdown file in `docs/` — the page renders
 // it, it does not restate it. That is the whole point of the chosen option: a lawyer edits one file,
@@ -45,7 +45,10 @@ useHead({
 </script>
 
 <template>
-  <main :class="`legal-shell mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14 ${SHELL_CLASS}`">
+  <main
+    :class="`legal-shell mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14 ${SHELL_CLASS}`"
+    :style="SHELL_VARS"
+  >
     <!-- Ссылка наверху, а не только внизу: на страницу попадают прямой ссылкой из карточки
          Маркета, и до нижней навигации пришлось бы пролистать весь документ. -->
     <p class="mb-6 text-sm">
@@ -65,7 +68,7 @@ useHead({
       class="legal-body"
       v-html="html"
     />
-    <p class="mt-10 text-sm text-slate-400">
+    <p class="mt-10 text-sm legal-muted">
       {{ PUBLISHER.legalName }} · УНП {{ PUBLISHER.unp }} ·
       <a
         :href="`mailto:${PUBLISHER.email}`"
@@ -95,19 +98,20 @@ useHead({
 .legal-body :deep(ul), .legal-body :deep(ol) { margin: 0.75rem 0 0.75rem 1.25rem; line-height: 1.65; }
 .legal-body :deep(li) { margin: 0.25rem 0; list-style: disc; }
 .legal-body :deep(ol li) { list-style: decimal; }
-.legal-body :deep(hr) { margin: 2rem 0; border-top: 1px solid var(--color-slate-500); }
+.legal-body :deep(hr) { margin: 2rem 0; border-top: 1px solid var(--legal-border); }
 .legal-body :deep(blockquote) {
   margin: 1rem 0;
   padding: 0.5rem 0 0.5rem 0.75rem;
-  border-left: 3px solid var(--color-slate-500);
-  color: var(--color-slate-300);
+  border-left: 3px solid var(--legal-border);
+  color: var(--legal-quote);
 }
-.legal-body :deep(a) { color: var(--color-cyan-400); text-decoration: underline; }
+.legal-body :deep(a) { color: var(--legal-link); text-decoration: underline; }
+.legal-muted { color: var(--legal-muted); }
 .legal-body :deep(code) { font-size: 0.9em; }
 .legal-body :deep(table) { display: block; overflow-x: auto; margin: 1rem 0; border-collapse: collapse; }
 .legal-body :deep(th), .legal-body :deep(td) {
   padding: 0.4rem 0.6rem;
-  border: 1px solid var(--color-slate-500);
+  border: 1px solid var(--legal-border);
   text-align: left;
   vertical-align: top;
 }
