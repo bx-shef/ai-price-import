@@ -13,6 +13,7 @@
 // to telemetry attributes — those go through an allowlist.
 
 import type { TaxIdKind } from '~/types/document'
+import { stripHostileChars } from '~/utils/feedback'
 
 const LABELS: Record<TaxIdKind, string> = {
   INN: 'ИНН',
@@ -44,6 +45,24 @@ export function taxIdLabelBy(kind: TaxIdKind | undefined): string {
 export const MAX_COUNTERPARTY_NAME = 60
 
 /**
+ * Name from the document, made safe to print.
+ *
+ * ⚠ Cut by CODE POINTS, not by UTF-16 units. `slice(0, 60)` splits a surrogate pair, and the lone
+ * half travels all three paths as is: the chat and the дело show «», and a portal that rejects the
+ * malformed JSON drops the best-effort message entirely — precisely on the long foreign name the
+ * cap exists for. Measured on «А»×59 + an emoji.
+ *
+ * ⚠ Hostile invisibles are stripped too (`stripHostileChars`: bidi overrides, zero-widths, C0).
+ * BB-neutralisation covers markup, but a right-to-left override reverses how the name READS in the
+ * chat, in the timeline card and on screen — the module header used to call injection «already
+ * handled», which was true for BB and false for these.
+ */
+export function capName(name: string | undefined): string {
+  const clean = stripHostileChars(name ?? '').replace(/\s+/g, ' ').trim()
+  return [...clean].slice(0, MAX_COUNTERPARTY_NAME).join('')
+}
+
+/**
  * Warning for a document whose counterparty was not linked to a CRM company. Splits the two cases so
  * the suggested action is actually the one that helps.
  *
@@ -54,7 +73,7 @@ export const MAX_COUNTERPARTY_NAME = 60
  * • **The printed label (УНП/ИНН/БИН) is gone** from this sentence — the number stands in brackets
  *   after the name, where a label reads as clutter. This is NOT a loss of #264: that issue was about
  *   not listing all three abbreviations at once, and nothing lists them now either. The label still
- *   lives in the «номер не распознан» branch and in `taxIdLabel`/`taxIdLabelBy` for other callers.
+ *   names the number in the «имя не распозналось» branch below.
  * • **The consequence stays**, as a short second sentence. The owner's draft dropped it, but this is
  *   the ONLY place a person is told that the entity was nevertheless created and is hanging without
  *   a company; «не найден» alone reads as «ничего не произошло».
@@ -72,7 +91,7 @@ export function supplierNotLinkedWarning(
   }
   // Имени может не быть (распозналось не всё) — тогда «Контрагент  (123) не найден» с дырой
   // посередине; в этом случае называем номер тем ярлыком, под которым он напечатан.
-  const clean = (name ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_COUNTERPARTY_NAME)
+  const clean = capName(name)
   const who = clean ? `Контрагент ${clean} (${taxId})` : `Контрагент по ${taxIdLabelBy(kind)} ${taxId}`
   return `${who} не найден — запись создана без привязки к компании. `
     + 'Заведите компанию с этим номером налогоплательщика в реквизитах, и следующий импорт привяжется сам.'

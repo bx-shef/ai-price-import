@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { formatRate, summarizeMetrics } from '../app/utils/metricsView'
 
@@ -52,5 +53,19 @@ describe('formatRate', () => {
     expect(formatRate(1)).toBe('100%')
     expect(formatRate(0)).toBe('0%')
     expect(formatRate(null)).toBe('—')
+  })
+})
+
+describe('#384: терминология счётчиков совпадает с текстом предупреждений', () => {
+  it('«контрагент», а не «поставщик»', () => {
+    // Мутация «вернуть прежнюю подпись» проходила при зелёном наборе: тест сверял ключи и порядок,
+    // а подписи — нет. Пункт приёмки «подпись согласована с новой терминологией» держался ни на чём,
+    // и следующий рефактор откатил бы его молча. Продукт зовёт одно и то же одним словом.
+    // Список подписей не экспортируется — сверяем по исходнику: важна сама подпись, а не способ
+    // до неё добраться.
+    const src = readFileSync(new URL('../app/utils/metricsView.ts', import.meta.url), 'utf8')
+    const row = src.match(/\{ key: 'unmatched', label: '([^']+)' \}/)?.[1] ?? ''
+    expect(row).toContain('Контрагент')
+    expect(row).not.toMatch(/поставщик/i)
   })
 })
