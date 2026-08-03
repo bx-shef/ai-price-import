@@ -31,7 +31,13 @@ export default defineEventHandler(async (event) => {
       // получает даже после успешного импорта. Неизвестный возраст читается как «рано».
       const [state, installedAt] = await Promise.all([
         getRatingState(member.memberId, query),
-        getInstalledAt(member.memberId, query).catch(() => null)
+        // ⚠ fail-closed, но НЕ немой: перманентный сбой этого чтения (не тот столбец, права)
+        // навсегда выключил бы попап без единой строки в журнале. Отказ читается как «рано» —
+        // это верно, — но должен быть виден.
+        getInstalledAt(member.memberId, query).catch((e: unknown) => {
+          console.warn('[app-rating] install age unavailable — prompt stays hidden:', e instanceof Error ? e.message : e)
+          return null
+        })
       ])
       return { show: shouldPrompt(state, new Date(), { installedAt }) }
     }

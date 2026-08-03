@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { RATING_MIN_INSTALL_AGE_DAYS, RATING_REPROMPT_DAYS, shouldPrompt } from '../server/utils/appRatingPolicy'
 
@@ -77,5 +78,52 @@ describe('#380: попап не раньше N суток после устан�
     expect(shouldPrompt(st, NOW, { minInstallAgeDays: 10, installedAt: daysAgo(2) })).toBe(false)
     // Троттл при этом не трогается: свежепоказанный попап молчит на любом возрасте установки.
     expect(shouldPrompt({ promptedAt: daysAgo(1), openedAt: null, reviewed: false }, NOW, { minInstallAgeDays: 0, installedAt: daysAgo(365) })).toBe(false)
+  })
+})
+
+describe('#380 ревью: то, что держалось только на комментарии', () => {
+  it('возрастной гейт стоит ПЕРЕД разбором строки, а не после', () => {
+    // Мутация «перенести гейт под `if (!state)`» проходила при всех зелёных тестах. Отказ узкий, но
+    // реальный: у молодого портала строка `portal_app_rating` может уже существовать — её заводит
+    // консоль оператора (`markReviewed`/`clearOpened`), — и тогда решение уходило по прежней ветке
+    // троттла, то есть попап всплывал на первые сутки.
+    const rowWithExpiredThrottle = { promptedAt: daysAgo(RATING_REPROMPT_DAYS + 1), openedAt: null, reviewed: false }
+    expect(shouldPrompt(rowWithExpiredThrottle, NOW, { installedAt: daysAgo(1) })).toBe(false)
+  })
+
+  it('две константы независимы ПО ПОСТРОЕНИЮ, а не по совпадению значений', () => {
+    // Требование приёмки. Числа сегодня равны, поэтому мутация «RATING_MIN_INSTALL_AGE_DAYS =
+    // RATING_REPROMPT_DAYS» не роняла ничего — проверить это можно только структурно.
+    const src = readFileSync(new URL('../server/utils/appRatingPolicy.ts', import.meta.url), 'utf8')
+    const decl = src.match(/export const RATING_MIN_INSTALL_AGE_DAYS\s*=\s*([^\n]+)/)?.[1] ?? ''
+    expect(decl, 'порог установки выражен через троттл — смыслы связаны навсегда').not.toMatch(/RATING_REPROMPT_DAYS/)
+    expect(decl.trim()).toMatch(/^\d+$/)
+    // И обратно: троттл не должен быть выражен через порог установки.
+    const throttle = src.match(/export const RATING_REPROMPT_DAYS\s*=\s*([^\n]+)/)?.[1] ?? ''
+    expect(throttle).not.toMatch(/RATING_MIN_INSTALL_AGE_DAYS/)
+  })
+})
+
+describe('#380 ревью: шов «роут → политика»', () => {
+  // Мутация «передать в политику фиксированную старую дату» (то есть выключить фичу) не роняла
+  // НИЧЕГО: политика покрыта плотно, чтение даты теперь тоже, а вот то, что роут действительно
+  // отдаёт прочитанное, не проверял никто. Тот же класс, что уже закрывали у лимитера загрузок.
+  const src = readFileSync(new URL('../server/api/app-rating.get.ts', import.meta.url), 'utf8')
+  const body = src.split('\n').filter(l => !/^\s*import\b/.test(l)).join('\n')
+
+  it('роут читает дату установки и отдаёт её в решение', () => {
+    expect(body).toMatch(/getInstalledAt\(/)
+    expect(body).toMatch(/shouldPrompt\([\s\S]{0,120}?installedAt/)
+  })
+
+  it('не подменяет её константой', () => {
+    // `new Date(0)` / литерал даты рядом с вызовом означал бы «портал всегда старый».
+    const call = body.slice(body.indexOf('shouldPrompt('), body.indexOf('shouldPrompt(') + 200)
+    expect(call).not.toMatch(/installedAt:\s*new Date\(/)
+  })
+
+  it('сбой чтения не остаётся немым', () => {
+    // Перманентный отказ SELECT’а навсегда выключил бы попап без единой строки в журнале.
+    expect(body).toMatch(/getInstalledAt[\s\S]{0,300}console\.warn/)
   })
 })
