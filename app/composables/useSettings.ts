@@ -19,6 +19,12 @@ export function useSettings() {
   const error = ref('')
   // Whether the CALLING portal user is an admin (from GET /api/settings, verified server-side).
   // Non-admins may view settings but not save — writes are also enforced admin-only on the server.
+  //
+  // ⚠ Источников признака в проекте ДВА, и это осознанно (#411): здесь — из ответа сервера, потому
+  // что запрос за настройками всё равно идёт и признак едет попутно, проверенным; на `/metrics` —
+  // из фрейм-SDK (`useB24().isAdmin`), потому что там своего запроса нет и заводить серверный крюк
+  // ради одного флага незачем. Оба — только для показа: разрешает действие в обоих случаях сервер.
+  // Правило простое: есть свой серверный запрос — берите признак оттуда, нет — из фрейма.
   const isAdmin = ref(false)
   // Portal base currency (crm.currency.list BASE:'Y'), or `null` when the portal has none.
   // It labels the hourly rate — and its absence is exactly why the money tile can never appear.

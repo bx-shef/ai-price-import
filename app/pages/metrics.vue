@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
+import HelpIcon from '@bitrix24/b24icons-vue/main/HelpIcon'
 import { navigateTo } from '#app'
 import { useMetrics } from '~/composables/useMetrics'
 import { useB24 } from '~/composables/useB24'
@@ -20,13 +21,24 @@ const { counters, savings, resetting, error, load, reset } = useMetrics()
 
 // Opened as a B24 slider (openSliderAppPage({place:'metrics'})) or by in-frame navigation, so the
 // «back» control closes the slider overlay vs navigates to /app. Standalone → plain navigation.
-const { init: initB24, placementPlace, closeSlider } = useB24()
+const { init: initB24, placementPlace, closeSlider, isAdmin } = useB24()
 const isSlider = ref(false)
+
+// Обнуление счётчиков — только администратору (#411). Признак берём из фрейма (`IS_ADMIN` приезжает
+// вместе с токеном), сервер ради этого не расширяем.
+//
+// ⚠ Прежде кнопку видел КАЖДЫЙ: рядовой сотрудник проходил двухшаговое подтверждение «Да, обнулить»
+// и только после согласия получал 403. Интерфейс предлагал то, чего не разрешает, и говорил об этом
+// после того, как человек согласился, — хуже и чем спрятать, и чем показать заблокированным.
+//
+// ⚠ Скрытие — удобство. Настоящая проверка осталась на сервере (403), см. `useB24().isAdmin`.
+const admin = ref(false)
 onMounted(async () => {
   try {
     await initB24()
     isSlider.value = placementPlace() === APP_SLIDER_PLACE_METRICS
-  } catch { /* standalone */ }
+    admin.value = isAdmin()
+  } catch { /* standalone → остаётся false: вне портала сброс не показываем никому */ }
   await load()
 })
 /** Slider → close the B24 overlay; in-frame/standalone → go back to /app. */
@@ -181,14 +193,29 @@ async function doReset(): Promise<void> {
               @click="load"
             />
             <div class="ml-auto flex items-center gap-2">
+              <!-- Не-админу: на месте кнопки подсказка, КТО может обнулить, а не «недостаточно
+                   прав» — второе не подсказывает следующего шага. На телефоне тултипа нет вовсе
+                   (решение владельца): наведения там нет, а тултип-по-нажатию это отдельный
+                   паттерн со своими правилами закрытия. Следствие принято осознанно — на телефоне
+                   не-админ видит просто отсутствие действия, и отсутствующее действие не требует
+                   оправдания. -->
+              <B24Tooltip
+                v-if="!admin"
+                :delay-duration="100"
+                :content="{ side: 'left' }"
+                text="Обнулить счётчики может администратор портала."
+                class="hidden sm:inline-flex"
+              >
+                <HelpIcon class="size-5 cursor-help text-(--ui-color-base-4)" />
+              </B24Tooltip>
               <B24Button
-                v-if="!confirmReset"
+                v-if="admin && !confirmReset"
                 label="Обнулить счётчики"
                 color="air-tertiary-no-accent"
                 size="sm"
                 @click="() => { confirmReset = true }"
               />
-              <template v-else>
+              <template v-else-if="admin">
                 <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
                 <B24Button
                   color="air-primary-alert"
