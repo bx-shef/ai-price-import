@@ -27,6 +27,7 @@
     "loadtest:123": "node scripts/load-test-123.mjs",
     "loadtest:queue": "node scripts/load-test-queue.mjs",
     "og": "node --experimental-strip-types scripts/make-og.mjs",
+    "rating-demo": "node scripts/make-rating-demo.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "icons": "node scripts/make-icons.mjs",
     "verify:fail": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-fail-notify.mjs",
@@ -65,8 +66,10 @@
     "@types/qrcode": "^1.5.6",
     "@vue/test-utils": "^2.4.11",
     "eslint": "^10.8.0",
+    "gifenc": "^1.0.3",
     "happy-dom": "^20.11.1",
     "playwright-core": "^1.62.1",
+    "pngjs": "^7.0.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10",
     "vue-tsc": "^3.3.9"
