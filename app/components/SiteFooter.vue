@@ -61,6 +61,21 @@ const shaHref = computed(() => commitUrl(commitSha as string))
       >
         Политика конфиденциальности
       </NuxtLink>
+      <!-- Документы САЙТА — вторая пара (пакет юриста 2026-08-08). Посетитель лендинга приложение
+           не устанавливал, лицензией не связан, и его данные (демо-разбор, форма заявки) описывает
+           не политика приложения, а своя. Поэтому в подвале стоят все четыре, а не две. -->
+      <NuxtLink
+        to="/site-terms"
+        class="hover:text-white hover:underline"
+      >
+        Условия использования сайта
+      </NuxtLink>
+      <NuxtLink
+        to="/site-privacy"
+        class="hover:text-white hover:underline"
+      >
+        Конфиденциальность сайта
+      </NuxtLink>
       <a
         :href="shaHref"
         target="_blank"

@@ -65,7 +65,7 @@ export default defineNuxtConfig({
       // request returns 200 for B24's URL validation.
       // `/eula` и `/privacy` — публичные юридические документы (#297): Маркет Bitrix24 требует
       // постоянные HTTPS-адреса, поэтому они пререндерятся и попадают в sitemap.
-      routes: ['/', '/eula', '/privacy', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install']
+      routes: ['/', '/eula', '/privacy', '/site-terms', '/site-privacy', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install']
     }
   },
 

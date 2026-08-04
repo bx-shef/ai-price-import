@@ -259,6 +259,21 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
       <p class="mt-3 text-xs text-amber-300/80">
         ⚠️ Демо публичное: не загружайте конфиденциальные документы. Ограничение — 3 файла за 10 минут.
       </p>
+      <!-- Условия — РЯДОМ С КНОПКОЙ, а не только в подвале (требование пакета юриста 2026-08-08):
+           загрузка документа в демо это и есть момент, когда посетитель принимает условия; ссылка
+           внизу страницы к этому решению не относится, до неё ещё надо доскроллить. -->
+      <p class="mt-2 text-xs text-slate-500">
+        Загружая файл, вы принимаете
+        <NuxtLink
+          to="/site-terms"
+          class="underline hover:text-slate-300"
+        >Условия использования сайта</NuxtLink>
+        и
+        <NuxtLink
+          to="/site-privacy"
+          class="underline hover:text-slate-300"
+        >Политику конфиденциальности сайта</NuxtLink>.
+      </p>
     </div>
 
     <!-- Quota spent: upload form hidden, samples above still work (client-side, no quota) -->

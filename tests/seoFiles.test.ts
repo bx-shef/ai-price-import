@@ -29,12 +29,12 @@ describe('buildRobotsTxt', () => {
 })
 
 describe('buildSitemapXml', () => {
-  it('lists the landing and the two legal documents, with absolute locs', () => {
+  it('lists the landing and the four legal documents, with absolute locs', () => {
     // Три адреса, а не один (#297): лицензия и политика обязаны быть публичными по требованию
     // Маркета. Число закреплено намеренно — «заодно» добавленная служебная страница краснеет.
     const xml = buildSitemapXml('https://x.test')
     expect(xml).toContain('<loc>https://x.test/</loc>')
-    expect(xml.match(/<url>/g)).toHaveLength(3)
+    expect(xml.match(/<url>/g)).toHaveLength(5)
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true)
   })
 
@@ -99,7 +99,8 @@ describe('индексируется только лендинг', () => {
   // постоянным публичным адресам, а закрытый от индексации юридический документ — худший ответ
   // модератору, чем открытый. Список ИМЕНОВАННЫЙ: новая страница по умолчанию по-прежнему обязана
   // нести noindex, иначе служебный экран однажды уедет в выдачу вместе с пустым телом.
-  const INDEXABLE = ['app/pages/index.vue', 'app/pages/eula.vue', 'app/pages/privacy.vue']
+  const INDEXABLE = ['app/pages/index.vue', 'app/pages/eula.vue', 'app/pages/privacy.vue',
+    'app/pages/site-terms.vue', 'app/pages/site-privacy.vue']
 
   it('индексируются только лендинг и юридические документы', () => {
     const files = pageFiles('app/pages')
@@ -114,12 +115,14 @@ describe('индексируется только лендинг', () => {
   it('юридические страницы существуют и попали в sitemap', () => {
     // Обратная половина: удалить страницу и оставить исключение — значит тихо потерять требование
     // Маркета. Проверяем и файл, и то, что адрес реально объявлен краулерам.
-    for (const f of ['app/pages/eula.vue', 'app/pages/privacy.vue']) {
+    for (const f of ['app/pages/eula.vue', 'app/pages/privacy.vue', 'app/pages/site-terms.vue', 'app/pages/site-privacy.vue']) {
       expect(existsSync(resolve(ROOT, f)), `${f} должна существовать`).toBe(true)
     }
     const sitemap = buildSitemapXml('https://example.test', '2026-08-02')
     expect(sitemap).toContain('<loc>https://example.test/eula</loc>')
     expect(sitemap).toContain('<loc>https://example.test/privacy</loc>')
+    expect(sitemap).toContain('<loc>https://example.test/site-terms</loc>')
+    expect(sitemap).toContain('<loc>https://example.test/site-privacy</loc>')
   })
 
   // The #292 regression: SEO meta in a component that wraps MANY pages applied the landing's marketing

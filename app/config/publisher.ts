@@ -34,7 +34,7 @@ export const PUBLISHER = {
   /** Full legal name of the rights holder — the form legal documents must use. */
   legalName: 'Индивидуальный предприниматель Шевчик Игорь Сергеевич',
   /** Registered address; the postal address is the same one (owner-confirmed). */
-  address: 'пр. Дзержинского, д. 131, оф. 234, г. Минск, Беларусь, 220025'
+  address: 'пр. Дзержинского, д. 131, оф. 234, г. Минск, Республика Беларусь, 220025'
 } as const
 
 /** The person behind the sole proprietorship — business card and vCard. */

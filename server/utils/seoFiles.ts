@@ -95,6 +95,8 @@ export function buildSitemapXml(baseUrl: string, lastmod?: string, canonicalHost
     ...page('/', '1.0', 'weekly'),
     ...page('/eula', '0.3', 'yearly'),
     ...page('/privacy', '0.3', 'yearly'),
+    ...page('/site-terms', '0.3', 'yearly'),
+    ...page('/site-privacy', '0.3', 'yearly'),
     '</urlset>',
     ''
   ].join('\n')
