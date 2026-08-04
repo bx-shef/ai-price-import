@@ -235,347 +235,359 @@ watch(jobs, (list) => {
        redirected, the prerendered /app header fused with the redirected page's body). ClientOnly renders
        nothing on the server → no mismatch. -->
   <ClientOnly>
-    <div>
-      <!-- Шапка страницы — навбар каркаса (#259) вместо самодельного flex-заголовка. В мобильном
-           приложении Б24 нативная шапка УЖЕ показывает название, поэтому навбар там не рисуем. -->
-      <B24DashboardNavbar
-        v-if="!isBitrixMobile && screen !== 'launcher'"
-        :toggle="false"
-        title="AI-импорт прайсов"
-      >
-        <template #right>
-          <B24Button
-            :icon="SettingsIcon"
-            color="air-tertiary-no-accent"
-            size="sm"
-            aria-label="Настройки импорта"
-            @click="openSettings"
-          />
-        </template>
-      </B24DashboardNavbar>
-
-      <div class="mx-auto max-w-2xl p-4 sm:p-6">
-        <p
-          v-if="screen === 'work'"
-          class="mb-4 text-base text-(--ui-color-base-3)"
+    <!-- Панель каркаса (#259): навбар — в #header, контент — в #body. Родная база панели несёт
+         `min-h-svh` (храповик высоты iframe: контент всегда ≥ фрейма, Битрикс24 не сможет его
+         уменьшить), внутреннюю прокрутку тела и свой sm-паддинг. ⚠ `:b24ui` МЕРДЖИТСЯ через
+         tailwind-merge, а не заменяет слот, поэтому каждый из них снят явным конфликтующим
+         классом: `min-h-0`, `overflow-y-visible`, `gap-0`, `sm:p-0` (см. layout clear.vue). -->
+    <B24DashboardPanel
+      id="home"
+      :b24ui="{ root: 'relative flex flex-col w-full min-w-0 min-h-0', body: 'flex flex-col gap-0 overflow-y-visible sm:p-0' }"
+    >
+      <template #header>
+        <!-- Шапка страницы — навбар каркаса (#259) вместо самодельного flex-заголовка. В мобильном
+             приложении Б24 нативная шапка УЖЕ показывает название, поэтому навбар там не рисуем. -->
+        <B24DashboardNavbar
+          v-if="!isBitrixMobile && screen !== 'launcher'"
+          :toggle="false"
+          title="AI-импорт прайсов"
         >
-          Загрузите или сфотографируйте накладную, счёт, КП или прайс — приложение само внесёт товары в CRM.
-        </p>
-
-        <!-- Пока исход загрузки настроек неизвестен — только скелетон раскладки (#256). -->
-        <AppLoader v-if="screen === 'loading'" />
-
-        <!-- Пусковая страница (#262): приложение открыли прямой ссылкой / пунктом меню. Рабочий
-             экран здесь НЕ поднимаем — он уже открыт слайдером поверх. Кнопка нужна, чтобы был
-             путь обратно после закрытия слайдера. -->
-        <div
-          v-else-if="screen === 'launcher'"
-          class="py-6 text-center"
-          role="status"
-        >
-          <p class="mb-4 text-base text-(--ui-color-base-3)">
-            Импорт открывается отдельным окном поверх портала. Не открылось или вы его
-            закрыли — нажмите «Открыть импорт».
-          </p>
-          <p
-            v-if="sliderFailed"
-            class="mb-4 text-sm text-(--ui-color-accent-main-alert)"
-          >
-            Окно открыть не удалось. Попробуйте ещё раз или обновите страницу.
-          </p>
-          <B24Button
-            color="air-primary"
-            label="Открыть импорт"
-            @click="() => { void openMain() }"
-          />
-        </div>
-
-        <!-- Setup nudge: shown until the admin configures the app (pristine defaults). Admin gets a
-         call-to-action to /settings; a non-admin is told to ask their portal admin.
-         Цвет и иконка — по решению владельца (#257): нейтральный air-secondary + WarningAlarmIcon;
-         у кнопки цвет НЕ задаём, оставляем дефолт компонента. -->
-        <B24Alert
-          v-if="screen === 'setup'"
-          class="mb-4"
-          color="air-secondary"
-          :icon="WarningAlarmIcon"
-          :title="isAdmin ? 'Сначала настройте приложение' : 'Приложение ещё не настроено'"
-          :description="isAdmin
-            ? 'Осталось указать, куда вносить товары, по какому полю искать их в каталоге и в какой чат слать уведомления. Нажмите «Настроить» — это займёт пару минут.'
-            : 'Импорт пока не запустить. Попросите администратора портала настроить приложение — после этого загрузка документов станет доступна.'"
-        >
-          <template
-            v-if="isAdmin"
-            #actions
-          >
+          <template #right>
             <B24Button
-              label="Настроить импорт"
+              :icon="SettingsIcon"
+              color="air-tertiary-no-accent"
               size="sm"
+              aria-label="Настройки импорта"
               @click="openSettings"
             />
           </template>
-        </B24Alert>
+        </B24DashboardNavbar>
+      </template>
 
-        <!-- Бот не завёлся (#360): сообщения уходят, но подписаны сотрудником, а не приложением.
-         Показываем ТОЛЬКО админу и ТОЛЬКО когда чат уведомлений реально настроен — иначе сообщений
-         нет вовсе и предупреждать не о чем. Не блокирует работу: это качество подписи, не отказ. -->
-        <B24Alert
-          v-if="warnUnsignedChat"
-          class="mb-4"
-          color="air-secondary"
-          size="sm"
-          :icon="WarningAlarmIcon"
-          title="Сообщения в чат подписаны сотрудником"
-          description="Импорт работает как обычно, но отчёты и сообщения об ошибках приходят от имени сотрудника, который ставил приложение: своего чат-бота у приложения на этом портале пока нет. Обычно причина одна из двух — на тарифе портала чат-боты недоступны либо при установке не выдали право на них. В первом случае поможет коммерческий тариф, во втором — переустановка с полным набором прав."
-        >
-          <template #actions>
-            <B24Button
-              label="Открыть в Маркете"
-              size="sm"
-              color="air-tertiary"
-              @click="openMarket"
-            />
-          </template>
-        </B24Alert>
-
-        <!-- Пока приложение НЕ настроено (needsSetup) показываем ТОЛЬКО баннер выше (админу — с кнопкой
-           «Настроить», не-админу — «обратитесь к администратору»); весь рабочий контент скрыт до настройки
-           (owner ask). Вне портала (standalone) needsSetup=false → всё видно как обычно. -->
-        <template v-if="screen === 'work'">
-          <!-- PRIMARY ACTION: stage files → ONE target for the batch → «Импортировать» uploads the batch
-             and WAITS for every result, holding the page locked (owner rework, round 2). `upload`/`jobDone`
-             come from THIS page's single useImport() so the run and the list below share one poll. -->
-          <ImportStaging
-            :upload="upload"
-            :job-done="jobDone"
-            :refresh-now="refreshNow"
-            :list-error="listError"
-            :remember-file="rememberFile"
-            :portal-domain="portalDomain"
-            @update:busy="v => stagingBusy = v"
-          />
-
-          <B24Alert
-            v-if="error"
-            class="mt-3"
-            color="air-primary-warning"
-            :title="error"
-          />
-
-          <!-- STATUS: recent operations with compact inline counts. Shown only once there's history to show
-           (or a file is uploading) — a brand-new operator on first open sees just the dropzone + savings,
-           not an empty «Последние операции» block. -->
-          <div
-            v-if="jobs.length || uploading || listError || listWarning"
-            class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
-            :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+      <template #body>
+        <div class="mx-auto w-full max-w-2xl p-4 sm:p-6">
+          <p
+            v-if="screen === 'work'"
+            class="mb-4 text-base text-(--ui-color-base-3)"
           >
-            <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <h2 class="text-base font-semibold">
-                Последние операции
-              </h2>
-              <span
-                v-if="jobs.length"
-                class="flex items-center gap-2 text-xs"
-              >
-                <span class="text-(--ui-color-accent-main-success)">готово: {{ stats.done }}</span>
-                <span class="text-(--ui-color-accent-main-primary)">в работе: {{ stats.running }}</span>
-                <span class="text-(--ui-color-accent-main-alert)">ошибки: {{ stats.error }}</span>
-              </span>
-              <span
-                v-if="hasActive"
-                class="flex items-center gap-1 text-xs text-(--ui-color-accent-main-primary)"
-                role="status"
-              >
-                <span class="inline-block size-1.5 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-                обновляется
-              </span>
-            </div>
-            <div class="flex items-center gap-2">
-              <template v-if="jobs.length && !confirmClear">
-                <B24Button
-                  label="Очистить список"
-                  color="air-tertiary-no-accent"
-                  size="xs"
-                  @click="() => { confirmClear = true }"
-                />
-              </template>
-              <template v-else-if="confirmClear">
-                <span class="text-xs text-(--ui-color-base-3)">Убрать завершённые строки из списка? Ещё обрабатываемые останутся, документы в CRM — тоже.</span>
-                <B24Button
-                  label="Да, очистить"
-                  color="air-primary-alert"
-                  size="xs"
-                  @click="doClearList"
-                />
-                <B24Button
-                  label="Отмена"
-                  color="air-tertiary-no-accent"
-                  size="xs"
-                  @click="() => { confirmClear = false }"
-                />
-              </template>
-              <B24Button
-                :icon="RefreshIcon"
-                color="air-tertiary-no-accent"
-                size="xs"
-                :loading="loading"
-                :disabled="loading"
-                :label="loading ? 'Обновляем…' : 'Обновить'"
-                @click="refreshNow"
-              />
-            </div>
+            Загрузите или сфотографируйте накладную, счёт, КП или прайс — приложение само внесёт товары в CRM.
+          </p>
+
+          <!-- Пока исход загрузки настроек неизвестен — только скелетон раскладки (#256). -->
+          <AppLoader v-if="screen === 'loading'" />
+
+          <!-- Пусковая страница (#262): приложение открыли прямой ссылкой / пунктом меню. Рабочий
+             экран здесь НЕ поднимаем — он уже открыт слайдером поверх. Кнопка нужна, чтобы был
+             путь обратно после закрытия слайдера. -->
+          <div
+            v-else-if="screen === 'launcher'"
+            class="py-6 text-center"
+            role="status"
+          >
+            <p class="mb-4 text-base text-(--ui-color-base-3)">
+              Импорт открывается отдельным окном поверх портала. Не открылось или вы его
+              закрыли — нажмите «Открыть импорт».
+            </p>
+            <p
+              v-if="sliderFailed"
+              class="mb-4 text-sm text-(--ui-color-accent-main-alert)"
+            >
+              Окно открыть не удалось. Попробуйте ещё раз или обновите страницу.
+            </p>
+            <B24Button
+              color="air-primary"
+              label="Открыть импорт"
+              @click="() => { void openMain() }"
+            />
           </div>
 
-          <!-- НЕ блокируется на время прогона: результаты обязаны читаться по ходу импорта — ради
-               этого страница и ждёт. Блокировка остаётся на настройках/метриках ниже. -->
-          <B24Card
-            v-if="jobs.length || uploading || listError || listWarning"
-            variant="outline"
-            class="transition-opacity"
-            :b24ui="{ body: 'p-0 sm:p-0' }"
+          <!-- Setup nudge: shown until the admin configures the app (pristine defaults). Admin gets a
+         call-to-action to /settings; a non-admin is told to ask their portal admin.
+         Цвет и иконка — по решению владельца (#257): нейтральный air-secondary + WarningAlarmIcon;
+         у кнопки цвет НЕ задаём, оставляем дефолт компонента. -->
+          <B24Alert
+            v-if="screen === 'setup'"
+            class="mb-4"
+            color="air-secondary"
+            :icon="WarningAlarmIcon"
+            :title="isAdmin ? 'Сначала настройте приложение' : 'Приложение ещё не настроено'"
+            :description="isAdmin
+              ? 'Осталось указать, куда вносить товары, по какому полю искать их в каталоге и в какой чат слать уведомления. Нажмите «Настроить» — это займёт пару минут.'
+              : 'Импорт пока не запустить. Попросите администратора портала настроить приложение — после этого загрузка документов станет доступна.'"
           >
-            <ul class="divide-y divide-(--ui-color-base-5)">
-              <!-- Immediate feedback while the POST is in flight, before the job row appears. -->
-              <li
-                v-if="uploading"
-                class="flex items-center gap-2 p-3 text-sm text-(--ui-color-base-3)"
-              >
-                <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-                Отправляем файл…
-              </li>
-              <ImportJobItem
-                v-for="job in jobs"
-                :key="job.jobId"
-                :job="job"
-                :file="fileFor(job.jobId)"
-                @remove="removeJob"
+            <template
+              v-if="isAdmin"
+              #actions
+            >
+              <B24Button
+                label="Настроить импорт"
+                size="sm"
+                @click="openSettings"
               />
-              <!-- Сервер ответил, но не по всем заданиям (#260): не ошибка — предупреждение, поэтому
-                 показываем и при непустом списке. -->
-              <li
-                v-if="listWarning"
-                class="p-3 text-sm text-(--ui-color-base-3)"
-              >
-                {{ listWarning }}
-              </li>
-              <!-- Пустое состояние с причиной: «историю не удалось получить» и «истории нет» больше не
-                 выглядят одинаково (#268). Кнопка «Обновить» в шапке блока теперь тоже видна. -->
-              <li
-                v-if="!jobs.length && !uploading && listError"
-                class="p-3 text-sm text-(--ui-color-base-3)"
-              >
-                Статус загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
-                откройте приложение заново.
-              </li>
-            </ul>
-          </B24Card>
+            </template>
+          </B24Alert>
 
-          <!-- Экономия (по макету docs/ui-spec.md §2.7): две крупные цифры в строку, справа — ссылка на
-             подробные метрики и сброс; счётчики отдельной тихой строкой ПОД карточкой. -->
-          <B24Card
-            variant="outline"
-            class="mt-4 transition-opacity"
-            :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+          <!-- Бот не завёлся (#360): сообщения уходят, но подписаны сотрудником, а не приложением.
+         Показываем ТОЛЬКО админу и ТОЛЬКО когда чат уведомлений реально настроен — иначе сообщений
+         нет вовсе и предупреждать не о чем. Не блокирует работу: это качество подписи, не отказ. -->
+          <B24Alert
+            v-if="warnUnsignedChat"
+            class="mb-4"
+            color="air-secondary"
+            size="sm"
+            :icon="WarningAlarmIcon"
+            title="Сообщения в чат подписаны сотрудником"
+            description="Импорт работает как обычно, но отчёты и сообщения об ошибках приходят от имени сотрудника, который ставил приложение: своего чат-бота у приложения на этом портале пока нет. Обычно причина одна из двух — на тарифе портала чат-боты недоступны либо при установке не выдали право на них. В первом случае поможет коммерческий тариф, во втором — переустановка с полным набором прав."
           >
-            <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
-              <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
-              <B24PageGrid :class="hasMoneyTile ? 'flex-1 sm:grid-cols-2 lg:grid-cols-2' : 'flex-1 sm:grid-cols-1 lg:grid-cols-1'">
-                <B24PageCard
-                  variant="tinted-no-accent"
-                  title="Сэкономлено времени"
-                  :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+            <template #actions>
+              <B24Button
+                label="Открыть в Маркете"
+                size="sm"
+                color="air-tertiary"
+                @click="openMarket"
+              />
+            </template>
+          </B24Alert>
+
+          <!-- Пока приложение НЕ настроено (needsSetup) показываем ТОЛЬКО баннер выше (админу — с кнопкой
+           «Настроить», не-админу — «обратитесь к администратору»); весь рабочий контент скрыт до настройки
+           (owner ask). Вне портала (standalone) needsSetup=false → всё видно как обычно. -->
+          <template v-if="screen === 'work'">
+            <!-- PRIMARY ACTION: stage files → ONE target for the batch → «Импортировать» uploads the batch
+             and WAITS for every result, holding the page locked (owner rework, round 2). `upload`/`jobDone`
+             come from THIS page's single useImport() so the run and the list below share one poll. -->
+            <ImportStaging
+              :upload="upload"
+              :job-done="jobDone"
+              :refresh-now="refreshNow"
+              :list-error="listError"
+              :remember-file="rememberFile"
+              :portal-domain="portalDomain"
+              @update:busy="v => stagingBusy = v"
+            />
+
+            <B24Alert
+              v-if="error"
+              class="mt-3"
+              color="air-primary-warning"
+              :title="error"
+            />
+
+            <!-- STATUS: recent operations with compact inline counts. Shown only once there's history to show
+           (or a file is uploading) — a brand-new operator on first open sees just the dropzone + savings,
+           not an empty «Последние операции» block. -->
+            <div
+              v-if="jobs.length || uploading || listError || listWarning"
+              class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
+              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+            >
+              <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h2 class="text-base font-semibold">
+                  Последние операции
+                </h2>
+                <span
+                  v-if="jobs.length"
+                  class="flex items-center gap-2 text-xs"
                 >
-                  <p class="text-[22px] leading-tight font-semibold">
-                    {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-                  </p>
-                </B24PageCard>
-                <!-- Деньги показываем, только если админ задал стоимость часа: валюта берётся
-                     из самого портала, выдумывать её нельзя (#270). Не задана — плитки просто нет. -->
-                <B24PageCard
-                  v-if="hasMoneyTile"
-                  variant="tinted-no-accent"
-                  title="Сэкономлено денег (примерно)"
-                  :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+                  <span class="text-(--ui-color-accent-main-success)">готово: {{ stats.done }}</span>
+                  <span class="text-(--ui-color-accent-main-primary)">в работе: {{ stats.running }}</span>
+                  <span class="text-(--ui-color-accent-main-alert)">ошибки: {{ stats.error }}</span>
+                </span>
+                <span
+                  v-if="hasActive"
+                  class="flex items-center gap-1 text-xs text-(--ui-color-accent-main-primary)"
+                  role="status"
                 >
-                  <p class="text-[22px] leading-tight font-semibold">
-                    {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
-                  </p>
-                </B24PageCard>
-                <!-- Плитки нет — говорим, чего не хватает, вместо пустого места. -->
-                <p
-                  v-else-if="moneyHint"
-                  class="self-center text-xs text-(--ui-color-base-3)"
-                >
-                  {{ moneyHint }}
-                </p>
-              </B24PageGrid>
-              <div class="ml-auto flex flex-col items-end gap-2 text-xs">
-                <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
-                <button
-                  v-if="!isBitrixMobile"
-                  type="button"
-                  class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline"
-                  @click="openMetrics"
-                >
-                  Подробные метрики →
-                </button>
-                <B24Button
-                  v-if="!confirmReset"
-                  label="Сбросить"
-                  color="air-tertiary-no-accent"
-                  size="xs"
-                  @click="() => { confirmReset = true }"
-                />
-                <div
-                  v-else
-                  class="flex flex-wrap items-center justify-end gap-2"
-                >
-                  <span class="text-(--ui-color-base-3)">Обнулить счётчики экономии? Документы в CRM останутся.</span>
+                  <span class="inline-block size-1.5 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+                  обновляется
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                <template v-if="jobs.length && !confirmClear">
                   <B24Button
+                    label="Очистить список"
+                    color="air-tertiary-no-accent"
+                    size="xs"
+                    @click="() => { confirmClear = true }"
+                  />
+                </template>
+                <template v-else-if="confirmClear">
+                  <span class="text-xs text-(--ui-color-base-3)">Убрать завершённые строки из списка? Ещё обрабатываемые останутся, документы в CRM — тоже.</span>
+                  <B24Button
+                    label="Да, очистить"
                     color="air-primary-alert"
                     size="xs"
-                    :loading="resetting"
-                    :disabled="resetting"
-                    :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
-                    @click="doReset"
+                    @click="doClearList"
                   />
                   <B24Button
                     label="Отмена"
                     color="air-tertiary-no-accent"
                     size="xs"
-                    @click="() => { confirmReset = false }"
+                    @click="() => { confirmClear = false }"
                   />
-                </div>
+                </template>
+                <B24Button
+                  :icon="RefreshIcon"
+                  color="air-tertiary-no-accent"
+                  size="xs"
+                  :loading="loading"
+                  :disabled="loading"
+                  :label="loading ? 'Обновляем…' : 'Обновить'"
+                  @click="refreshNow"
+                />
               </div>
             </div>
-            <B24Alert
-              v-if="metricsError"
-              class="mt-3"
-              color="air-primary-warning"
-              size="sm"
-              :title="metricsError"
-            />
-          </B24Card>
-          <p
-            class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
-            :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
-          >
-            <span>Документов: {{ counters.docs || 0 }}</span>
-            <span>Создано в CRM: {{ counters.created || 0 }}</span>
-            <span>Позиций: {{ counters.lines || 0 }}</span>
-          </p>
 
-          <!-- Маркетинг: работа на своём сервере — «по запросу», не готовая услуга с ценой (#96). -->
-          <SelfHostedPromo />
-        </template>
+            <!-- НЕ блокируется на время прогона: результаты обязаны читаться по ходу импорта — ради
+               этого страница и ждёт. Блокировка остаётся на настройках/метриках ниже. -->
+            <B24Card
+              v-if="jobs.length || uploading || listError || listWarning"
+              variant="outline"
+              class="transition-opacity"
+              :b24ui="{ body: 'p-0 sm:p-0' }"
+            >
+              <ul class="divide-y divide-(--ui-color-base-5)">
+                <!-- Immediate feedback while the POST is in flight, before the job row appears. -->
+                <li
+                  v-if="uploading"
+                  class="flex items-center gap-2 p-3 text-sm text-(--ui-color-base-3)"
+                >
+                  <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+                  Отправляем файл…
+                </li>
+                <ImportJobItem
+                  v-for="job in jobs"
+                  :key="job.jobId"
+                  :job="job"
+                  :file="fileFor(job.jobId)"
+                  @remove="removeJob"
+                />
+                <!-- Сервер ответил, но не по всем заданиям (#260): не ошибка — предупреждение, поэтому
+                 показываем и при непустом списке. -->
+                <li
+                  v-if="listWarning"
+                  class="p-3 text-sm text-(--ui-color-base-3)"
+                >
+                  {{ listWarning }}
+                </li>
+                <!-- Пустое состояние с причиной: «историю не удалось получить» и «истории нет» больше не
+                 выглядят одинаково (#268). Кнопка «Обновить» в шапке блока теперь тоже видна. -->
+                <li
+                  v-if="!jobs.length && !uploading && listError"
+                  class="p-3 text-sm text-(--ui-color-base-3)"
+                >
+                  Статус загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
+                  откройте приложение заново.
+                </li>
+              </ul>
+            </B24Card>
 
-        <!-- «Оцените приложение»: всплывает после успешного импорта (когда польза очевидна). Показ/
+            <!-- Экономия (по макету docs/ui-spec.md §2.7): две крупные цифры в строку, справа — ссылка на
+             подробные метрики и сброс; счётчики отдельной тихой строкой ПОД карточкой. -->
+            <B24Card
+              variant="outline"
+              class="mt-4 transition-opacity"
+              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+            >
+              <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
+                <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
+                <B24PageGrid :class="hasMoneyTile ? 'flex-1 sm:grid-cols-2 lg:grid-cols-2' : 'flex-1 sm:grid-cols-1 lg:grid-cols-1'">
+                  <B24PageCard
+                    variant="tinted-no-accent"
+                    title="Сэкономлено времени"
+                    :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+                  >
+                    <p class="text-[22px] leading-tight font-semibold">
+                      {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+                    </p>
+                  </B24PageCard>
+                  <!-- Деньги показываем, только если админ задал стоимость часа: валюта берётся
+                     из самого портала, выдумывать её нельзя (#270). Не задана — плитки просто нет. -->
+                  <B24PageCard
+                    v-if="hasMoneyTile"
+                    variant="tinted-no-accent"
+                    title="Сэкономлено денег (примерно)"
+                    :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+                  >
+                    <p class="text-[22px] leading-tight font-semibold">
+                      {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
+                    </p>
+                  </B24PageCard>
+                  <!-- Плитки нет — говорим, чего не хватает, вместо пустого места. -->
+                  <p
+                    v-else-if="moneyHint"
+                    class="self-center text-xs text-(--ui-color-base-3)"
+                  >
+                    {{ moneyHint }}
+                  </p>
+                </B24PageGrid>
+                <div class="ml-auto flex flex-col items-end gap-2 text-xs">
+                  <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
+                  <button
+                    v-if="!isBitrixMobile"
+                    type="button"
+                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline"
+                    @click="openMetrics"
+                  >
+                    Подробные метрики →
+                  </button>
+                  <B24Button
+                    v-if="!confirmReset"
+                    label="Сбросить"
+                    color="air-tertiary-no-accent"
+                    size="xs"
+                    @click="() => { confirmReset = true }"
+                  />
+                  <div
+                    v-else
+                    class="flex flex-wrap items-center justify-end gap-2"
+                  >
+                    <span class="text-(--ui-color-base-3)">Обнулить счётчики экономии? Документы в CRM останутся.</span>
+                    <B24Button
+                      color="air-primary-alert"
+                      size="xs"
+                      :loading="resetting"
+                      :disabled="resetting"
+                      :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
+                      @click="doReset"
+                    />
+                    <B24Button
+                      label="Отмена"
+                      color="air-tertiary-no-accent"
+                      size="xs"
+                      @click="() => { confirmReset = false }"
+                    />
+                  </div>
+                </div>
+              </div>
+              <B24Alert
+                v-if="metricsError"
+                class="mt-3"
+                color="air-primary-warning"
+                size="sm"
+                :title="metricsError"
+              />
+            </B24Card>
+            <p
+              class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
+              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+            >
+              <span>Документов: {{ counters.docs || 0 }}</span>
+              <span>Создано в CRM: {{ counters.created || 0 }}</span>
+              <span>Позиций: {{ counters.lines || 0 }}</span>
+            </p>
+
+            <!-- Маркетинг: работа на своём сервере — «по запросу», не готовая услуга с ценой (#96). -->
+            <SelfHostedPromo />
+          </template>
+
+          <!-- «Оцените приложение»: всплывает после успешного импорта (когда польза очевидна). Показ/
              троттлинг/верификация — на сервере (portal_app_rating). Инертен вне портала. -->
-        <AppRatingModal :trigger="freshImportSuccess" />
+          <AppRatingModal :trigger="freshImportSuccess" />
 
-        <BuildFooter />
-      </div>
-    </div>
+          <BuildFooter />
+        </div>
+      </template>
+    </B24DashboardPanel>
   </ClientOnly>
 </template>
