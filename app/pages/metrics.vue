@@ -60,136 +60,156 @@ async function doReset(): Promise<void> {
 <template>
   <!-- CLIENT-ONLY: depends on the B24 frame handshake; prerender+hydrate framed mismatched (see /app). -->
   <ClientOnly>
-    <div>
-      <!-- Шапка — навбар каркаса (#259). Кнопка закрытия слайдера осталась той же: механику закрытия
-           страница по-прежнему решает сама (closeOrBack), навбар несёт только хром. -->
-      <B24DashboardNavbar
-        :toggle="false"
-        title="Метрики импорта"
-      >
-        <template #leading>
-          <B24Button
-            :icon="CrossMIcon"
-            color="air-tertiary-no-accent"
-            size="xs"
-            :aria-label="isSlider ? 'Закрыть' : 'Вернуться к обзору'"
-            @click="closeOrBack"
-          />
-        </template>
-      </B24DashboardNavbar>
-
-      <div class="mx-auto max-w-2xl p-4 pb-6 sm:p-6">
-        <p class="mb-4 text-sm text-(--ui-color-base-3)">
-          Сколько документов приложение обработало и сколько времени вам сэкономило.
-        </p>
-        <B24Alert
-          v-if="error"
-          class="mb-4"
-          color="air-primary-warning"
-          size="sm"
-          :title="error"
-        />
-
-        <!-- Экономия — те же плитки B24PageCard, что на /app: два экрана одной фичи читаются одинаково. -->
-        <B24PageGrid :class="hasMoneyTile ? 'sm:grid-cols-2 lg:grid-cols-2' : 'sm:grid-cols-1 lg:grid-cols-1'">
-          <B24PageCard
-            variant="tinted-no-accent"
-            title="Сэкономлено времени"
-            :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-          >
-            <p class="text-[22px] leading-tight font-semibold">
-              {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-            </p>
-          </B24PageCard>
-          <!-- Деньги — только при заданной стоимости часа (валюта портала, не константа; #270). -->
-          <B24PageCard
-            v-if="hasMoneyTile"
-            variant="tinted-no-accent"
-            title="Сэкономлено денег (примерно)"
-            :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-          >
-            <p class="text-[22px] leading-tight font-semibold">
-              {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
-            </p>
-          </B24PageCard>
-        </B24PageGrid>
-
-        <!-- Успешность -->
-        <div class="mt-3 rounded-lg border border-(--ui-color-base-5) p-4">
-          <div class="flex items-baseline justify-between">
-            <span class="text-sm text-(--ui-color-base-3)">Документов дошло до CRM</span>
-            <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
-          </div>
-          <p class="mt-1 text-xs text-(--ui-color-base-4)">
-            Из скольких загруженных документов получилась запись в CRM. Остальные — с ошибкой, их видно в списке операций.
-          </p>
-        </div>
-
-        <!-- Детальная разбивка -->
-        <div class="mt-3 rounded-lg border border-(--ui-color-base-5)">
-          <div class="border-b border-(--ui-color-base-5) px-4 py-2 text-xs font-semibold uppercase tracking-wide text-(--ui-color-base-4)">
-            Счётчики
-          </div>
-          <p
-            v-if="summary.empty"
-            class="px-4 py-6 text-center text-sm text-(--ui-color-base-4)"
-          >
-            Пока пусто. Загрузите первый документ на главной странице — счётчики появятся здесь.
-          </p>
-          <ul
-            v-else
-            class="divide-y divide-(--ui-color-base-5)"
-          >
-            <li
-              v-for="row in summary.rows"
-              :key="row.key"
-              class="flex items-center justify-between px-4 py-2.5 text-sm"
-            >
-              <span class="text-(--ui-color-base-3)">{{ row.label }}</span>
-              <span class="font-semibold text-(--ui-color-base-1) tabular-nums">{{ row.value }}</span>
-            </li>
-          </ul>
-        </div>
-
-        <!-- Сброс -->
-        <div class="mt-4 flex items-center gap-2">
-          <B24Button
-            :icon="RefreshIcon"
-            color="air-tertiary-no-accent"
-            size="sm"
-            :label="'Обновить'"
-            @click="load"
-          />
-          <div class="ml-auto flex items-center gap-2">
+    <!-- Панель каркаса (#259): навбар — в #header, контент — в #body; база переопределена под
+         обычный поток (см. layout clear.vue). -->
+    <B24DashboardPanel
+      id="metrics"
+      :b24ui="{ root: 'relative flex flex-col w-full min-w-0', body: 'flex flex-col' }"
+    >
+      <template #header>
+        <!-- Шапка — навбар каркаса (#259). Кнопка закрытия слайдера осталась той же: механику
+             закрытия страница по-прежнему решает сама (closeOrBack), навбар несёт только хром. -->
+        <B24DashboardNavbar
+          :toggle="false"
+          title="Метрики импорта"
+        >
+          <template #leading>
             <B24Button
-              v-if="!confirmReset"
-              label="Обнулить счётчики"
+              :icon="CrossMIcon"
+              color="air-tertiary-no-accent"
+              size="xs"
+              :aria-label="isSlider ? 'Закрыть' : 'Вернуться к обзору'"
+              @click="closeOrBack"
+            />
+          </template>
+        </B24DashboardNavbar>
+      </template>
+
+      <template #body>
+        <div class="mx-auto w-full max-w-2xl p-4 pb-6 sm:p-6">
+          <p class="mb-4 text-sm text-(--ui-color-base-3)">
+            Сколько документов приложение обработало и сколько времени вам сэкономило.
+          </p>
+          <B24Alert
+            v-if="error"
+            class="mb-4"
+            color="air-primary-warning"
+            size="sm"
+            :title="error"
+          />
+
+          <!-- Экономия — те же плитки B24PageCard, что на /app: два экрана одной фичи читаются одинаково. -->
+          <B24PageGrid :class="hasMoneyTile ? 'sm:grid-cols-2 lg:grid-cols-2' : 'sm:grid-cols-1 lg:grid-cols-1'">
+            <B24PageCard
+              variant="tinted-no-accent"
+              title="Сэкономлено времени"
+              :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+            >
+              <p class="text-[22px] leading-tight font-semibold">
+                {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+              </p>
+            </B24PageCard>
+            <!-- Деньги — только при заданной стоимости часа (валюта портала, не константа; #270). -->
+            <B24PageCard
+              v-if="hasMoneyTile"
+              variant="tinted-no-accent"
+              title="Сэкономлено денег (примерно)"
+              :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+            >
+              <p class="text-[22px] leading-tight font-semibold">
+                {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
+              </p>
+            </B24PageCard>
+          </B24PageGrid>
+
+          <!-- Успешность — карточка шаблона, а не ручной div.border (#259): один визуальный язык со
+             всеми блоками страницы. -->
+          <B24PageCard
+            variant="outline"
+            class="mt-3"
+          >
+            <div class="flex items-baseline justify-between">
+              <span class="text-sm text-(--ui-color-base-3)">Документов дошло до CRM</span>
+              <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
+            </div>
+            <p class="mt-1 text-xs text-(--ui-color-base-4)">
+              Из скольких загруженных документов получилась запись в CRM. Остальные — с ошибкой, их видно в списке операций.
+            </p>
+          </B24PageCard>
+
+          <!-- Детальная разбивка — пара «тонированная шапка + тело», как блоки настроек (#259 §1.3). -->
+          <div class="mt-3">
+            <B24PageCard
+              variant="tinted"
+              title="Счётчики"
+              :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
+            />
+            <B24PageCard
+              variant="outline"
+              :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+            >
+              <p
+                v-if="summary.empty"
+                class="py-2 text-center text-sm text-(--ui-color-base-4)"
+              >
+                Пока пусто. Загрузите первый документ на главной странице — счётчики появятся здесь.
+              </p>
+              <ul
+                v-else
+                class="divide-y divide-(--ui-color-divider-default)"
+              >
+                <li
+                  v-for="row in summary.rows"
+                  :key="row.key"
+                  class="flex items-center justify-between py-2.5 text-sm"
+                >
+                  <span class="text-(--ui-color-base-3)">{{ row.label }}</span>
+                  <span class="font-semibold text-(--ui-color-base-1) tabular-nums">{{ row.value }}</span>
+                </li>
+              </ul>
+            </B24PageCard>
+          </div>
+
+          <!-- Сброс -->
+          <div class="mt-4 flex items-center gap-2">
+            <B24Button
+              :icon="RefreshIcon"
               color="air-tertiary-no-accent"
               size="sm"
-              @click="() => { confirmReset = true }"
+              :label="'Обновить'"
+              @click="load"
             />
-            <template v-else>
-              <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
+            <div class="ml-auto flex items-center gap-2">
               <B24Button
-                color="air-primary-alert"
-                size="sm"
-                :loading="resetting"
-                :disabled="resetting"
-                :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
-                @click="doReset"
-              />
-              <B24Button
-                label="Отмена"
+                v-if="!confirmReset"
+                label="Обнулить счётчики"
                 color="air-tertiary-no-accent"
                 size="sm"
-                @click="() => { confirmReset = false }"
+                @click="() => { confirmReset = true }"
               />
-            </template>
+              <template v-else>
+                <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
+                <B24Button
+                  color="air-primary-alert"
+                  size="sm"
+                  :loading="resetting"
+                  :disabled="resetting"
+                  :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
+                  @click="doReset"
+                />
+                <B24Button
+                  label="Отмена"
+                  color="air-tertiary-no-accent"
+                  size="sm"
+                  @click="() => { confirmReset = false }"
+                />
+              </template>
+            </div>
           </div>
-        </div>
 
-        <BuildFooter />
-      </div>
-    </div>
+          <BuildFooter />
+        </div>
+      </template>
+    </B24DashboardPanel>
   </ClientOnly>
 </template>
