@@ -10,7 +10,7 @@ import { createDemoBudget, demoDailyLimit, secondsToBudgetReset } from '../../ut
 import { createIoredisBudgetStore } from '../../utils/demoBudgetRedis'
 import { connectionOptions } from '../../queue/connection'
 import { extractText } from '../../utils/textExtract'
-import { liveExtractRunners } from '../../utils/extractRunners'
+import { demoExtractRunners } from '../../utils/extractRunners'
 import { runChatExtract } from '../../agent/chatExtract'
 import { resolveLlmConfig } from '../../agent/llmConfig'
 import { makeChatFn } from '../../agent/openaiChat'
@@ -67,7 +67,7 @@ const demoAiDeps: DemoAiDeps = {
     await writeFile(p, bytes)
     return p
   },
-  extractText: (path, fileName) => extractText(path, fileName, liveExtractRunners),
+  extractText: (path, fileName) => extractText(path, fileName, demoExtractRunners),
   runAgent: async (documentText) => {
     const instructions = buildExtractionPrompt()
     const deps = { sleep: (ms: number) => new Promise<void>(r => setTimeout(r, ms)), random: () => Math.random() }

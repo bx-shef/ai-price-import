@@ -87,3 +87,39 @@ describe('#413: на путях демо не остаётся IP-адреса',
     expect(four29).not.toMatch(/remoteAddress|\bkey\b/)
   })
 })
+
+describe('#413: содержимое демо-документа не попадает в постоянное хранилище', () => {
+  const route = read('../server/api/demo/extract.post.ts')
+
+  it('файл пишется ТОЛЬКО во временный каталог и удаляется в finally', () => {
+    // ⚠ Формулировка приёмки в issue — «обработка строго in-memory» — невыполнима буквально:
+    // pdftotext/tesseract/libreoffice читают файл с диска, это внешние программы. Поэтому
+    // проверяется исполнимое утверждение: единственная запись идёт во временный каталог, и её
+    // удаление стоит в `finally` — то есть переживает и ошибку разбора, и отказ модели.
+    expect(route, 'путь записи не через временный каталог').toMatch(/DEMO_TMP/)
+    expect(route, 'временный каталог не из tmp').toMatch(/\/tmp\//)
+    const core = read('../server/utils/demoAi.ts')
+    expect(core, 'удаление не в finally — файл переживёт ошибку').toMatch(/finally\s*\{[\s\S]{0,200}cleanup/)
+  })
+
+  it('в базу и в Redis уходит только статус задания, без содержимого документа', () => {
+    // Демо живёт на своём сторе (`demoJobStore`), а не на портальном: у последнего другой TTL и
+    // другой состав. Проверяем, что маршрут не трогает ни портальный стор, ни Postgres.
+    expect(route, 'демо пишет в портальный стор заданий').not.toMatch(/from '\.\.\/\.\.\/utils\/jobStore'/)
+    expect(route, 'демо ходит в Postgres').not.toMatch(/queryFn|getPool|from '\.\.\/\.\.\/db\//)
+  })
+
+  it('у демо свой кап страниц скана — втрое ниже портального', () => {
+    // Каждая страница скана в демо это секунды OCR (держат один из двух слотов) и токены из
+    // общего суточного бюджета. Портальный кап защищает инфраструктуру, демо-кап — наш кошелёк.
+    const runners = read('../server/utils/extractRunners.ts')
+    expect(runners).toMatch(/MAX_DEMO_OCR_PDF_PAGES = \d+/)
+    const demoCap = Number(runners.match(/MAX_DEMO_OCR_PDF_PAGES = (\d+)/)?.[1])
+    const portalCap = Number(runners.match(/MAX_OCR_PDF_PAGES = (\d+)/)?.[1])
+    expect(demoCap).toBeGreaterThan(0)
+    expect(demoCap, 'демо-кап не ниже портального — тогда он бессмыслен').toBeLessThan(portalCap)
+    // И демо обязано использовать СВОИ раннеры: подмена на портальные снимает кап молча.
+    expect(route, 'демо ходит портальными раннерами').not.toContain('liveExtractRunners')
+    expect(route).toContain('demoExtractRunners')
+  })
+})
