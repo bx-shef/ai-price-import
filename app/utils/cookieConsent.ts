@@ -53,7 +53,10 @@ export function isConsentPath(path: string): boolean {
 }
 
 function normalisePath(path: string): string {
-  const clean = String(path ?? '').split('?')[0]!.split('#')[0]!
+  // ⚠ Регистр приводится: vue-router по умолчанию матчит адрес нечувствительно к регистру, поэтому
+  // `/EULA` из чужого письма отдаёт ту же страницу, а `route.path` остаётся `'/EULA'` — сравнение
+  // «как есть» оставило бы такого посетителя без баннера на публичной странице.
+  const clean = String(path ?? '').split('?')[0]!.split('#')[0]!.toLowerCase()
   if (clean.length > 1 && clean.endsWith('/')) return clean.slice(0, -1)
   return clean || '/'
 }

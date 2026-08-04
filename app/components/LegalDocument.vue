@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { renderMarkdown } from '~/utils/markdownLite'
 import { canonicalUrl } from '~/utils/landing'
 import { PUBLISHER } from '~/config/publisher'
 import { SHELL_BG_CLASS, SHELL_CLASS, SHELL_VARS } from '~/config/landingShell'
 import type { LegalEditionEntry } from '~/config/legalArchive'
 import { editionCanonicalPath, editionPageTitle, isCurrentEdition } from '~/utils/legalArchive'
+import { CONSENT_TEXT } from '~/config/cookieConsent'
+import { useCookieConsent } from '~/composables/useCookieConsent'
 
 // Public legal page (#297, вариант В). The SOURCE is the markdown file in `docs/` — the page renders
 // it, it does not restate it. That is the whole point of the chosen option: a lawyer edits one file,
@@ -36,6 +38,13 @@ const props = defineProps<{
 const isArchived = computed(() => Boolean(props.edition && !isCurrentEdition(props.edition)))
 
 const html = computed(() => renderMarkdown(props.source))
+
+const consent = useCookieConsent()
+const resetDone = ref(false)
+function resetConsent() {
+  consent.reset()
+  resetDone.value = true
+}
 
 // Заголовок и канонический адрес — ЧИСТЫЕ хелперы (`utils/legalArchive`), а не выражения здесь:
 // оба правила пережили мутационную проверку незамеченными, пока жили внутри `computed`.
@@ -124,6 +133,26 @@ useHead({
         class="underline"
       >{{ PUBLISHER.email }}</a>
     </p>
+    <!-- Передумать про cookie (#404). Кнопка стоит на Политике сайта — документе, который сам
+         обещает такую возможность; без неё единственным способом отозвать согласие была бы очистка
+         данных сайта в браузере. ⚠ Уже загруженный счётчик она не выключает — это сказано и здесь,
+         и в документе. -->
+    <p
+      v-if="path === CONSENT_TEXT.policyPath"
+      class="mt-6 text-sm"
+    >
+      <button
+        type="button"
+        class="legal-consent-reset"
+        @click="resetConsent"
+      >
+        {{ CONSENT_TEXT.change }}
+      </button>
+      <span
+        v-if="resetDone"
+        class="ml-2 legal-muted"
+      >Вопрос будет задан снова при следующем открытии страницы сайта.</span>
+    </p>
     <p
       v-if="archiveSlug"
       class="mt-2 text-sm"
@@ -180,6 +209,16 @@ useHead({
 }
 .legal-body :deep(a) { color: var(--legal-link); text-decoration: underline; }
 .legal-muted { color: var(--legal-muted); }
+.legal-consent-reset {
+  color: var(--legal-link);
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+.legal-consent-reset:focus-visible { outline: 2px solid var(--legal-link); outline-offset: 2px; }
 .legal-body :deep(code) { font-size: 0.9em; }
 .legal-body :deep(table) { display: block; overflow-x: auto; margin: 1rem 0; border-collapse: collapse; }
 .legal-body :deep(th), .legal-body :deep(td) {

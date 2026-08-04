@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { CONSENT_PATHS, CONSENT_VERSION } from '../app/config/cookieConsent'
+import { CONSENT_KEY, CONSENT_PATHS, CONSENT_VERSION } from '../app/config/cookieConsent'
 import { analyticsAllowed, isConsentPath, parseConsent, serializeConsent } from '../app/utils/cookieConsent'
+import { allArchiveRoutes } from '../app/utils/legalArchive'
 
 // #404. Уведомление о cookie и гейт аналитики.
 //
@@ -59,7 +60,19 @@ describe('#404: где показывается', () => {
     expect(isConsentPath('/eula/')).toBe(true)
     expect(isConsentPath('/?utm_source=ya')).toBe(true)
     expect(isConsentPath('/privacy#p5')).toBe(true)
-    expect(isConsentPath('/eula/archive')).toBe(false)
+    // Регистр тоже: vue-router отдаёт ту же страницу на `/EULA`, а путь остаётся с заглавными.
+    expect(isConsentPath('/EULA')).toBe(true)
+    expect(isConsentPath('/app')).toBe(false)
+  })
+
+  it('страницы архива редакций — тоже публичные', () => {
+    // Двенадцать адресов, которые рукописный список пропустил: они пререндерятся, лежат в карте
+    // сайта и открываются прямо из поиска. Посетитель читал бы там «счётчик только после согласия»,
+    // не видя, где это согласие дать. Список выводится из реестра, поэтому новая редакция
+    // добавляет свои адреса сама.
+    expect(isConsentPath('/site-privacy/archive')).toBe(true)
+    expect(isConsentPath('/eula/archive/2026-08-08')).toBe(true)
+    for (const r of allArchiveRoutes()) expect(isConsentPath(r), r).toBe(true)
   })
 })
 
@@ -80,7 +93,10 @@ describe('#404: счётчик не стартует сам', () => {
   it('решение читается из того же ключа и той же версии, что и приложение', () => {
     // Сниппет — простой текст в конфиге, он не может импортировать наши модули, поэтому ключ и
     // версия в нём написаны заново. Разъехавшись, они дали бы согласие, которое счётчик не видит.
-    expect(config).toContain('cookie-consent')
+    // ⚠ Сверяем с самой константой И по границе. Подстрочная проверка `toContain('cookie-consent')`
+    // пропускала мутацию `cookie-consent-v2`: приложение писало бы в один ключ, сниппет читал бы
+    // другой, и счётчик не поднимался бы никогда после перезагрузки — при зелёном CI.
+    expect(config).toContain(`getItem('${CONSENT_KEY}')`)
     expect(config).toContain(`c.version===${CONSENT_VERSION}`)
   })
 
