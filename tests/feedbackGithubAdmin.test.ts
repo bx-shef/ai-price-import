@@ -139,6 +139,26 @@ describe('#417: деградация вместо удаления', () => {
     expect(calls.some(c => c.method === 'PATCH')).toBe(false)
   })
 
+  it('комментарии читаются постранично', async () => {
+    // ⚠ Одной страницы хватало ровно до 101-го комментария: дальше удалялась сотня, возвращался
+    // успех, задача обезличивалась — и остаток комментариев с процитированным контекстом
+    // оставался видимым, при отчёте «обезличено».
+    let page = 0
+    const seen: number[] = []
+    const fn = (async (url: string, init?: { method?: string }) => {
+      if ((init?.method ?? 'GET') === 'GET') {
+        page++
+        // Первый заход — полная страница, второй — остаток, третий — пусто.
+        const ids = page === 1 ? Array.from({ length: 100 }, (_, i) => ({ id: i + 1 })) : page === 2 ? [{ id: 101 }] : []
+        return { status: 200, json: async () => ids }
+      }
+      seen.push(Number(url.split('/').pop()))
+      return { status: 204, json: async () => null }
+    }) as never
+    expect(await deleteIssueComments(config, 7, fn)).toBe(true)
+    expect(seen.length).toBe(101)
+  })
+
   it('комментариев нет — это успех', async () => {
     const { fn } = fakeFetch([['GET /issues/7/comments', { status: 200, json: [] }]])
     expect(await deleteIssueComments(config, 7, fn)).toBe(true)

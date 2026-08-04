@@ -164,7 +164,10 @@ export async function deleteFeedbackFile(config: FeedbackConfig, path: string, f
 }
 
 /** Текст, остающийся вместо содержимого при деградации. */
-export const REDACTED_BODY = 'Содержимое отзыва обезличено по истечении срока хранения (12 месяцев, п. 8.6 Политики конфиденциальности).'
+// ⚠ Текст не называет срок числом (он берётся из настройки и может быть меньше) и НЕ утверждает,
+// что содержимое исчезло: при обезличивании прежний текст остаётся в истории правок задачи, и
+// читатель, увидевший «удалено», сделал бы неверный вывод в одном клике от опровержения.
+export const REDACTED_BODY = 'Отзыв обезличен по истечении срока хранения (п. 8.6 Политики конфиденциальности). Прежний текст может оставаться в истории правок этой задачи.'
 
 /** Наши метки: их снимаем, чужие оставляем. */
 export function isOwnLabel(name: string): boolean {
@@ -181,31 +184,45 @@ export function isOwnLabel(name: string): boolean {
  * содержимое. `deleteIssue` комментарии уносит сам, здесь — запасной путь.
  */
 export async function deleteIssueComments(config: FeedbackConfig, issueNumber: number, fetchFn: FetchFn): Promise<boolean> {
-  let list: Awaited<ReturnType<FetchFn>>
-  try {
-    list = await fetchFn(`${API}/repos/${config.repo}/issues/${issueNumber}/comments?per_page=100`, { method: 'GET', headers: headers(config) })
-  } catch {
-    return false
-  }
-  if (list.status === 404) return true
-  if (list.status !== 200) return false
-  const body = await list.json().catch(() => null)
-  if (!Array.isArray(body)) return false
+  const PER_PAGE = 100
+  // ⚠ Страницы обязательны. Одной страницы хватало ровно до 101-го комментария, а дальше функция
+  // удаляла сотню, возвращала успех, задача обезличивалась — и остаток комментариев с
+  // процитированным контекстом оставался видимым, при отчёте «обезличено». То есть ложное
+  // обезличивание возвращалось тем же способом, каким его только что закрыли.
+  // Кап страниц — чтобы отказ удаления не крутил бесконечный цикл на неубывающем списке.
   let ok = true
-  for (const raw of body) {
-    const id = Number((raw as { id?: unknown })?.id)
-    if (!Number.isInteger(id) || id <= 0) {
-      ok = false
-      continue
-    }
+  for (let page = 1; page <= 20; page++) {
+    let list: Awaited<ReturnType<FetchFn>>
     try {
-      const res = await fetchFn(`${API}/repos/${config.repo}/issues/comments/${id}`, { method: 'DELETE', headers: headers(config) })
-      if (res.status !== 204 && res.status !== 404) ok = false
+      list = await fetchFn(`${API}/repos/${config.repo}/issues/${issueNumber}/comments?per_page=${PER_PAGE}&page=${page}`, { method: 'GET', headers: headers(config) })
     } catch {
-      ok = false
+      return false
     }
+    if (list.status === 404) return page > 1 ? ok : true
+    if (list.status !== 200) return false
+    const body = await list.json().catch(() => null)
+    if (!Array.isArray(body)) return false
+    if (body.length === 0) return ok
+    for (const raw of body) {
+      const id = Number((raw as { id?: unknown })?.id)
+      if (!Number.isInteger(id) || id <= 0) {
+        ok = false
+        continue
+      }
+      try {
+        const res = await fetchFn(`${API}/repos/${config.repo}/issues/comments/${id}`, { method: 'DELETE', headers: headers(config) })
+        if (res.status !== 204 && res.status !== 404) ok = false
+      } catch {
+        ok = false
+      }
+    }
+    // Удаление сдвигает нумерацию, поэтому следующая страница читается снова как первая: при
+    // полном успехе список пустеет, при отказах — нет, и кап страниц оборвёт круг.
+    if (body.length < PER_PAGE) return ok
+    if (!ok) return false
+    page = 0
   }
-  return ok
+  return false
 }
 
 /**

@@ -4,6 +4,8 @@ import { feedbackUploadAllowed } from '../utils/feedbackRepoPrivacy'
 import { resolveRetentionMonths, runFeedbackRetention } from '../utils/feedbackRetention'
 import { resolveTelegramConfig, sendTelegramAlert } from '../utils/telegramAlert'
 import { queueRuntimeConfig } from '../queue/runtime'
+import { connectionOptions } from '../queue/connection'
+import { windowCounterStore } from '../utils/windowCounterRedis'
 
 // Суточная чистка приёмника отзывов (#417): стереть отзывы старше срока из п. 8.6 Политики.
 //
@@ -32,6 +34,11 @@ const MAX_PER_RUN = 50
  */
 const FIRST_RUN_DELAY_MS = 5 * 60 * 1000
 
+/** Календарный день UTC — ключ суточной отсечки. */
+function dayKey(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 export default defineNitroPlugin(() => {
   if (import.meta.prerender) return
   if (!queueRuntimeConfig().cron) return
@@ -39,6 +46,19 @@ export default defineNitroPlugin(() => {
   if (!config) return
 
   const months = resolveRetentionMonths(process.env.FEEDBACK_RETENTION_MONTHS)
+  // ⚠ Отсечка ПЕРЕЖИВАЕТ перезапуск, и это не украшение. Прогон стоит на старте процесса, а
+  // Watchtower перекатывает контейнер на каждый выкат — десять выкатов за день дают десять
+  // прогонов (то есть кап «50 за прогон», обоснованный вторичными лимитами GitHub, превращается в
+  // 50×10) и десять сообщений об одной и той же поломке, ровно то мерцание, от которого этот
+  // канал отстраивался. Счётчик в Redis: первый тик за сутки — единственный, кто работает.
+  // Без Redis отсечки нет — это названо в PROCESS.md §6.12, а не молча.
+  const counter = windowCounterStore(connectionOptions())
+  const claimDaily = async (key: string, ttlSec: number): Promise<boolean> => {
+    if (!counter) return true
+    const n = await counter.incrWithTtl(key, ttlSec).catch(() => null)
+    // Redis не ответил — идём как раньше: пропущенный прогон хуже лишнего.
+    return n === null || n <= 1
+  }
   const fetchImpl = globalThis.fetch as typeof fetch
   const telegram = resolveTelegramConfig()
   // Одно сообщение на поломку, а не на прогон: суточный повтор одного и того же — это канал,
@@ -59,6 +79,11 @@ export default defineNitroPlugin(() => {
     console.warn(`[feedback-retention] ${text}`)
     if (announced === key) return
     if (!telegram) return
+    // Сутки на вид поломки — общие для всех перезапусков процесса.
+    if (!await claimDaily(`feedback-retention:said:${key}:${dayKey()}`, 25 * 3600)) {
+      announced = key
+      return
+    }
     try {
       const r = await sendTelegramAlert(telegram, `⚠️ Чистка отзывов: ${text}`, fetchImpl)
       if (r.ok) announced = key
@@ -84,6 +109,10 @@ export default defineNitroPlugin(() => {
     if (running) return
     running = true
     try {
+      if (!await claimDaily(`feedback-retention:run:${dayKey()}`, 25 * 3600)) {
+        console.info('[feedback-retention] сегодня уже отрабатывала — пропуск (перезапуск процесса)')
+        return
+      }
       // ⚠ Гейт приватности стоит ПЕРЕД разрушительными действиями, а не только перед загрузкой
       // байт (#200). Приёмник задаётся переменной окружения, и опечатка навела бы необратимое
       // удаление на чужой репозиторий. Проверка «не удалось» и «репозиторий публичный» одинаково

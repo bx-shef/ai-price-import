@@ -120,7 +120,10 @@ export function isOwnFeedbackIssue(i: FeedbackIssueRef): boolean {
  */
 export function jobIdOf(body: string): string | null {
   const text = String(body ?? '')
-  const at = text.indexOf('**Контекст:**')
+  // ⚠ ПОСЛЕДНЕЕ вхождение, не первое. Секцию печатает билдер, и она всегда идёт последней, а
+  // комментарий сотрудника стоит выше и экранируется только по `& < >` — маркер `**Контекст:**`,
+  // набранный в самом комментарии, матчился первым, и подделка работала ровно как до правки.
+  const at = text.lastIndexOf('**Контекст:**')
   if (at < 0) return null
   const m = /Задача \(jobId\):\*\*\s*`([^`]+)`/.exec(text.slice(at))
   if (!m) return null
@@ -142,9 +145,12 @@ export function issueFileDirs(i: FeedbackIssueRef): string[] {
   const job = jobIdOf(i.body)
   if (!job) return []
   const tag = portalTagOf(i)
-  const dirs = tag ? [feedbackFileDir(tag, job)] : []
-  dirs.push(`files/${job}`)
-  return dirs
+  // ⚠ Прежний каталог берётся ТОЛЬКО у задачи без метки портала. Он не несёт признака портала, а
+  // идентификатор задания приходит от клиента: проверяя его у задач С меткой, мы вернули бы ровно
+  // ту кросс-тенантную дыру, ради закрытия которой портал и попал в путь, — сотрудник назвал бы
+  // своим заданием чужое и добился удаления документа другого портала. У задачи без метки другого
+  // пути нет (она старше метки), и там это единственный способ вообще найти её документ.
+  return tag ? [feedbackFileDir(tag, job)] : [`files/${job}`]
 }
 
 /**
