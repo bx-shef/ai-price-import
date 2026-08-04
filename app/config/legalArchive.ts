@@ -87,6 +87,6 @@ export const LEGAL_ARCHIVE: LegalArchiveDoc[] = [
     noRetroactivity: false,
     title: 'Политика конфиденциальности сайта',
     sourceFile: 'site-privacy',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: 'def3e1e210a3cebdfb04a98cb38e9daa466449e4f6d09c84d1b30a6e6c2f9280' }]
+    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '6bf77bce1dabdecc6b5493597960b9a9d1ea099f1445b2d00551559406e1795a' }]
   }
 ]

@@ -1,0 +1,64 @@
+import { CONSENT_PATHS, CONSENT_VERSION } from '../config/cookieConsent'
+
+// Чистое ядро решения о cookie (#404): что хранить, где показывать, когда спрашивать снова.
+// Без DOM и без реактивности — всё это в composable и компоненте.
+
+/** Ответ посетителя. `null` — не отвечал (или ответ нечитаем). */
+export type ConsentChoice = 'accepted' | 'declined' | null
+
+export interface ConsentRecord {
+  choice: Exclude<ConsentChoice, null>
+  version: number
+}
+
+/**
+ * Разбор сохранённого решения.
+ *
+ * ⚠ Любое непонятное значение читается как «не отвечал», а не как согласие. Мусор в хранилище
+ * (правка руками, чужой ключ, недописанная запись) не вправе включить счётчик — цена ошибки
+ * несимметрична: лишний показ баннера это неудобство, аналитика без согласия — нарушение
+ * собственного документа.
+ */
+export function parseConsent(raw: string | null | undefined): ConsentChoice {
+  if (!raw) return null
+  let data: unknown
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  const rec = data as Partial<ConsentRecord> | null
+  if (!rec || typeof rec !== 'object') return null
+  // Версия ниже текущей — вопрос с тех пор изменился по смыслу, значит прежний ответ на него не
+  // отвечает. Версия ВЫШЕ (откат приложения) тоже спрашивается заново: чужой ответ мы не знаем.
+  if (rec.version !== CONSENT_VERSION) return null
+  return rec.choice === 'accepted' || rec.choice === 'declined' ? rec.choice : null
+}
+
+/** Строка для записи в хранилище. */
+export function serializeConsent(choice: Exclude<ConsentChoice, null>): string {
+  return JSON.stringify({ choice, version: CONSENT_VERSION } satisfies ConsentRecord)
+}
+
+/**
+ * Показывать ли уведомление на этом адресе.
+ *
+ * Сравнение — по нормализованному пути (хвостовой слэш у Nuxt появляется и исчезает в зависимости
+ * от того, пререндер это или переход внутри приложения; на такой мелочи баннер пропал бы ровно на
+ * половине заходов).
+ */
+export function isConsentPath(path: string): boolean {
+  const p = normalisePath(path)
+  return (CONSENT_PATHS as readonly string[]).some(allowed => normalisePath(allowed) === p)
+}
+
+function normalisePath(path: string): string {
+  const clean = String(path ?? '').split('?')[0]!.split('#')[0]!
+  if (clean.length > 1 && clean.endsWith('/')) return clean.slice(0, -1)
+  return clean || '/'
+}
+
+/** Запускать ли аналитику: только по явному согласию. */
+export function analyticsAllowed(choice: ConsentChoice): boolean {
+  return choice === 'accepted'
+}
