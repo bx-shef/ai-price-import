@@ -109,6 +109,19 @@ describe('проводка на странице настроек (#311)', () =>
     // это была бы неправда.
     expect(PAGE).toContain('v-if="rateHint && rateSeeded"')
   })
+
+  it('посев идёт ТОЛЬКО через shouldPrefillRate — второго инлайн-посева нет (#402)', () => {
+    // Рядом с чистой функцией жил забытый черновик её внедрения: второй watcher сеял ориентир
+    // инлайном — без проверки `configured` и без `rateSeeded`. На настроенном портале с намеренно
+    // пустой ставкой он молча подставлял число, и подпись «Подставлен ориентир» не показывалась —
+    // ставка выглядела введённой человеком. Гард: ровно один watcher посева и ровно одна запись
+    // в поле, та, что стоит за shouldPrefillRate (комментарии режем — иначе черновик, «убранный»
+    // в комментарий, считался бы за живой код).
+    const code = PAGE.split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+    expect(code.match(/watch\(\[loaded, baseCurrency\]/g) ?? []).toHaveLength(1)
+    const writes = code.match(/savingsRate\.value = [^\n]+/g) ?? []
+    expect(writes).toEqual(['savingsRate.value = rateHint.value!.rate'])
+  })
 })
 
 describe('подсказка под полем ставки (#311)', () => {
