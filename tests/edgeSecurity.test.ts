@@ -48,9 +48,17 @@ describe('contentSecurityPolicy', () => {
     const hosts = (directive: string) => (csp.split(';').find(d => d.trim().startsWith(directive)) ?? '')
       .trim().split(/\s+/).filter(t => t.startsWith('https://')).sort()
     const expected = zones.map(z => `https://*.bitrix24.${z}`).sort()
-    // exactly the official list, no extras (a stray host here is a clickjacking allowlist hole)
+    // frame-ancestors — РОВНО официальный список, без исключений: лишний хост здесь это дыра
+    // кликджекинга (чужая страница получает право показать наш портальный экран в своём фрейме).
     expect(hosts('frame-ancestors')).toEqual(expected)
-    expect(hosts('connect-src')).toEqual(expected)
+    // connect-src шире ровно на приёмники Метрики (#297): счётчик отправляет туда отчёты, а
+    // резервный домен `mc.yandex.com` он выбирает сам, когда основной недоступен. Список
+    // ИМЕНОВАННЫЙ — новый посторонний хост в исходящих соединениях по-прежнему роняет тест, и
+    // это главное, что здесь сторожится: connect-src — канал, по которому со страницы уходят
+    // данные. Счётчик работает только на лендинге (во фрейме он себя глушит), но политика одна
+    // на все страницы, поэтому разрешение шире фактического использования.
+    const METRIKA = ['https://mc.yandex.ru', 'https://mc.yandex.com']
+    expect(hosts('connect-src')).toEqual([...expected, ...METRIKA].sort())
   })
   it('relaxed form CSP only for /b24-form.html (unsafe-eval + B24 script hosts)', () => {
     const csp = contentSecurityPolicy('/b24-form.html')

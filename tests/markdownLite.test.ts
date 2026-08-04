@@ -84,15 +84,21 @@ describe('конструкции документов', () => {
   })
 })
 
+/** Все четыре публикуемых документа: две пары — приложение и сайт (пакет юриста, #297). */
+const DOCS = ['eula.md', 'privacy-policy.md', 'site-terms.md', 'site-privacy.md'] as const
+
 describe('реальные документы рендерятся без потерь', () => {
   const eula = readDoc('eula.md')
   const privacy = readDoc('privacy-policy.md')
 
   it('лицензия: все разделы на месте, включая применимое право', () => {
+    // Список — по редакции юриста от 08.08.2026 (#297). Раздел «Авторские права» из черновика стал
+    // «Права на Приложение и на данные Лицензиата», появились «Персональные данные» и «Техническая
+    // поддержка»: имена проверяем по фактическому документу, иначе гард сторожит текст, которого нет.
     const html = renderMarkdown(eula)
-    for (const n of ['Основные термины', 'Предмет Соглашения', 'Авторские права', 'Условия использования',
-      'Ответственность сторон', 'Ограниченная гарантия', 'Действие, изменение', 'Применимое право',
-      'непреодолимой силы', 'Контактная информация']) {
+    for (const n of ['Основные термины', 'Предмет Соглашения', 'Права на Приложение', 'Условия использования',
+      'Персональные данные', 'Техническая поддержка', 'Ответственность сторон', 'Ограниченная гарантия',
+      'Действие, изменение', 'Применимое право', 'непреодолимой силы', 'Контактная информация']) {
       expect(html, n).toContain(n)
     }
   })
@@ -104,7 +110,8 @@ describe('реальные документы рендерятся без пот
 
   it('в готовой разметке не остаётся сырых markdown-маркеров', () => {
     // Признак того, что конструкция встретилась, но не поддержана — читатель увидит «##» глазами.
-    for (const [name, md] of [['eula', eula], ['privacy', privacy]] as const) {
+    for (const name of DOCS) {
+      const md = readDoc(name)
       const html = renderMarkdown(md)
       expect(html, `${name}: незакрытые заголовки`).not.toMatch(/<p>#{1,6}\s/)
       expect(html, `${name}: незакрытые таблицы`).not.toMatch(/<p>\|/)
@@ -120,6 +127,8 @@ describe('страницы действительно публикуются (#2
     const routes = /routes:\s*\[([^\]]*)\]/.exec(config)?.[1] ?? ''
     expect(routes).toContain(`'/eula'`)
     expect(routes).toContain(`'/privacy'`)
+    expect(routes).toContain(`'/site-terms'`)
+    expect(routes).toContain(`'/site-privacy'`)
   })
 
   it('страница объявляет свой собственный адрес, а не соседний', () => {
@@ -131,6 +140,12 @@ describe('страницы действительно публикуются (#2
     expect(eula).toContain('docs/eula.md?raw')
     expect(privacy).toContain('path="/privacy"')
     expect(privacy).toContain('docs/privacy-policy.md?raw')
+    const siteTerms = readFileSync(new URL('../app/pages/site-terms.vue', import.meta.url), 'utf8')
+    const sitePrivacy = readFileSync(new URL('../app/pages/site-privacy.vue', import.meta.url), 'utf8')
+    expect(siteTerms).toContain('path="/site-terms"')
+    expect(siteTerms).toContain('docs/site-terms.md?raw')
+    expect(sitePrivacy).toContain('path="/site-privacy"')
+    expect(sitePrivacy).toContain('docs/site-privacy.md?raw')
   })
 })
 
@@ -139,31 +154,21 @@ describe('на публичную страницу не уезжает служ�
     // Файл живёт двумя жизнями: внутренний документ со штампом `Last reviewed` и запиской «вычитать
     // юристу» — и публикуемый текст. Дословный рендер выводил слово «ЧЕРНОВИК» на юридическую
     // страницу, то есть ровно то, чего не должен прочитать модератор Маркета.
-    for (const name of ['eula.md', 'privacy-policy.md']) {
+    for (const name of DOCS) {
       const html = renderMarkdown(readDoc(name))
       expect(html, `${name}: черновая пометка`).not.toContain('ЧЕРНОВИК')
       expect(html, `${name}: служебный штамп`).not.toContain('Last reviewed')
     }
   })
 
-  it('незаполненные места документа перечислены поимённо', () => {
-    // Плейсхолдеры `‹…›` — это то, что владелец обязан заполнить перед публикацией. Пин НЕ прячет
-    // их: он делает список видимым, и любое новое незаполненное место краснеет, а заполнение
-    // требует осознанно вычеркнуть строку отсюда.
+  it('незаполненных мест не осталось ни в одном из четырёх документов', () => {
+    // Плейсхолдеры `‹…›` жили в черновике и означали «владелец обязан заполнить до публикации».
+    // В редакции юриста от 08.08.2026 их нет — и это часть приёмки пакета: документ с угловой
+    // скобкой вместо суда или даты уйдёт модератору Маркета ровно в таком виде.
     const found = new Set<string>()
-    for (const name of ['eula.md', 'privacy-policy.md']) {
+    for (const name of DOCS) {
       for (const m of readDoc(name).matchAll(/‹[^›]*›/g)) found.add(`${name}: ${m[0]}`)
     }
-    expect([...found].sort()).toEqual([
-      'eula.md: ‹N›',
-      'eula.md: ‹ДД.ММ.ГГГГ›',
-      'eula.md: ‹указать суд / порядок›',
-      'eula.md: ‹указать: Республики Беларусь / иное›',
-      'privacy-policy.md: ‹email поддержки / форма›',
-      'privacy-policy.md: ‹Владелец: подтвердить с юристом основание обработки для демо-режима и текст предупреждения на сайте.›',
-      'privacy-policy.md: ‹ДД.ММ.ГГГГ›',
-      'privacy-policy.md: ‹РФ / РБ — указать›',
-      'privacy-policy.md: ‹…›'
-    ])
+    expect([...found].sort()).toEqual([])
   })
 })

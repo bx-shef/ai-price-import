@@ -23,3 +23,5 @@ scratch*
 # page imports a document that is not re-included here.
 !docs/eula.md
 !docs/privacy-policy.md
+!docs/site-terms.md
+!docs/site-privacy.md

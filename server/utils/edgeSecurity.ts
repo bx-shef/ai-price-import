@@ -84,8 +84,8 @@ const B24_CLOUD = 'https://*.bitrix24.com https://*.bitrix24.ru https://*.bitrix
 
 const PAGE_CSP
   = 'default-src \'self\'; img-src \'self\' data: https:; style-src \'self\' \'unsafe-inline\'; '
-    + 'script-src \'self\' \'unsafe-inline\'; '
-    + `connect-src 'self' ${B24_CLOUD}; `
+    + 'script-src \'self\' \'unsafe-inline\' https://mc.yandex.ru; '
+    + `connect-src 'self' https://mc.yandex.ru https://mc.yandex.com ${B24_CLOUD}; `
     + `frame-ancestors 'self' ${B24_CLOUD}; `
     + 'base-uri \'self\'; object-src \'none\''
 

@@ -1,4 +1,23 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+// Яндекс Метрика — ТОЛЬКО лендинг, и с тремя ограничениями (#297, решение владельца 2026-08-04:
+// счётчик нужен, чтобы вести рекламу и видеть клики).
+//
+//   1. `window.self === window.top` — счётчик не поднимается ВНУТРИ ФРЕЙМА. In-portal экраны
+//      (`/app`, `/settings`, `/metrics`, `/import`, `/install`) живут в iframe портала: там счётчик
+//      писал бы работу сотрудника в чужой CRM, а цели лендинга смешивались бы с портальным
+//      трафиком. Тот же приём, что в соседнем client-bank.
+//   2. `webvisor: false` — запись сессии и содержимого форм ВЫКЛЮЧЕНА, и это не «пока не включили».
+//      На лендинге стоит демо-разбор: посетитель грузит туда накладную, и Вебвизор записал бы её
+//      содержимое на сторону Яндекса. Политика прямо обещает обратное.
+//   3. Идентификатор берётся из env и чистится от нецифрового — пустой ⇒ счётчика нет вовсе
+//      (dev, staging, self-hosted у клиента): у аналитики издателя нет причин работать на чужом
+//      сервере.
+//
+// clickmap/trackLinks оставлены — это карта кликов и внешние переходы, ради которых счётчик и
+// ставится; содержимого страницы они не записывают.
+const metrikaId = String(process.env.NUXT_PUBLIC_METRIKA_ID || '').replace(/\D/g, '')
+const metrikaSnippet = `if(window.self===window.top){(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<e.scripts.length;j++){if(e.scripts[j].src===r){return;}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,'script','https://mc.yandex.ru/metrika/tag.js?id=${metrikaId}','ym');ym(${metrikaId},'init',{ssr:true,webvisor:false,clickmap:true,accurateTrackBounce:true,trackLinks:true});}`
+
 export default defineNuxtConfig({
 
   modules: [
@@ -14,6 +33,9 @@ export default defineNuxtConfig({
       // Master is public/favicon.svg; the rest is generated from it by `pnpm icons`.
       // Order matters: browsers pick the FIRST usable match, so SVG (crisp at any size)
       // goes first, .ico stays as the legacy fallback, PNG sizes serve pinned-tab/pwa UIs.
+      // Счётчик Метрики (см. metrikaSnippet выше): инлайн, с самозаглушением во фрейме. Пустой
+      // идентификатор ⇒ ни тега, ни noscript-пикселя.
+      script: metrikaId ? [{ innerHTML: metrikaSnippet }] : [],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
         { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32.png' },
@@ -44,8 +66,9 @@ export default defineNuxtConfig({
       // composable falls back to the app's real slug (LANDING_MARKET_CODE in landing.ts). Set
       // NUXT_PUBLIC_B24_MARKET_CODE only to point at a different listing (e.g. a re-publish).
       b24MarketCode: '',
-      // Yandex.Metrika id (empty → useMetrikaGoal no-ops; landing analytics optional).
-      metrikaId: '',
+      // Yandex.Metrika id (empty → счётчика нет и useMetrikaGoal no-op). Тот же источник, что у
+      // сниппета выше, — иначе цели уходили бы в один счётчик, а тег грузился под другим.
+      metrikaId,
       // Embedded Bitrix24 CRM web-form (BriefForm) — client & partner enquiries.
       // Defaults = the shared bx-shef brief form (public embed token, same as client-bank);
       // override via NUXT_PUBLIC_B24_FORM_* to point at a product-specific form.
@@ -65,7 +88,7 @@ export default defineNuxtConfig({
       // request returns 200 for B24's URL validation.
       // `/eula` и `/privacy` — публичные юридические документы (#297): Маркет Bitrix24 требует
       // постоянные HTTPS-адреса, поэтому они пререндерятся и попадают в sitemap.
-      routes: ['/', '/eula', '/privacy', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install']
+      routes: ['/', '/eula', '/privacy', '/site-terms', '/site-privacy', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install']
     }
   },
 
