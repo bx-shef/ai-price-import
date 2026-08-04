@@ -88,6 +88,38 @@ describe('#413: на путях демо не остаётся IP-адреса',
   })
 })
 
+describe('#413: адреса нет и в журнале веб-сервера', () => {
+  const nginx = read('../nginx.conf')
+
+  it('журнал пишется своим форматом, а не стандартным combined', () => {
+    // Журнал — такое же хранилище, как база: строка с адресом в нём это ровно те персональные
+    // данные, от которых уходит весь остальной пакет. Мутация «убрать access_log» возвращает
+    // стандартный combined с полным $remote_addr и не роняет ничего, кроме этого гарда.
+    expect(nginx).toMatch(/log_format\s+anon/)
+    expect(nginx).toMatch(/access_log\s+\S+\s+anon;/)
+  })
+
+  it('в самом формате нет ни полного адреса, ни заголовка, который его несёт', () => {
+    const fmt = nginx.slice(nginx.indexOf('log_format anon'))
+    const body = fmt.slice(0, fmt.indexOf(';'))
+    expect(body, 'в журнал уходит полный адрес').not.toMatch(/\$remote_addr/)
+    // XFF несёт тот же адрес — прокси дописывает реального пира в конец списка.
+    expect(body, 'в журнал уходит X-Forwarded-For').not.toMatch(/x_forwarded_for/)
+    expect(body).toContain('$ip_anon')
+  })
+
+  it('усечение только в журнале — ограничение частоты считает по полному адресу', () => {
+    // Если ключ зоны переписать на усечённый адрес, под один счётчик попадёт целая подсеть
+    // провайдера, и лимит станет общим на сотни человек. Приватность журнала этого не требует.
+    for (const zone of ['zone=demo:', 'zone=demo_conn:', 'zone=login:']) {
+      const at = nginx.indexOf(zone)
+      expect(at, `зона ${zone} исчезла`).toBeGreaterThan(-1)
+      const line = nginx.slice(nginx.lastIndexOf('\n', at) + 1, nginx.indexOf(';', at))
+      expect(line, `зона ${zone} считает по усечённому адресу`).toContain('$binary_remote_addr')
+    }
+  })
+})
+
 describe('#413: содержимое демо-документа не попадает в постоянное хранилище', () => {
   const route = read('../server/api/demo/extract.post.ts')
 
