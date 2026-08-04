@@ -210,7 +210,10 @@ export async function deletePortal(memberId: string, query: QueryFn, eventTs = 0
   // portal_consent уходит вместе с порталом намеренно (#414): согласие дано на установку, а не
   // навсегда. Переустановка обязана взять его заново — иначе новый владелец портала оказался бы
   // связан галочкой, которую нажал предыдущий.
-  for (const table of ['portal_tokens', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating', 'portal_consent']) {
+  // portal_legal_notice — по той же логике (#418): отметки об уведомлении относятся к установке,
+  // которой больше нет. Оставленные, они молча погасили бы баннер и сообщение в чат у портала,
+  // поставившего приложение заново, — то есть уведомление, которое обязаны доставить, не ушло бы.
+  for (const table of ['portal_tokens', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating', 'portal_consent', 'portal_legal_notice']) {
     await query(`DELETE FROM ${table} WHERE member_id = $1`, [memberId])
   }
 }

@@ -17,6 +17,8 @@ import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
 import { findExistingItemId } from '../utils/originLookup'
 import { bumpCounter, METRICS } from '../utils/metricsStore'
 import { readMapping } from '../utils/appSettings'
+import { markNoticeChatSent, portalsAwaitingNoticeChat } from '../utils/legalNoticeStore'
+import { legalDocUrl } from '../utils/legalNoticeUrl'
 import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
@@ -225,6 +227,36 @@ export function resolvePortalBotId(memberId: string, infra: LiveInfra, call: () 
     // this portal signs its notices with a person's name.
     onRefused: m => bumpCounter(m, METRICS.botRefused, 1, infra.query).catch(() => {})
   }, botIdCache)
+}
+
+/**
+ * Deps для рассылки уведомления об изменении документов (#418).
+ *
+ * ⚠ Адресат — **чат уведомлений портала** из его же настроек. Личный диалог того, кто установил
+ * приложение, был бы точнее по букве п. 9.3.3, но идентификатор установившего мы не храним
+ * (отметки об уведомлении — уровня портала, как и согласие), а чат уведомлений это место, куда
+ * приложение уже пишет и куда администратор смотрит. Чат не настроен ⇒ доставки нет, портал
+ * остаётся в очереди и получит сообщение, как только чат появится.
+ */
+export function liveLegalNoticeDeps(infra: LiveInfra) {
+  const rest = restResolver(infra)
+  return {
+    pendingPortals: (key: string, limit: number) => portalsAwaitingNoticeChat(key, limit, infra.query),
+    markSent: (memberId: string, key: string) => markNoticeChatSent(memberId, key, infra.query),
+    send: async (memberId: string, text: string): Promise<boolean> => {
+      const t = await rest(memberId)
+      if (!t) return false
+      const mapping = await readMapping(t.call).catch(() => null)
+      const dialogId = mapping?.notifyChatId
+      if (!dialogId) return false
+      const id = await sendChatMessage(dialogId, text, t.call, await resolvePortalBotId(memberId, infra, async () => t.call), console.warn)
+      // ⚠ `null` значит «не доставлено» и отметку НЕ ставит: иначе первый же сбой похоронил бы
+      // уведомление навсегда — следующий проход счёл бы портал уведомлённым.
+      return id !== null
+    },
+    docUrl: legalDocUrl,
+    log: (msg: string) => console.info(msg)
+  }
 }
 
 /**
