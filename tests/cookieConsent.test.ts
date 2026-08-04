@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { CONSENT_KEY, CONSENT_PATHS, CONSENT_VERSION } from '../app/config/cookieConsent'
+import { CONSENT_KEY, CONSENT_VERSION } from '../app/config/cookieConsent'
 import { analyticsAllowed, isConsentPath, parseConsent, serializeConsent } from '../app/utils/cookieConsent'
 import { allArchiveRoutes } from '../app/utils/legalArchive'
 import { buildSitemapXml } from '../server/utils/seoFiles'
