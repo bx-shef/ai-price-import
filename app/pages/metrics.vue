@@ -41,6 +41,22 @@ onMounted(async () => {
   } catch { /* standalone → остаётся false: вне портала сброс не показываем никому */ }
   await load()
 })
+
+/**
+ * «Обновить» перечитывает и признак администратора.
+ *
+ * ⚠ `init()` при сбое рукопожатия не бросает, а возвращает `null` — тогда `catch` выше не
+ * срабатывает, `admin` молча остаётся `false`, и АДМИНИСТРАТОР не видит кнопку до перезагрузки
+ * страницы, причём без единого объяснения на экране. Одноразового присваивания мало, а «Обновить»
+ * — естественная вторая попытка, и она уже на экране.
+ */
+async function reload(): Promise<void> {
+  try {
+    await initB24()
+    admin.value = isAdmin()
+  } catch { /* остаёмся с прежним значением */ }
+  await load()
+}
 /** Slider → close the B24 overlay; in-frame/standalone → go back to /app. */
 async function closeOrBack(): Promise<void> {
   if (isSlider.value) {
@@ -190,7 +206,7 @@ async function doReset(): Promise<void> {
               color="air-tertiary-no-accent"
               size="sm"
               :label="'Обновить'"
-              @click="load"
+              @click="reload"
             />
             <div class="ml-auto flex items-center gap-2">
               <!-- Не-админу: на месте кнопки подсказка, КТО может обнулить, а не «недостаточно
@@ -203,10 +219,24 @@ async function doReset(): Promise<void> {
                 v-if="!admin"
                 :delay-duration="100"
                 :content="{ side: 'left' }"
-                text="Обнулить счётчики может администратор портала."
+                text="Обнулить счётчики может администратор портала — попросите его."
                 class="hidden sm:inline-flex"
+                :b24ui="{ content: 'max-w-xs' }"
               >
-                <HelpIcon class="size-5 cursor-help text-(--ui-color-base-4)" />
+                <!-- ⚠ Носитель подсказки — КНОПКА, а не сама иконка. `b24icons` ставит на svg
+                     `aria-hidden="true"`, и в порядок фокуса он не попадает: подсказка, видимая
+                     мышью, для клавиатуры и программы чтения с экрана не существовала бы вовсе
+                     (WCAG 2.1.1). `aria-label` повторяет текст — он и есть всё содержание.
+                     ⚠ Цвет — `base-3`, а не `base-4`: второй даёт 2,26:1 на белом, ниже планки
+                     3:1 для несущего смысл элемента (WCAG 1.4.11), и в светлой теме иконка
+                     сливалась с фоном. -->
+                <button
+                  type="button"
+                  class="cursor-help items-center text-(--ui-color-base-3)"
+                  aria-label="Обнулить счётчики может администратор портала — попросите его."
+                >
+                  <HelpIcon class="size-5" />
+                </button>
               </B24Tooltip>
               <B24Button
                 v-if="admin && !confirmReset"

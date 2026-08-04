@@ -11,19 +11,67 @@ import { describe, expect, it } from 'vitest'
 const ROUTE = new URL('../server/api/import/metrics-reset.post.ts', import.meta.url).pathname
 const src = readFileSync(ROUTE, 'utf8')
 
-describe('#411: обнуление счётчиков остаётся admin-only на сервере', () => {
-  it('проверка админа стоит до сброса и отвечает 403', () => {
-    const gate = src.indexOf('member.admin')
-    const reset = src.indexOf('resetCounters(')
-    expect(gate, 'гейт администратора исчез из роута').toBeGreaterThan(-1)
-    expect(reset).toBeGreaterThan(-1)
-    expect(gate, 'гейт администратора стоит ПОСЛЕ обнуления').toBeLessThan(reset)
-    expect(src.slice(gate, reset)).toContain('403')
+// ⚠ Точек входа в это действие ДВЕ, и первая правка закрыла только одну. Кнопка на `/metrics` была
+// спрятана, а на `/app` — самом посещаемом экране — осталась видна всем, то есть ровно тот сценарий,
+// ради которого задача заводилась, продолжал жить. Поэтому гард перечисляет обе поимённо: новая
+// точка входа обязана попасть сюда явно, а не быть замеченной глазами на следующем круге.
+const RESET_SCREENS = [
+  { file: 'app/pages/metrics.vue', flag: 'admin' }, // признак из фрейм-SDK (своего запроса нет)
+  { file: 'app/pages/app.vue', flag: 'isAdmin' } // признак с сервера (запрос за настройками идёт)
+]
+
+describe('#411: кнопку сброса видит только администратор', () => {
+  for (const { file, flag } of RESET_SCREENS) {
+    it(`${file}: кнопка и подтверждение скрыты у не-админа`, () => {
+      const page = readFileSync(new URL(`../${file}`, import.meta.url).pathname, 'utf8')
+      // Обе ветки: сама кнопка и состояние подтверждения. Прикрыть только первую мало — сотрудник
+      // остался бы в подтверждении, если бы признак изменился уже после нажатия.
+      expect(page, `${file}: кнопка сброса не гейтится`).toMatch(new RegExp(`v-if="${flag} &&[^"]*confirmReset"`))
+      expect(page, `${file}: состояние подтверждения не гейтится`).toContain(`v-else-if="${flag}"`)
+    })
+  }
+})
+
+describe('#411: подсказка вместо кнопки и источник признака', () => {
+  const page = readFileSync(new URL('../app/pages/metrics.vue', import.meta.url).pathname, 'utf8')
+
+  it('признак берётся из фрейма, а не проставляется константой', () => {
+    // ⚠ Гард по разметке выше сторожит УСЛОВИЕ, но не то, откуда условие берёт значение: мутация
+    // `admin.value = true` оставляет `v-if` на месте и полностью его обесточивает — кнопку снова
+    // видят все.
+    expect(page).toMatch(/admin\.value\s*=\s*isAdmin\(\)/)
+    expect(page, 'признак админа проставлен константой').not.toMatch(/admin\.value\s*=\s*(true|false)\b/)
+  })
+
+  it('подсказка есть у не-админа и скрыта на телефоне', () => {
+    // «Нет на телефоне» — осознанное решение владельца, а не случайный класс: без гарда оно
+    // отменится первой же уборкой вёрстки, и на узком экране появится подсказка-по-наведению там,
+    // где наведения не бывает.
+    expect(page).toMatch(/<B24Tooltip[\s\S]{0,200}v-if="!admin"/)
+    expect(page).toMatch(/<B24Tooltip[\s\S]{0,400}hidden sm:inline-flex/)
+  })
+
+  it('подсказка доступна с клавиатуры', () => {
+    // Иконка `b24icons` несёт `aria-hidden` и вне порядка фокуса: без фокусируемого носителя
+    // подсказка существует только для мыши.
+    expect(page).toMatch(/<button[\s\S]{0,200}aria-label="Обнулить счётчики может администратор/)
+  })
+})
+
+describe('#411: роут не решает сам, а делегирует проверяемому ядру', () => {
+  it('обнуление доступно только как эффект, внедрённый в ядро', () => {
+    // ⚠ Решение живёт в `metricsResetHandler` и покрыто ПОВЕДЕНЧЕСКИ (см. соседний файл): там
+    // проверяется, что при отказе разрушительный вызов не состоялся. Здесь остаётся один
+    // структурный инвариант — роут не должен уметь обнулить счётчики в обход ядра.
+    expect(src).toContain('handleMetricsReset(')
+    const calls = src.match(/resetCounters\(/g) ?? []
+    expect(calls.length, 'роут зовёт обнуление помимо ядра').toBe(1)
+    expect(src).toMatch(/reset:\s*memberId\s*=>\s*resetCounters\(memberId, query\)/)
   })
 
   it('member_id берётся из проверенного токена, а не из тела запроса', () => {
     // Иначе портал мог бы обнулить чужие счётчики, и admin-гейт защищал бы не то.
-    expect(src).toContain('member.memberId')
+    expect(src).toContain('resolveFrameMember(auth')
     expect(src).not.toMatch(/readBody|getQuery/)
   })
 })

@@ -1,6 +1,7 @@
 import { extractFrameAuth } from '../../utils/frameAuth'
 import { resolveFrameMember } from '../../utils/resolveFrameMember'
 import { resetCounters } from '../../utils/metricsStore'
+import { handleMetricsReset } from '../../utils/metricsResetHandler'
 import { withFrameRouteSpan } from '../../utils/frameRouteSpan'
 import { query } from '../../db/client'
 
@@ -16,24 +17,16 @@ export default defineEventHandler(async (event) => {
   return withFrameRouteSpan(
     { name: 'http.import-metrics-reset.post', method: 'POST', op: 'metrics.reset', domain: auth?.domain },
     async (span) => {
-      if (!auth) {
-        span.outcome = 'no_auth'
-        setResponseStatus(event, 401)
-        return { error: 'frame auth required' }
-      }
-      const member = await resolveFrameMember(auth, { query })
-      if (!member.ok || !member.memberId) {
-        span.outcome = 'auth_failed'
-        setResponseStatus(event, member.status ?? 401)
-        return { error: 'authorization failed', reason: member.reason }
-      }
-      if (!member.admin) {
-        span.outcome = 'forbidden'
-        setResponseStatus(event, 403)
-        return { error: 'admin only' }
-      }
-      await resetCounters(member.memberId, query)
-      return { ok: true }
+      // Решение — в чистой функции с внедрёнными эффектами (#411): текстовый гард по исходнику
+      // пропускал и инверсию условия, и потерянный `return`, а оба полностью снимают защиту.
+      const member = auth ? await resolveFrameMember(auth, { query }) : null
+      const result = await handleMetricsReset({
+        member,
+        reset: memberId => resetCounters(memberId, query)
+      })
+      span.outcome = result.outcome
+      if (result.status !== 200) setResponseStatus(event, result.status)
+      return result.body
     }
   )
 })
