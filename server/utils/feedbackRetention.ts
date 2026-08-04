@@ -42,8 +42,8 @@ export interface FeedbackIssueRef {
 
 export interface RetentionPlanItem {
   issue: FeedbackIssueRef
-  /** Каталог файлов задачи в приёмнике, `null` — задание не опознано (файлов у задачи нет). */
-  dir: string | null
+  /** Каталоги файлов задачи в приёмнике (текущая раскладка и прежняя). Пусто — задание не опознано. */
+  dirs: string[]
 }
 
 /** Граница хранения: всё, что создано СТРОГО раньше, подлежит стиранию. */
@@ -94,32 +94,57 @@ export function portalTagOf(i: FeedbackIssueRef): string | null {
 /**
  * Наша ли это задача.
  *
- * ⚠ Проверяются ТРИ признака: метка канала, наш заголовок и псевдоним портала. Удаление
- * необратимо, а приёмник задаётся переменной окружения — опечатка в `GITHUB_FEEDBACK_REPO` могла
- * бы навести чистку на публичный репозиторий проекта, где метка `user-feedback` живёт по той же
- * конвенции. Совпадения всех трёх признаков разом там не будет.
+ * ⚠ Проверяются ДВА признака: метка канала и наш заголовок. Удаление необратимо, а приёмник
+ * задаётся переменной окружения — опечатка в `GITHUB_FEEDBACK_REPO` могла бы навести чистку на
+ * публичный репозиторий проекта, где метка `user-feedback` живёт по той же конвенции; заголовок
+ * там не совпадёт.
+ *
+ * ⚠ Псевдоним портала третьим признаком БЫТЬ НЕ МОЖЕТ, хотя сначала он им и был. Метка появилась
+ * вместе с этой чисткой, а канал отзывов работает с 2026-07-19 — у всех уже накопленных задач её
+ * нет, и требование метки исключало бы их из чистки НЕ до срока, а навсегда. То есть признак,
+ * заведённый ради исполнения п. 8.6, сам бы его и нарушил.
  */
 export function isOwnFeedbackIssue(i: FeedbackIssueRef): boolean {
   if (!i.labels.includes('user-feedback')) return false
-  if (!i.title.includes(FEEDBACK_TITLE_MARK)) return false
-  return portalTagOf(i) !== null
+  return i.title.includes(FEEDBACK_TITLE_MARK)
 }
 
-/** Идентификатор задания из тела задачи (строка «Задача (jobId)»), `null` — нет. */
+/**
+ * Идентификатор задания из тела задачи (строка «Задача (jobId)» в секции «Контекст»), `null` — нет.
+ *
+ * ⚠ Ищем ТОЛЬКО в секции «Контекст», а не по всему телу. Тело начинается с комментария сотрудника,
+ * и обратные кавычки в нём живы (экранируются лишь `&`, `<`, `>`): строка вида
+ * «Задача (jobId):** `чужой-job`», набранная в комментарии, матчилась раньше настоящей и уводила
+ * чистку в другой каталог — задача стиралась, а её документ оставался в приёмнике навсегда и уже
+ * без ссылки на себя. Секцию печатает билдер, комментарий стоит выше неё.
+ */
 export function jobIdOf(body: string): string | null {
-  const m = /Задача \(jobId\):\*\*\s*`([^`]+)`/.exec(String(body ?? ''))
+  const text = String(body ?? '')
+  const at = text.indexOf('**Контекст:**')
+  if (at < 0) return null
+  const m = /Задача \(jobId\):\*\*\s*`([^`]+)`/.exec(text.slice(at))
   if (!m) return null
   // Санитайзер тот же, что при записи (`feedbackFileDir`): из тела приходит текст, а не путь.
   const id = m[1]!.replace(/[^A-Za-z0-9-]/g, '').slice(0, 64)
   return id || null
 }
 
-/** Каталог файлов задачи, `null` — задание не опознано (значит, и файлов у неё не было). */
-export function issueFileDir(i: FeedbackIssueRef): string | null {
-  const tag = portalTagOf(i)
+/**
+ * Каталоги файлов задачи. Пустой список — задание не опознано, удалять негде.
+ *
+ * ⚠ Их ДВА вида, и прежний обязателен. До этой задачи файлы клались в `files/<задание>` без
+ * портала; переход на `files/<портал>/<задание>` не переносит уже лежащие документы, и чистка,
+ * знающая только новую раскладку, оставила бы их в приёмнике навсегда — ровно то, чего требует
+ * не допустить п. 8.6. Старый каталог проверяется у КАЖДОЙ задачи (у накопленных нет и метки
+ * портала), новый — только когда метка есть.
+ */
+export function issueFileDirs(i: FeedbackIssueRef): string[] {
   const job = jobIdOf(i.body)
-  if (!tag || !job) return null
-  return feedbackFileDir(tag, job)
+  if (!job) return []
+  const tag = portalTagOf(i)
+  const dirs = tag ? [feedbackFileDir(tag, job)] : []
+  dirs.push(`files/${job}`)
+  return dirs
 }
 
 /**
@@ -138,7 +163,7 @@ export function planFeedbackRetention(issues: FeedbackIssueRef[], nowMs: number,
     // Старые вперёд: если прогон обрежется капом, обязаны уйти самые просроченные.
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
     .slice(0, Math.max(1, maxPerRun))
-    .map(issue => ({ issue, dir: issueFileDir(issue) }))
+    .map(issue => ({ issue, dirs: issueFileDirs(issue) }))
 }
 
 export interface RetentionDeps {
@@ -192,22 +217,22 @@ export async function runFeedbackRetention(deps: RetentionDeps, months = 12, max
   const plan = planFeedbackRetention(issues, deps.now(), months, maxPerRun)
   const run: RetentionRun = { read: issues.length, due: plan.length, erased: 0, redacted: 0, files: 0, failed: 0 }
   for (const item of plan) {
-    if (item.dir) {
-      const paths = await deps.listDir(item.dir)
+    let filesOk = true
+    for (const dir of item.dirs) {
+      const paths = await deps.listDir(dir)
       if (!paths) {
         // Не прочитали каталог — не знаем, лежит ли там документ. Задачу не трогаем.
-        run.failed++
-        continue
+        filesOk = false
+        break
       }
-      let filesOk = true
       for (const path of paths) {
         if (await deps.deleteFile(path)) run.files++
         else filesOk = false
       }
-      if (!filesOk) {
-        run.failed++
-        continue
-      }
+    }
+    if (!filesOk) {
+      run.failed++
+      continue
     }
     if (await deps.deleteIssue(item.issue.nodeId)) run.erased++
     else if (await deps.redactIssue(item.issue)) run.redacted++

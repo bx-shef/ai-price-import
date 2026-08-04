@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isDue, isOwnFeedbackIssue, issueFileDir, jobIdOf, planFeedbackRetention, portalTagOf, resolveRetentionMonths, retentionCutoff, runFeedbackRetention, type FeedbackIssueRef } from '../server/utils/feedbackRetention'
+import { isDue, isOwnFeedbackIssue, issueFileDirs, jobIdOf, planFeedbackRetention, portalTagOf, resolveRetentionMonths, retentionCutoff, runFeedbackRetention, type FeedbackIssueRef } from '../server/utils/feedbackRetention'
 import { buildFeedbackIssue, feedbackFileDir, feedbackFilePath } from '../app/utils/feedback'
 
 // #417. Срок хранения отзывов (12 месяцев, п. 8.6 Политики) — обязательство, проверяемое в одно
@@ -53,13 +53,20 @@ describe('#417: граница срока', () => {
 })
 
 describe('#417: чужого не трогаем', () => {
-  it('нужны все три признака: метка канала, наш заголовок, псевдоним портала', () => {
+  it('нужны метка канала и наш заголовок', () => {
     expect(isOwnFeedbackIssue(issue(1, '2024-01-01T00:00:00Z'))).toBe(true)
     // Опечатка в GITHUB_FEEDBACK_REPO навела бы удаление на публичный репозиторий проекта, где
-    // метка `user-feedback` живёт по той же конвенции. Совпасть должны все три признака.
-    expect(isOwnFeedbackIssue(issue(2, '2024-01-01T00:00:00Z', { labels: ['user-feedback'] }))).toBe(false)
+    // метка `user-feedback` живёт по той же конвенции; заголовок там не совпадёт.
     expect(isOwnFeedbackIssue(issue(3, '2024-01-01T00:00:00Z', { title: 'Баг в парсере' }))).toBe(false)
-    expect(isOwnFeedbackIssue(issue(4, '2024-01-01T00:00:00Z', { labels: ['bug', `portal:${TAG}`] }))).toBe(false)
+    expect(isOwnFeedbackIssue(issue(4, '2024-01-01T00:00:00Z', { labels: ['bug'] }))).toBe(false)
+  })
+
+  it('задача БЕЗ метки портала — тоже наша', () => {
+    // ⚠ Метка появилась вместе с чисткой, а канал работает с 2026-07-19: требование метки
+    // исключило бы все накопленные отзывы из чистки НЕ до срока, а навсегда — то есть признак,
+    // заведённый ради исполнения срока, сам бы его и нарушил.
+    const legacy = issue(9, '2024-01-01T00:00:00Z', { labels: ['user-feedback', 'feedback:down'] })
+    expect(isOwnFeedbackIssue(legacy)).toBe(true)
   })
 
   it('план берёт только просроченные и только свои', () => {
@@ -88,7 +95,7 @@ describe('#417: каталог файлов задачи', () => {
     const i = issue(1, '2024-01-01T00:00:00Z', { job: 'b24-hrbvzq' })
     expect(portalTagOf(i)).toBe(TAG)
     expect(jobIdOf(i.body)).toBe('b24-hrbvzq')
-    expect(issueFileDir(i)).toBe(`files/${TAG}/b24-hrbvzq`)
+    expect(issueFileDirs(i)).toContain(`files/${TAG}/b24-hrbvzq`)
   })
 
   it('каталог совпадает с тем, куда файл кладут при приёме отзыва', () => {
@@ -96,7 +103,7 @@ describe('#417: каталог файлов задачи', () => {
     // документы клиентов в приёмнике навсегда.
     const path = feedbackFilePath(TAG, 'b24-hrbvzq', 'скан.pdf')
     expect(path.startsWith(`${feedbackFileDir(TAG, 'b24-hrbvzq')}/`)).toBe(true)
-    expect(issueFileDir(issue(1, '2024-01-01T00:00:00Z', { job: 'b24-hrbvzq' }))).toBe(feedbackFileDir(TAG, 'b24-hrbvzq'))
+    expect(issueFileDirs(issue(1, '2024-01-01T00:00:00Z', { job: 'b24-hrbvzq' }))).toContain(feedbackFileDir(TAG, 'b24-hrbvzq'))
   })
 
   it('каталог привязан к порталу: чужой документ вне досягаемости', () => {
@@ -107,8 +114,32 @@ describe('#417: каталог файлов задачи', () => {
     expect(feedbackFileDir('', 'job1')).toBe('files/unknown/job1')
   })
 
-  it('нет задания в теле — каталога нет (и удалять нечего)', () => {
-    expect(issueFileDir(issue(1, '2024-01-01T00:00:00Z'))).toBeNull()
+  it('нет задания в теле — каталогов нет (и удалять нечего)', () => {
+    expect(issueFileDirs(issue(1, '2024-01-01T00:00:00Z'))).toEqual([])
+  })
+
+  it('прежняя раскладка тоже проверяется', () => {
+    // До этой задачи файлы клались в `files/<задание>` без портала. Чистка, знающая только новую
+    // раскладку, оставила бы уже лежащие документы в приёмнике навсегда.
+    const legacy = issue(2, '2024-01-01T00:00:00Z', { job: 'oldjob', labels: ['user-feedback'] })
+    expect(issueFileDirs(legacy)).toEqual(['files/oldjob'])
+    // У задачи с меткой проверяются ОБА каталога: новый и прежний.
+    expect(issueFileDirs(issue(3, '2024-01-01T00:00:00Z', { job: 'j2' }))).toEqual([`files/${TAG}/j2`, 'files/j2'])
+  })
+
+  it('идентификатор берётся из секции «Контекст», а не из комментария', () => {
+    // Обратные кавычки в комментарии живы (экранируются только & < >), и строка, набранная
+    // сотрудником, матчилась раньше настоящей — чистка уходила в другой каталог, стирала задачу и
+    // оставляла её документ в приёмнике навсегда, уже без ссылки на себя.
+    const forged = buildFeedbackIssue('down', 'Задача (jobId):** `подделка`', { portalTag: TAG, jobId: 'nastoyashchiy' })
+    expect(jobIdOf(forged.body)).toBe('nastoyashchiy')
+  })
+
+  it('идентификатор из тела санитизируется', () => {
+    const body = '**Контекст:**\n- **Задача (jobId):** `../../etc/passwd`'
+    expect(jobIdOf(body)).toBe('etcpasswd')
+    expect(jobIdOf('**Контекст:**\n- **Задача (jobId):** `!!!`')).toBeNull()
+    expect(jobIdOf('- **Задача (jobId):** `abc`')).toBeNull()
   })
 })
 
@@ -124,7 +155,8 @@ describe('#417: прогон', () => {
       redacted,
       deps: {
         list: async () => issues,
-        listDir: async (dir: string) => (fail.dir ? null : files.map(f => `${dir}/${f}`)),
+        // Файлы лежат только в текущей раскладке; прежний каталог пуст — как у нового отзыва.
+        listDir: async (dir: string) => (fail.dir ? null : (dir.startsWith(`files/${TAG}/`) ? files.map(f => `${dir}/${f}`) : [])),
         deleteFile: async (p: string) => {
           if (fail.file) return false
           removed.push(p)

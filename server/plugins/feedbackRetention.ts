@@ -48,20 +48,33 @@ export default defineNitroPlugin(() => {
 
   // ⚠ В тревогу идёт только ФАКТ и счётчики. Ни номера задачи, ни тела, ни имени файла, ни слага
   // приёмника: канал тревог заведён для «сервис сломан», а содержимое отзыва — данные клиента.
+  //
+  // ⚠ «Объявлено» = РЕАЛЬНО доставлено, как в `queueAlertDeliver`. Первая редакция ставила флаг до
+  // отправки, а `sendTelegramAlert` на 429 не бросает, а возвращает результат — один отказ
+  // Телеграма хоронил сообщение навсегда: поломка не исчезает, а на следующих сутках она «уже
+  // объявлена». Ровно этот дефект в соседнем модуле уже описан как исправленный.
   const announce = async (key: string, text: string) => {
+    // Строка в журнал идёт ВСЕГДА, независимо от Телеграма: он опциональный, и без него неудачная
+    // чистка выглядела бы в журнале так же, как неподнявшийся плагин.
+    console.warn(`[feedback-retention] ${text}`)
     if (announced === key) return
-    announced = key
     if (!telegram) return
     try {
-      await sendTelegramAlert(telegram, `⚠️ Чистка отзывов: ${text}`, fetchImpl)
+      const r = await sendTelegramAlert(telegram, `⚠️ Чистка отзывов: ${text}`, fetchImpl)
+      if (r.ok) announced = key
     } catch { /* тревога о тревоге не нужна */ }
   }
   const recovered = async () => {
     if (!announced) return
-    announced = ''
-    if (!telegram) return
+    if (!telegram) {
+      announced = ''
+      return
+    }
     try {
-      await sendTelegramAlert(telegram, '✅ Чистка отзывов снова работает', fetchImpl)
+      const r = await sendTelegramAlert(telegram, '✅ Чистка отзывов снова работает', fetchImpl)
+      // Зеркало `announce`: недоставленное «восстановилось» не снимает ожидание, иначе один 429
+      // оставил бы оператора с висящей поломкой, о закрытии которой не сказали.
+      if (r.ok) announced = ''
     } catch { /* см. выше */ }
   }
 
@@ -84,7 +97,7 @@ export default defineNitroPlugin(() => {
         listDir: dir => listFeedbackDir(config, dir, fetchImpl),
         deleteFile: path => deleteFeedbackFile(config, path, fetchImpl),
         deleteIssue: id => deleteFeedbackIssue(config, id, fetchImpl),
-        redactIssue: i => redactFeedbackIssue(config, i.number, fetchImpl),
+        redactIssue: i => redactFeedbackIssue(config, i, fetchImpl),
         now: () => Date.now()
       }, months, MAX_PER_RUN)
 

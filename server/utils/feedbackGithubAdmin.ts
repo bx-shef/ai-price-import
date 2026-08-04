@@ -115,8 +115,12 @@ export async function listFeedbackDir(config: FeedbackConfig, dir: string, fetch
   for (const raw of body) {
     const r = raw as Record<string, unknown>
     const path = String(r.path ?? '')
+    // ⚠ Не-файл (вложенный каталог, ссылка, подмодуль) — это «мы не разобрались», а не «файлов
+    // нет»: пропустив его молча, мы стёрли бы задачу и оставили содержимое. Мы кладём только
+    // плоские файлы, поэтому такое означает чужую руку в каталоге.
+    if (r.type !== 'file') return null
     // Путь берём ТОЛЬКО из ответа GitHub и только внутри запрошенного каталога.
-    if (r.type === 'file' && path.startsWith(`${dir}/`)) out.push(path)
+    if (path.startsWith(`${dir}/`)) out.push(path)
   }
   return out
 }
@@ -160,24 +164,69 @@ export async function deleteFeedbackFile(config: FeedbackConfig, path: string, f
 }
 
 /** Текст, остающийся вместо содержимого при деградации. */
-export const REDACTED_BODY = 'Содержимое отзыва удалено по истечении срока хранения (12 месяцев, п. 8.6 Политики конфиденциальности).'
+export const REDACTED_BODY = 'Содержимое отзыва обезличено по истечении срока хранения (12 месяцев, п. 8.6 Политики конфиденциальности).'
+
+/** Наши метки: их снимаем, чужие оставляем. */
+export function isOwnLabel(name: string): boolean {
+  return name === 'user-feedback' || /^feedback:/.test(name) || /^portal:[0-9a-f]{12}$/.test(name)
+}
 
 /**
- * Деградация, когда удалить задачу нечем: обезличить тело и заголовок, закрыть, снять метки.
+ * Удалить комментарии задачи.
  *
- * ⚠ Метки снимаются ОБЯЗАТЕЛЬНО — и метка канала, и псевдоним портала. Без этого задача осталась
- * бы в выборке чистки навсегда и на следующие сутки заняла бы то же место в очереди: пятьдесят
- * таких задач закрыли бы обзор всего остального, и чистка не сдвинулась бы больше никогда.
- * Снятый псевдоним заодно убирает признак, по которому обезличенную задачу можно связать с
- * клиентом.
+ * ⚠ Без этого деградация была ложной. Агент разбора по регламенту комментирует отзывы, цитируя
+ * контекст, а в теле отзыва живут идентификатор задания, имя файла, ссылка на сущность и
+ * свободный текст сотрудника: процитированное в комментарии пережило бы «удаление по сроку
+ * хранения» целиком и в открытом виде — и это уже не история правок, а обычное видимое
+ * содержимое. `deleteIssue` комментарии уносит сам, здесь — запасной путь.
  */
-export async function redactFeedbackIssue(config: FeedbackConfig, issueNumber: number, fetchFn: FetchFn): Promise<boolean> {
+export async function deleteIssueComments(config: FeedbackConfig, issueNumber: number, fetchFn: FetchFn): Promise<boolean> {
+  let list: Awaited<ReturnType<FetchFn>>
+  try {
+    list = await fetchFn(`${API}/repos/${config.repo}/issues/${issueNumber}/comments?per_page=100`, { method: 'GET', headers: headers(config) })
+  } catch {
+    return false
+  }
+  if (list.status === 404) return true
+  if (list.status !== 200) return false
+  const body = await list.json().catch(() => null)
+  if (!Array.isArray(body)) return false
+  let ok = true
+  for (const raw of body) {
+    const id = Number((raw as { id?: unknown })?.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      ok = false
+      continue
+    }
+    try {
+      const res = await fetchFn(`${API}/repos/${config.repo}/issues/comments/${id}`, { method: 'DELETE', headers: headers(config) })
+      if (res.status !== 204 && res.status !== 404) ok = false
+    } catch {
+      ok = false
+    }
+  }
+  return ok
+}
+
+/**
+ * Деградация, когда удалить задачу нечем: снести комментарии, обезличить тело и заголовок,
+ * закрыть, снять НАШИ метки.
+ *
+ * ⚠ Метка канала снимается обязательно: по ней идёт выборка, и без этого задача осталась бы в
+ * ней навсегда, заняв то же место в очереди — пятьдесят таких закрыли бы обзор всего остального.
+ * ⚠ Но снимаются ТОЛЬКО свои: `labels: []` в первой редакции сносил и метки разбора (связка с
+ * инженерной задачей, приоритет, статус), которые ставил человек и восстановить которые из
+ * интерфейса нельзя.
+ */
+export async function redactFeedbackIssue(config: FeedbackConfig, issue: FeedbackIssueRef, fetchFn: FetchFn): Promise<boolean> {
+  if (!await deleteIssueComments(config, issue.number, fetchFn)) return false
+  const keep = issue.labels.filter(l => !isOwnLabel(l))
   let res: Awaited<ReturnType<FetchFn>>
   try {
-    res = await fetchFn(`${API}/repos/${config.repo}/issues/${issueNumber}`, {
+    res = await fetchFn(`${API}/repos/${config.repo}/issues/${issue.number}`, {
       method: 'PATCH',
       headers: headers(config),
-      body: JSON.stringify({ title: 'Отзыв (удалён по сроку хранения)', body: REDACTED_BODY, state: 'closed', labels: [] })
+      body: JSON.stringify({ title: 'Отзыв (обезличен по сроку хранения)', body: REDACTED_BODY, state: 'closed', labels: keep })
     })
   } catch {
     return false
