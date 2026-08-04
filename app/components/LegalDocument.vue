@@ -4,6 +4,8 @@ import { renderMarkdown } from '~/utils/markdownLite'
 import { canonicalUrl } from '~/utils/landing'
 import { PUBLISHER } from '~/config/publisher'
 import { SHELL_BG_CLASS, SHELL_CLASS, SHELL_VARS } from '~/config/landingShell'
+import type { LegalEditionEntry } from '~/config/legalArchive'
+import { isCurrentEdition } from '~/utils/legalArchive'
 
 // Public legal page (#297, вариант В). The SOURCE is the markdown file in `docs/` — the page renders
 // it, it does not restate it. That is the whole point of the chosen option: a lawyer edits one file,
@@ -20,15 +22,30 @@ const props = defineProps<{
   /** Site-relative path, e.g. `/eula` — used for the canonical link. */
   path: string
   description: string
+  /** Сегмент архива редакций (#415): `eula`, `privacy`, … Пусто — ссылки на архив нет. */
+  archiveSlug?: string
+  /** Заполнено, когда страница показывает редакцию из архива (действующую или заменённую). */
+  edition?: LegalEditionEntry
 }>()
+
+// Архивная редакция — та, что уже заменена. Её обязательно пометить: перепутанная с действующей,
+// она хуже отсутствия архива — человек прочтёт недействующий текст как обязывающий.
+//
+// ⚠ Признак берём из ОБЩЕГО хелпера, а не пересчитываем здесь: это главный инвариант всей задачи,
+// и вторая его копия — ровно тот случай, когда одна сторона однажды поедет, а тестом покрыта другая.
+const isArchived = computed(() => Boolean(props.edition && !isCurrentEdition(props.edition)))
 
 const html = computed(() => renderMarkdown(props.source))
 
+// Заголовок страницы редакции обязан отличаться от заголовка документа: одинаковые `<title>` на
+// двух индексируемых адресах — это дубль в выдаче и путаница в закладках.
+const pageTitle = computed(() => (props.edition ? `${props.title} — редакция от ${props.edition.date}` : props.title))
+
 useSeoMeta({
-  title: props.title,
-  description: props.description,
-  ogTitle: props.title,
-  ogDescription: props.description,
+  title: pageTitle,
+  description: () => props.description,
+  ogTitle: pageTitle,
+  ogDescription: () => props.description,
   ogType: 'article'
 })
 // Тёмная брендовая оболочка — та же, что у лендинга: человек приходит сюда по ссылке из подвала
@@ -37,8 +54,14 @@ useSeoMeta({
 // переписываются здесь заново: копия этой пары уже разъехалась — фон скопировали, текст нет (#368).
 // `bodyAttrs` красит поле ЗА контентом (короткий документ не закрывает экран целиком), а `SHELL_CLASS`
 // на корне — сам контент.
+// ⚠ Канонический адрес страницы ДЕЙСТВУЮЩЕЙ редакции — сам документ (`/eula`), а не её постоянный
+// адрес: тексты там байт в байт одинаковые, и две само-канонические страницы с одинаковым телом —
+// это дубль на тех самых адресах, которые открывает модератор Маркета. У ЗАМЕНЁННОЙ редакции
+// канонический адрес свой: её текста больше нигде нет, и склеивать её с действующей нельзя.
+const canonicalPath = computed(() => (props.edition && !isArchived.value && props.archiveSlug ? `/${props.archiveSlug}` : props.path))
+
 useHead({
-  link: [{ rel: 'canonical', href: canonicalUrl(props.path) }],
+  link: [{ rel: 'canonical', href: canonicalUrl(canonicalPath.value) }],
   bodyAttrs: { class: SHELL_BG_CLASS },
   htmlAttrs: { 'data-force-dark': 'true' }
 })
@@ -60,6 +83,26 @@ useHead({
     <h1 class="mb-6 text-3xl font-semibold sm:text-4xl">
       {{ title }}
     </h1>
+    <!-- Плашка редакции. У архивной — предупреждение с датой замены и ссылкой на действующую:
+         иначе человек, пришедший по постоянной ссылке из старого договора, прочтёт недействующий
+         текст как обязывающий. У действующей — спокойная пометка, что она действующая. -->
+    <div
+      v-if="edition"
+      class="mb-6 rounded-lg border px-4 py-3 text-sm"
+      :style="{ borderColor: 'var(--legal-border)' }"
+    >
+      <p v-if="isArchived">
+        <strong>Архивная редакция.</strong> Действовала с {{ edition.effective }} по
+        {{ edition.supersededAt }}. Текст приведён в том виде, в каком был опубликован.
+        <NuxtLink
+          :to="`/${archiveSlug}`"
+          class="underline"
+        >Открыть действующую редакцию</NuxtLink>
+      </p>
+      <p v-else>
+        <strong>Действующая редакция.</strong> Вступила в силу {{ edition.effective }}.
+      </p>
+    </div>
     <!-- Источник — наш собственный файл в репозитории, и рендер экранирует ВСЁ до разбора
          конструкций (см. markdownLite): сырой HTML из документа выводится текстом, а не исполняется.
          Это единственное место в проекте с v-html, и оно обосновано именно этим. -->
@@ -75,7 +118,22 @@ useHead({
         class="underline"
       >{{ PUBLISHER.email }}</a>
     </p>
-    <p class="mt-2 text-sm">
+    <p
+      v-if="archiveSlug"
+      class="mt-2 text-sm"
+    >
+      <NuxtLink
+        :to="`/${archiveSlug}/archive`"
+        class="underline"
+      >Все редакции документа</NuxtLink>
+    </p>
+    <!-- Пара «лицензия ↔ политика» имеет смысл только на самих документах: на странице редакции
+         `path` это `/…/archive/<дата>`, и прежнее условие уводило КАЖДУЮ такую страницу на `/eula` —
+         в том числе саму лицензию на себя же. -->
+    <p
+      v-if="!edition"
+      class="mt-2 text-sm"
+    >
       <NuxtLink
         to="/"
         class="underline"
@@ -85,6 +143,15 @@ useHead({
         :to="path === '/eula' ? '/privacy' : '/eula'"
         class="underline"
       >{{ path === '/eula' ? 'Политика конфиденциальности' : 'Лицензионное соглашение' }}</NuxtLink>
+    </p>
+    <p
+      v-else
+      class="mt-2 text-sm"
+    >
+      <NuxtLink
+        to="/"
+        class="underline"
+      >На главную</NuxtLink>
     </p>
   </main>
 </template>

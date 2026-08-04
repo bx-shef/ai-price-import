@@ -11,6 +11,7 @@ import source from '~~/docs/site-terms.md?raw'
     :source="source"
     title="Условия использования сайта"
     path="/site-terms"
+    archive-slug="site-terms"
     description="Правила использования сайта price-import.bx-shef.by и демонстрационного разбора документа."
   />
 </template>

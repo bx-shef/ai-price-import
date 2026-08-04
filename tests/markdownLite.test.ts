@@ -134,14 +134,16 @@ describe('страницы действительно публикуются (#2
   it('страница объявляет свой собственный адрес, а не соседний', () => {
     // Опечатка `path="/eula"` на странице политики дала бы канонический адрес чужого документа —
     // и поисковик склеил бы два разных юридических текста в один.
-    const eula = readFileSync(new URL('../app/pages/eula.vue', import.meta.url), 'utf8')
-    const privacy = readFileSync(new URL('../app/pages/privacy.vue', import.meta.url), 'utf8')
+    // ⚠ Пути страниц с #415 — `app/pages/<документ>/index.vue`: рядом появился вложенный архив
+    // редакций, а Nuxt не даёт держать `eula.vue` и папку `eula/` одновременно.
+    const eula = readFileSync(new URL('../app/pages/eula/index.vue', import.meta.url), 'utf8')
+    const privacy = readFileSync(new URL('../app/pages/privacy/index.vue', import.meta.url), 'utf8')
     expect(eula).toContain('path="/eula"')
     expect(eula).toContain('docs/eula.md?raw')
     expect(privacy).toContain('path="/privacy"')
     expect(privacy).toContain('docs/privacy-policy.md?raw')
-    const siteTerms = readFileSync(new URL('../app/pages/site-terms.vue', import.meta.url), 'utf8')
-    const sitePrivacy = readFileSync(new URL('../app/pages/site-privacy.vue', import.meta.url), 'utf8')
+    const siteTerms = readFileSync(new URL('../app/pages/site-terms/index.vue', import.meta.url), 'utf8')
+    const sitePrivacy = readFileSync(new URL('../app/pages/site-privacy/index.vue', import.meta.url), 'utf8')
     expect(siteTerms).toContain('path="/site-terms"')
     expect(siteTerms).toContain('docs/site-terms.md?raw')
     expect(sitePrivacy).toContain('path="/site-privacy"')

@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { buildRobotsTxt, buildSitemapXml, crawlerFiles, DISALLOWED_PATHS } from '../server/utils/seoFiles'
 import { CRAWLER_ALLOWED_METHODS, crawlerMethodGate } from '../server/utils/crawlerRoute'
+import { allArchiveRoutes } from '../app/utils/legalArchive'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8')
@@ -30,11 +31,13 @@ describe('buildRobotsTxt', () => {
 
 describe('buildSitemapXml', () => {
   it('lists the landing and the four legal documents, with absolute locs', () => {
-    // Три адреса, а не один (#297): лицензия и политика обязаны быть публичными по требованию
-    // Маркета. Число закреплено намеренно — «заодно» добавленная служебная страница краснеет.
+    // Не один адрес (#297): лицензия и политика обязаны быть публичными по требованию Маркета,
+    // плюс архив редакций (#415). Число закреплено намеренно — «заодно» добавленная СЛУЖЕБНАЯ
+    // страница краснеет; рост архива при этом законен, поэтому его вклад считается из реестра, а
+    // не вписывается числом (иначе каждая новая редакция ломала бы тест, и его бы просто ослабили).
     const xml = buildSitemapXml('https://x.test')
     expect(xml).toContain('<loc>https://x.test/</loc>')
-    expect(xml.match(/<url>/g)).toHaveLength(5)
+    expect(xml.match(/<url>/g)).toHaveLength(5 + allArchiveRoutes().length)
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true)
   })
 
@@ -99,8 +102,11 @@ describe('индексируется только лендинг', () => {
   // постоянным публичным адресам, а закрытый от индексации юридический документ — худший ответ
   // модератору, чем открытый. Список ИМЕНОВАННЫЙ: новая страница по умолчанию по-прежнему обязана
   // нести noindex, иначе служебный экран однажды уедет в выдачу вместе с пустым телом.
-  const INDEXABLE = ['app/pages/index.vue', 'app/pages/eula.vue', 'app/pages/privacy.vue',
-    'app/pages/site-terms.vue', 'app/pages/site-privacy.vue']
+  // Архив редакций (#415) тоже индексируется, и это часть обещания: адрес редакции должен
+  // находиться спустя годы, иначе «покажите, что действовало в тот день» упирается в память.
+  const LEGAL_SLUGS = ['eula', 'privacy', 'site-terms', 'site-privacy']
+  const INDEXABLE = ['app/pages/index.vue',
+    ...LEGAL_SLUGS.flatMap(s => [`app/pages/${s}/index.vue`, `app/pages/${s}/archive/index.vue`, `app/pages/${s}/archive/[date].vue`])]
 
   it('индексируются только лендинг и юридические документы', () => {
     const files = pageFiles('app/pages')
@@ -115,7 +121,7 @@ describe('индексируется только лендинг', () => {
   it('юридические страницы существуют и попали в sitemap', () => {
     // Обратная половина: удалить страницу и оставить исключение — значит тихо потерять требование
     // Маркета. Проверяем и файл, и то, что адрес реально объявлен краулерам.
-    for (const f of ['app/pages/eula.vue', 'app/pages/privacy.vue', 'app/pages/site-terms.vue', 'app/pages/site-privacy.vue']) {
+    for (const f of LEGAL_SLUGS.map(s => `app/pages/${s}/index.vue`)) {
       expect(existsSync(resolve(ROOT, f)), `${f} должна существовать`).toBe(true)
     }
     const sitemap = buildSitemapXml('https://example.test', '2026-08-02')

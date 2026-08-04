@@ -1,3 +1,4 @@
+import { allArchiveRoutes } from '~/utils/legalArchive'
 import { isCanonicalHost, siteBaseUrl } from '~/utils/landing'
 
 // Pure builders for the two crawler files (/robots.txt, /sitemap.xml). Served by thin Nitro routes
@@ -97,6 +98,10 @@ export function buildSitemapXml(baseUrl: string, lastmod?: string, canonicalHost
     ...page('/privacy', '0.3', 'yearly'),
     ...page('/site-terms', '0.3', 'yearly'),
     ...page('/site-privacy', '0.3', 'yearly'),
+    // Архив редакций (#415): страницы обязаны индексироваться — на них ссылаются сами документы,
+    // и адрес редакции должен находиться поиском спустя годы. Список берётся из реестра, чтобы
+    // новая редакция не осталась вне карты сайта.
+    ...allArchiveRoutes().flatMap(r => page(r, '0.2', 'yearly')),
     '</urlset>',
     ''
   ].join('\n')

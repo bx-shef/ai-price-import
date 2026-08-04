@@ -10,6 +10,7 @@ import source from '~~/docs/site-privacy.md?raw'
     :source="source"
     title="Политика конфиденциальности сайта"
     path="/site-privacy"
+    archive-slug="site-privacy"
     description="Какие данные посетителя обрабатывает сайт price-import.bx-shef.by и на каких условиях."
   />
 </template>

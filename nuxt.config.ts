@@ -1,6 +1,7 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import { readFileSync } from 'node:fs'
 import { parseLegalEdition } from './app/utils/legalEdition'
+import { allArchiveRoutes } from './app/utils/legalArchive'
 
 // Редакции документов приложения читаются ИЗ САМИХ ДОКУМЕНТОВ на сборке (#414) и уезжают в
 // runtimeConfig — оттуда их берёт запись о согласии.
@@ -106,7 +107,10 @@ export default defineNuxtConfig({
       // request returns 200 for B24's URL validation.
       // `/eula` и `/privacy` — публичные юридические документы (#297): Маркет Bitrix24 требует
       // постоянные HTTPS-адреса, поэтому они пререндерятся и попадают в sitemap.
-      routes: ['/', '/eula', '/privacy', '/site-terms', '/site-privacy', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install']
+      // Архив редакций (#415) добавляется ИЗ РЕЕСТРА, а не переписыванием списка руками: новая
+      // редакция иначе появлялась бы в архиве, но не пререндерилась — то есть ссылка из
+      // договора вела бы в 404 ровно тогда, когда она понадобилась.
+      routes: ['/', '/eula', '/privacy', '/site-terms', '/site-privacy', '/app', '/import', '/settings', '/metrics', '/login', '/queues', '/install', ...allArchiveRoutes()]
     }
   },
 
