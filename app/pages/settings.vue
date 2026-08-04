@@ -338,11 +338,12 @@ const ARTICLE_KIND_ITEMS = [
 <template>
   <!-- CLIENT-ONLY: depends on the B24 frame handshake; prerender+hydrate framed mismatched (see /app). -->
   <ClientOnly>
-    <!-- Панель каркаса (#259): навбар и тулбар — в #header, контент — в #body. База переопределена
-         под обычный поток (см. layout clear.vue: высоту iframe задаёт контент). -->
+    <!-- Панель каркаса (#259): навбар и тулбар — в #header, контент — в #body. `:b24ui` МЕРДЖИТСЯ
+         (tailwind-merge), не заменяет базу — `min-h-svh`/прокрутка/паддинг тела сняты явными
+         конфликтующими классами `min-h-0`/`overflow-y-visible`/`gap-0`/`sm:p-0` (см. /app). -->
     <B24DashboardPanel
       id="settings"
-      :b24ui="{ root: 'relative flex flex-col w-full min-w-0', body: 'flex flex-col' }"
+      :b24ui="{ root: 'relative flex flex-col w-full min-w-0 min-h-0', body: 'flex flex-col gap-0 overflow-y-visible sm:p-0' }"
     >
       <template #header>
         <!-- Same chrome as /metrics: навбар каркаса (#259) с кнопкой закрытия. Механика закрытия не
@@ -365,10 +366,11 @@ const ARTICLE_KIND_ITEMS = [
         <!-- Тулбар каркаса: навигация по разделам вместо схлопывания (#259). Аккордеон прятал
              настройки — «что вообще можно настроить» было видно только по заголовкам секций. -->
         <B24DashboardToolbar v-if="!showReadOnly">
+          <!-- Без `highlight`: vue-router не учитывает hash при сравнении активного маршрута,
+               поэтому подсветка горела бы на всех четырёх пунктах разом. -->
           <B24NavigationMenu
             :items="sectionNav"
             orientation="horizontal"
-            highlight
           />
         </B24DashboardToolbar>
       </template>

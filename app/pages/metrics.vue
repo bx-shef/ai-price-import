@@ -60,11 +60,12 @@ async function doReset(): Promise<void> {
 <template>
   <!-- CLIENT-ONLY: depends on the B24 frame handshake; prerender+hydrate framed mismatched (see /app). -->
   <ClientOnly>
-    <!-- Панель каркаса (#259): навбар — в #header, контент — в #body; база переопределена под
-         обычный поток (см. layout clear.vue). -->
+    <!-- Панель каркаса (#259): навбар — в #header, контент — в #body. `:b24ui` МЕРДЖИТСЯ
+         (tailwind-merge), не заменяет базу — `min-h-svh`/прокрутка/паддинг тела сняты явными
+         конфликтующими классами `min-h-0`/`overflow-y-visible`/`gap-0`/`sm:p-0` (см. /app). -->
     <B24DashboardPanel
       id="metrics"
-      :b24ui="{ root: 'relative flex flex-col w-full min-w-0', body: 'flex flex-col' }"
+      :b24ui="{ root: 'relative flex flex-col w-full min-w-0 min-h-0', body: 'flex flex-col gap-0 overflow-y-visible sm:p-0' }"
     >
       <template #header>
         <!-- Шапка — навбар каркаса (#259). Кнопка закрытия слайдера осталась той же: механику

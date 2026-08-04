@@ -235,12 +235,14 @@ watch(jobs, (list) => {
        redirected, the prerendered /app header fused with the redirected page's body). ClientOnly renders
        nothing on the server → no mismatch. -->
   <ClientOnly>
-    <!-- Панель каркаса (#259): навбар — в #header, контент — в #body. База панели переопределена:
-         родная несёт `min-h-svh` и внутреннюю прокрутку тела — в iframe портала высоту задаёт
-         контент, поэтому тело остаётся в обычном потоке (см. layout clear.vue). -->
+    <!-- Панель каркаса (#259): навбар — в #header, контент — в #body. Родная база панели несёт
+         `min-h-svh` (храповик высоты iframe: контент всегда ≥ фрейма, Битрикс24 не сможет его
+         уменьшить), внутреннюю прокрутку тела и свой sm-паддинг. ⚠ `:b24ui` МЕРДЖИТСЯ через
+         tailwind-merge, а не заменяет слот, поэтому каждый из них снят явным конфликтующим
+         классом: `min-h-0`, `overflow-y-visible`, `gap-0`, `sm:p-0` (см. layout clear.vue). -->
     <B24DashboardPanel
       id="home"
-      :b24ui="{ root: 'relative flex flex-col w-full min-w-0', body: 'flex flex-col' }"
+      :b24ui="{ root: 'relative flex flex-col w-full min-w-0 min-h-0', body: 'flex flex-col gap-0 overflow-y-visible sm:p-0' }"
     >
       <template #header>
         <!-- Шапка страницы — навбар каркаса (#259) вместо самодельного flex-заголовка. В мобильном
