@@ -12,7 +12,13 @@
 // Consequence for ops: peak disk is bounded by files in flight, not by a retention window, so the
 // old «watch UPLOAD_DIR, shrink IMPORT_JOB_TTL_HOURS» advice no longer applies.
 
-export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/tmp/ai-price-import-uploads'
+// ⚠ Дефолтный путь НЕ переименован вместе с продуктом (#412), и это осознанно. Здесь лежат
+// документы клиента, а подметает их только обход этого каталога (`sweepOldUploads`) и очистка при
+// удалении портала (`purgePortalFiles`). На Вайбкод-развёртывании `UPLOAD_DIR` в env не задаётся —
+// значит смена дефолта увела бы оба обхода на новый каталог, а всё, что лежало в старом, осталось
+// бы на диске навсегда и мимо очистки. Человек этот путь не видит: он в том же классе, что имена
+// образов и базы.
+export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/tmp/procure-uploads'
 
 /** Sanitise one path segment: no separators, no '..', bounded. */
 export function safeSeg(s: string): string {
