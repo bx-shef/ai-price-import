@@ -203,6 +203,18 @@ async function officeToText(path: string, fileName: string): Promise<string> {
 /** Fail-fast cap on scanned-PDF pages rasterized + OCR'd (memory/CPU bound on minimal infra). */
 export const MAX_OCR_PDF_PAGES = 30
 
+/**
+ * Свой, гораздо более низкий кап страниц для ПУБЛИЧНОГО демо (#413).
+ *
+ * У портального импорта кап защищает нашу инфраструктуру от кривого документа; у демо задача
+ * другая — оно публичное и его оплачиваем мы. Каждая страница скана это секунды OCR (держат
+ * слот конкуренции, а их два) и токены модели из общего суточного бюджета: один
+ * тридцатистраничный скан выедает заметную долю дневного лимита и на всё это время занимает
+ * очередь у остальных посетителей. Пять страниц достаточно, чтобы увидеть, как продукт
+ * разбирает накладную, — а именно для этого демо и существует.
+ */
+export const MAX_DEMO_OCR_PDF_PAGES = 5
+
 const OCR_LANGS = 'rus+bel+kaz+eng'
 
 /**
@@ -251,18 +263,21 @@ async function isPdfFile(path: string): Promise<boolean> {
  * a worker slot for a while (per-page tesseract is seconds; the RUN_TIMEOUT_MS cap is
  * per-process, not per-doc), acceptable on the "stable, not fast" profile (docs/PROCESS.md §12).
  */
-async function ocrPdf(path: string): Promise<string> {
+async function ocrPdf(path: string, maxPages: number = MAX_OCR_PDF_PAGES): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'procure-ocrpdf-'))
   try {
-    // `-l MAX+1` renders at most MAX_OCR_PDF_PAGES+1 pages → the check below can still detect
+    // `-l maxPages+1` renders at most one page past the cap → the check below can still detect
     // "too many" without pdftoppm rasterizing the whole crafted document first. `-scale-to`
     // (long edge px) bounds output size regardless of page DPI/dimensions.
-    await run('pdftoppm', ['-png', '-scale-to', '3000', '-f', '1', '-l', String(MAX_OCR_PDF_PAGES + 1),
+    // ⚠ Кап приходит ПАРАМЕТРОМ, а не берётся из константы: у публичного демо он свой и втрое
+    // ниже (#413). Внутренняя проверка ниже обязана сверяться с ТЕМ ЖЕ значением — иначе демо
+    // рендерило бы 6 страниц и молча пропускало все, потому что порог остался бы портальным.
+    await run('pdftoppm', ['-png', '-scale-to', '3000', '-f', '1', '-l', String(maxPages + 1),
       path, join(dir, 'p')])
     const pages = orderPdfPageImages(await readdir(dir))
     if (!pages.length) throw new Error('pdftoppm: страницы не получены')
-    if (pages.length > MAX_OCR_PDF_PAGES) {
-      throw new Error(`слишком много страниц для OCR (> ${MAX_OCR_PDF_PAGES})`)
+    if (pages.length > maxPages) {
+      throw new Error(`слишком много страниц для OCR (> ${maxPages})`)
     }
     const texts: string[] = []
     for (const p of pages) {
@@ -272,6 +287,19 @@ async function ocrPdf(path: string): Promise<string> {
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
+}
+
+/**
+ * Раннеры для ПУБЛИЧНОГО демо (#413): всё то же самое, но со своим капом страниц скана.
+ * Отдельный объект, а не флаг внутри `liveExtractRunners`, — чтобы у портального пути не было
+ * ветки, в которой он однажды окажется по ошибке: демо-ограничения не должны быть доступны
+ * платящему клиенту случайной опечаткой.
+ */
+export const demoExtractRunners: ExtractRunners = {
+  readText: decodeText,
+  pdfToText: path => run('pdftotext', ['-layout', '-enc', 'UTF-8', path, '-']),
+  officeToText,
+  ocr: async path => (await isPdfFile(path)) ? ocrPdf(path, MAX_DEMO_OCR_PDF_PAGES) : run('tesseract', [path, 'stdout', '-l', OCR_LANGS])
 }
 
 export const liveExtractRunners: ExtractRunners = {
