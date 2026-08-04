@@ -82,6 +82,24 @@ export function useB24() {
   }
 
   /**
+   * Признак администратора портала — ИЗ ФРЕЙМА, без серверного запроса (#411).
+   *
+   * Портал присылает `IS_ADMIN` в том же сообщении инициализации, что и токен, поэтому значение
+   * есть до любого обращения к сети и стоит ноль вызовов. Отдельный крюк в ответ метрик ради него
+   * заводить незачем.
+   *
+   * ⚠ Это УДОБСТВО, а не защита: значение приехало в браузер, то есть подконтрольно клиенту.
+   * Настоящая проверка — серверный гейт на `POST /api/import/metrics-reset` (403), и он остаётся
+   * единственной. Соблазн «упростить сервер, раз кнопки всё равно нет» — ровно тот случай, когда
+   * защита исчезает вместе с интерфейсом.
+   *
+   * Вне фрейма — `false`: там нет ни портала, ни прав, и разрушительное действие показывать нечему.
+   */
+  function isAdmin(): boolean {
+    return frame?.auth.isAdmin === true
+  }
+
+  /**
    * Frame auth, refreshing it once when it has expired (#345).
    *
    * Frame authorisation lives about an hour. When it runs out the SDK's `getAuthData()` returns
@@ -171,5 +189,5 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
+  return { init, get, auth, isAdmin, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
 }
