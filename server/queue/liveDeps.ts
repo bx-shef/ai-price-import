@@ -414,7 +414,11 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
     // resolveTarget applies with top priority over the routing rules (#135 routing slice 2).
     getManualOverride: (m, j) => getManualOverride(m, j, jobRedis),
     deleteText: (m, j) => deleteText(m, j, infra.query),
-    markProcessing: (m, j) => setJobStatus(m, j, 'processing', '', jobRedis)
+    markProcessing: (m, j) => setJobStatus(m, j, 'processing', '', jobRedis),
+    // Класс отказа + просеянная подпись — в журнал (#416). Сотрудник видит наш текст, оператор
+    // здесь видит, ЧТО именно сломалось: без этой строки «квота кончилась» и «ключ отозвали»
+    // выглядели бы в журнале одинаково, а чинятся по-разному.
+    logLlmFailure: (kind, signature) => console.warn(`[agent-run] отказ распознавания: ${kind}${signature ? ` (${signature})` : ''}`)
   }
 }
 
