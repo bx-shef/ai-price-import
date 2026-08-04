@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { LEGAL_ARCHIVE } from '../app/config/legalArchive'
 
 // The legal pages RENDER `docs/*.md` through a `?raw` import instead of carrying a second copy of
 // the text (#297, вариант В). That makes those files BUILD INPUTS — and `.dockerignore` excludes
@@ -49,6 +50,22 @@ describe('юридические страницы рендерят файл из
       .map(l => l.trim())
     const missing = sources.filter(s => !ignore.includes(`!${s}`))
     expect(missing, `добавьте «!<путь>» в .dockerignore, иначе сборка образа упадёт ENOENT:\n${missing.join('\n')}`).toEqual([])
+  })
+
+  it('снимки редакций возвращены в docker-контекст', () => {
+    // ⚠ Отдельная проверка, потому что снимки приходят НЕ через `docs/x.md?raw`, а через
+    // `import.meta.glob('~~/docs/archive/**/*.md')` — регулярка выше их не видит по построению.
+    // Цена промаха выяснена на живой сборке: в образе `docs/archive` не было, глоб находил ноль
+    // файлов, и все четыре постоянных адреса падали в 404 прямо на пререндере.
+    const ignore = readFileSync(join(ROOT, '.dockerignore'), 'utf8').split('\n').map(l => l.trim())
+    expect(ignore, 'папка снимков не возвращена в контекст').toContain('!docs/archive')
+    expect(ignore, 'содержимое папки снимков не возвращено в контекст').toContain('!docs/archive/**')
+    // И сами файлы на месте — пустой глоб дал бы тот же 404, но уже по другой причине.
+    for (const doc of LEGAL_ARCHIVE) {
+      for (const e of doc.editions) {
+        expect(readFileSync(join(ROOT, `docs/archive/${doc.slug}/${e.date}.md`), 'utf8').length).toBeGreaterThan(100)
+      }
+    }
   })
 
   it('сами документы существуют — иначе страница соберётся пустой', () => {

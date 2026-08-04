@@ -10,6 +10,7 @@ import source from '~~/docs/eula.md?raw'
     :source="source"
     title="Лицензионное соглашение"
     path="/eula"
+    archive-slug="eula"
     description="Условия использования приложения «AI-импорт прайсов в Bitrix24»: предмет, права, ограничения и гарантии."
   />
 </template>

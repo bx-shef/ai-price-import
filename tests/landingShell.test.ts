@@ -93,7 +93,7 @@ describe('#368: оболочка публичных страниц читает�
 })
 
 describe('#368: фон и текст берутся вместе, а не порознь', () => {
-  const SHELL_USERS = ['app/pages/index.vue', 'app/components/LegalDocument.vue']
+  const SHELL_USERS = ['app/pages/index.vue', 'app/components/LegalDocument.vue', 'app/components/LegalArchiveIndex.vue']
 
   // ⚠ Строки `import` вырезаются ПЕРЕД поиском. Первая версия гарда искала имя по всему файлу и
   // находила его в импорте: мутация «убрать `SHELL_CLASS` из корневого элемента» проходила
