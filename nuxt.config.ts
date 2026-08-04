@@ -33,7 +33,16 @@ const LEGAL_EDITIONS = {
 // clickmap/trackLinks оставлены — это карта кликов и внешние переходы, ради которых счётчик и
 // ставится; содержимого страницы они не записывают.
 const metrikaId = String(process.env.NUXT_PUBLIC_METRIKA_ID || '').replace(/\D/g, '')
-const metrikaSnippet = `if(window.self===window.top){(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<e.scripts.length;j++){if(e.scripts[j].src===r){return;}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,'script','https://mc.yandex.ru/metrika/tag.js?id=${metrikaId}','ym');ym(${metrikaId},'init',{ssr:true,webvisor:false,clickmap:true,accurateTrackBounce:true,trackLinks:true});}`
+// ⚠ Счётчик БОЛЬШЕ НЕ СТАРТУЕТ САМ (#404). Сниппет объявляет функцию `__ymStart` и зовёт её
+// только при уже сохранённом согласии; иначе её зовёт кнопка баннера — тогда счётчик поднимается
+// без перезагрузки страницы. Проверка кадра (`window.self===window.top`) стоит ВНУТРИ функции, то
+// есть по-прежнему до создания тега: во фрейме портала счётчик не поднимется, даже если согласие
+// в этом браузере когда-то дали на лендинге.
+// ⚠ Чтение согласия завёрнуто в try: `localStorage` бросает в приватном режиме части браузеров, и
+// исключение здесь снесло бы весь инлайн-скрипт вместе с ним — счётчик не заработал бы уже никогда.
+// ⚠ Проверка кадра написана в положительной форме и обёрткой: гард в тестах ищет её ПЕРЕД созданием
+// тега, а отрицательная форма с ранним выходом читалась бы им хуже.
+const metrikaSnippet = `window.__ymStart=function(){if(window.self===window.top){if(window.__ymUp){return;}window.__ymUp=1;(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<e.scripts.length;j++){if(e.scripts[j].src===r){return;}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,'script','https://mc.yandex.ru/metrika/tag.js?id=${metrikaId}','ym');ym(${metrikaId},'init',{ssr:true,webvisor:false,clickmap:true,accurateTrackBounce:true,trackLinks:true});}};try{var c=JSON.parse(localStorage.getItem('cookie-consent')||'null');if(c&&c.choice==='accepted'&&c.version===1){window.__ymStart();}}catch(e){}`
 
 export default defineNuxtConfig({
 

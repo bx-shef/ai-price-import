@@ -26,8 +26,19 @@ const read = (p: string) => readFileSync(join(ROOT, p), 'utf8')
 const ALLOWED_ANALYTICS_HOSTS = ['mc.yandex.ru', 'mc.yandex.com']
 const FOREIGN_ANALYTICS_HOSTS = ['google-analytics.com', 'googletagmanager.com', 'top-fwz1.mail.ru', 'top.mail.ru']
 
+/**
+ * Конфиг БЕЗ комментариев.
+ *
+ * ⚠ Иначе гард сторожит прозу. Именно так и вышло при #404: сниппет переписали на ранний выход
+ * (`window.self!==window.top`), тест остался зелёным — и не потому, что код верен, а потому что
+ * фраза `window.self===window.top` попала в комментарий рядом. Проверять надо исполняемый текст.
+ */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+}
+
 describe('границы веб-аналитики (#297)', () => {
-  const config = read('nuxt.config.ts')
+  const config = stripComments(read('nuxt.config.ts'))
 
   it('счётчик самозаглушается во фрейме — в портале он не работает', () => {
     // Условие стоит ВНУТРИ сниппета, до создания тега: без него счётчик поднимется в каждом
