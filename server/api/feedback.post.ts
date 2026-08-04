@@ -4,6 +4,7 @@ import { resolveFeedbackConfig } from '../utils/feedbackConfig'
 import { commitFeedbackFile, postFeedbackIssue } from '../utils/feedbackGithub'
 import { feedbackUploadAllowed } from '../utils/feedbackRepoPrivacy'
 import { buildFeedbackIssue, feedbackFilePath, normalizeKind } from '~/utils/feedback'
+import { portalHash } from '../utils/telemetryAttributes'
 import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
@@ -180,7 +181,9 @@ export default defineEventHandler(async (event) => {
         entityType: entity.entityType,
         entityId: entity.entityId,
         entityUrl: entity.entityUrl,
-        appVersion: c.appVersion
+        appVersion: c.appVersion,
+        // Псевдоним портала — чтобы отзывы клиента можно было найти по его обращению (#417).
+        portalTag: portalHash(member.memberId)
       })
       const result = await postFeedbackIssue(config, payload, fetchImpl)
       if (result.ok) {
