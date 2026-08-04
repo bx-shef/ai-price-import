@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { LEGAL_ARCHIVE } from '../app/config/legalArchive'
-import { allArchiveRoutes, archivePath, editionPath, findArchiveDoc, findEdition, isCurrentEdition, supersededLabel } from '../app/utils/legalArchive'
+import { allArchiveRoutes, archivePath, editionCanonicalPath, editionPageTitle, editionPath, findArchiveDoc, findEdition, isCurrentEdition, supersededLabel } from '../app/utils/legalArchive'
 import { parseLegalEdition } from '../app/utils/legalEdition'
 import { buildSitemapXml } from '../server/utils/seoFiles'
 
@@ -211,5 +211,100 @@ describe('#415: перекрёстные ссылки', () => {
       const re = new RegExp(`${path.replace(/\//g, '\\/')}(?![\\w./-])`)
       expect(read(file), `${file}: не обещает архив по адресу ${path}`).toMatch(re)
     }
+  })
+})
+
+// ⚠ Блок заведён по результату мутационной проверки: пять правок ниже переживали ВЕСЬ набор тестов.
+// Общая черта у всех — правило жило либо в `computed` компонента, либо в атрибуте шаблона, либо
+// только в комментарии, и ни один тест о нём не спрашивал.
+describe('#415: правила страниц редакции (пережили мутации)', () => {
+  it('канонический адрес: у действующей — сам документ, у заменённой — свой', () => {
+    const doc = LEGAL_ARCHIVE[0]!
+    const current = doc.editions.find(isCurrentEdition)!
+    expect(editionCanonicalPath(doc.slug, current.date, current)).toBe(`/${doc.slug}`)
+    // Заменённой редакции в реестре пока нет — строим её из действующей: инвариант заявлен над
+    // признаком `supersededAt`, а не над сегодняшним составом данных.
+    const retired = { ...current, supersededAt: '01.01.2030' }
+    expect(editionCanonicalPath(doc.slug, retired.date, retired)).toBe(editionPath(doc.slug, retired.date))
+  })
+
+  it('заголовок страницы редакции отличается от заголовка документа', () => {
+    const doc = LEGAL_ARCHIVE[0]!
+    const e = doc.editions[0]!
+    expect(editionPageTitle(doc.title)).toBe(doc.title)
+    expect(editionPageTitle(doc.title, e)).not.toBe(doc.title)
+    expect(editionPageTitle(doc.title, e)).toContain(e.date)
+  })
+
+  it('неизвестная редакция — настоящий 404, а не страница с кодом 200', () => {
+    // Мягкий 404 под индексируемым префиксом даёт неограниченное множество страниц в выдаче.
+    const src = read('app/components/LegalEditionPage.vue')
+    const throws = src.match(/createError\(\{[^}]*\}\)/g) ?? []
+    expect(throws, 'нужны оба отказа: нет редакции и нет текста').toHaveLength(2)
+    for (const t of throws) {
+      expect(t, 'отказ должен быть 404').toMatch(/statusCode:\s*404/)
+      // ⚠ Без `fatal` брошенная из асинхронного `setup` ошибка отвергает Suspense, а не уходит в
+      // обработчик Nuxt: переход по битой ссылке внутри приложения давал пустую страницу с кодом 200.
+      expect(t, 'отказ должен быть fatal — иначе при переходе внутри приложения будет пустая страница').toMatch(/fatal:\s*true/)
+    }
+  })
+
+  it('тексты редакций грузятся по требованию', () => {
+    // `eager: true` затащил бы в чанк одной страницы тексты ВСЕХ редакций всех четырёх документов.
+    // Проверяем отсутствие ключа в самих опциях глоба, а не в комментарии рядом.
+    const opts = read('app/utils/legalArchiveTexts.ts').match(/import\.meta\.glob\([^)]*\)/s)?.[0] ?? ''
+    expect(opts, 'глоб не найден — гард потерял смысл').toContain('docs/archive')
+    expect(opts).not.toMatch(/\beager\b/)
+  })
+
+  it('строки таблицы архива несут заголовок строки', () => {
+    // Без `th scope="row"` экранный диктор объявляет четыре одинаковых «Открыть» без признака,
+    // к какой редакции они ведут, — список ссылок в никуда.
+    expect(read('app/components/LegalArchiveIndex.vue')).toMatch(/<th scope="row">/)
+  })
+})
+
+// ⚠ Второй блок по итогам разбора публикации: у шагов проверялось НАЛИЧИЕ, но не ЗНАЧЕНИЕ. Дата
+// замены и даты заменённых редакций не сверялись ни с чем — опечатка давала архив, объявляющий
+// период действия, которого не было, при зелёном CI и на постоянном адресе.
+describe('#415: значения дат в реестре', () => {
+  const RU_DATE = /^\d{2}\.\d{2}\.\d{4}$/
+
+  it('дата замены — это дата вступления следующей редакции', () => {
+    // Список идёт новыми вверх, поэтому «следующая» для записи i — это запись i-1.
+    for (const doc of LEGAL_ARCHIVE) {
+      doc.editions.forEach((e, i) => {
+        if (isCurrentEdition(e)) return
+        expect(e.supersededAt, `${doc.slug}/${e.date}: дата замены не в формате ДД.ММ.ГГГГ`).toMatch(RU_DATE)
+        const next = doc.editions[i - 1]
+        expect(next, `${doc.slug}/${e.date}: редакция заменена, а заменившей в реестре нет`).toBeTruthy()
+        expect(e.supersededAt, `${doc.slug}/${e.date}: замена не совпадает с вступлением следующей`).toBe(next!.effective)
+      })
+    }
+  })
+
+  it('даты КАЖДОЙ редакции совпадают с текстом её снимка', () => {
+    // Прежняя сверка читала живой документ и потому касалась только действующей редакции. У
+    // заменённой источник свой — сам снимок, он и есть опубликованный текст.
+    for (const doc of LEGAL_ARCHIVE) {
+      for (const e of doc.editions) {
+        const ed = parseLegalEdition(read(`docs/archive/${doc.slug}/${e.date}.md`), `${doc.slug}/${e.date}`)
+        expect(e.effective, `${doc.slug}/${e.date}: вступление в реестре ≠ тексту снимка`).toBe(ed.effective)
+        const [d, m, y] = ed.edition.split('.')
+        expect(e.date, `${doc.slug}/${e.date}: дата редакции в реестре ≠ тексту снимка`).toBe(`${y}-${m}-${d}`)
+      }
+    }
+  })
+})
+
+describe('#415: таблица архива доступна с клавиатуры', () => {
+  it('прокручиваемая область фокусируема и названа', () => {
+    // Без фокуса до ссылки «Открыть» (она в колонке за краем экрана) с клавиатуры не добраться.
+    const src = read('app/components/LegalArchiveIndex.vue')
+    const region = src.match(/<div[^>]*class="archive-scroll"[^>]*>/s)?.[0] ?? ''
+    expect(region, 'обёртка прокрутки не найдена').toBeTruthy()
+    expect(region).toContain('tabindex="0"')
+    expect(region).toContain('role="region"')
+    expect(region).toMatch(/aria-label/)
   })
 })

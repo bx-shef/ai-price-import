@@ -44,6 +44,19 @@ RUN for p in app settings metrics install import login queues; do \
       || { echo "BUILD FAILED: /$p is prerendered without robots:noindex — it would be indexed on the landing's domain." >&2; exit 1; }; \
     done
 
+# Постоянные адреса редакций юридических документов (#415) — тот же класс проверки, но по другой
+# причине: `nitropack` по умолчанию НЕ роняет сборку на ошибке пререндера (`failOnError: false`),
+# поэтому пропавшие снимки дают exit 0 и образ, где страница архива ссылается на четыре 404 —
+# «ссылка из договора ведёт в никуда», молча. Живой прогон это уже показал: `.dockerignore`
+# исключает `docs` целиком, и снимков в контексте не оказалось. Гард в тестах сторожит строки
+# `.dockerignore`, а здесь проверяется РЕЗУЛЬТАТ — файл на диске.
+RUN for d in eula privacy site-terms site-privacy; do \
+      test -f ".output/public/$d/archive/index.html" \
+      || { echo "BUILD FAILED: /$d/archive not prerendered." >&2; exit 1; }; \
+      ls .output/public/$d/archive/*/index.html >/dev/null 2>&1 \
+      || { echo "BUILD FAILED: /$d/archive has no edition pages — docs/archive missing from the build context?" >&2; exit 1; }; \
+    done
+
 # Third guard of the same kind, for the no-nginx target's security headers (#185 п.1). The bug it
 # replaces was invisible to every unit test: Nitro answers a prerendered page from the public-assets
 # handler, which runs BEFORE server/middleware, so headers set there never reached any HTML — `/app`

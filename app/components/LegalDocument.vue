@@ -5,7 +5,7 @@ import { canonicalUrl } from '~/utils/landing'
 import { PUBLISHER } from '~/config/publisher'
 import { SHELL_BG_CLASS, SHELL_CLASS, SHELL_VARS } from '~/config/landingShell'
 import type { LegalEditionEntry } from '~/config/legalArchive'
-import { isCurrentEdition } from '~/utils/legalArchive'
+import { editionCanonicalPath, editionPageTitle, isCurrentEdition } from '~/utils/legalArchive'
 
 // Public legal page (#297, вариант В). The SOURCE is the markdown file in `docs/` — the page renders
 // it, it does not restate it. That is the whole point of the chosen option: a lawyer edits one file,
@@ -37,9 +37,9 @@ const isArchived = computed(() => Boolean(props.edition && !isCurrentEdition(pro
 
 const html = computed(() => renderMarkdown(props.source))
 
-// Заголовок страницы редакции обязан отличаться от заголовка документа: одинаковые `<title>` на
-// двух индексируемых адресах — это дубль в выдаче и путаница в закладках.
-const pageTitle = computed(() => (props.edition ? `${props.title} — редакция от ${props.edition.date}` : props.title))
+// Заголовок и канонический адрес — ЧИСТЫЕ хелперы (`utils/legalArchive`), а не выражения здесь:
+// оба правила пережили мутационную проверку незамеченными, пока жили внутри `computed`.
+const pageTitle = computed(() => editionPageTitle(props.title, props.edition))
 
 useSeoMeta({
   title: pageTitle,
@@ -58,7 +58,7 @@ useSeoMeta({
 // адрес: тексты там байт в байт одинаковые, и две само-канонические страницы с одинаковым телом —
 // это дубль на тех самых адресах, которые открывает модератор Маркета. У ЗАМЕНЁННОЙ редакции
 // канонический адрес свой: её текста больше нигде нет, и склеивать её с действующей нельзя.
-const canonicalPath = computed(() => (props.edition && !isArchived.value && props.archiveSlug ? `/${props.archiveSlug}` : props.path))
+const canonicalPath = computed(() => (props.edition && props.archiveSlug ? editionCanonicalPath(props.archiveSlug, props.edition.date, props.edition) : props.path))
 
 useHead({
   link: [{ rel: 'canonical', href: canonicalUrl(canonicalPath.value) }],
@@ -91,8 +91,14 @@ useHead({
       class="mb-6 rounded-lg border px-4 py-3 text-sm"
       :style="{ borderColor: 'var(--legal-border)' }"
     >
+      <!-- ⚠ Плашки написаны БЕЗ прошедшего времени, и это не стилистика. Редакция публикуется
+           заранее — п. 9.3.2 EULA даёт срок уведомления, и до даты вступления обязывает ПРЕЖНЯЯ
+           редакция. «Вступила в силу 20.08.2026», показанное 04.08.2026, — прямая неправда о
+           будущей дате, а «Действовала по <дата в будущем>» — о заменённой. Сравнить с «сегодня»
+           тут нельзя: страницы пререндерятся, и сравнение застыло бы на дате сборки. Поэтому
+           печатаем сами даты — они верны в любой день. -->
       <p v-if="isArchived">
-        <strong>Архивная редакция.</strong> Действовала с {{ edition.effective }} по
+        <strong>Архивная редакция.</strong> Период действия: с {{ edition.effective }} по
         {{ edition.supersededAt }}. Текст приведён в том виде, в каком был опубликован.
         <NuxtLink
           :to="`/${archiveSlug}`"
@@ -100,7 +106,7 @@ useHead({
         >Открыть действующую редакцию</NuxtLink>
       </p>
       <p v-else>
-        <strong>Действующая редакция.</strong> Вступила в силу {{ edition.effective }}.
+        <strong>Действующая редакция.</strong> Дата вступления в силу — {{ edition.effective }}.
       </p>
     </div>
     <!-- Источник — наш собственный файл в репозитории, и рендер экранирует ВСЁ до разбора
