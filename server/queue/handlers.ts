@@ -4,6 +4,7 @@ import { runCrmSync } from './crmSyncCore'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
 import type { ExtractedDocument } from '~/types/document'
 import type { RoutingSignals } from '~/utils/routing'
+import { describeLlmFailure, llmErrorSignature, type LlmFailureKind } from '../agent/llmFailure'
 
 // Pure job handlers with DI. Live transports (REST/MCP/DB) are injected in worker.ts;
 // tests inject fakes. See docs/PROCESS.md
@@ -215,6 +216,13 @@ export interface AgentRunDeps {
   deleteText?: (memberId: string, jobId: string) => Promise<void>
   /** Optional progress: mark the job 'processing' once extraction begins. */
   markProcessing?: (memberId: string, jobId: string) => Promise<void>
+  /**
+   * Optional: record an LLM refusal in the server log (#416).
+   *
+   * Принимает КЛАСС и просеянную подпись, а не исходную строку — так «залогировать сырую ошибку»
+   * невозможно по сигнатуре, а не по договорённости.
+   */
+  logLlmFailure?: (kind: LlmFailureKind, signature: string) => void
 }
 
 /** agent-run: text → extract structure → store {doc, signals} → enqueue crm-sync. */
@@ -227,7 +235,12 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
   await markProgress(deps.markProcessing, job.memberId, job.jobId)
   const { document, error } = await deps.extractDocument(text)
   if (!document) {
-    await deps.failJob(job.memberId, job.jobId, error || 'не удалось извлечь документ')
+    // ⚠ Наружу уходит НАШ текст по классу отказа, а не строка провайдера (#416): она ничего не
+    // объясняет человеку и вправе процитировать присланный запрос, то есть текст документа
+    // клиента. Исходная строка остаётся только в журнале, и туда идёт просеянной.
+    const { kind, message } = describeLlmFailure(error)
+    deps.logLlmFailure?.(kind, llmErrorSignature(error))
+    await deps.failJob(job.memberId, job.jobId, message)
     // Terminal extraction failure (re-extraction of the same text won't differ) →
     // drop the raw client text now; don't retain unrecognised documents.
     await dropText(deps.deleteText, job.memberId, job.jobId)

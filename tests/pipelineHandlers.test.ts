@@ -152,7 +152,9 @@ describe('handleAgentRunJob', () => {
     const d = deps({ extractDocument: vi.fn(async () => ({ document: null, error: 'агент не извлёк табличную часть' })) })
     const r = await handleAgentRunJob({ memberId: 'm', jobId: 'j' }, d)
     expect(r.ok).toBe(false)
-    expect(d.failJob).toHaveBeenCalledWith('m', 'j', expect.stringContaining('не извлёк'))
+    // С #416 наружу уходит НАШ текст по классу отказа, а не строка провайдера: она ничего не
+    // объясняет человеку и вправе процитировать присланный запрос. Подробнее — tests/llmFailure.
+    expect(d.failJob).toHaveBeenCalledWith('m', 'j', expect.stringContaining('табличная часть не извлечена'))
     expect(d.enqueueCrmSync).not.toHaveBeenCalled()
   })
   it('cleanup (deleteText) failure never blocks enqueue', async () => {

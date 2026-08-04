@@ -11,7 +11,10 @@ describe('checkBackendEnv', () => {
       B24_APPLICATION_TOKEN: 'realtoken123',
       B24_CLIENT_ID: 'id',
       B24_CLIENT_SECRET: 'sec',
-      REDIS_URL: 'redis://x'
+      REDIS_URL: 'redis://x',
+      // Ключ провайдера — часть чистого окружения с #416: без него распознавание отказывает
+      // на каждом документе, и это ошибка конфигурации, а не «нормально по умолчанию».
+      VIBE_API_KEY: 'vibe_api_x'
     })
     expect(r.errors).toEqual([])
     expect(r.warnings).toEqual([])
@@ -26,13 +29,13 @@ describe('checkBackendEnv', () => {
 
   it('empty B24_APPLICATION_TOKEN is OK (optional — installs authenticate via access_token)', () => {
     // No token set: not an error. application_token is learned from ONAPPINSTALL.
-    const r = checkBackendEnv({ B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_CLIENT_ID: 'i', B24_CLIENT_SECRET: 's', REDIS_URL: 'r' })
+    const r = checkBackendEnv({ B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_CLIENT_ID: 'i', B24_CLIENT_SECRET: 's', REDIS_URL: 'r', VIBE_API_KEY: 'k' })
     expect(r.errors).toEqual([])
     expect(r.errors.some(e => /APPLICATION_TOKEN/.test(e))).toBe(false)
   })
 
   it('warns (not errors) on missing OAuth creds / Redis', () => {
-    const r = checkBackendEnv({ B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_APPLICATION_TOKEN: 't' })
+    const r = checkBackendEnv({ B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_APPLICATION_TOKEN: 't', VIBE_API_KEY: 'k' })
     expect(r.errors).toEqual([])
     expect(r.warnings.some(w => /CLIENT_ID/.test(w))).toBe(true)
     expect(r.warnings.some(w => /REDIS_URL/.test(w))).toBe(true)

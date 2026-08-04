@@ -4,7 +4,19 @@
 export interface EnvReport {
   errors: string[]
   warnings: string[]
+  /**
+   * Misconfiguration the service must NOT start with (#416).
+   *
+   * Отдельный список, а не «сделать все errors фатальными»: остальные ошибки — это деградация
+   * (нет ключа шифрования → часть путей мертва, но приложение обязано подняться, чтобы оператор
+   * увидел это на `/queues`, а не гадал по перезапускающемуся контейнеру). Здесь же — случаи,
+   * когда поднявшийся сервис ВРЁТ опубликованному документу, а это хуже отсутствия сервиса.
+   */
+  fatal: string[]
 }
+
+/** Провайдеры, которые вообще существуют в коде (`server/agent/llmConfig.ts`). */
+const KNOWN_PROVIDERS = ['bitrixgpt', 'deepseek', 'custom']
 
 const PLACEHOLDERS = ['', 'change_me', 'changeme', 'todo', 'xxx', 'your_token_here']
 
@@ -12,6 +24,7 @@ const PLACEHOLDERS = ['', 'change_me', 'changeme', 'todo', 'xxx', 'your_token_he
 export function checkBackendEnv(env: Record<string, string | undefined>): EnvReport {
   const errors: string[] = []
   const warnings: string[] = []
+  const fatal: string[] = []
 
   // Token encryption key must decode to exactly 32 bytes (AES-256).
   const key = env.B24_TOKEN_ENC_KEY ?? ''
@@ -63,5 +76,34 @@ export function checkBackendEnv(env: Record<string, string | undefined>): EnvRep
     }
   }
 
-  return { errors, warnings }
+  // ── LLM-провайдер (#416) ────────────────────────────────────────────────────
+  // П. 5.3 Политики конфиденциальности НАЗЫВАЕТ двух провайдеров поимённо и утверждает, что иные
+  // в облачной версии не используются. Поэтому опечатка в `LLM_PROVIDER` не может тихо
+  // деградировать: `resolveLlmProvider` молча падает на дефолт, и портал, которому обещали
+  // DeepSeek, годами ходил бы в BitrixGPT — или наоборот. Документ бы врал, а узнать об этом было
+  // бы неоткуда. Останов на старте — единственный исход, при котором опубликованный текст остаётся
+  // верным.
+  const rawProvider = (env.LLM_PROVIDER ?? '').trim().toLowerCase()
+  if (rawProvider && !KNOWN_PROVIDERS.includes(rawProvider)) {
+    fatal.push(`LLM_PROVIDER='${env.LLM_PROVIDER}' — неизвестный провайдер (допустимы: ${KNOWN_PROVIDERS.join(', ')})`)
+  }
+  // `custom` — ТОЛЬКО self-hosted (п. 12.3 Политики: там провайдера выбирает клиент своим ключом).
+  // В облаке это третий, неназванный получатель текста документов, то есть прямое расхождение с
+  // п. 5.3. Требуем явного признака инсталляции клиента — молчаливое «наверное, это self-hosted»
+  // и есть та самая тихая третья труба.
+  if (rawProvider === 'custom' && (env.SELF_HOSTED ?? '') !== '1') {
+    fatal.push('LLM_PROVIDER=custom допустим только в инсталляции клиента — поставьте SELF_HOSTED=1 (в облаке разрешены только bitrixgpt и deepseek, п. 5.3 Политики)')
+  }
+  // Отсутствующий ключ — НЕ фатально: приложение обязано подняться (установка, настройки, чат
+  // работают), а каждый документ получит внятный отказ «ключ недействителен» через классификатор
+  // отказов. Падать здесь значило бы менять понятную деградацию на непонятный рестарт-цикл.
+  const provider = rawProvider || 'bitrixgpt'
+  if (provider === 'bitrixgpt' && !(env.BITRIXGPT_API_KEY || env.VIBE_API_KEY)) {
+    errors.push('LLM_PROVIDER=bitrixgpt, но ни BITRIXGPT_API_KEY, ни VIBE_API_KEY не заданы — распознавание будет отказывать')
+  }
+  if (provider === 'deepseek' && !env.DEEPSEEK_API_KEY) {
+    errors.push('LLM_PROVIDER=deepseek, но DEEPSEEK_API_KEY не задан — распознавание будет отказывать')
+  }
+
+  return { errors, warnings, fatal }
 }
