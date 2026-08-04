@@ -25,7 +25,12 @@ export interface TargetStore {
 }
 
 /** Storage key for one portal. No portal yet (frame not ready) → a neutral slot, so a choice made
- *  before init cannot be attributed to the wrong portal later. */
+ *  before init cannot be attributed to the wrong portal later.
+ *
+ *  ⚠ Префикс сменился вместе с именем продукта (#412), и это забывает выбор направления во всех
+ *  открытых вкладках у всех порталов — ровно один раз, на выкате. Терпимо: память живёт до
+ *  закрытия вкладки by design, а следующая пачка сохранит выбор заново. Цена названа, чтобы её не
+ *  искали как дефект. */
 export function targetMemoryKey(portalDomain?: string | null): string {
   const d = String(portalDomain ?? '').trim().toLowerCase() || 'unknown'
   return `ai-price-import.target.${d}`

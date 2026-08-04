@@ -29,7 +29,7 @@
     "og": "node --experimental-strip-types scripts/make-og.mjs",
     "rating-demo": "node scripts/make-rating-demo.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "icons": "node scripts/make-icons.mjs",
+    "icons": "node --experimental-strip-types scripts/make-icons.mjs",
     "verify:fail": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-fail-notify.mjs",
     "ab:prompt": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/ab-prompt.mjs"
   },

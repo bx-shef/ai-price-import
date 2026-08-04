@@ -26,6 +26,11 @@ import { APP_NAME } from '~/config/appIdentity'
  */
 
 /** Bot code — unique within the app, and the idempotency key of the registration call. */
+// ⚠ Литерал НАМЕРЕННО не связан с `APP_SLUG`, хотя сегодня совпадает с ним посимвольно. Это
+// идентификатор бота НА ПОРТАЛЕ клиента: по нему мы находим уже заведённого бота на переустановке
+// (`Bot.list`). Сменить его значит осиротить всех зарегистрированных ботов — регистрация под новым
+// кодом пройдёт, старые останутся висеть, а часть порталов упрётся в предел числа ботов. Поэтому
+// «унифицировать» его с общим слагом нельзя, сколько бы одинаково они ни выглядели.
 export const BOT_CODE = 'ai-price-import'
 
 /** The bot's face in the chat. `workPosition` shows under the name in Bitrix24. */

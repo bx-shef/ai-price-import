@@ -5,13 +5,14 @@ import SearchIcon from '@bitrix24/b24icons-vue/outline/SearchIcon'
 import { useAuth } from '~/composables/useAuth'
 import { ALL_QUEUES, FLASH_MS, QUEUES_REFRESH_MS, QUEUE_HEALTH_STALE_MS, backlogHours, formatClock, lifetimeSummary, staleAfter, visiblePortals, type PortalHealthFilter } from '~/utils/opsMonitor'
 import { copyToClipboard } from '~/utils/clipboard'
+import { APP_NAME } from '~/config/appIdentity'
 
 // Operator queue monitor (service zone). Auth-gated (server 401 + client redirect).
 // Layout `clear`, noindex, prerendered (shell; data loads client-side).
 definePageMeta({ layout: 'clear' })
 // Заголовок вкладки называет ПРОДУКТ (#318 п.1): у владельца открыто несколько служебных консолей
 // разных продуктов, и по вкладке «Служебная консоль» они неразличимы.
-useHead({ title: 'Служебная консоль / AI-импорт документов в Bitrix24', meta: [{ name: 'robots', content: 'noindex' }] })
+useHead({ title: `Служебная консоль / ${APP_NAME}`, meta: [{ name: 'robots', content: 'noindex' }] })
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
 interface QueueAlert { kind: 'stalled' | 'failing' | 'unreadable', queue: string, text: string }

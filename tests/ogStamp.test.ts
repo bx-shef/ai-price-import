@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readFileSync as nodeReadFileSync } from 'node:fs'
+import { dirname as nodeDirname, join as nodeJoin } from 'node:path'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error — .mjs helpers shared with scripts/make-og.mjs (plain JS by design, no types)
 import { ogStamp } from '../scripts/lib/ogStamp.mjs'
@@ -58,5 +59,44 @@ describe('содержимое карточки собрано из общих �
     expect(html).toContain('Bitrix24')
     expect(html).toContain('border-radius') // хром пилюли из brandBadgeHtml
     expect(html).not.toContain('class="eyebrow"')
+  })
+})
+
+// ⚠ Цепочка генератора карточки обязана быть alias-free ТРАНЗИТИВНО (#412).
+//
+// `pnpm og` гоняет `scripts/lib/ogTemplate.mjs` через голый `node --experimental-strip-types`, где
+// алиасов Nuxt нет: один импорт по `~/` в любом файле цепочки роняет команду с `Cannot find
+// package '~'`. И это не гипотеза — так `pnpm og` не запускался ВООБЩЕ до #412, то есть
+// единственный документированный способ починить красный штамп сам был сломан. Тесты этого не
+// видят: сюда `ogTemplate.mjs` приезжает через Vite, где `~/` резолвится штатно.
+describe('#412: генератор карточки не зависит от алиасов Nuxt', () => {
+  it('вся цепочка импортов — относительные пути с расширением', () => {
+    const root = new URL('../', import.meta.url).pathname
+    const seen = new Set<string>()
+    const bad: string[] = []
+    const walk = (file: string) => {
+      if (seen.has(file)) return
+      seen.add(file)
+      const src = nodeReadFileSync(file, 'utf8')
+      for (const m of src.matchAll(/from\s+'([^']+)'/g)) {
+        const spec = m[1]!
+        if (spec.startsWith('node:')) continue
+        if (!spec.startsWith('.')) {
+          // Пакет из node_modules — норма. Алиас — нет: у `node` он не резолвится.
+          if (spec.startsWith('~') || spec.startsWith('@/')) bad.push(`${file.replace(root, '')}: ${spec}`)
+          continue
+        }
+        if (!/\.(ts|mjs|js)$/.test(spec)) {
+          // Без расширения `node` тоже не найдёт файл — Vite бы нашёл, и рассинхрон был бы немым.
+          bad.push(`${file.replace(root, '')}: ${spec} — без расширения`)
+          continue
+        }
+        walk(nodeJoin(nodeDirname(file), spec))
+      }
+    }
+    walk(nodeJoin(root, 'scripts/lib/ogTemplate.mjs'))
+    expect(bad, `цепочка pnpm og сломается на node:\n${bad.join('\n')}`).toEqual([])
+    // Мета-проверка: обход действительно дошёл до файлов приложения, а не остановился на первом.
+    expect([...seen].some(f => f.includes('app/utils/landing.ts'))).toBe(true)
   })
 })

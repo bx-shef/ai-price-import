@@ -4,6 +4,7 @@
 // Политика конфиденциальности (#297). Источник — `docs/privacy-policy.md`; см. комментарий в
 // `eula.vue` о том, почему страница рендерит файл, а не повторяет его.
 import source from '~~/docs/privacy-policy.md?raw'
+import { APP_NAME } from '~/config/appIdentity'
 </script>
 
 <template>
@@ -12,6 +13,6 @@ import source from '~~/docs/privacy-policy.md?raw'
     title="Политика конфиденциальности приложения"
     path="/privacy"
     archive-slug="privacy"
-    description="Какие данные обрабатывает приложение «AI-импорт прайсов в Bitrix24», куда они передаются и сколько хранятся."
+    :description="`Какие данные обрабатывает приложение «${APP_NAME}» для Bitrix24, куда они передаются и сколько хранятся.`"
   />
 </template>

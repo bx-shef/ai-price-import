@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { APP_NAME, APP_SLUG } from '../app/config/appIdentity'
-import { LANDING_TITLE } from '../app/utils/landing'
+import { LANDING_SEO_TITLE, LANDING_TITLE } from '../app/utils/landing'
 
 // #412. Имя продукта обязано быть ОДНО и совпадать символ в символ везде: в карточке Маркета, в
 // шапке лицензии, в шапке Политики и в интерфейсе. До этой задачи оно жило тремя независимыми
@@ -12,12 +12,30 @@ import { LANDING_TITLE } from '../app/utils/landing'
 const ROOT = new URL('../', import.meta.url).pathname
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8')
 
+/**
+ * Комментарии вырезаются перед поиском: они ОБЪЯСНЯЮТ, почему имя где-то упомянуто, и гард,
+ * краснеющий на пояснении, подталкивает удалить пояснение, а не дефект. Тот же урок, что с гардом
+ * аналитики, где проверка проходила по фразе в комментарии.
+ */
+function stripComments(src: string): string {
+  return src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+}
+
+/** Документы, уходящие наружу: имя продукта в них обязано совпадать с интерфейсом. */
+const LEGAL_DOCS = ['docs/eula.md', 'docs/privacy-policy.md', 'docs/site-terms.md', 'docs/site-privacy.md', 'docs/market-graphics.md']
+
 /** Рекурсивно — все исходники приложения и сервера. */
 function sources(): string[] {
   const out: string[] = []
-  for (const root of ['app', 'server', 'prompts']) {
+  // ⚠ `scripts/` входит в обход намеренно: генератор иконок ПЕРЕЗАПИСЫВАЕТ `public/site.webmanifest`,
+  // поэтому правка одного манифеста без правки генератора откатывалась бы ближайшим `pnpm icons` —
+  // ровно так имя со знаком и пережило переименование.
+  for (const root of ['app', 'server', 'prompts', 'scripts']) {
     for (const name of readdirSync(join(ROOT, root), { recursive: true }) as string[]) {
-      if (!/\.(ts|vue|mts)$/.test(name)) continue
+      if (!/\.(ts|vue|mts|mjs)$/.test(name)) continue
       const full = join(ROOT, root, name)
       if (statSync(full).isDirectory()) continue
       out.push(full)
@@ -32,13 +50,51 @@ describe('#412: имя продукта — один источник', () => {
     // разъехалась бы позже и незаметно — увидели бы по чужому скриншоту.
     const offenders = sources()
       .filter(f => !f.endsWith('config/appIdentity.ts'))
-      .filter(f => readFileSync(f, 'utf8').includes(`'${APP_NAME}'`) || readFileSync(f, 'utf8').includes(`"${APP_NAME}"`))
+      .filter((f) => {
+        const src = readFileSync(f, 'utf8')
+        return src.includes(`'${APP_NAME}'`) || src.includes(`"${APP_NAME}"`)
+      })
       .map(f => f.replace(ROOT, ''))
     expect(offenders, `имя продукта переписано литералом — берите APP_NAME:\n${offenders.join('\n')}`).toEqual([])
   })
 
+  it('к имени не приклеена платформа — это делало бы её частью названия', () => {
+    // ⚠ Отдельное правило, и оно поймало то, что кавычный гард выше пропустил: заголовок первого
+    // экрана лендинга был ГОЛЫМ ТЕКСТОМ в разметке — «AI-импорт прайсов в Bitrix24». Чужой знак
+    // стоял внутри собственного названия на самой заметной поверхности сайта, при зелёном CI. Тем
+    // же написанием жили манифест установки, генератор иконок, `aria-label` шапки и описания тех
+    // двух страниц, которые открывает модератор Маркета.
+    //
+    // ⚠ Правило узкое НАМЕРЕННО: запрещено ровно «<имя> в Bitrix24» — склейка, которая читается
+    // как название. Фразы вроде «AI-импорт прайсов ПРЯМО в Bitrix24» или «…и товаров в Bitrix24»
+    // это описание услуги, они разрешены и нужны — платформу из текстов не выгоняем.
+    const glued = new RegExp(`${APP_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+в\\s+Bitrix24`)
+    const offenders = sources()
+      .filter(f => glued.test(stripComments(readFileSync(f, 'utf8'))))
+      .map(f => f.replace(ROOT, ''))
+    expect(offenders, `платформа приклеена к имени:\n${offenders.join('\n')}`).toEqual([])
+    expect(glued.test(read('public/site.webmanifest'))).toBe(false)
+    // Документы уходят наружу целиком — склейка в них была бы видна юристу и модератору.
+    for (const doc of LEGAL_DOCS) expect(glued.test(read(doc)), `${doc}: платформа приклеена к имени`).toBe(false)
+  })
+
   it('заголовок лендинга — это имя продукта', () => {
     expect(LANDING_TITLE).toBe(APP_NAME)
+  })
+
+  it('заголовок вкладки называет платформу дескриптором, а не внутри имени', () => {
+    // Ключ «Bitrix24» из `<title>` убирать нельзя — его набирают вместе со словом «импорт». Но и
+    // внутри названия ему не место. Тире разделяет: имя остаётся именем, платформа названа
+    // площадкой. Проверяем оба конца, иначе правка любого из них тихо вернёт прежний вид.
+    expect(LANDING_SEO_TITLE.startsWith(`${APP_NAME} — `)).toBe(true)
+    expect(LANDING_SEO_TITLE).toMatch(/Bitrix24/)
+  })
+
+  it('имя в манифесте установки — ровно имя продукта', () => {
+    // `site.webmanifest` — то, что человек видит в диалоге установки PWA и в списке приложений.
+    // Файл ГЕНЕРИРУЕТСЯ (`pnpm icons`), поэтому сверяем сам артефакт: рассинхрон генератора и
+    // закоммиченного файла иначе виден только после следующего прогона генератора.
+    expect(JSON.parse(read('public/site.webmanifest')).name).toBe(APP_NAME)
   })
 
   it('в имени продукта нет чужого товарного знака', () => {
@@ -51,8 +107,12 @@ describe('#412: имя продукта — один источник', () => {
   it('имя из шапок юридических документов совпадает символ в символ', () => {
     // Критерий приёмки #412. Документы уходят наружу; расхождение с интерфейсом там заметит
     // модератор Маркета, а не мы.
+    // ⚠ Проверяем САМ ЗАГОЛОВОК H1, а не вхождение подстроки где угодно в файле: «содержит» прошло
+    // бы и на шапке «…приложения «AI-импорт прайсов в Bitrix24»», то есть ровно на том написании,
+    // ради снятия которого задача заведена.
     for (const doc of ['docs/eula.md', 'docs/privacy-policy.md']) {
-      expect(read(doc), `${doc}: имя продукта не совпадает с APP_NAME`).toContain(APP_NAME)
+      const h1 = read(doc).split('\n').find(l => l.startsWith('# ')) ?? ''
+      expect(h1, `${doc}: имя продукта в шапке не совпадает с APP_NAME`).toContain(`«${APP_NAME}»`)
     }
   })
 
@@ -64,12 +124,14 @@ describe('#412: имя продукта — один источник', () => {
       // ⚠ Комментарии вырезаются: они ОБЪЯСНЯЮТ, почему прежнее имя где-то осталось, и гард,
       // краснеющий на пояснении, подталкивает удалить пояснение, а не дефект. Тот же урок, что с
       // гардом аналитики, где проверка проходила по фразе в комментарии.
-      const src = readFileSync(f, 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
-      // Ключ настроек портала намеренно оставлен прежним — его переименование обнулило бы
-      // настройки всех установленных порталов.
-      return /procure-ai/i.test(src) && !src.includes('SETTINGS_KEY')
+      // ⚠ Исключение — ПОСТРОЧНОЕ. Прежде оно действовало на весь файл, и любой файл, где вообще
+      // упомянут `SETTINGS_KEY`, получал бессрочную индульгенцию на старое имя.
+      //
+      // Ключ настроек портала намеренно оставлен прежним (`procure_mapping`) — его переименование
+      // не переносит значения, и все установленные порталы разом стали бы «ненастроенными».
+      return stripComments(readFileSync(f, 'utf8'))
+        .split('\n')
+        .some(l => /procure-ai/i.test(l) && !l.includes('SETTINGS_KEY'))
     }).map(f => f.replace(ROOT, ''))
     expect(dirty, `старое имя в исходниках:\n${dirty.join('\n')}`).toEqual([])
   })
