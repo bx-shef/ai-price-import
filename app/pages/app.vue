@@ -48,7 +48,25 @@ const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(ma
 // Вне портала settingsLoaded так и останется false, поэтому ждём ЛЮБОГО исхода загрузки настроек.
 const settingsResolved = ref(false)
 // Одно правило на три состояния экрана — чистое и покрыто тестом (appScreenState).
-const screen = computed(() => appScreenState({ launch: launch.value, settingsResolved: settingsResolved.value, needsSetup: needsSetup.value }))
+// Принятие EULA и Политики (#414) — гейт ПЕРЕД настройкой: условия принимают до того, как
+// администратор начнёт настраивать, куда вносить товары. Решение живёт на сервере, здесь показ.
+const {
+  accepted: consentAccepted,
+  admin: consentAdmin,
+  editions: consentEditions,
+  resolved: consentResolved,
+  saving: consentSaving,
+  error: consentError,
+  load: loadConsent,
+  accept: acceptConsent
+} = useConsent()
+const screen = computed(() => appScreenState({
+  launch: launch.value,
+  settingsResolved: settingsResolved.value,
+  needsSetup: needsSetup.value,
+  consentResolved: consentResolved.value,
+  consentAccepted: consentAccepted.value
+}))
 
 // #360: у портала может не быть чат-бота (бесплатный тариф, предел ботов, права не выданы) — тогда
 // сообщения в чат подписаны именем сотрудника, а не приложения. Раньше это было видно только
@@ -163,6 +181,10 @@ onMounted(async () => {
     // Слайдер не открылся — не оставляем человека на мёртвой странице, работаем как раньше.
     launch.value = 'work'
   }
+  // Согласие читаем ДО остальной загрузки и ждём его (#414): пока условия не приняты, рабочего
+  // экрана нет вовсе, а опрос статусов и метрики — его части. Настройки грузим следом, как раньше:
+  // администратор, только что нажавший галочку, должен сразу попасть на нужный экран, не перезагружая.
+  await loadConsent()
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
   void loadChatBotStatus() // фоном: баннер не должен задерживать рабочий экран
@@ -248,7 +270,7 @@ watch(jobs, (list) => {
         <!-- Шапка страницы — навбар каркаса (#259) вместо самодельного flex-заголовка. В мобильном
              приложении Б24 нативная шапка УЖЕ показывает название, поэтому навбар там не рисуем. -->
         <B24DashboardNavbar
-          v-if="!isBitrixMobile && screen !== 'launcher'"
+          v-if="!isBitrixMobile && screen !== 'launcher' && screen !== 'consent'"
           :toggle="false"
           title="AI-импорт прайсов"
         >
@@ -300,6 +322,17 @@ watch(jobs, (list) => {
               @click="() => { void openMain() }"
             />
           </div>
+
+          <!-- Согласие с EULA и Политикой (#414). Стоит перед баннером настройки и, как и он,
+               скрывает весь рабочий контент: до подтверждения сервер не примет ни одного документа. -->
+          <ConsentScreen
+            v-if="screen === 'consent'"
+            :admin="consentAdmin"
+            :editions="consentEditions"
+            :saving="consentSaving"
+            :error="consentError"
+            @accept="() => { void acceptConsent() }"
+          />
 
           <!-- Setup nudge: shown until the admin configures the app (pristine defaults). Admin gets a
          call-to-action to /settings; a non-admin is told to ask their portal admin.

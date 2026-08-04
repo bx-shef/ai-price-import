@@ -7,7 +7,7 @@
 // Состояний на самом деле три, и «неизвестно» — полноценное первое: пока исход загрузки настроек не
 // известен, нельзя показывать ни работу, ни баннер.
 
-export type AppScreenState = 'loading' | 'launcher' | 'setup' | 'work'
+export type AppScreenState = 'loading' | 'launcher' | 'consent' | 'setup' | 'work'
 
 export interface ScreenInput {
   /** Как открыто приложение (#262); `undefined` — ещё не определили. */
@@ -16,14 +16,32 @@ export interface ScreenInput {
   settingsResolved: boolean
   /** Настройки прочитаны и остались дефолтными → приложение ещё не настроено. */
   needsSetup: boolean
+  /**
+   * Проверка согласия завершилась (#414); `false` — ещё не знаем.
+   *
+   * ⚠ Оба поля ОБЯЗАТЕЛЬНЫЕ, хотя технически могли бы иметь значение по умолчанию. Любой дефолт
+   * здесь неверен: `true/true` — это fail-open, забытое поле пропустило бы к работе портал без
+   * согласия; `false` — вечный `loading` у нового вызывающего, и он бы об этом не узнал.
+   * Обязательность превращает пропуск в ошибку компиляции.
+   */
+  consentResolved: boolean
+  /** Портал принял EULA и Политику. */
+  consentAccepted: boolean
 }
 
 /** Единственное правило показа. Инвариант: до `settingsResolved` — всегда `loading`. */
-export function appScreenState({ launch, settingsResolved, needsSetup }: ScreenInput): AppScreenState {
+export function appScreenState({ launch, settingsResolved, needsSetup, consentResolved, consentAccepted }: ScreenInput): AppScreenState {
   // Режим открытия решается раньше всего: в базовом фрейме рабочий экран вообще не поднимается,
   // поэтому ждать загрузки настроек там нечего и незачем (#262).
   if (!launch) return 'loading'
   if (launch === 'launcher') return 'launcher'
+  // Согласие — ВПЕРЕДИ настройки (#414). Настройка это уже работа с порталом, а условия принимают
+  // до неё: иначе администратор выбирает каталог и целевую сущность, ни разу не увидев, что
+  // содержимое документов уйдёт на распознавание в Битрикс24, а при отказе основного канала — в КНР.
+  // ⚠ До ответа сервера — `loading`, а не «согласия нет»: мелькнувший экран согласия у портала,
+  // который его давно принял, читается как сброс настроек.
+  if (!consentResolved) return 'loading'
+  if (!consentAccepted) return 'consent'
   if (!settingsResolved) return 'loading'
   return needsSetup ? 'setup' : 'work'
 }

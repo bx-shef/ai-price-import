@@ -13,6 +13,8 @@ import { bodySizeStatus, edgeSecurityEnabled } from '../../utils/edgeSecurity'
 import { withFrameRouteSpan } from '../../utils/frameRouteSpan'
 import { query } from '../../db/client'
 import { checkUploadRate, uploadRateMessage } from '../../utils/uploadRateLimit'
+import { getConsent } from '../../utils/consentStore'
+import { consentGate } from '../../utils/consentGate'
 
 /** A plain UUID (v1–v5) — the only shape accepted for a client-supplied jobId (Redis key safety). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -39,6 +41,21 @@ export default defineEventHandler(async (event) => {
         console.warn(`[import/upload] auth fail: reason=${member.reason} domain=${auth.domain} status=${member.status}`)
         setResponseStatus(event, member.status ?? 401)
         return { error: 'authorization failed', reason: member.reason }
+      }
+
+      // Документы не принимаются, пока портал не принял EULA и Политику (#414). Стоит ПЕРВЫМ из
+      // отказов и до чтения тела: обращение к модели идёт под учётной записью издателя, а условия
+      // провайдера требуют от него гарантировать права на передаваемые данные — гарантия держится
+      // ровно на этом подтверждении. Пропустить документ «пока», а спросить потом, нельзя: он уже
+      // уйдёт на инференс. Экран согласия в интерфейсе — удобство, граница здесь.
+      const consent = await getConsent(member.memberId, query)
+      const gate = consentGate(consent)
+      if (!gate.allowed) {
+        // Свой исход, не общий 'forbidden': по телеметрии «портал не принял условия» обязано
+        // отличаться от «сотрудник не админ» — это разные поломки с разным лечением.
+        span.outcome = 'forbidden'
+        setResponseStatus(event, gate.status)
+        return { error: gate.message }
       }
 
       // Refuse early if the pipeline can't run — otherwise we'd store bytes + a job that

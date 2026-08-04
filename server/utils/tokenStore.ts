@@ -207,7 +207,10 @@ export async function deletePortal(memberId: string, query: QueryFn, eventTs = 0
   // NOTE: import_job (#202) and job_result (#135) are intentionally absent — both were dropped. Listing
   // a non-existent table here would make DELETE raise 42P01 and abort the purge AFTER portal_tokens is
   // already gone, orphaning client documents (import_text/import_doc) — a data-minimisation breach.
-  for (const table of ['portal_tokens', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating']) {
+  // portal_consent уходит вместе с порталом намеренно (#414): согласие дано на установку, а не
+  // навсегда. Переустановка обязана взять его заново — иначе новый владелец портала оказался бы
+  // связан галочкой, которую нажал предыдущий.
+  for (const table of ['portal_tokens', 'metrics_counter', 'import_text', 'import_doc', 'portal_app_rating', 'portal_consent']) {
     await query(`DELETE FROM ${table} WHERE member_id = $1`, [memberId])
   }
 }
