@@ -1,5 +1,6 @@
 import { extractDemo } from '~/utils/demoExtract'
 import { createRateLimiter } from '../../utils/demoRateLimit'
+import { anonRateKey } from '../../utils/anonRateKey'
 import { bodySizeStatus, edgeSecurityEnabled, edgeTrustXff, rateLimitKey } from '../../utils/edgeSecurity'
 import { decodeText, validateDemoFile, ext, DEMO_XLSX_EXT, DEMO_AI_EXT, MAX_DEMO_BYTES } from '../../utils/demoUpload'
 import { xlsxToText, XlsxTooLargeError } from '../../utils/demoXlsx'
@@ -48,6 +49,9 @@ const demoBudget = createDemoBudget(
 // GET /api/demo/result/:jobId. A long synchronous OCR would otherwise hold the connection
 // past the gateway timeout → 504. The shared job store lives in ../../utils/demoJobs.
 
+// Текст в ответе — вторая половина предупреждения; ПЕРВАЯ стоит на странице ДО кнопки загрузки
+// (#413): человек должен узнать про передачу содержимого нейросети и про юрисдикции ДО того, как
+// отдаст файл, а не в ответе на уже отданный.
 const DEMO_NOTICE = 'Демо-режим: файл обрабатывается публично и не сохраняется. Не загружайте конфиденциальные документы.'
 
 // Live AI deps (backend image: poppler/libreoffice/tesseract + agent binary + DeepSeek
@@ -111,7 +115,15 @@ export default defineEventHandler(async (event) => {
   }
 
   const now = Date.now()
-  const key = rateLimitKey(edgeSecurityEnabled(process.env), edgeTrustXff(process.env), getHeader(event, 'x-forwarded-for'), event.node.req.socket?.remoteAddress)
+  // Ключ счётчика — НЕОБРАТИМЫЙ ОТПЕЧАТОК, а не IP-адрес (#413). Адрес нужен ровно на одну строку
+  // ниже (построить ключ) и дальше нигде не живёт: ни в памяти лимитера, ни в ответе, ни в
+  // журнале. Так в демо не образуется персональных данных, и вопрос о статусе владельца по
+  // Закону № 99-З снимается технически, а не юридической конструкцией. Подробности и почему
+  // именно HMAC с секретом процесса — в шапке `anonRateKey.ts`.
+  const key = anonRateKey(
+    rateLimitKey(edgeSecurityEnabled(process.env), edgeTrustXff(process.env), getHeader(event, 'x-forwarded-for'), event.node.req.socket?.remoteAddress),
+    getHeader(event, 'user-agent')
+  )
   limiter.sweep(now)
   const decision = limiter.check(key, now)
   if (!decision.allowed) {
