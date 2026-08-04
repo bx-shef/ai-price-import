@@ -28,7 +28,7 @@ export interface TargetStore {
  *  before init cannot be attributed to the wrong portal later. */
 export function targetMemoryKey(portalDomain?: string | null): string {
   const d = String(portalDomain ?? '').trim().toLowerCase() || 'unknown'
-  return `procure.import.target.${d}`
+  return `ai-price-import.target.${d}`
 }
 
 /** Serialise a target for storage. `null` clears the memory (employee went back to the default). */

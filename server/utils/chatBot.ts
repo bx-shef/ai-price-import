@@ -1,5 +1,6 @@
 import type { RestCall } from './b24Rest'
 import { BOT_AVATAR_BASE64 } from './botAvatar'
+import { APP_NAME } from '~/config/appIdentity'
 
 /**
  * Chat messages sent AS THE APP, not as the employee whose OAuth token we happen to hold (#316).
@@ -29,7 +30,7 @@ export const BOT_CODE = 'ai-price-import'
 
 /** The bot's face in the chat. `workPosition` shows under the name in Bitrix24. */
 export const BOT_PROPERTIES = {
-  name: 'AI-импорт прайсов',
+  name: APP_NAME,
   workPosition: 'Импорт документов в CRM'
 } as const
 

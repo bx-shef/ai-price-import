@@ -4,7 +4,9 @@ import { resolveAuthConfig, verifySession } from './session'
 // Shared operator-session constants + guard used by the auth routes and any
 // operator-only endpoint (e.g. /api/ops/queues). Cookie is HttpOnly/SameSite=Lax/Secure.
 
-export const OP_COOKIE = 'procure_op'
+// ⚠ Смена имени разлогинивает открытую консоль ровно один раз; клиентов она не касается —
+// это служебный вход владельца (#412).
+export const OP_COOKIE = 'ai_price_import_op'
 export const OP_MAX_AGE_MS = 8 * 60 * 60 * 1000 // 8 hours
 export const OP_MAX_AGE_S = OP_MAX_AGE_MS / 1000
 

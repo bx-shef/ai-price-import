@@ -12,7 +12,7 @@
 // Consequence for ops: peak disk is bounded by files in flight, not by a retention window, so the
 // old «watch UPLOAD_DIR, shrink IMPORT_JOB_TTL_HOURS» advice no longer applies.
 
-export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/tmp/procure-uploads'
+export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/tmp/ai-price-import-uploads'
 
 /** Sanitise one path segment: no separators, no '..', bounded. */
 export function safeSeg(s: string): string {

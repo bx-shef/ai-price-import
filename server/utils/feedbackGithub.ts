@@ -1,6 +1,7 @@
 import type { FetchFn } from './b24Rest'
 import type { FeedbackConfig } from './feedbackConfig'
 import type { IssuePayload } from '~/utils/feedback'
+import { APP_SLUG } from '~/config/appIdentity'
 
 // Transport: POST the built issue to the GitHub REST API. DI over FetchFn (tested with a fake).
 // SECURITY: never log the token, the request URL or the response body. Only the numeric status is
@@ -24,7 +25,7 @@ export async function postFeedbackIssue(config: FeedbackConfig, payload: IssuePa
         'Authorization': `Bearer ${config.token}`,
         'Accept': 'application/vnd.github+json',
         'Content-Type': 'application/json',
-        'User-Agent': 'procure-ai-feedback',
+        'User-Agent': `${APP_SLUG}-feedback`,
         'X-GitHub-Api-Version': '2022-11-28'
       },
       body: JSON.stringify(payload)
@@ -64,7 +65,7 @@ export async function commitFeedbackFile(config: FeedbackConfig, path: string, c
         'Authorization': `Bearer ${config.token}`,
         'Accept': 'application/vnd.github+json',
         'Content-Type': 'application/json',
-        'User-Agent': 'procure-ai-feedback',
+        'User-Agent': `${APP_SLUG}-feedback`,
         'X-GitHub-Api-Version': '2022-11-28'
       },
       body: JSON.stringify({ message, content: contentBase64 })

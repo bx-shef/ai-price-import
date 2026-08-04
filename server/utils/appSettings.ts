@@ -5,6 +5,10 @@ import type { PortalMapping } from '~/types/mapping'
 // Read/write per-portal settings in app.option (server-side REST by portal token).
 // Never trust stored JSON → always run through parsePortalSettings. DI over RestCall.
 
+// ⚠ ИМЯ НЕ МЕНЯЕТСЯ вместе с переименованием продукта (#412), и это осознанно: под этим ключом
+// лежат настройки КАЖДОГО уже установившего портала (`app.option`). Переименование не переносит
+// значения — все порталы разом стали бы «ненастроенными», то есть выкат закрыл бы рабочий экран
+// тенантам, у которых ничего не менялось. Ключ невидим человеку и на имя продукта не влияет.
 export const SETTINGS_KEY = 'procure_mapping'
 
 /** Read + normalise the portal mapping from app.option. */

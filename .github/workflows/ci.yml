@@ -1,4 +1,4 @@
-# CI for the procure-ai redesign (Nuxt 4 monolith). Runs the full `pnpm check`
+# CI for the AI-импорт прайсов redesign (Nuxt 4 monolith). Runs the full `pnpm check`
 # gate + SSG build + a backend Docker image build validation. Name kept as "CI" so
 # the branch-protection required check and deploy.yml's workflow_run trigger map to it.
 name: CI

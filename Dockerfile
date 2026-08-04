@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# procure-ai (redesign) — single Nitro node image serving the prerendered pages
+# AI-импорт прайсов (redesign) — single Nitro node image serving the prerendered pages
 # (landing + in-portal UI) AND the backend API/pipeline. The extraction stage needs
 # system binaries (pdftotext / libreoffice / tesseract) baked in. docs/redesign 02, 06, 09.
 

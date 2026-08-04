@@ -1,4 +1,5 @@
 import { ALL_QUEUES, type QueueAlert } from './queueAlert'
+import { APP_NAME } from '~/config/appIdentity'
 
 // What actually gets PUSHED out of the queue health check, and when (BACKLOG.md §1).
 //
@@ -189,7 +190,7 @@ const KIND_RECOVERED: Record<string, string> = {
 
 /** Message announcing a new problem. */
 export function alertMessage(a: QueueAlert, appUrl?: string | null): string {
-  const lines = [`⚠️ AI-импорт прайсов: ${a.text}`]
+  const lines = [`⚠️ ${APP_NAME}: ${a.text}`]
   if (appUrl) lines.push(`Состояние: ${appUrl}`)
   return lines.join('\n')
 }
@@ -201,6 +202,6 @@ export function recoveryMessage(key: EpisodeKey): string {
   const what = KIND_RECOVERED[kind ?? ''] ?? kind
   // Эпизод конвейера (`ALL_QUEUES`) — про Redis, а не про конкретную очередь: «очередь «*»» в чате
   // читалась бы как поломка самого сообщения, а не как новость.
-  if (queue === ALL_QUEUES) return '✅ AI-импорт прайсов: очереди снова читаются.'
-  return `✅ AI-импорт прайсов: очередь «${queue}» — ${what}.`
+  if (queue === ALL_QUEUES) return `✅ ${APP_NAME}: очереди снова читаются.`
+  return `✅ ${APP_NAME}: очередь «${queue}» — ${what}.`
 }

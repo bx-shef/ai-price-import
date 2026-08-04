@@ -56,7 +56,7 @@ const DEMO_NOTICE = 'Демо-режим: файл обрабатывается 
 
 // Live AI deps (backend image: poppler/libreoffice/tesseract + agent binary + DeepSeek
 // env). Constructed once; runs only when a PDF/scan/office file is uploaded.
-const DEMO_TMP = process.env.DEMO_TMP_DIR || '/tmp/procure-demo'
+const DEMO_TMP = process.env.DEMO_TMP_DIR || '/tmp/ai-price-import-demo'
 // OpenAI-compatible extractor (DeepSeek/BitrixGPT), same as the in-portal pipeline. Resolved once.
 const demoLlm = resolveLlmConfig(process.env)
 const demoChatFn = makeChatFn(demoLlm)
