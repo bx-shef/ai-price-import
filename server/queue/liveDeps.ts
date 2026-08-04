@@ -18,6 +18,7 @@ import { findExistingItemId } from '../utils/originLookup'
 import { bumpCounter, METRICS } from '../utils/metricsStore'
 import { readMapping } from '../utils/appSettings'
 import { markNoticeChatSent, portalsAwaitingNoticeChat } from '../utils/legalNoticeStore'
+import { noticeProblems } from '../../app/utils/legalNotice'
 import { legalDocUrl } from '../utils/legalNoticeUrl'
 import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
@@ -241,18 +242,22 @@ export function resolvePortalBotId(memberId: string, infra: LiveInfra, call: () 
 export function liveLegalNoticeDeps(infra: LiveInfra) {
   const rest = restResolver(infra)
   return {
-    pendingPortals: (key: string, limit: number) => portalsAwaitingNoticeChat(key, limit, infra.query),
+    pendingPortals: (key: string, limit: number, after: string) => portalsAwaitingNoticeChat(key, limit, after, infra.query),
     markSent: (memberId: string, key: string) => markNoticeChatSent(memberId, key, infra.query),
-    send: async (memberId: string, text: string): Promise<boolean> => {
+    problems: noticeProblems,
+    send: async (memberId: string, text: string): Promise<'sent' | 'failed' | 'no-channel'> => {
       const t = await rest(memberId)
-      if (!t) return false
+      // Токена нет — состояние временное (портал мог только что переустановиться), пробуем снова.
+      if (!t) return 'failed'
       const mapping = await readMapping(t.call).catch(() => null)
       const dialogId = mapping?.notifyChatId
-      if (!dialogId) return false
+      // ⚠ Чат не выбран — это НЕ сбой, а постоянное состояние портала, и отличать его обязательно:
+      // слитое с отказом, оно делало очередь неотличимой от рабочей ровно тогда, когда она стояла.
+      if (!dialogId) return 'no-channel'
       const id = await sendChatMessage(dialogId, text, t.call, await resolvePortalBotId(memberId, infra, async () => t.call), console.warn)
       // ⚠ `null` значит «не доставлено» и отметку НЕ ставит: иначе первый же сбой похоронил бы
       // уведомление навсегда — следующий проход счёл бы портал уведомлённым.
-      return id !== null
+      return id === null ? 'failed' : 'sent'
     },
     docUrl: legalDocUrl,
     log: (msg: string) => console.info(msg)

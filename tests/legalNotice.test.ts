@@ -13,6 +13,7 @@ import {
   type PendingLegalEdition
 } from '../app/utils/legalNotice'
 import { PENDING_LEGAL_EDITIONS } from '../app/config/legalNotice'
+import { LEGAL_ARCHIVE } from '../app/config/legalArchive'
 
 const BASE: PendingLegalEdition = {
   slug: 'eula',
@@ -84,6 +85,7 @@ describe('#418: состав уведомления', () => {
     for (const c of BASE.changes) expect(chat).toContain(c)
     expect(chat).toContain('https://example.com/eula/archive/2026-09-01')
     expect(chat).toContain('https://example.com/eula/archive/2026-08-08')
+    expect(chat).toContain('Прежняя редакция')
     expect(chat).toContain('удалить с портала')
   })
 })
@@ -109,6 +111,31 @@ describe('#418: реестр объявлений', () => {
     // документов. Как только запись появится, она обязана быть годной.
     for (const e of PENDING_LEGAL_EDITIONS) {
       expect(noticeProblems(e), `${editionKey(e)}: ${noticeProblems(e).join('; ')}`).toEqual([])
+    }
+  })
+
+  it('обе ссылки объявления ведут на существующие редакции архива', () => {
+    // ⚠ Опечатка в дате даёт 404 в сообщении, УЖЕ разосланном по чужим чатам, откуда его не
+    // отозвать. Формат проверяет `noticeProblems`, а существование — только сверка с реестром:
+    // связь двух реестров иначе не сторожит ничто, а публикация идёт руками.
+    for (const e of PENDING_LEGAL_EDITIONS) {
+      const doc = LEGAL_ARCHIVE.find(d => d.slug === e.slug)
+      expect(doc, `${e.slug}: документа нет в реестре архива`).toBeTruthy()
+      expect(doc!.editions.map(x => x.date), `${e.slug}: редакции ${e.date} нет в архиве`).toContain(e.date)
+      if (e.previousDate) {
+        expect(doc!.editions.map(x => x.date), `${e.slug}: прежней редакции ${e.previousDate} нет в архиве`).toContain(e.previousDate)
+      }
+    }
+  })
+
+  it('считаемая дата вступления совпадает с напечатанной в документе', () => {
+    // ⚠ Дат три: в самом документе, в реестре архива и считаемая из срока. Разъехавшись, они дают
+    // баннер, обещающий одну дату, и документ, печатающий другую, — то есть нарушение п. 9.3.2
+    // ровно там, где на него сошлются.
+    for (const e of PENDING_LEGAL_EDITIONS) {
+      const entry = LEGAL_ARCHIVE.find(d => d.slug === e.slug)?.editions.find(x => x.date === e.date)
+      if (!entry) continue
+      expect(formatRuDate(effectiveDate(e)), `${e.slug}: дата вступления разъехалась с документом`).toBe(entry.effective)
     }
   })
 

@@ -118,16 +118,35 @@ export function buildLegalNotice(edition: PendingLegalEdition): LegalNoticeText 
     changes: edition.changes,
     newHref: editionArchivePath(edition.slug, edition.date),
     currentHref: edition.previousDate ? editionArchivePath(edition.slug, edition.previousDate) : null,
-    currentLabel: `Действующая до ${eff}`,
+    // ⚠ «Действующая до …» рядом с «Новая редакция» повисало грамматически и читалось как
+    // продолжение первой ссылки: действующая — что?
+    currentLabel: `Прежняя редакция (действует до ${eff})`,
     // ⚠ Формулировка прямая и без условий: п. 9.3.6 даёт это право безоговорочно, а мягкое
     // «вы можете рассмотреть возможность» читалось бы как приглашение к переговорам.
     optOut: `Если условия вам не подходят, приложение можно удалить с портала до ${eff} — без последствий.`
   }
 }
 
+/** Предел длины поля объявления в сообщении чата. */
+export const MAX_NOTICE_FIELD = 400
+
+/**
+ * Обезвредить BB-разметку и обрезать поле объявления.
+ *
+ * ⚠ Текст объявления пишет ЧЕЛОВЕК (это и есть штатный порядок публикации редакции), а чат Битрикса
+ * разбирает BB-коды. Квадратная скобка в описании изменения — `[см. п. 9.3]`, `[b]`, `[URL]` — съедается
+ * парсером, и в чат клиента приходит битым ровно то сообщение, которое обязано быть безупречным.
+ *
+ * ⚠ Полный `chatSafeText` применять НЕЛЬЗЯ: он превращает двоеточие в полноширинное и тем ломает
+ * `https://`, а ссылки на архив редакций здесь несущие — без них уведомление неполно.
+ */
+export function noticeChatField(raw: string): string {
+  return String(raw ?? '').replace(/\[/g, '［').replace(/\]/g, '］').slice(0, MAX_NOTICE_FIELD)
+}
+
 /** Текст сообщения в чат: тот же состав, одним сообщением. */
 export function buildLegalNoticeChat(edition: PendingLegalEdition, docUrl: (path: string) => string): string {
-  const n = buildLegalNotice(edition)
+  const n = buildLegalNotice({ ...edition, title: noticeChatField(edition.title), changes: edition.changes.map(noticeChatField) })
   const lines = [n.headline, '', 'Что меняется:']
   for (const c of n.changes) lines.push(`— ${c}`)
   lines.push('', `Новая редакция: ${docUrl(n.newHref)}`)
@@ -145,10 +164,29 @@ export function buildLegalNoticeChat(edition: PendingLegalEdition, docUrl: (path
  */
 export function noticeProblems(edition: PendingLegalEdition): string[] {
   const bad: string[] = []
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(edition.publishedAt)) bad.push('дата публикации не в формате ГГГГ-ММ-ДД')
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(edition.date)) bad.push('дата редакции не в формате ГГГГ-ММ-ДД')
+  if (!isRealDate(edition.publishedAt)) bad.push('дата публикации не существует или не в формате ГГГГ-ММ-ДД')
+  if (!isRealDate(edition.date)) bad.push('дата редакции не существует или не в формате ГГГГ-ММ-ДД')
+  // ⚠ Дата предыдущей редакции — это ВТОРАЯ ссылка уведомления, и она обязана вести на живой
+  // постоянный адрес. Опечатка здесь даёт 404 в сообщении, уже разосланном по чужим чатам, откуда
+  // его не отозвать. Сверку с реестром архива делает отдельный тест — здесь хотя бы формат.
+  if (edition.previousDate !== null && !isRealDate(edition.previousDate)) bad.push('дата предыдущей редакции не существует или не в формате ГГГГ-ММ-ДД')
   if (edition.changes.length === 0) bad.push('не сказано, что меняется — «условия обновлены» уведомлением не является')
   if (edition.changes.some(c => c.trim().length < 10)) bad.push('слишком короткое описание изменения')
   if (!edition.title.trim()) bad.push('нет названия документа')
+  if (!edition.slug.trim()) bad.push('не указан документ')
   return bad
+}
+
+/**
+ * Существует ли такая дата в календаре.
+ *
+ * ⚠ Регулярки МАЛО, и это не педантизм: `2026-02-31` ей соответствует, а `new Date` разбирает её
+ * лениво и молча даёт 3 марта. Проверка формата пропускала опечатку, окно показа съезжало на три
+ * дня, дата вступления в уведомлении переставала совпадать с обещанным сроком, а ссылка вела на
+ * адрес редакции, которой не существует.
+ */
+function isRealDate(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false
+  const d = new Date(`${iso}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso
 }

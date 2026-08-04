@@ -7,11 +7,9 @@ import { recordQueueHealth } from '../utils/queueAlertState'
 import { alertMessage, emptyDeliveryState, episodeKey, markAnnounced, markRecovered, planAlertDelivery, recoveryMessage, type DeliveryState } from '../utils/queueAlertDeliver'
 import { resolveTelegramConfig, sendTelegramAlert } from '../utils/telegramAlert'
 import { buildLiveInfra, startEventWorker, startThroughputWorkers } from '../queue/worker'
-import { liveLegalNoticeDeps, liveKeepAliveDeps } from '../queue/liveDeps'
+import { liveKeepAliveDeps } from '../queue/liveDeps'
 import { queueRuntimeConfig } from '../queue/runtime'
 import { keepAliveIntervalMs, runTokenKeepAlive } from '../utils/tokenKeepAlive'
-import { dispatchLegalNotices } from '../utils/legalNoticeDispatch'
-import { PENDING_LEGAL_EDITIONS } from '../../app/config/legalNotice'
 
 /** How often the queue health check reads counts. Also the window each alert speaks about. */
 const QUEUE_HEALTH_INTERVAL_MS = 5 * 60 * 1000
@@ -34,7 +32,6 @@ export default defineNitroPlugin((nitroApp) => {
   const infra = (role.workers || role.cron) ? buildLiveInfra() : null
   const workers: Worker[] = []
   let keepAliveTimer: ReturnType<typeof setInterval> | undefined
-  let legalNoticeTimer: ReturnType<typeof setInterval> | undefined
   let healthTimer: ReturnType<typeof setInterval> | undefined
 
   if (role.workers && infra) {
@@ -77,21 +74,6 @@ export default defineNitroPlugin((nitroApp) => {
     } else {
       console.warn('[queue] token keep-alive disabled — B24_CLIENT_ID/SECRET unset (idle portals may lose auth on day 180)')
     }
-
-    // Уведомление об изменении юридических документов (#418, п. 9.3.3): вторая половина —
-    // сообщение в чат портала. Раз в сутки, на крон-экземпляре: N реплик воркера слали бы N копий
-    // в чужой чат. Пока объявленных редакций нет, проход не делает ни одного запроса.
-    const runLegalNotices = async () => {
-      try {
-        const today = new Date().toISOString().slice(0, 10)
-        await dispatchLegalNotices({ today, editions: PENDING_LEGAL_EDITIONS, ...liveLegalNoticeDeps(infra) })
-      } catch (err) {
-        // Сюда доходит только сбой первой выборки — отказ конкретного портала изолирован внутри.
-        console.error('[legal-notice] dispatch failed:', (err as Error)?.message)
-      }
-    }
-    legalNoticeTimer = setInterval(runLegalNotices, 24 * 3_600_000)
-    void runLegalNotices()
 
     // Queue health check (BACKLOG.md §1). /queues only ever showed a snapshot, which cannot tell
     // «навалило работы» from «встало»: both look like a big number. What tells them apart is how
@@ -193,7 +175,6 @@ export default defineNitroPlugin((nitroApp) => {
 
   nitroApp.hooks.hook('close', async () => {
     if (keepAliveTimer) clearInterval(keepAliveTimer)
-    if (legalNoticeTimer) clearInterval(legalNoticeTimer)
     if (healthTimer) clearInterval(healthTimer)
     await Promise.all(workers.map(w => w.close()))
   })

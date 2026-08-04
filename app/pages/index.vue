@@ -115,7 +115,9 @@ onMounted(async () => {
            и на сайте. Здесь он БЕЗ отметки о показе — отмечать нечего: посетитель лендинга не
            лицензиат, а адресное уведомление обращено к порталу. -->
       <div class="relative z-20 mx-auto max-w-[1080px] px-[22px] pt-4 lg:px-8">
-        <LegalChangeBanner />
+        <!-- `compact`: на телефоне полный состав занимал 44% первого экрана и вытеснял заголовок
+             с кнопками. Обязанность уведомить выполняется показом и доступом к содержанию. -->
+        <LegalChangeBanner compact />
       </div>
       <!-- radial brand glow (clip blurred blobs here, not on <main>, for the sticky header) -->
       <div

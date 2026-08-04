@@ -17,9 +17,11 @@ function memoryDb(portals: string[] = []) {
     }
     if (s.startsWith('SELECT t.member_id')) {
       const key = String(params[0])
+      const after = String(params[1])
       const out = portals
+        .filter(p => p > after)
         .filter(p => !rows.find(x => x.member_id === p && x.edition_key === key && x.chat_sent_at))
-        .slice(0, Number(params[1]))
+        .slice(0, Number(params[2]))
       return { rows: out.map(member_id => ({ member_id })) }
     }
     if (s.startsWith('INSERT')) {
@@ -79,9 +81,9 @@ describe('#418: отметки об уведомлении', () => {
     // ⚠ Портал, установивший приложение уже ПОСЛЕ публикации, отметок не имеет вовсе. Выборка
     // «где chat_sent_at пуст» по таблице отметок его бы не нашла, и уведомление не ушло бы.
     const db = memoryDb(['m1', 'm2'])
-    expect(await portalsAwaitingNoticeChat('eula@2026-09-01', 10, db.query)).toEqual(['m1', 'm2'])
+    expect(await portalsAwaitingNoticeChat('eula@2026-09-01', 10, '', db.query)).toEqual(['m1', 'm2'])
     await markNoticeChatSent('m1', 'eula@2026-09-01', db.query)
-    expect(await portalsAwaitingNoticeChat('eula@2026-09-01', 10, db.query)).toEqual(['m2'])
+    expect(await portalsAwaitingNoticeChat('eula@2026-09-01', 10, '', db.query)).toEqual(['m2'])
   })
 
   it('показ баннера не считается отправкой в чат', async () => {
@@ -89,6 +91,6 @@ describe('#418: отметки об уведомлении', () => {
     // ОБА способа одновременно, а не любой на выбор.
     const db = memoryDb(['m1'])
     await markNoticeShown('m1', 'eula@2026-09-01', db.query)
-    expect(await portalsAwaitingNoticeChat('eula@2026-09-01', 10, db.query)).toEqual(['m1'])
+    expect(await portalsAwaitingNoticeChat('eula@2026-09-01', 10, '', db.query)).toEqual(['m1'])
   })
 })

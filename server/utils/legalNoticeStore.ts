@@ -67,15 +67,21 @@ export async function markNoticeChatSent(memberId: string, editionKey: string, q
  *
  * ⚠ Отбор идёт от таблицы порталов, а не от отметок: портал, установивший приложение уже ПОСЛЕ
  * публикации, отметки не имеет вовсе, и выборка «где chat_sent_at пуст» его бы не нашла.
+ *
+ * ⚠ Курсор `after` обязателен, и это не оптимизация. Без него выборка возвращала одни и те же
+ * первые N ВЕЧНО: портал без настроенного чата уведомлений недоставляем ПОСТОЯННО, а не временно,
+ * отметки не получает и из очереди не уходит. Пятьдесят таких в начале алфавита блокировали бы
+ * всех остальных навсегда — при этом рассылка писала бы в журнал «не доставлено 50» и выглядела
+ * работающей, пока часть лицензиатов не получала уведомления вовсе.
  */
-export async function portalsAwaitingNoticeChat(editionKey: string, limit: number, query: QueryFn): Promise<string[]> {
+export async function portalsAwaitingNoticeChat(editionKey: string, limit: number, after: string, query: QueryFn): Promise<string[]> {
   const { rows } = await query(
     `SELECT t.member_id FROM portal_tokens t
       LEFT JOIN portal_legal_notice n ON n.member_id = t.member_id AND n.edition_key = $1
-      WHERE n.chat_sent_at IS NULL
+      WHERE n.chat_sent_at IS NULL AND t.member_id > $2
       ORDER BY t.member_id
-      LIMIT $2`,
-    [editionKey, limit]
+      LIMIT $3`,
+    [editionKey, after, limit]
   )
   return rows.map(r => String(r.member_id))
 }
