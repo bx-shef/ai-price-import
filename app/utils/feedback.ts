@@ -73,6 +73,16 @@ export interface FeedbackContext {
   /** Durable link to the source file on the portal Disk (#192 п.3), attached only with consent. */
   fileUrl?: unknown
   appVersion?: unknown
+  /**
+   * Псевдоним портала (#417) — по нему находят отзывы одного клиента, когда он просит их удалить
+   * (п. 8.6 и 10.3 Политики). Без него обязательство неисполнимо: в приёмнике нет ни одного поля,
+   * по которому можно отобрать «отзывы этого портала», а перебирать все и открывать тела — значит
+   * читать чужие документы ради удаления чужих документов.
+   *
+   * ⚠ Это ХЭШ идентификатора портала, а не сам идентификатор и тем более не сотрудник: искать по
+   * нему может только тот, кто и так знает портал, а состав хранимых данных от метки не растёт.
+   */
+  portalTag?: unknown
 }
 
 const MAX_CONTEXT_VALUE = 300
@@ -142,16 +152,36 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
     '</code></pre>',
     ...(contextLines.length ? ['', '**Контекст:**', ...contextLines] : [])
   ].join('\n')
-  return { title, body, labels: ['user-feedback', `feedback:${kind}`] }
+  const labels = ['user-feedback', `feedback:${kind}`]
+  // Метка портала — только из ожидаемой формы (12 hex, `portalHash`): метка попадает в адрес
+  // запроса при поиске, и произвольная строка из контекста там делать нечего.
+  const tag = String(context.portalTag ?? '')
+  if (/^[0-9a-f]{12}$/.test(tag)) labels.push(`portal:${tag}`)
+  return { title, body, labels }
+}
+
+/** Каталог файлов ОДНОГО задания в приёмнике: `files/<портал>/<задание>` (#417).
+ *
+ *  ⚠ Портал в пути — не для порядка, а ради чистки. Раньше путь был `files/<задание>/…`, а
+ *  `jobId` приходит от клиента: сотрудник чужого портала мог назвать своим заданием чужое, и его
+ *  файл лёг бы в каталог жертвы — а чистка, дойдя до его отзыва, удалила бы оттуда ЧУЖОЙ документ.
+ *  `portalTag` считает сервер из проверенного фрейм-токена, подменить его нельзя, поэтому чистка
+ *  теперь по построению не может выйти за пределы своего портала.
+ *
+ *  Пустой/битый `portalTag` → `unknown`: путь обязан быть корректным всегда, а такой каталог
+ *  просто не совпадёт ни с одним порталом при поиске. */
+export function feedbackFileDir(portalTag: string, jobId: string): string {
+  const tag = /^[0-9a-f]{12}$/.test(String(portalTag ?? '')) ? String(portalTag) : 'unknown'
+  const id = String(jobId ?? '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'job'
+  return `files/${tag}/${id}`
 }
 
 /** Repo-relative path for a source file committed to the PRIVATE feedback repo (#332, byte-upload).
- *  jobId groups files per run; the filename is sanitised to a safe basename (strip directory parts →
- *  no path traversal, allowlist chars, drop leading dots, cap length). Both parts fall back to a
- *  constant so the path is always well-formed. */
-export function feedbackFilePath(jobId: string, fileName: string): string {
-  const id = String(jobId ?? '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'job'
+ *  The filename is sanitised to a safe basename (strip directory parts → no path traversal,
+ *  allowlist chars, drop leading dots, cap length) and falls back to a constant, so the path is
+ *  always well-formed. Каталог — см. `feedbackFileDir`. */
+export function feedbackFilePath(portalTag: string, jobId: string, fileName: string): string {
   const base = String(fileName ?? '').split(/[\\/]/).pop() ?? ''
   const safe = base.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 80) || 'file'
-  return `files/${id}/${safe}`
+  return `${feedbackFileDir(portalTag, jobId)}/${safe}`
 }

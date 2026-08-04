@@ -1,0 +1,165 @@
+import { resolveFeedbackConfig } from '../utils/feedbackConfig'
+import { deleteFeedbackFile, deleteFeedbackIssue, listFeedbackDir, listOldestFeedbackIssues, redactFeedbackIssue } from '../utils/feedbackGithubAdmin'
+import { feedbackUploadAllowed } from '../utils/feedbackRepoPrivacy'
+import { resolveRetentionMonths, runFeedbackRetention } from '../utils/feedbackRetention'
+import { resolveTelegramConfig, sendTelegramAlert } from '../utils/telegramAlert'
+import { queueRuntimeConfig } from '../queue/runtime'
+import { connectionOptions } from '../queue/connection'
+import { windowCounterStore } from '../utils/windowCounterRedis'
+
+// Суточная чистка приёмника отзывов (#417): стереть отзывы старше срока из п. 8.6 Политики.
+//
+// ⚠ Только на cron-экземпляре. Реплики воркера подняли бы ту же чистку каждая: лишние обращения к
+// GitHub под одним токеном издателя (вторичные лимиты считаются по нему) и ложные тревоги —
+// вторая реплика получала бы отказ на уже стёртой задаче и рапортовала бы о сбое необратимой
+// операции.
+//
+// ⚠ Канал выключен (нет токена/приёмника) — плагин молчит. Отзывов в этом случае нет вовсе, и
+// «чистка не настроена» было бы тревогой о несуществующем.
+
+const DAY_MS = 24 * 60 * 60 * 1000
+/** Кап на прогон: см. `planFeedbackRetention` — вторичные лимиты GitHub. */
+const MAX_PER_RUN = 50
+/**
+ * Задержка первого прогона.
+ *
+ * ⚠ Прогон на старте ОБЯЗАТЕЛЕН, и это правка по итогам разбора. Раньше стоял голый суточный
+ * таймер «чтобы не ходить в GitHub на каждый выкат» — но выкаты в этом проекте идут по десятку в
+ * день, Watchtower перезапускает контейнер на каждый, и суточный таймер не доживал до срабатывания
+ * ни разу. Механизм существовал, не выполнившись ни одного раза, и это было ненаблюдаемо: в
+ * журнале пусто, тревог нет, «чистить нечего» и «не запускались» выглядят одинаково.
+ *
+ * Пауза в несколько минут снимает исходное возражение: пачка перевыкатов подряд не превращается в
+ * пачку обращений к GitHub, потому что процесс столько не живёт.
+ */
+const FIRST_RUN_DELAY_MS = 5 * 60 * 1000
+
+/** Календарный день UTC — ключ суточной отсечки. */
+function dayKey(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+export default defineNitroPlugin(() => {
+  if (import.meta.prerender) return
+  if (!queueRuntimeConfig().cron) return
+  const config = resolveFeedbackConfig()
+  if (!config) return
+
+  const months = resolveRetentionMonths(process.env.FEEDBACK_RETENTION_MONTHS)
+  // ⚠ Отсечка ПЕРЕЖИВАЕТ перезапуск, и это не украшение. Прогон стоит на старте процесса, а
+  // Watchtower перекатывает контейнер на каждый выкат — десять выкатов за день дают десять
+  // прогонов (то есть кап «50 за прогон», обоснованный вторичными лимитами GitHub, превращается в
+  // 50×10) и десять сообщений об одной и той же поломке, ровно то мерцание, от которого этот
+  // канал отстраивался. Счётчик в Redis: первый тик за сутки — единственный, кто работает.
+  // Без Redis отсечки нет — это названо в PROCESS.md §6.12, а не молча.
+  const counter = windowCounterStore(connectionOptions())
+  const claimDaily = async (key: string, ttlSec: number): Promise<boolean> => {
+    if (!counter) return true
+    const n = await counter.incrWithTtl(key, ttlSec).catch(() => null)
+    // Redis не ответил — идём как раньше: пропущенный прогон хуже лишнего.
+    return n === null || n <= 1
+  }
+  const fetchImpl = globalThis.fetch as typeof fetch
+  const telegram = resolveTelegramConfig()
+  // Одно сообщение на поломку, а не на прогон: суточный повтор одного и того же — это канал,
+  // который перестают читать. Пустая строка = всё хорошо.
+  let announced = ''
+  let running = false
+
+  // ⚠ В тревогу идёт только ФАКТ и счётчики. Ни номера задачи, ни тела, ни имени файла, ни слага
+  // приёмника: канал тревог заведён для «сервис сломан», а содержимое отзыва — данные клиента.
+  //
+  // ⚠ «Объявлено» = РЕАЛЬНО доставлено, как в `queueAlertDeliver`. Первая редакция ставила флаг до
+  // отправки, а `sendTelegramAlert` на 429 не бросает, а возвращает результат — один отказ
+  // Телеграма хоронил сообщение навсегда: поломка не исчезает, а на следующих сутках она «уже
+  // объявлена». Ровно этот дефект в соседнем модуле уже описан как исправленный.
+  const announce = async (key: string, text: string) => {
+    // Строка в журнал идёт ВСЕГДА, независимо от Телеграма: он опциональный, и без него неудачная
+    // чистка выглядела бы в журнале так же, как неподнявшийся плагин.
+    console.warn(`[feedback-retention] ${text}`)
+    if (announced === key) return
+    if (!telegram) return
+    // Сутки на вид поломки — общие для всех перезапусков процесса.
+    if (!await claimDaily(`feedback-retention:said:${key}:${dayKey()}`, 25 * 3600)) {
+      announced = key
+      return
+    }
+    try {
+      const r = await sendTelegramAlert(telegram, `⚠️ Чистка отзывов: ${text}`, fetchImpl)
+      if (r.ok) announced = key
+    } catch { /* тревога о тревоге не нужна */ }
+  }
+  const recovered = async () => {
+    if (!announced) return
+    if (!telegram) {
+      announced = ''
+      return
+    }
+    try {
+      const r = await sendTelegramAlert(telegram, '✅ Чистка отзывов снова работает', fetchImpl)
+      // Зеркало `announce`: недоставленное «восстановилось» не снимает ожидание, иначе один 429
+      // оставил бы оператора с висящей поломкой, о закрытии которой не сказали.
+      if (r.ok) announced = ''
+    } catch { /* см. выше */ }
+  }
+
+  const run = async () => {
+    // Прогон длиннее суток невозможен по построению (кап 50), но наложение всё равно исключаем:
+    // зависший запрос к GitHub иначе дал бы два конкурирующих удаления.
+    if (running) return
+    running = true
+    try {
+      if (!await claimDaily(`feedback-retention:run:${dayKey()}`, 25 * 3600)) {
+        console.info('[feedback-retention] сегодня уже отрабатывала — пропуск (перезапуск процесса)')
+        return
+      }
+      // ⚠ Гейт приватности стоит ПЕРЕД разрушительными действиями, а не только перед загрузкой
+      // байт (#200). Приёмник задаётся переменной окружения, и опечатка навела бы необратимое
+      // удаление на чужой репозиторий. Проверка «не удалось» и «репозиторий публичный» одинаково
+      // запрещают — как и при загрузке.
+      if (!await feedbackUploadAllowed(config, fetchImpl)) {
+        await announce('privacy', 'приёмник не подтверждён приватным — чистка не выполнялась')
+        return
+      }
+      const r = await runFeedbackRetention({
+        list: limit => listOldestFeedbackIssues(config, limit, fetchImpl),
+        listDir: dir => listFeedbackDir(config, dir, fetchImpl),
+        deleteFile: path => deleteFeedbackFile(config, path, fetchImpl),
+        deleteIssue: id => deleteFeedbackIssue(config, id, fetchImpl),
+        redactIssue: i => redactFeedbackIssue(config, i, fetchImpl),
+        now: () => Date.now()
+      }, months, MAX_PER_RUN)
+
+      if (r.read === null) {
+        // Приёмник не прочитан — это НЕ «нечего чистить». Молча не работающий регламент хуже
+        // отсутствующего: срок в опубликованном документе продолжает идти, а исполнять его нечем.
+        await announce('unreadable', 'приёмник отзывов недоступен — чистка не выполнена')
+        return
+      }
+      // Строка пишется КАЖДЫЙ прогон, в том числе пустой: иначе «работает штатно, чистить нечего»
+      // и «плагин вообще не поднялся» в журнале неотличимы, а у этого регламента есть срок.
+      console.info(`[feedback-retention] прочитано=${r.read} просрочено=${r.due} стёрто=${r.erased} обезличено=${r.redacted} файлов=${r.files} не удалось=${r.failed}`)
+
+      if (r.failed) {
+        await announce('failed', `не удалось стереть отзывов: ${r.failed} из ${r.due}`)
+      } else if (r.redacted) {
+        // Деградация — не успех: у токена нет прав на удаление задач, и прежний текст остаётся в
+        // истории правок. Об этом обязаны сказать, иначе «работает» будет означать полумеру.
+        await announce('redacted', `нет прав на удаление задач — ${r.redacted} обезличено вместо удаления (текст остаётся в истории правок)`)
+      } else {
+        await recovered()
+      }
+    } catch {
+      // ⚠ Текст ошибки в журнал НЕ идёт: у undici в него попадает адрес запроса. Образец — тот же,
+      // что в `feedbackGithub.ts`: наружу отдаётся факт, не сообщение.
+      console.error('[feedback-retention] сбой прогона')
+      await announce('crashed', 'чистка отзывов упала с ошибкой')
+    } finally {
+      running = false
+    }
+  }
+
+  console.info(`[feedback-retention] чистка включена: срок ${months} мес., первый прогон через ${Math.round(FIRST_RUN_DELAY_MS / 60000)} мин`)
+  setTimeout(() => void run(), FIRST_RUN_DELAY_MS).unref?.()
+  setInterval(() => void run(), DAY_MS).unref?.()
+})

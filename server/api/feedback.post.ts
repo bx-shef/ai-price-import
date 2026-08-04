@@ -4,6 +4,7 @@ import { resolveFeedbackConfig } from '../utils/feedbackConfig'
 import { commitFeedbackFile, postFeedbackIssue } from '../utils/feedbackGithub'
 import { feedbackUploadAllowed } from '../utils/feedbackRepoPrivacy'
 import { buildFeedbackIssue, feedbackFilePath, normalizeKind } from '~/utils/feedback'
+import { portalHash } from '../utils/telemetryAttributes'
 import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
@@ -91,6 +92,10 @@ export default defineEventHandler(async (event) => {
       // consent (#192 п.3) — the source-file link that was archived to the portal Disk. Best-effort:
       // a missing/expired job simply yields no extra context.
       let entity: { entityType?: string, entityId?: string, entityUrl?: string } = {}
+      // Псевдоним портала (#417): и метка задачи, и каталог файлов. Считается СЕРВЕРОМ из
+      // проверенного фрейм-токена — подменить его телом запроса нельзя, поэтому чистка по
+      // построению не может выйти за пределы своего портала.
+      const portalTag = portalHash(member.memberId)
       let outcome: { status?: string, outcome?: string, notes?: string } = {}
       let fileUrl: string | undefined
       /** Told to the employee whenever the file did NOT go out (#354) — «принято» без оговорки
@@ -155,7 +160,7 @@ export default defineEventHandler(async (event) => {
                     attachNotice = budget.notice
                   } else {
                     const commit = await commitFeedbackFile(
-                      config, feedbackFilePath(jobId, name), base64, `feedback file for job ${jobId}`, fetchImpl
+                      config, feedbackFilePath(portalTag, jobId, name), base64, `feedback file for job ${jobId}`, fetchImpl
                     )
                     if (commit.ok && commit.htmlUrl) fileUrl = commit.htmlUrl
                   }
@@ -180,7 +185,9 @@ export default defineEventHandler(async (event) => {
         entityType: entity.entityType,
         entityId: entity.entityId,
         entityUrl: entity.entityUrl,
-        appVersion: c.appVersion
+        appVersion: c.appVersion,
+        // Псевдоним портала — чтобы отзывы клиента можно было найти по его обращению (#417).
+        portalTag
       })
       const result = await postFeedbackIssue(config, payload, fetchImpl)
       if (result.ok) {
