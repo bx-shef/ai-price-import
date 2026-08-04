@@ -1,16 +1,45 @@
 import { describe, expect, it } from 'vitest'
-import { attachedFilePaths, planFeedbackRetention, resolveRetentionMonths, retentionCutoff, runFeedbackRetention, type FeedbackIssueRef } from '../server/utils/feedbackRetention'
-import { buildFeedbackIssue } from '../app/utils/feedback'
+import { isDue, isOwnFeedbackIssue, issueFileDir, jobIdOf, planFeedbackRetention, portalTagOf, resolveRetentionMonths, retentionCutoff, runFeedbackRetention, type FeedbackIssueRef } from '../server/utils/feedbackRetention'
+import { buildFeedbackIssue, feedbackFileDir, feedbackFilePath } from '../app/utils/feedback'
 
 // #417. Срок хранения отзывов (12 месяцев, п. 8.6 Политики) — обязательство, проверяемое в одно
 // действие, поэтому проверяется поведение механизма, а не его наличие.
 
 const NOW = Date.parse('2026-08-04T12:00:00Z')
-const issue = (n: number, createdAt: string, body = ''): FeedbackIssueRef => ({ number: n, nodeId: `node-${n}`, createdAt, body })
+const TAG = 'a1b2c3d4e5f6'
+
+/** Задача-отзыв в том виде, в каком её строит наш же билдер, — иначе проверялся бы вымысел. */
+function issue(n: number, createdAt: string, opts: { job?: string, labels?: string[], title?: string } = {}): FeedbackIssueRef {
+  const built = buildFeedbackIssue('down', 'не то', { portalTag: TAG, ...(opts.job ? { jobId: opts.job } : {}) })
+  return {
+    number: n,
+    nodeId: `node-${n}`,
+    createdAt,
+    title: opts.title ?? built.title,
+    body: built.body,
+    labels: opts.labels ?? built.labels
+  }
+}
 
 describe('#417: граница срока', () => {
   it('12 месяцев назад от даты прогона', () => {
     expect(retentionCutoff(NOW, 12).toISOString()).toBe('2025-08-04T12:00:00.000Z')
+  })
+
+  it('просрочка считается СТРОГО раньше отсечки', () => {
+    const cutoff = retentionCutoff(NOW, 12).getTime()
+    expect(isDue('2025-08-04T11:59:59Z', cutoff)).toBe(true)
+    // Ровно на отсечке — ещё не просрочен: «не более 12 месяцев» истекает по прошествии срока.
+    expect(isDue('2025-08-04T12:00:00Z', cutoff)).toBe(false)
+    expect(isDue('2025-08-04T12:00:01Z', cutoff)).toBe(false)
+  })
+
+  it('нечитаемая дата отсекается ЯВНО, а не побочным свойством NaN', () => {
+    // Мутационная проверка показала: снятие `Number.isFinite` не роняло ничего, потому что
+    // `NaN < cutoff` и так `false`. Спрашиваем предикат прямо.
+    for (const bad of ['позавчера', '', 'null', '2026-13-45']) {
+      expect(isDue(bad, retentionCutoff(NOW, 12).getTime()), bad).toBe(false)
+    }
   })
 
   it('срок из env: мусор → 12, длиннее 12 не бывает', () => {
@@ -23,14 +52,24 @@ describe('#417: граница срока', () => {
   })
 })
 
-describe('#417: план чистки', () => {
-  it('берёт просроченные и не трогает свежие', () => {
+describe('#417: чужого не трогаем', () => {
+  it('нужны все три признака: метка канала, наш заголовок, псевдоним портала', () => {
+    expect(isOwnFeedbackIssue(issue(1, '2024-01-01T00:00:00Z'))).toBe(true)
+    // Опечатка в GITHUB_FEEDBACK_REPO навела бы удаление на публичный репозиторий проекта, где
+    // метка `user-feedback` живёт по той же конвенции. Совпасть должны все три признака.
+    expect(isOwnFeedbackIssue(issue(2, '2024-01-01T00:00:00Z', { labels: ['user-feedback'] }))).toBe(false)
+    expect(isOwnFeedbackIssue(issue(3, '2024-01-01T00:00:00Z', { title: 'Баг в парсере' }))).toBe(false)
+    expect(isOwnFeedbackIssue(issue(4, '2024-01-01T00:00:00Z', { labels: ['bug', `portal:${TAG}`] }))).toBe(false)
+  })
+
+  it('план берёт только просроченные и только свои', () => {
     const plan = planFeedbackRetention([
       issue(1, '2024-01-01T00:00:00Z'),
       issue(2, '2026-07-01T00:00:00Z'),
-      issue(3, '2025-01-01T00:00:00Z')
+      issue(3, '2023-01-01T00:00:00Z', { title: 'Чужая задача', labels: ['user-feedback'] }),
+      issue(4, '2025-01-01T00:00:00Z')
     ], NOW)
-    expect(plan.map(p => p.issue.number)).toEqual([1, 3])
+    expect(plan.map(p => p.issue.number)).toEqual([1, 4])
   })
 
   it('самые старые вперёд и кап на прогон', () => {
@@ -42,95 +81,116 @@ describe('#417: план чистки', () => {
     // Обрезание капом обязано оставлять на потом САМЫЕ СВЕЖИЕ из просроченных.
     expect(plan.map(p => p.issue.number)).toEqual([2, 1])
   })
-
-  it('нечитаемая дата — не стираем', () => {
-    // Цена ошибки несимметрична: пропущенный отзыв догонит следующий прогон, стёртый не вернётся.
-    expect(planFeedbackRetention([issue(1, 'позавчера'), issue(2, '')], NOW)).toEqual([])
-  })
 })
 
-describe('#417: пути приложенных файлов', () => {
-  it('берутся из ссылки на блоб приёмника', () => {
-    const body = '- **Исходный файл:** `https://github.com/o/r/blob/main/files/job-1/scan.pdf`'
-    expect(attachedFilePaths(body)).toEqual(['files/job-1/scan.pdf'])
+describe('#417: каталог файлов задачи', () => {
+  it('строится из МЕТКИ портала и задания, а не из текста ссылки', () => {
+    const i = issue(1, '2024-01-01T00:00:00Z', { job: 'b24-hrbvzq' })
+    expect(portalTagOf(i)).toBe(TAG)
+    expect(jobIdOf(i.body)).toBe('b24-hrbvzq')
+    expect(issueFileDir(i)).toBe(`files/${TAG}/b24-hrbvzq`)
   })
 
-  it('чужие ссылки и обход каталогов игнорируются', () => {
-    const body = [
-      'https://github.com/o/r/blob/main/README.md',
-      'https://github.com/o/r/blob/main/files/../secrets.txt',
-      'https://github.com/o/r/blob/main/files/job-2/'
-    ].join('\n')
-    expect(attachedFilePaths(body)).toEqual([])
+  it('каталог совпадает с тем, куда файл кладут при приёме отзыва', () => {
+    // Шов «куда пишем» ↔ «где потом ищем»: разъехавшись, чистка стирала бы задачи, оставляя
+    // документы клиентов в приёмнике навсегда.
+    const path = feedbackFilePath(TAG, 'b24-hrbvzq', 'скан.pdf')
+    expect(path.startsWith(`${feedbackFileDir(TAG, 'b24-hrbvzq')}/`)).toBe(true)
+    expect(issueFileDir(issue(1, '2024-01-01T00:00:00Z', { job: 'b24-hrbvzq' }))).toBe(feedbackFileDir(TAG, 'b24-hrbvzq'))
   })
 
-  it('путь берётся из настоящей задачи, построенной нашим же билдером', () => {
-    // Шов «что пишем» ↔ «что потом ищем»: две стороны одного формата, и разъехавшись, чистка
-    // удаляла бы задачи, оставляя документы клиентов в приёмнике навсегда.
-    const built = buildFeedbackIssue('down', 'не то', { fileUrl: 'https://github.com/o/r/blob/main/files/abc/накладная.pdf'.replace('накладная', 'nakladnaya') })
-    expect(attachedFilePaths(built.body)).toEqual(['files/abc/nakladnaya.pdf'])
+  it('каталог привязан к порталу: чужой документ вне досягаемости', () => {
+    // Раньше путь был `files/<задание>/…`, а задание приходит от клиента: назвав своим заданием
+    // чужое, сотрудник добился бы удаления документа другого портала.
+    expect(feedbackFileDir('aaaaaaaaaaaa', 'job1')).not.toBe(feedbackFileDir('bbbbbbbbbbbb', 'job1'))
+    // Битый псевдоним не даёт «общего» каталога, куда попали бы все.
+    expect(feedbackFileDir('', 'job1')).toBe('files/unknown/job1')
+  })
+
+  it('нет задания в теле — каталога нет (и удалять нечего)', () => {
+    expect(issueFileDir(issue(1, '2024-01-01T00:00:00Z'))).toBeNull()
   })
 })
 
 describe('#417: прогон', () => {
-  const deps = (issues: FeedbackIssueRef[] | null, fail: { file?: boolean, issue?: boolean } = {}) => {
+  type Fail = { dir?: boolean, file?: boolean, issue?: boolean, redact?: boolean }
+  const harness = (issues: FeedbackIssueRef[] | null, files: string[] = [], fail: Fail = {}) => {
     const erased: string[] = []
     const removed: string[] = []
+    const redacted: number[] = []
     return {
       erased,
       removed,
+      redacted,
       deps: {
         list: async () => issues,
+        listDir: async (dir: string) => (fail.dir ? null : files.map(f => `${dir}/${f}`)),
+        deleteFile: async (p: string) => {
+          if (fail.file) return false
+          removed.push(p)
+          return true
+        },
         deleteIssue: async (id: string) => {
           if (fail.issue) return false
           erased.push(id)
           return true
         },
-        deleteFile: async (p: string) => {
-          if (fail.file) return false
-          removed.push(p)
+        redactIssue: async (i: FeedbackIssueRef) => {
+          if (fail.redact) return false
+          redacted.push(i.number)
           return true
         },
         now: () => NOW
       }
     }
   }
+  const old = (n = 1) => issue(n, '2024-01-01T00:00:00Z', { job: 'job1' })
 
   it('удаляет файлы и саму задачу', async () => {
-    const body = '`https://github.com/o/r/blob/main/files/j/doc.pdf`'
-    const t = deps([issue(1, '2024-01-01T00:00:00Z', body)])
+    const t = harness([old()], ['doc.pdf'])
     const r = await runFeedbackRetention(t.deps)
-    expect(r).toMatchObject({ read: 1, due: 1, erased: 1, files: 1, failed: 0 })
-    expect(t.removed).toEqual(['files/j/doc.pdf'])
+    expect(r).toMatchObject({ read: 1, due: 1, erased: 1, redacted: 0, files: 1, failed: 0 })
+    expect(t.removed).toEqual([`files/${TAG}/job1/doc.pdf`])
     expect(t.erased).toEqual(['node-1'])
   })
 
-  it('файл не удалился — задачу не трогаем', async () => {
-    // Иначе пропадёт единственная ссылка на документ: он остался бы в приёмнике навсегда и уже
-    // без следа, по которому его можно найти.
-    const body = '`https://github.com/o/r/blob/main/files/j/doc.pdf`'
-    const t = deps([issue(1, '2024-01-01T00:00:00Z', body)], { file: true })
-    const r = await runFeedbackRetention(t.deps)
-    expect(r).toMatchObject({ erased: 0, failed: 1 })
+  it('каталог не прочитан — задачу не трогаем', async () => {
+    // Не знаем, лежит ли там документ. Стерев задачу, потеряли бы единственный способ его найти.
+    const t = harness([old()], ['doc.pdf'], { dir: true })
+    expect(await runFeedbackRetention(t.deps)).toMatchObject({ erased: 0, failed: 1 })
     expect(t.erased).toEqual([])
   })
 
-  it('приёмник недоступен — не «нечего чистить», а отдельный исход', async () => {
-    const r = await runFeedbackRetention(deps(null).deps)
-    expect(r.read).toBeNull()
-    expect(r.erased).toBe(0)
+  it('файл не удалился — задачу не трогаем', async () => {
+    const t = harness([old()], ['doc.pdf'], { file: true })
+    expect(await runFeedbackRetention(t.deps)).toMatchObject({ erased: 0, failed: 1 })
+    expect(t.erased).toEqual([])
   })
 
-  it('отказ удаления задачи считается сбоем', async () => {
-    const t = deps([issue(1, '2024-01-01T00:00:00Z')], { issue: true })
-    expect((await runFeedbackRetention(t.deps)).failed).toBe(1)
+  it('нет прав на удаление задачи — обезличиваем, а не залипаем', async () => {
+    // Удаление задачи требует админских прав. Без деградации первый прогон удалил бы документы,
+    // оставил задачи и на следующие сутки читал бы ровно те же — чистка не сдвинулась бы никогда.
+    const t = harness([old()], ['doc.pdf'], { issue: true })
+    const r = await runFeedbackRetention(t.deps)
+    expect(r).toMatchObject({ erased: 0, redacted: 1, files: 1, failed: 0 })
+    expect(t.redacted).toEqual([1])
+  })
+
+  it('не вышло ни удалить, ни обезличить — это сбой', async () => {
+    const t = harness([old()], [], { issue: true, redact: true })
+    expect(await runFeedbackRetention(t.deps)).toMatchObject({ erased: 0, redacted: 0, failed: 1 })
+  })
+
+  it('приёмник недоступен — не «нечего чистить», а отдельный исход', async () => {
+    const r = await runFeedbackRetention(harness(null).deps)
+    expect(r.read).toBeNull()
+    expect(r.erased).toBe(0)
   })
 })
 
 describe('#417: метка портала для удаления по обращению', () => {
   it('ставится по хэшу портала', () => {
-    const p = buildFeedbackIssue('up', 'ок', { portalTag: 'a1b2c3d4e5f6' })
-    expect(p.labels).toContain('portal:a1b2c3d4e5f6')
+    expect(buildFeedbackIssue('up', 'ок', { portalTag: TAG }).labels).toContain(`portal:${TAG}`)
   })
 
   it('произвольная строка меткой не становится', () => {
@@ -140,8 +200,7 @@ describe('#417: метка портала для удаления по обра�
     }
   })
 
-  it('метка — единственное, чем портал опознаётся: сам идентификатор в задачу не идёт', () => {
-    const p = buildFeedbackIssue('up', 'ок', { portalTag: 'a1b2c3d4e5f6' })
-    expect(p.body).not.toContain('a1b2c3d4e5f6')
+  it('сам идентификатор портала в задачу не идёт', () => {
+    expect(buildFeedbackIssue('up', 'ок', { portalTag: TAG }).body).not.toContain(TAG)
   })
 })

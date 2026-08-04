@@ -52,7 +52,10 @@ export async function listOldestFeedbackIssues(config: FeedbackConfig, limit: nu
     const nodeId = String(r.node_id ?? '')
     const createdAt = String(r.created_at ?? '')
     if (!Number.isInteger(number) || number <= 0 || !nodeId || !createdAt) continue
-    out.push({ number, nodeId, createdAt, body: String(r.body ?? '') })
+    const labels = Array.isArray(r.labels)
+      ? r.labels.map(l => String((l as { name?: unknown })?.name ?? l ?? '')).filter(Boolean)
+      : []
+    out.push({ number, nodeId, createdAt, title: String(r.title ?? ''), body: String(r.body ?? ''), labels })
   }
   return out
 }
@@ -86,11 +89,47 @@ export async function deleteFeedbackIssue(config: FeedbackConfig, nodeId: string
 }
 
 /**
+ * Файлы каталога приёмника: `null` — не прочитали (сеть/права), `[]` — каталога нет.
+ *
+ * ⚠ Каталог — единственный источник правды о путях. Разбирать их из тела задачи нельзя: туда
+ * попадает свободный текст сотрудника, и чужая ссылка в комментарии увела бы удаление на документ
+ * другого портала.
+ *
+ * ⚠ 404 — это `[]`, а не отказ: каталог мог быть удалён прошлым прогоном или отзыв пришёл без
+ * файла. Прочие коды — отказ, потому что «нет прав» и «нет каталога» на приватном репозитории
+ * выглядят одинаково, а принять отказ за пустоту значит стереть задачу и оставить документ.
+ */
+export async function listFeedbackDir(config: FeedbackConfig, dir: string, fetchFn: FetchFn): Promise<string[] | null> {
+  let res: Awaited<ReturnType<FetchFn>>
+  try {
+    res = await fetchFn(`${API}/repos/${config.repo}/contents/${dir}`, { method: 'GET', headers: headers(config) })
+  } catch {
+    return null
+  }
+  if (res.status === 404) return []
+  if (res.status !== 200) return null
+  const body = await res.json().catch(() => null)
+  // Одиночный файл вместо каталога отдаётся объектом — для нас это тоже «ничего не нашли».
+  if (!Array.isArray(body)) return []
+  const out: string[] = []
+  for (const raw of body) {
+    const r = raw as Record<string, unknown>
+    const path = String(r.path ?? '')
+    // Путь берём ТОЛЬКО из ответа GitHub и только внутри запрошенного каталога.
+    if (r.type === 'file' && path.startsWith(`${dir}/`)) out.push(path)
+  }
+  return out
+}
+
+/**
  * Удалить приложенный файл из приёмника.
  *
  * Двухшаговый: интерфейс содержимого требует `sha` текущего блоба, иначе удаление не принимается.
- * Файла уже нет (404) — считаем успехом: цель достигнута, а повторный прогон не должен вечно
- * рапортовать об ошибке.
+ *
+ * ⚠ 404 здесь — ОТКАЗ, а не успех. Путь только что пришёл из листинга того же каталога, значит
+ * файл существовал; 404 в ответ означает нехватку прав или гонку, а не достигнутую цель. Прежняя
+ * трактовка «404 = уже нет» позволяла стереть задачу при живом документе и отчитаться нулём
+ * отказов.
  *
  * ⚠ Это удаление из ВЕТКИ, а не из истории. Содержимое остаётся достижимо по хэшу объекта, пока
  * история не переписана; в PROCESS.md это записано как остаточный риск, а не как сделанное.
@@ -103,7 +142,6 @@ export async function deleteFeedbackFile(config: FeedbackConfig, path: string, f
   } catch {
     return false
   }
-  if (head.status === 404) return true
   if (head.status !== 200) return false
   const meta = await head.json().catch(() => null)
   const sha = String((meta as { sha?: unknown } | null)?.sha ?? '')
@@ -114,6 +152,32 @@ export async function deleteFeedbackFile(config: FeedbackConfig, path: string, f
       method: 'DELETE',
       headers: headers(config),
       body: JSON.stringify({ message: 'retention: remove expired feedback file', sha })
+    })
+  } catch {
+    return false
+  }
+  return res.status === 200
+}
+
+/** Текст, остающийся вместо содержимого при деградации. */
+export const REDACTED_BODY = 'Содержимое отзыва удалено по истечении срока хранения (12 месяцев, п. 8.6 Политики конфиденциальности).'
+
+/**
+ * Деградация, когда удалить задачу нечем: обезличить тело и заголовок, закрыть, снять метки.
+ *
+ * ⚠ Метки снимаются ОБЯЗАТЕЛЬНО — и метка канала, и псевдоним портала. Без этого задача осталась
+ * бы в выборке чистки навсегда и на следующие сутки заняла бы то же место в очереди: пятьдесят
+ * таких задач закрыли бы обзор всего остального, и чистка не сдвинулась бы больше никогда.
+ * Снятый псевдоним заодно убирает признак, по которому обезличенную задачу можно связать с
+ * клиентом.
+ */
+export async function redactFeedbackIssue(config: FeedbackConfig, issueNumber: number, fetchFn: FetchFn): Promise<boolean> {
+  let res: Awaited<ReturnType<FetchFn>>
+  try {
+    res = await fetchFn(`${API}/repos/${config.repo}/issues/${issueNumber}`, {
+      method: 'PATCH',
+      headers: headers(config),
+      body: JSON.stringify({ title: 'Отзыв (удалён по сроку хранения)', body: REDACTED_BODY, state: 'closed', labels: [] })
     })
   } catch {
     return false

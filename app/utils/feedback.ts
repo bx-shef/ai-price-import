@@ -160,13 +160,28 @@ export function buildFeedbackIssue(kind: FeedbackKind, comment: unknown, context
   return { title, body, labels }
 }
 
-/** Repo-relative path for a source file committed to the PRIVATE feedback repo (#332, byte-upload).
- *  jobId groups files per run; the filename is sanitised to a safe basename (strip directory parts →
- *  no path traversal, allowlist chars, drop leading dots, cap length). Both parts fall back to a
- *  constant so the path is always well-formed. */
-export function feedbackFilePath(jobId: string, fileName: string): string {
+/** Каталог файлов ОДНОГО задания в приёмнике: `files/<портал>/<задание>` (#417).
+ *
+ *  ⚠ Портал в пути — не для порядка, а ради чистки. Раньше путь был `files/<задание>/…`, а
+ *  `jobId` приходит от клиента: сотрудник чужого портала мог назвать своим заданием чужое, и его
+ *  файл лёг бы в каталог жертвы — а чистка, дойдя до его отзыва, удалила бы оттуда ЧУЖОЙ документ.
+ *  `portalTag` считает сервер из проверенного фрейм-токена, подменить его нельзя, поэтому чистка
+ *  теперь по построению не может выйти за пределы своего портала.
+ *
+ *  Пустой/битый `portalTag` → `unknown`: путь обязан быть корректным всегда, а такой каталог
+ *  просто не совпадёт ни с одним порталом при поиске. */
+export function feedbackFileDir(portalTag: string, jobId: string): string {
+  const tag = /^[0-9a-f]{12}$/.test(String(portalTag ?? '')) ? String(portalTag) : 'unknown'
   const id = String(jobId ?? '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'job'
+  return `files/${tag}/${id}`
+}
+
+/** Repo-relative path for a source file committed to the PRIVATE feedback repo (#332, byte-upload).
+ *  The filename is sanitised to a safe basename (strip directory parts → no path traversal,
+ *  allowlist chars, drop leading dots, cap length) and falls back to a constant, so the path is
+ *  always well-formed. Каталог — см. `feedbackFileDir`. */
+export function feedbackFilePath(portalTag: string, jobId: string, fileName: string): string {
   const base = String(fileName ?? '').split(/[\\/]/).pop() ?? ''
   const safe = base.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 80) || 'file'
-  return `files/${id}/${safe}`
+  return `${feedbackFileDir(portalTag, jobId)}/${safe}`
 }

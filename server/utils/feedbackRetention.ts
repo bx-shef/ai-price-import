@@ -1,3 +1,5 @@
+import { feedbackFileDir } from '~/utils/feedback'
+
 // Чистое ядро чистки отзывов (#417). Транспорт — `feedbackGithubAdmin.ts`, расписание — плагин.
 //
 // П. 8.6 Политики: отзыв (текст, технический контекст и приложенный документ) хранится не более
@@ -7,13 +9,21 @@
 //
 // ⚠ Стирание идёт ЦЕЛИКОМ, а не редактированием тела. Правка тела оставляет прежний текст в
 // истории правок задачи (GitHub её показывает всем, у кого есть доступ), то есть выглядит как
-// удаление, не будучи им. Поэтому задача удаляется вместе с комментариями — это единственная
-// операция GitHub с нужным смыслом.
+// удаление, не будучи им. Поэтому задача удаляется вместе с комментариями. Редактирование
+// остаётся ТОЛЬКО как деградация, когда удалять нечем (см. `redactIssue`).
+//
+// ⚠ Пути приложенных файлов берутся ЛИСТИНГОМ каталога, а не разбором тела задачи. Первая
+// редакция вытаскивала их регуляркой из тела — и это было неверно сразу тремя способами: в тело
+// попадает свободный текст сотрудника, поэтому чужой ссылкой в комментарии можно было добиться
+// удаления документа ДРУГОГО портала; длинная ссылка обрезается по капу контекстного поля, и
+// обрезанный путь давал 404, который считался успехом (задача стёрта, документ цел); а если
+// ссылки в теле не оказалось вовсе, документ становился недостижим навсегда. Каталог знает
+// правду о том, что в нём лежит.
 //
 // ⚠ Остаточный риск назван вслух и НЕ закрывается кодом: приложенные документы попадают в
-// приёмник коммитами (`files/<jobId>/<имя>`), поэтому удаление файла убирает его из текущего
-// состояния ветки, но не из истории git — содержимое остаётся доступно по хэшу объекта. Настоящее
-// стирание требует переписывания истории и делается владельцем руками (см. PROCESS.md).
+// приёмник коммитами, поэтому удаление файла убирает его из текущего состояния ветки, но не из
+// истории git — содержимое остаётся доступно по хэшу объекта. Настоящее стирание требует
+// переписывания истории и делается владельцем руками (см. PROCESS.md §6.12).
 
 /** Задача-отзыв в приёмнике: ровно те поля, что нужны для решения. */
 export interface FeedbackIssueRef {
@@ -22,14 +32,18 @@ export interface FeedbackIssueRef {
   nodeId: string
   /** ISO-дата создания (GitHub `created_at`). */
   createdAt: string
-  /** Тело задачи — из него достаются пути приложенных файлов. */
+  /** Заголовок — по нему сверяется, что задача наша. */
+  title: string
+  /** Тело задачи — из него берётся идентификатор задания. */
   body: string
+  /** Метки задачи — в них лежит псевдоним портала. */
+  labels: string[]
 }
 
 export interface RetentionPlanItem {
   issue: FeedbackIssueRef
-  /** Пути файлов в приёмнике, которые надо удалить вместе с задачей. */
-  files: string[]
+  /** Каталог файлов задачи в приёмнике, `null` — задание не опознано (файлов у задачи нет). */
+  dir: string | null
 }
 
 /** Граница хранения: всё, что создано СТРОГО раньше, подлежит стиранию. */
@@ -37,6 +51,21 @@ export function retentionCutoff(nowMs: number, months: number): Date {
   const d = new Date(nowMs)
   d.setUTCMonth(d.getUTCMonth() - months)
   return d
+}
+
+/**
+ * Просрочен ли отзыв.
+ *
+ * Отдельный предикат, а не выражение внутри фильтра, и это по итогам мутационной проверки: снятие
+ * `Number.isFinite` не роняло НИ одного теста, потому что `NaN < cutoff` и так `false` — то есть
+ * тест «нечитаемая дата не стирается» сторожил свойство сравнений с NaN, а не наш код.
+ */
+export function isDue(createdAt: string, cutoffMs: number): boolean {
+  const t = Date.parse(createdAt)
+  // Нечитаемая дата — НЕ стираем. Цена ошибки несимметрична: пропущенный отзыв догонит следующий
+  // прогон, а стёртый по мусорной дате не вернётся.
+  if (!Number.isFinite(t)) return false
+  return t < cutoffMs
 }
 
 /**
@@ -50,29 +79,51 @@ export function resolveRetentionMonths(raw: string | undefined, fallback = 12): 
   return Math.min(12, Math.max(1, Math.floor(n)))
 }
 
-/**
- * Пути приложенных файлов из тела задачи.
- *
- * В теле стоит ссылка на блоб приёмника (строка «Исходный файл»), а путь внутри неё — после
- * `/blob/<ветка>/`. Берём только пути под `files/`: это наш собственный префикс
- * (`feedbackFilePath`), и он же не даёт удалить из приёмника что-нибудь постороннее, если в
- * комментарии окажется чужая ссылка.
- *
- * ⚠ Разбор идёт по ССЫЛКЕ, а не по имени задачи: имя файла в теле выведено отдельной строкой и
- * могло быть переписано человеком, а ссылка ведёт ровно туда, куда файл положили.
- */
-export function attachedFilePaths(body: string): string[] {
-  const out = new Set<string>()
-  for (const m of String(body ?? '').matchAll(/\/blob\/[^/\s]+\/(files\/[A-Za-z0-9._/-]+)/g)) {
-    const p = m[1]!
-    // Ни `..`, ни хвостовой слэш: путь уходит в адрес запроса на удаление.
-    if (!p.includes('..') && !p.endsWith('/')) out.add(p)
+/** Кусок заголовка наших задач-отзывов (`buildFeedbackIssue`), общий для обеих оценок. */
+export const FEEDBACK_TITLE_MARK = 'Отзыв сотрудника'
+
+/** Псевдоним портала из меток задачи, `null` — метки нет. */
+export function portalTagOf(i: FeedbackIssueRef): string | null {
+  for (const l of i.labels) {
+    const m = /^portal:([0-9a-f]{12})$/.exec(l)
+    if (m) return m[1]!
   }
-  return [...out]
+  return null
 }
 
 /**
- * План чистки: какие задачи стереть и какие файлы удалить вместе с ними.
+ * Наша ли это задача.
+ *
+ * ⚠ Проверяются ТРИ признака: метка канала, наш заголовок и псевдоним портала. Удаление
+ * необратимо, а приёмник задаётся переменной окружения — опечатка в `GITHUB_FEEDBACK_REPO` могла
+ * бы навести чистку на публичный репозиторий проекта, где метка `user-feedback` живёт по той же
+ * конвенции. Совпадения всех трёх признаков разом там не будет.
+ */
+export function isOwnFeedbackIssue(i: FeedbackIssueRef): boolean {
+  if (!i.labels.includes('user-feedback')) return false
+  if (!i.title.includes(FEEDBACK_TITLE_MARK)) return false
+  return portalTagOf(i) !== null
+}
+
+/** Идентификатор задания из тела задачи (строка «Задача (jobId)»), `null` — нет. */
+export function jobIdOf(body: string): string | null {
+  const m = /Задача \(jobId\):\*\*\s*`([^`]+)`/.exec(String(body ?? ''))
+  if (!m) return null
+  // Санитайзер тот же, что при записи (`feedbackFileDir`): из тела приходит текст, а не путь.
+  const id = m[1]!.replace(/[^A-Za-z0-9-]/g, '').slice(0, 64)
+  return id || null
+}
+
+/** Каталог файлов задачи, `null` — задание не опознано (значит, и файлов у неё не было). */
+export function issueFileDir(i: FeedbackIssueRef): string | null {
+  const tag = portalTagOf(i)
+  const job = jobIdOf(i.body)
+  if (!tag || !job) return null
+  return feedbackFileDir(tag, job)
+}
+
+/**
+ * План чистки: какие задачи стереть и из какого каталога удалить их файлы.
  *
  * ⚠ Кап на прогон обязателен. Приёмник мультитенантный, а вторичные лимиты GitHub считаются по
  * токену издателя (≈500 операций с содержимым в час): разовая чистка накопившегося за год без
@@ -83,36 +134,46 @@ export function attachedFilePaths(body: string): string[] {
 export function planFeedbackRetention(issues: FeedbackIssueRef[], nowMs: number, months = 12, maxPerRun = 50): RetentionPlanItem[] {
   const cutoff = retentionCutoff(nowMs, months).getTime()
   return issues
-    .filter((i) => {
-      const t = Date.parse(i.createdAt)
-      // Нечитаемая дата — НЕ стираем. Цена ошибки несимметрична: пропущенный на неделю отзыв
-      // исправится следующим прогоном, а стёртый по мусорной дате не вернётся.
-      return Number.isFinite(t) && t < cutoff
-    })
+    .filter(i => isOwnFeedbackIssue(i) && isDue(i.createdAt, cutoff))
     // Старые вперёд: если прогон обрежется капом, обязаны уйти самые просроченные.
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
     .slice(0, Math.max(1, maxPerRun))
-    .map(issue => ({ issue, files: attachedFilePaths(issue.body) }))
+    .map(issue => ({ issue, dir: issueFileDir(issue) }))
 }
 
 export interface RetentionDeps {
   /** Самые старые задачи приёмника (или `null` — не прочитали). */
   list: (limit: number) => Promise<FeedbackIssueRef[] | null>
-  deleteIssue: (nodeId: string) => Promise<boolean>
+  /** Файлы каталога (или `null` — не прочитали; пустой массив — каталога/файлов нет). */
+  listDir: (dir: string) => Promise<string[] | null>
   deleteFile: (path: string) => Promise<boolean>
+  deleteIssue: (nodeId: string) => Promise<boolean>
+  /**
+   * Деградация: обезличить и закрыть задачу, сняв метку канала.
+   *
+   * ⚠ Нужна потому, что удаление задачи в GitHub требует АДМИНСКИХ прав на репозиторий, а каналу
+   * отзывов хватало «создать задачу + положить файл». Без деградации первый же прогон на токене с
+   * обычными правами удалял бы документы, оставлял задачи и на следующие сутки читал бы ровно те
+   * же пятьдесят самых старых: чистка не сдвинулась бы НИКОГДА, вечно рапортуя об отказах.
+   * ⚠ Это ХУЖЕ удаления — прежний текст остаётся в истории правок задачи. Поэтому только запасной
+   * путь, и о нём отдельно сообщается оператору.
+   */
+  redactIssue: (i: FeedbackIssueRef) => Promise<boolean>
   now: () => number
 }
 
 export interface RetentionRun {
-  /** Прочитано задач (null у `read` — приёмник недоступен). */
+  /** Прочитано задач (`null` — приёмник недоступен). */
   read: number | null
   /** Просрочено по плану. */
   due: number
-  /** Стёрто задач. */
+  /** Стёрто задач целиком. */
   erased: number
+  /** Обезличено вместо удаления (нет прав) — деградация, а не успех. */
+  redacted: number
   /** Удалено файлов. */
   files: number
-  /** Не удалось стереть — повод для тревоги, а не для тишины. */
+  /** Не удалось — повод для тревоги, а не для тишины. */
   failed: number
 }
 
@@ -120,30 +181,37 @@ export interface RetentionRun {
  * Прогон чистки: прочитать самые старые задачи, отобрать просроченные, удалить их файлы и сами
  * задачи.
  *
- * ⚠ Порядок «сначала файлы, потом задача» обязателен: пути файлов записаны В ТЕЛЕ задачи, и
- * стерев её первой, мы потеряли бы единственную ссылку на приложенный документ — он остался бы в
- * приёмнике навсегда, причём уже без всякого следа, по которому его можно найти. Файл не удалился —
- * задачу тоже не трогаем по той же причине.
+ * ⚠ Порядок «сначала файлы, потом задача» обязателен: каталог файлов вычисляется из МЕТКИ и ТЕЛА
+ * задачи, и стерев её первой, мы потеряли бы единственный способ найти приложенный документ — он
+ * остался бы в приёмнике навсегда и уже без следа. Каталог не прочитан или файл не удалился —
+ * задачу тоже не трогаем.
  */
 export async function runFeedbackRetention(deps: RetentionDeps, months = 12, maxPerRun = 50): Promise<RetentionRun> {
   const issues = await deps.list(Math.min(100, Math.max(1, maxPerRun)))
-  if (!issues) return { read: null, due: 0, erased: 0, files: 0, failed: 0 }
+  if (!issues) return { read: null, due: 0, erased: 0, redacted: 0, files: 0, failed: 0 }
   const plan = planFeedbackRetention(issues, deps.now(), months, maxPerRun)
-  let erased = 0
-  let files = 0
-  let failed = 0
+  const run: RetentionRun = { read: issues.length, due: plan.length, erased: 0, redacted: 0, files: 0, failed: 0 }
   for (const item of plan) {
-    let filesOk = true
-    for (const path of item.files) {
-      if (await deps.deleteFile(path)) files++
-      else filesOk = false
+    if (item.dir) {
+      const paths = await deps.listDir(item.dir)
+      if (!paths) {
+        // Не прочитали каталог — не знаем, лежит ли там документ. Задачу не трогаем.
+        run.failed++
+        continue
+      }
+      let filesOk = true
+      for (const path of paths) {
+        if (await deps.deleteFile(path)) run.files++
+        else filesOk = false
+      }
+      if (!filesOk) {
+        run.failed++
+        continue
+      }
     }
-    if (!filesOk) {
-      failed++
-      continue
-    }
-    if (await deps.deleteIssue(item.issue.nodeId)) erased++
-    else failed++
+    if (await deps.deleteIssue(item.issue.nodeId)) run.erased++
+    else if (await deps.redactIssue(item.issue)) run.redacted++
+    else run.failed++
   }
-  return { read: issues.length, due: plan.length, erased, files, failed }
+  return run
 }

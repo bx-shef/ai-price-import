@@ -2,21 +2,27 @@ import { describe, expect, it } from 'vitest'
 import { buildFeedbackIssue, escapeHtml, feedbackFilePath, MAX_COMMENT_LENGTH, normalizeKind, sanitizeComment, stripHostileChars } from '../app/utils/feedback'
 
 describe('feedbackFilePath (#332 byte-upload repo path)', () => {
-  it('builds files/<jobId>/<safe basename>', () => {
-    expect(feedbackFilePath('job-1', 'invoice.pdf')).toBe('files/job-1/invoice.pdf')
+  const TAG = 'a1b2c3d4e5f6'
+  it('builds files/<портал>/<jobId>/<safe basename>', () => {
+    expect(feedbackFilePath(TAG, 'job-1', 'invoice.pdf')).toBe(`files/${TAG}/job-1/invoice.pdf`)
   })
   it('strips directory parts (no traversal) + unsafe chars', () => {
-    expect(feedbackFilePath('j1', '../../etc/passwd')).toBe('files/j1/passwd')
-    expect(feedbackFilePath('j1', 'a b/c<>d.xlsx')).toBe('files/j1/c__d.xlsx')
-    expect(feedbackFilePath('j1', '..hidden')).toBe('files/j1/hidden')
+    expect(feedbackFilePath(TAG, 'j1', '../../etc/passwd')).toBe(`files/${TAG}/j1/passwd`)
+    expect(feedbackFilePath(TAG, 'j1', 'a b/c<>d.xlsx')).toBe(`files/${TAG}/j1/c__d.xlsx`)
+    expect(feedbackFilePath(TAG, 'j1', '..hidden')).toBe(`files/${TAG}/j1/hidden`)
   })
   it('sanitises the jobId and falls back when parts empty', () => {
-    expect(feedbackFilePath('a/b!', '')).toBe('files/ab/file')
-    expect(feedbackFilePath('', '')).toBe('files/job/file')
+    expect(feedbackFilePath(TAG, 'a/b!', '')).toBe(`files/${TAG}/ab/file`)
+    expect(feedbackFilePath(TAG, '', '')).toBe(`files/${TAG}/job/file`)
+  })
+  it('битый псевдоним портала не даёт общего каталога (#417)', () => {
+    // Иначе документы разных клиентов легли бы в один каталог, и чистка одного задела бы чужие.
+    expect(feedbackFilePath('', 'j1', 'a.pdf')).toBe('files/unknown/j1/a.pdf')
+    expect(feedbackFilePath('../../x', 'j1', 'a.pdf')).toBe('files/unknown/j1/a.pdf')
   })
   it('caps the jobId (64) and basename (80)', () => {
-    const p = feedbackFilePath('j'.repeat(100), `${'n'.repeat(100)}.pdf`)
-    const [, id, name] = p.split('/')
+    const p = feedbackFilePath(TAG, 'j'.repeat(100), `${'n'.repeat(100)}.pdf`)
+    const [, , id, name] = p.split('/')
     expect(id!.length).toBe(64)
     expect(name!.length).toBe(80)
   })
