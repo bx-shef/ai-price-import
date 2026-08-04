@@ -8,6 +8,7 @@
 // `chatSafeText` and the caps live in chatNotify.ts — the same guard has to cover the crm-sync
 // success/error messages too, and two copies of a sanitiser drift.
 import { MAX_CHAT_FILE_NAME, MAX_CHAT_REASON, chatSafeText, neutralizeBb } from './chatNotify'
+import { APP_NAME } from '~/config/appIdentity'
 
 /** Prefixes of reasons that carry tool output rather than an explanation for a human. */
 const TECHNICAL_PREFIX = 'извлечение текста:'
@@ -54,7 +55,9 @@ export interface FailureNotifyInput {
 }
 
 /** App name as it appears in the Bitrix24 Market card — the message must say who is writing. */
-export const APP_NAME = 'AI-импорт прайсов'
+// Имя продукта — из общего источника (#412): три независимые копии одной строки разъезжаются.
+// Реэкспорт оставлен: на `APP_NAME` отсюда ссылаются соседние модули и тесты.
+export { APP_NAME }
 
 /**
  * What to send, to whom. Returns an empty list when there is nothing to say.

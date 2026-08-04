@@ -47,9 +47,9 @@ const die = (m) => {
 }
 
 const stamp = Date.now()
-const content = `procure-ai #332 disk round-trip ${stamp}\n`
+const content = `ai-price-import #332 disk round-trip ${stamp}\n`
 const base64In = Buffer.from(content, 'utf8').toString('base64')
-const fileName = `procure-332-test-${stamp}.txt`
+const fileName = `ai-price-import-332-test-${stamp}.txt`
 
 const run = async () => {
   // 1. Find the app's common Disk storage root to upload into.

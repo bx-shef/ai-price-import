@@ -15,6 +15,7 @@ import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
 import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMode } from '~/utils/appLaunchMode'
 import { formatMinutes } from '~/utils/savings'
+import { APP_NAME } from '~/config/appIdentity'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
 // primary flow (open → drop/snap a document) is one step, on desktop and in the B24 mobile app. The
@@ -25,7 +26,7 @@ definePageMeta({ layout: 'clear' })
 // EMPTY page on the landing's domain. Same for /settings and /metrics; /install, /import, /login and
 // /queues render a thin static shell and carry it too. `robots.txt` deliberately does NOT block them:
 // a blocked page is never fetched, so its noindex is never read (see server/utils/seoFiles.ts).
-useHead({ title: 'AI-импорт прайсов', meta: [{ name: 'robots', content: 'noindex' }] })
+useHead({ title: APP_NAME, meta: [{ name: 'robots', content: 'noindex' }] })
 
 const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob, rememberFile, fileFor } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
@@ -138,7 +139,7 @@ const sliderFailed = ref(false)
  *  `closeAppSlider` тут намеренно НЕ зовём (в референсе он есть): открыть себя слайдером может
  *  только лаунчер, а лаунчер по определению не слайдер — закрывать нечего. */
 async function openMain(): Promise<boolean> {
-  const opened = await openAppSlider(APP_SLIDER_PLACE_MAIN, { width: 1200, title: 'AI-импорт прайсов' })
+  const opened = await openAppSlider(APP_SLIDER_PLACE_MAIN, { width: 1200, title: APP_NAME })
   sliderFailed.value = !opened
   // Отметку ставим ТОЛЬКО на успехе: иначе портал, где слайдеры вообще не открываются, съедал бы ею
   // право на автооткрытие — и повторная загрузка страницы в пределах окна оставляла бы человека на
@@ -272,7 +273,7 @@ watch(jobs, (list) => {
         <B24DashboardNavbar
           v-if="!isBitrixMobile && screen !== 'launcher' && screen !== 'consent'"
           :toggle="false"
-          title="AI-импорт прайсов"
+          :title="APP_NAME"
         >
           <template #right>
             <B24Button

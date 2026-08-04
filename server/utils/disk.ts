@@ -1,4 +1,5 @@
 import type { RestCall } from './b24Rest'
+import { APP_NAME } from '~/config/appIdentity'
 
 // Store the source file on the COMMON Bitrix24 Disk: app folder → monthly subfolder.
 // Live-verified (B24_HOOK, scope disk): disk.storage.getlist returns the common drive with
@@ -8,7 +9,18 @@ import type { RestCall } from './b24Rest'
 interface DiskStorage { ID: string, ENTITY_TYPE: string, NAME: string, ROOT_OBJECT_ID?: string }
 
 /** App folder name under the common drive root (all import source files live here). */
-export const DISK_APP_FOLDER = 'procure-ai (импорт прайсов)'
+// ⚠ Имя видно КЛИЕНТУ: это папка на его Диске, где лежат архивные копии документов. Прежнее
+// «procure-ai (импорт прайсов)» показывало старое имя продукта прямо в его портале (#412).
+// ⚠ Переименование не переносит уже созданные папки: на портале, где импорт шёл раньше, старая
+// останется со своими файлами. Клиентов ещё не запускали, поэтому цена нулевая; после запуска
+// такая правка потребовала бы переноса.
+// ⚠ Имя папки на Диске КЛИЕНТА теперь привязано к имени продукта — и это плата, названная вслух:
+// следующее переименование снова расколет архив на две папки, потому что уже записанные ссылки
+// «Исходный файл» в делах таймлайна — СКОНСТРУИРОВАННЫЕ URL, вшитые в дело навсегда. Ретроспективно
+// они не пересчитываются (`commonDiskFileUrl` зовётся только на записи). Поэтому переименование или
+// удаление старой папки на портале ломает их безвозвратно: старую папку НЕ трогаем, новая просто
+// начинается рядом.
+export const DISK_APP_FOLDER = APP_NAME
 
 /** Max Disk file name length (kept well under B24's limit); strips path separators. */
 export function sanitizeFileName(name: string): string {

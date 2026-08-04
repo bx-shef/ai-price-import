@@ -1,4 +1,4 @@
-# Local/dev compose for the procure-ai redesign: Nitro backend (serves pages + API +
+# Local/dev compose for the redesigned price-import app: Nitro backend (serves pages + API +
 # in-process pipeline workers) + Postgres + Redis. Prod adds GHCR images + a reverse
 # proxy (see docs/PROCESS.md §12 / the client-bank-alfa-by reference). Not the prod file.
 services:

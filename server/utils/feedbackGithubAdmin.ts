@@ -1,6 +1,7 @@
 import type { FetchFn } from './b24Rest'
 import type { FeedbackConfig } from './feedbackConfig'
 import type { FeedbackIssueRef } from './feedbackRetention'
+import { APP_SLUG } from '~/config/appIdentity'
 
 // Служебные вызовы к приёмнику отзывов (#417): перечислить и стереть. DI над `FetchFn`.
 //
@@ -14,7 +15,7 @@ function headers(config: FeedbackConfig): Record<string, string> {
     'Authorization': `Bearer ${config.token}`,
     'Accept': 'application/vnd.github+json',
     'Content-Type': 'application/json',
-    'User-Agent': 'procure-ai-feedback',
+    'User-Agent': `${APP_SLUG}-feedback`,
     'X-GitHub-Api-Version': '2022-11-28'
   }
 }

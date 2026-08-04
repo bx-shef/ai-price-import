@@ -6,6 +6,7 @@ import ShieldIcon from '@bitrix24/b24icons-vue/solid/ShieldIcon'
 import ReceiptIcon from '@bitrix24/b24icons-vue/outline/ReceiptIcon'
 import ContactDetailsIcon from '@bitrix24/b24icons-vue/outline/ContactDetailsIcon'
 import { LANDING_CTA_MARKET, LANDING_MARKET_URL } from '~/utils/landing'
+import { APP_NAME } from '~/config/appIdentity'
 import { SHELL_BG_MOBILE_NAV_CLASS, SHELL_BG_STICKY_CLASS } from '~/config/landingShell'
 
 // Sticky landing navigation (client-bank parity): section anchors + market / legal /
@@ -41,7 +42,7 @@ function openCardMobile() {
       <a
         href="#top"
         class="shrink-0 text-lg font-bold tracking-tight text-white"
-        aria-label="AI-импорт прайсов в Bitrix24 — наверх"
+        :aria-label="`${APP_NAME} — наверх`"
       >
         <span class="text-cyan-400">AI</span>-импорт
       </a>

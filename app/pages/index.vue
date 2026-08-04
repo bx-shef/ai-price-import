@@ -15,6 +15,7 @@ import {
   LANDING_SOURCES,
   LANDING_STEPS,
   LANDING_SUBTITLE,
+  LANDING_SEO_TITLE,
   LANDING_TITLE,
   LANDING_WHY_SUBTITLE,
   canonicalUrl,
@@ -40,7 +41,9 @@ const ogImage = ogImageUrl()
 const canonical = canonicalUrl('/')
 
 useHead({
-  title: LANDING_TITLE,
+  // ⚠ Заголовок вкладки — с дескриптором платформы, а H1 ниже — чистое имя продукта. Это
+  // разные вещи по назначению: `<title>` отвечает на поисковый запрос, H1 называет продукт.
+  title: LANDING_SEO_TITLE,
   bodyAttrs: { class: SHELL_BG_CLASS },
   // The landing shell is hardcoded dark (vibecode hex) — pin dark so app.vue's theme-init keeps b24ui
   // components on dark tokens here regardless of the visitor's OS theme (in-portal pages stay auto).
@@ -54,7 +57,7 @@ useSeoMeta({
   // читают агрегаторы. Значение — издатель, тот же, что в og:site_name: один источник, без дрейфа.
   author: LANDING_PUBLISHER,
   articleAuthor: [LANDING_PUBLISHER],
-  ogTitle: LANDING_TITLE,
+  ogTitle: LANDING_SEO_TITLE,
   ogDescription: LANDING_DESCRIPTION,
   ogType: 'website',
   ogUrl: canonical,
@@ -68,7 +71,7 @@ useSeoMeta({
   ogImageType: 'image/png',
   ogImageAlt: LANDING_TITLE,
   twitterCard: 'summary_large_image',
-  twitterTitle: LANDING_TITLE,
+  twitterTitle: LANDING_SEO_TITLE,
   twitterDescription: LANDING_DESCRIPTION,
   twitterImage: ogImage,
   twitterImageAlt: LANDING_TITLE
@@ -154,8 +157,13 @@ onMounted(async () => {
               <div class="flex flex-1 flex-col items-start gap-5 lg:max-w-[620px]">
                 <PartnerBadge />
 
+                <!-- ⚠ H1 — это ИМЯ ПРОДУКТА и ничего больше (#412). Прежде здесь стоял литерал
+                     «AI-импорт прайсов в Bitrix24»: чужой товарный знак внутри собственного названия
+                     на самой заметной поверхности сайта, и при этом расхождение с шапками лицензии и
+                     Политики — то есть ровно то, что задача обязана была снять. Платформа осталась
+                     там, где она уместна: бейдж партнёра выше и подзаголовок ниже. -->
                 <h1 class="text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-6xl lg:text-7xl">
-                  AI-импорт прайсов в <span class="text-cyan-400">Bitrix24</span>
+                  {{ LANDING_TITLE }}
                 </h1>
 
                 <p class="max-w-[560px] text-lg leading-relaxed text-white/70 sm:text-xl">

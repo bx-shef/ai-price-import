@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { APP_NAME } from '~/config/appIdentity'
 
 // Legacy route: document upload was merged into the action-first home page (/app owner decision).
 // Kept as a redirect so old bookmarks / the marketplace handler URL don't 404. Prerendered shell;
@@ -8,7 +9,7 @@ definePageMeta({ layout: 'clear' })
 // `http-equiv=refresh` is a no-JS fallback (marketplace handler / crawlers): redirects even before
 // the client router runs. The onMounted replace handles the normal JS path (cleaner history entry).
 useHead({
-  title: 'AI-импорт прайсов',
+  title: APP_NAME,
   meta: [
     { name: 'robots', content: 'noindex' },
     { 'http-equiv': 'refresh', 'content': '0; url=/app' }

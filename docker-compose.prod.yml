@@ -1,4 +1,5 @@
-# Продакшн procure-ai — разместить на сервере в /home/bitrix/price-import/
+# Продакшн «AI-импорт прайсов» (образы и контейнеры сохраняют прежнее имя procure-ai — см.
+# docs/PROCESS.md §12, переименование инфраструктуры ломает выкат молча) — разместить на сервере в /home/bitrix/price-import/
 # Требует:
 #   - docker network proxy-net (создаётся общим nginx-proxy — см. docker-compose.server.yml /
 #     на этом сервере уже поднят вместе с currency-converter);

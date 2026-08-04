@@ -378,6 +378,9 @@ describe('configurableActivity', () => {
     expect(companyOpenPath(8)).toBe('/crm/company/details/8/')
   })
   it('commonDiskFileUrl encodes each segment + appends the IFRAME slider query', () => {
+    // Имя папки здесь — ПРОИЗВОЛЬНАЯ строка со скобкой и пробелом: тест про экранирование сегмента
+    // пути, а не про текущее название приложения. Подставлять сюда `DISK_APP_FOLDER` нельзя — тогда
+    // проверка экранирования скобок исчезнет вместе с первым же переименованием.
     const url = commonDiskFileUrl('procure-ai (импорт прайсов)', '2026-07', 'f5__шевчик июнь.xls')
     expect(url.startsWith('/docs/file/')).toBe(true)
     expect(url).toContain('procure-ai%20%28') // space → %20, «(» → %28

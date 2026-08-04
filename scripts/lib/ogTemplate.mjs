@@ -18,10 +18,10 @@ export const BADGE_SCALE = 2.2
 
 /** Build the card HTML. Async because the logo is inlined as a data URI (no network in Chromium). */
 export async function buildOgHtml() {
-  // The title is split so «Bitrix24» keeps the accent colour regardless of wording.
-  const [titleHead, titleTail] = LANDING_TITLE.split(/ в Bitrix24$/).length === 1
-    ? [LANDING_TITLE, '']
-    : [LANDING_TITLE.replace(/ в Bitrix24$/, ''), ' в <span>Bitrix24</span>']
+  // ⚠ Расщепления по « в Bitrix24» больше нет (#412): платформа ушла из ИМЕНИ продукта в
+  // подзаголовок, поэтому акцентировать в заголовке нечего. Ветка оставалась бы мёртвым кодом,
+  // который читается как «имя всё ещё может кончаться на Bitrix24».
+  const [titleHead, titleTail] = [LANDING_TITLE, '']
   const logoSvg = await readFile(join(ROOT, 'public', 'favicon.svg'), 'utf8')
   const logoData = `data:image/svg+xml;base64,${Buffer.from(logoSvg).toString('base64')}`
 

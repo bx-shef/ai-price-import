@@ -161,7 +161,7 @@ export function parseOfficeCsvOutputs(stdout: string): string[] {
  * order, so goods on a non-first sheet (e.g. a ТТН «Приложение») aren't lost (GH #76).
  */
 async function officeToText(path: string, fileName: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'procure-office-'))
+  const dir = await mkdtemp(join(tmpdir(), 'ai-price-import-office-'))
   try {
     const { filter, outExt } = officeConvertTarget(fileName)
     // --safe-mode: run a HARDENED libreoffice on the UNTRUSTED document — disables macros,
@@ -264,7 +264,7 @@ async function isPdfFile(path: string): Promise<boolean> {
  * per-process, not per-doc), acceptable on the "stable, not fast" profile (docs/PROCESS.md §12).
  */
 async function ocrPdf(path: string, maxPages: number = MAX_OCR_PDF_PAGES): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'procure-ocrpdf-'))
+  const dir = await mkdtemp(join(tmpdir(), 'ai-price-import-ocrpdf-'))
   try {
     // `-l maxPages+1` renders at most one page past the cap → the check below can still detect
     // "too many" without pdftoppm rasterizing the whole crafted document first. `-scale-to`

@@ -1,5 +1,6 @@
 import type { FetchFn } from './b24Rest'
 import type { FeedbackConfig } from './feedbackConfig'
+import { APP_SLUG } from '~/config/appIdentity'
 
 // Privacy probe for the feedback receiver (#200). The byte-upload commits REAL client documents —
 // invoices with counterparty names, tax ids and prices — into `GITHUB_FEEDBACK_REPO`. Everything else
@@ -36,7 +37,7 @@ export async function probeRepoPrivacy(config: FeedbackConfig, fetchFn: FetchFn)
       headers: {
         'Authorization': `Bearer ${config.token}`,
         'Accept': 'application/vnd.github+json',
-        'User-Agent': 'procure-ai-feedback',
+        'User-Agent': `${APP_SLUG}-feedback`,
         'X-GitHub-Api-Version': '2022-11-28'
       }
     })
