@@ -61,6 +61,17 @@ function normalisePath(path: string): string {
   return clean || '/'
 }
 
+/**
+ * Один и тот же ли это адрес.
+ *
+ * ⚠ Нужен потому, что компонент сравнивал пути СВОИМ выражением, без снятия хвостового слэша —
+ * ровно того, ради чего нормализатор и написан: на `/site-privacy/` ссылка «Политика сайта»
+ * показывалась и вела туда, где посетитель уже стоит.
+ */
+export function samePath(a: string, b: string): boolean {
+  return normalisePath(a) === normalisePath(b)
+}
+
 /** Запускать ли аналитику: только по явному согласию. */
 export function analyticsAllowed(choice: ConsentChoice): boolean {
   return choice === 'accepted'

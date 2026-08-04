@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { CONSENT_TEXT } from '~/config/cookieConsent'
-import { isConsentPath } from '~/utils/cookieConsent'
+import { isConsentPath, samePath } from '~/utils/cookieConsent'
 import { SHELL_BG_HEX, SHELL_VARS } from '~/config/landingShell'
 import { useCookieConsent } from '~/composables/useCookieConsent'
 
@@ -24,8 +24,10 @@ onMounted(load)
 
 const visible = computed(() => ready.value && choice.value === null && isConsentPath(route.path))
 
-// На странице Политики ссылка вела бы туда, где посетитель уже находится.
-const showPolicyLink = computed(() => route.path.toLowerCase() !== CONSENT_TEXT.policyPath)
+// На странице Политики ссылка вела бы туда, где посетитель уже находится, — включая постоянные
+// адреса её редакций: там тот же текст байт в байт, и ссылка предлагала бы перейти к нему же.
+const showPolicyLink = computed(() =>
+  !samePath(route.path, CONSENT_TEXT.policyPath) && !route.path.toLowerCase().startsWith(`${CONSENT_TEXT.policyPath}/`))
 
 // ⚠ Полоса `fixed`, потока не занимает — и накрывает последние строки страницы НАВСЕГДА: на
 // юридических документах под ней оказывалась строка реквизитов издателя, и доскроллить её было
@@ -48,7 +50,7 @@ watch(visible, async (on) => {
     observer = new ResizeObserver(applyPadding)
     observer.observe(bar.value)
   }
-})
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
@@ -135,4 +137,10 @@ onBeforeUnmount(() => {
 .cookie-btn-primary { background: var(--legal-link); color: var(--cookie-bg); border: 1px solid transparent; }
 .cookie-btn-ghost { background: transparent; color: var(--legal-text); border: 1px solid var(--legal-border); }
 .cookie-btn:focus-visible { outline: 2px solid var(--legal-link); outline-offset: 2px; }
+/* Низкий экран (телефон в ландшафте): полоса занимала треть высоты, потому что текст и кнопки
+   переносились в два ряда. Ужимаем поля и текст — содержимого под полосой остаётся больше. */
+@media (max-height: 460px) {
+  .cookie-banner { padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom)); font-size: 0.8125rem; }
+  .cookie-text { max-width: none; }
+}
 </style>

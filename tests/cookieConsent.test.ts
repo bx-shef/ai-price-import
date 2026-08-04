@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { CONSENT_KEY, CONSENT_PATHS, CONSENT_VERSION } from '../app/config/cookieConsent'
 import { analyticsAllowed, isConsentPath, parseConsent, serializeConsent } from '../app/utils/cookieConsent'
 import { allArchiveRoutes } from '../app/utils/legalArchive'
+import { buildSitemapXml } from '../server/utils/seoFiles'
 
 // #404. Уведомление о cookie и гейт аналитики.
 //
@@ -43,8 +44,17 @@ describe('#404: разбор решения', () => {
 })
 
 describe('#404: где показывается', () => {
-  it('на публичных страницах — да', () => {
-    for (const p of CONSENT_PATHS) expect(isConsentPath(p), p).toBe(true)
+  it('каждый публичный адрес из карты сайта показывает уведомление', () => {
+    // ⚠ Оракул НЕЗАВИСИМЫЙ. Прежняя проверка перебирала сам `CONSENT_PATHS` и была истинной по
+    // построению: список выводится из реестра, поэтому цикл по нему зелен при любом содержимом.
+    // Дефект, ради которого всё и правилось (публичная страница без баннера), она больше не
+    // сторожила. Карта сайта — второй, независимо составленный перечень публичных адресов: новая
+    // публичная страница попадает туда, и рассинхрон становится виден.
+    const xml = buildSitemapXml('https://price-import.bx-shef.by')
+    const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]!).pathname)
+    expect(urls.length, 'карта сайта пуста — оракул потерял смысл').toBeGreaterThan(4)
+    const missing = urls.filter(u => !isConsentPath(u))
+    expect(missing, `публичные адреса без уведомления о cookie:\n${missing.join('\n')}`).toEqual([])
   })
 
   it('ни на одном экране внутри портала — нет', () => {
