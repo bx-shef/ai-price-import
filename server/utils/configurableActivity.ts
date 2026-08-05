@@ -44,6 +44,19 @@ export interface ActivityLayoutInput {
   sourceFileUrl?: string
   /** File name shown as the link text. External (chosen by the uploader) — neutralised and capped. */
   sourceFileName?: string
+  /**
+   * Импорт прошёл без замечаний.
+   *
+   * ⚠ Дело закрывается (`completed:'Y'`) ТОЛЬКО у чистого импорта (#328 п.1). Прежде оно
+   * закрывалось всегда, и документ, у которого не нашлась половина товаров или не сошёлся итог,
+   * выглядел в таймлайне ровно как безупречный: закрытое дело — это «сделано, смотреть незачем».
+   * Замечания при этом были В ТЕЛЕ, то есть человек узнавал о них, только если открывал дело,
+   * которое сам же и счёл законченным. Незакрытое дело остаётся в списке текущих и попадается на
+   * глаза — это единственный сигнал, который работает без чтения.
+   * ⚠ Отсутствие флага трактуется как «замечания есть»: пропущенное поле не должно молча
+   * закрывать дело — это возврат прежнего поведения.
+   */
+  clean?: boolean
 }
 
 /** Build the crm.activity.configurable.add params. Pure. */
@@ -128,11 +141,17 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
     ownerId: input.ownerId,
     fields: {
       typeId: 'CONFIGURABLE',
-      completed: 'Y',
+      completed: input.clean ? 'Y' : 'N',
       ...(input.responsibleId ? { responsibleId: input.responsibleId } : {})
     },
     layout: {
-      icon: { code: 'document' },
+      // Значок — второй сигнал, читаемый без открытия дела (#328 п.3): у импорта с замечаниями он
+      // не такой, как у чистого.
+      // ⚠ Оба кода СВЕРЕНЫ С ЖИВЫМ ПОРТАЛОМ (`crm.timeline.icon.list`, 51 системный код,
+      // 2026-08-05). Первая редакция ставила `warning` — такого кода нет, и портал отверг бы
+      // вызов целиком: дело не записалось бы ВООБЩЕ, то есть попытка сделать замечания заметнее
+      // стёрла бы и сам след импорта. Подходящий системный код — `attention`.
+      icon: { code: input.clean ? 'document' : 'attention' },
       header: { title: neutralizeBb(input.title).slice(0, 255) },
       body: {
         // `logo` (LogoDto) is REQUIRED by B24 — a missing logo fails with «Поле logo в

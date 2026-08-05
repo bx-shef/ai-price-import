@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { archiveFileName, commonDiskFileUrl, MAX_DISK_NAME, DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
 import { buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
@@ -386,5 +387,41 @@ describe('configurableActivity', () => {
     expect(url).toContain('procure-ai%20%28') // space → %20, «(» → %28
     expect(url).toContain('%20%D0%B8%D1%8E%D0%BD%D1%8C.xls') // «·июнь.xls» encoded, dot kept
     expect(url.endsWith('?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER')).toBe(true)
+  })
+})
+
+describe('#328: импорт с замечаниями не выглядит как чистый', () => {
+  const base = { ownerTypeId: 2, ownerId: 7, title: 'Импорт: ООО «Ромашка»', lines: ['Позиций: 3'], openPath: '/crm/deal/details/7/' }
+
+  it('чистый импорт — дело закрыто, значок обычный', () => {
+    const a = buildConfigurableActivity({ ...base, clean: true }) as { fields: Record<string, unknown>, layout: { icon: { code: string } } }
+    expect(a.fields.completed).toBe('Y')
+    expect(a.layout.icon.code).toBe('document')
+  })
+
+  it('импорт с замечаниями — дело ОСТАЁТСЯ открытым и со своим значком', () => {
+    // ⚠ Несущее утверждение задачи. Прежде дело закрывалось всегда, и документ, у которого не
+    // нашлась половина товаров, читался в таймлайне как безупречный: закрытое дело значит
+    // «сделано, смотреть незачем». Замечания лежали В ТЕЛЕ — то есть человек узнавал о них,
+    // только открыв дело, которое сам же и счёл законченным.
+    const a = buildConfigurableActivity({ ...base, clean: false }) as { fields: Record<string, unknown>, layout: { icon: { code: string } } }
+    expect(a.fields.completed).toBe('N')
+    // ⚠ Код сверен с живым порталом: выдуманный (`warning`) портал отвергает целиком, и дело не
+    // записывается вовсе — попытка сделать замечания заметнее стёрла бы и сам след импорта.
+    expect(a.layout.icon.code).toBe('attention')
+  })
+
+  it('признак не задан — считаем, что замечания ЕСТЬ', () => {
+    // ⚠ Пропущенное поле не должно молча закрывать дело: это ровно возврат прежнего поведения,
+    // причём незаметный — вызывающий код просто забыл бы передать флаг.
+    const a = buildConfigurableActivity(base) as { fields: Record<string, unknown> }
+    expect(a.fields.completed).toBe('N')
+  })
+
+  it('признак берётся из тех же warnings, что печатаются в теле', () => {
+    // Два независимых источника разъехались бы, и дело закрывалось бы при видимом списке проблем.
+    const wiring = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
+      .replace(/\/\/.*$/gm, '')
+    expect(wiring).toContain('clean: warnings.length === 0')
   })
 })

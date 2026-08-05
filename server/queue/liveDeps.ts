@@ -656,6 +656,10 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         lines,
         openPath: entityOpenPath(entityTypeId, entityId),
         showOpenButton: hasCompany,
+        // Чистый импорт → дело закрыто; с замечаниями → остаётся открытым и со своим значком
+        // (#328). Признак берётся из ТЕХ ЖЕ warnings, что печатаются в теле: два независимых
+        // источника разъехались бы, и дело закрывалось бы при видимом списке проблем.
+        clean: warnings.length === 0,
         // Имя файла — подпись ссылки в деле (#328). Берём из задания; нет — билдер подставит
         // нейтральное «Открыть файл».
         ...(sourceFileUrl ? { sourceFileUrl, sourceFileName: (await getJob(memberId, jobId, jobRedis))?.fileName ?? '' } : {})

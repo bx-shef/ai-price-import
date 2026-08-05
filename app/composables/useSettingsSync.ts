@@ -1,4 +1,4 @@
-import { onScopeDispose } from 'vue'
+import { onScopeDispose, readonly, ref } from 'vue'
 import { B24PullClientManager } from '@bitrix24/b24jssdk'
 import { useB24 } from './useB24'
 import { LANDING_MARKET_CODE } from '~/utils/landing'
@@ -16,19 +16,45 @@ function appModuleId(): string {
   return String(useRuntimeConfig().public.b24MarketCode || LANDING_MARKET_CODE)
 }
 
+/**
+ * Почему у канала есть НАБЛЮДАЕМОЕ состояние (#443).
+ *
+ * ⚠ Обе стороны были обёрнуты пустыми `catch`, и это делало канал неотличимым от работающего: если
+ * подписка не поднялась (pull-сервер портала выключен, неверный `MODULE_ID`, приложение открыто вне
+ * фрейма), экран импорта просто никогда не обновлялся после сохранения настроек — ровно тот симптом,
+ * с которого заведена задача. Молчаливая деградация «на всякий случай» здесь стоит дороже отказа:
+ * чинить нечего, потому что поломки не видно.
+ * ⚠ Наружу отдаётся СОСТОЯНИЕ, а не исключение: канал остаётся best-effort и сохранение настроек не
+ * роняет. Разница ровно в одном — теперь про его неработоспособность можно узнать.
+ */
+export type SettingsSyncState = 'idle' | 'live' | 'unavailable'
+
+/** Причина отказа — только КЛАСС, без текста ошибки портала: он вправе процитировать параметры вызова. */
+export type SettingsSyncFailure = 'not-framed' | 'pull-failed' | 'send-failed'
+
 export function useSettingsSync() {
   const { init, get } = useB24()
+  const state = ref<SettingsSyncState>('idle')
+  const failure = ref<SettingsSyncFailure | null>(null)
+
+  function degrade(reason: SettingsSyncFailure) {
+    state.value = 'unavailable'
+    failure.value = reason
+    // Один раз на причину, а не на каждую попытку: канал best-effort, и журнал не должен шуметь.
+    console.warn(`[settings-sync] живое обновление настроек недоступно (${reason})`)
+  }
 
   /** Tell other open instances to reload settings. Best-effort — a pull failure never blocks a save. */
   async function notifyReload(): Promise<void> {
     try {
       await init()
       const frame = get()
-      if (!frame) return
+      if (!frame) return degrade('not-framed')
       // actions.v2.call.make — the non-deprecated replacement for frame.callMethod() (removed in SDK 2.0).
       await frame.actions.v2.call.make({ method: 'pull.application.event.add', params: buildSettingsReloadEvent(appModuleId()) })
     } catch {
-      // pull unavailable / not framed → skip; cross-instance sync is a nicety, not correctness
+      // pull unavailable / not framed → соседние вкладки не обновятся; сохранение уже прошло.
+      degrade('send-failed')
     }
   }
 
@@ -56,7 +82,7 @@ export function useSettingsSync() {
         await init()
         if (disposed) return
         const frame = get()
-        if (!frame) return
+        if (!frame) return degrade('not-framed')
         const moduleId = appModuleId()
         pull = new B24PullClientManager({ b24: frame, restApplication: moduleId })
         // The SDK dispatches this callback ONLY for the subscribed command bucket (reload.options) —
@@ -69,8 +95,10 @@ export function useSettingsSync() {
         }
         await pull.start()
         if (disposed) teardown()
+        else state.value = 'live'
       } catch {
-        // pull server off / not framed → no live sync; the explicit Save/reload still works
+        // pull server off / not framed → живого обновления нет; ручная перезагрузка работает.
+        degrade('pull-failed')
       }
     })()
 
@@ -82,5 +110,7 @@ export function useSettingsSync() {
     return unsubscribe
   }
 
-  return { notifyReload, subscribeReload }
+  // `state`/`failure` — только для наблюдения (журнал, будущая подсказка на экране). Ни один
+  // вызывающий не обязан их читать: канал остаётся best-effort.
+  return { notifyReload, subscribeReload, state: readonly(state), failure: readonly(failure) }
 }
