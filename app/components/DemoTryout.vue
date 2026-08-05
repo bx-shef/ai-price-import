@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { extractDemo, type DemoResult } from '~/utils/demoExtract'
 import { FORMATS_HUMAN, buildAccept } from '~/config/uploadFormats'
 import { pollDemoJob, type DemoPollResponse } from '~/utils/demoPoll'
+import { llmDisplayName } from '~/config/llmDisplay'
 
 // Public landing tryout: attach a document → see who the supplier is + goods table.
 // Built-in samples parse client-side (instant, no rate-limit) via the same pure core;
@@ -27,6 +28,18 @@ const error = ref('')
 const loading = ref(false)
 const notice = ref('')
 const sourceName = ref('')
+
+// Название работающего ИИ-сервиса (#437). Приходит с сервера, а не запекается на сборке: лендинг
+// пререндерится, и запечённое значение показывало бы сервис, настроенный на машине сборки.
+// ⚠ Пока ответа нет — обобщённое «ИИ-сервис»: предупреждение обязано быть на месте с первой
+// отрисовки, а не появляться после запроса. Отказ запроса оставляет ровно этот вариант — текст
+// остаётся верным, просто менее конкретным.
+const provider = ref(llmDisplayName(undefined))
+onMounted(async () => {
+  try {
+    provider.value = await $fetch<{ name: string, vendor?: string }>('/api/demo/provider')
+  } catch { /* остаётся обобщённое название — предупреждение не пропадает */ }
+})
 
 const resultCard = ref<HTMLElement | null>(null)
 
@@ -239,15 +252,26 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
       class="px-4 sm:px-0"
     >
       <!-- Предупреждение стоит ДО зоны загрузки и не свёрнуто (#413). Раньше человек узнавал про
-           передачу содержимого нейросети только из ответа — то есть уже отдав файл. Здесь названы
-           ОБЕ юрисдикции: демо резолвит провайдера тем же кодом, что боевой путь, поэтому
-           переключение на резервный канал распространяется и на него, и умолчать про КНР значило
-           бы, что посетитель узнаёт о ней из Политики, а не из места, где принимает решение. -->
+           передачу содержимого нейросети только из ответа — то есть уже отдав файл.
+           ⚠ Называем РАБОТАЮЩИЙ сервис, а не список возможных (#437): автоматического переключения
+           между провайдерами в коде нет, и прежний текст пугал посетителя гипотезой, которая в
+           текущей конфигурации не наступает — мы платили конверсией за предупреждение о том, чего
+           не делаем. Полный состав получателей, страны и условия — в Политике, в одном клике, где
+           они расписаны подробно (п. 5.3).
+           ⚠ Написать «данные не используются для обучения» НЕЛЬЗЯ ни в каком виде: по условиям
+           BitrixGPT правообладатель ВПРАВЕ обучать на переданных запросах (п. 3.10 Политики).
+           Сказать «МЫ не сохраняем и не используем» — правда; «никто не использует» — ложь, и
+           проверяется она первой. -->
       <p class="mb-3 rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 text-xs leading-relaxed text-amber-200/90">
-        Содержимое документа уходит на распознавание нейросети — в Битрикс24 (Россия), а при
-        недоступности основного канала резервному провайдеру с обработкой в КНР.
+        Документ распознаёт ИИ-сервис <strong class="font-semibold">{{ provider.name }}</strong><template v-if="provider.vendor">
+          — {{ provider.vendor }}
+        </template>.
         <span class="text-amber-200/70">Сам файл и распознанный текст не сохраняются, в CRM ничего не
-          записывается. Не загружайте документы со сведениями ограниченного доступа.</span>
+          записывается. Не загружайте документы со сведениями ограниченного доступа. Подробнее — в
+          <NuxtLink
+            to="/privacy"
+            class="underline underline-offset-2 hover:text-amber-100"
+          >Политике</NuxtLink>.</span>
       </p>
 
       <!-- Dropzone -->

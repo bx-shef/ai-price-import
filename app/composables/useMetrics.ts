@@ -39,7 +39,14 @@ export function useMetrics() {
     return buildFrameHeaders(await ensureAuth())
   }
 
-  async function load(): Promise<void> {
+  /**
+   * Прочитать метрики.
+   *
+   * `silent` — фоновое обновление после импорта (#444): экран не переводится в «грузим» и не
+   * показывает отказ. Обычное чтение (открытие страницы, кнопка «Обновить») этим флагом не
+   * пользуется — там человек ждёт ответа и обязан узнать, если его не будет.
+   */
+  async function load({ silent = false }: { silent?: boolean } = {}): Promise<void> {
     const h = await headers()
     if (!h) {
       // ⚠ Попытка ЗАВЕРШИЛАСЬ, пусть и ничем — `loaded` обязан стать true.
@@ -49,12 +56,19 @@ export function useMetrics() {
       // смогла (портал ушёл на логин, рукопожатие сорвалось). `inert` там false, `loaded` false —
       // заглушка без данных, без объяснения и без реакции на «Обновить», потому что повтор шёл тем
       // же путём. До этой задачи человек видел хотя бы нули и понимал, что экран живой.
+      // ⚠ Молчаливое обновление (#444) и здесь ничего не пишет: нет авторизации — просто нечего
+      // обновлять. Выставить отказ значило бы стереть верные числа сообщением о поломке ровно
+      // после успешного импорта, причём про авторизацию, которой минуту назад хватало.
+      if (silent) return
       loaded.value = true
       error.value = frameAuthMessage(inFrame(), 'Метрики доступны')
       loadError.value = error.value
       return
     }
-    loading.value = true
+    // ⚠ Индикатор загрузки при молчаливом обновлении не поднимаем: он переводит экран в состояние
+    // «грузим» и прячет уже показанные числа — то есть ради свежих данных на секунду отнимает те,
+    // что есть. Значения заменяются по приходу ответа, нулей на экране не появляется.
+    if (!silent) loading.value = true
     try {
       const res = await $fetch<MetricsView>('/api/import/metrics', { headers: h })
       counters.value = res.counters
@@ -63,11 +77,18 @@ export function useMetrics() {
       error.value = ''
       loadError.value = ''
     } catch (e) {
+      // ⚠ Молчаливое обновление (#444) отказ НЕ показывает: перечитывание после импорта — это
+      // удобство, а не запрошенное человеком действие. Показать «Не удалось получить метрики»
+      // поверх только что успешно прошедшего импорта значит сообщить о поломке там, где её нет:
+      // прежние числа на экране остаются верными, они просто на один импорт устарели.
+      if (silent) return
       error.value = fetchErrorMessage(e, 'Не удалось получить метрики')
       loadError.value = error.value
     } finally {
-      loading.value = false
-      loaded.value = true
+      if (!silent) {
+        loading.value = false
+        loaded.value = true
+      }
     }
   }
 
