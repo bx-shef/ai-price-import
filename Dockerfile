@@ -20,6 +20,12 @@ ARG NUXT_PUBLIC_SITE_URL=""
 ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
 ARG BUILD_DATE=""
 ENV NUXT_PUBLIC_BUILD_DATE=$BUILD_DATE
+# Счётчик Яндекс Метрики. ⚠ Читается в `nuxt.config.ts` на СБОРКЕ — сниппет впекается в статический
+# HTML лендинга, поэтому рантайм-переменная его не включает (и выглядит это как «внёс, а не
+# работает»). ⚠ Пустое значение = счётчика нет вовсе: так и должно быть на форке и на инсталляции
+# клиента — иначе там поднялся бы счётчик издателя.
+ARG NUXT_PUBLIC_METRIKA_ID=""
+ENV NUXT_PUBLIC_METRIKA_ID=$NUXT_PUBLIC_METRIKA_ID
 # nuxt build → .output: Nitro node server incl. prerendered static pages in public/.
 RUN pnpm build
 # Guard the defect this replaces: a RELATIVE og:image ships silently and is dropped by Facebook and
