@@ -76,7 +76,7 @@ export async function findProduct(item: DocumentItem, mapping: PortalMapping, ca
   // 1) Offers (SKU / ТП) first — by article-as-xmlId. Only when the portal has an offers iblock;
   //    otherwise this is a no-op (returns null) and we go straight to the base-product lookup.
   if (offersIblockId) {
-    const offerId = await findOfferForItem(item.article, item.name, offersIblockId, call)
+    const offerId = await findOfferForItem(item.article, offersIblockId, call)
     if (offerId) return offerId
   }
   // 2) Base product: the configured article property, then the external code (XML_ID).

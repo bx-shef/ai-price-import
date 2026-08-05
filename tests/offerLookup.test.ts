@@ -42,12 +42,14 @@ describe('findOfferForItem', () => {
     // ⚠ Зеркало решения по базовому товару: ошибочно подобранное торговое предложение так же пишет
     // в карточку клиента чужую позицию. Второй вызов здесь — это и есть возврат подбора по имени.
     const call = vi.fn(async () => ({ offers: [] }))
-    expect(await findOfferForItem('A-1', 'Гвоздь', 27, call)).toBeNull()
+    expect(await findOfferForItem('A-1', 27, call)).toBeNull()
     expect(call).toHaveBeenCalledTimes(1)
     // ⚠ По ВСЕМ вызовам: прежняя проверяла только первый (а он всегда фильтр по xmlId), то есть
     // была истинна по построению и второй линией защиты не являлась.
+    // ⚠ Названия товара нет уже в СИГНАТУРЕ, поэтому подставить его в фильтр неоткуда: проверка
+    // держится не на строке, а на том, что функция названия не получает.
     for (const [, params] of call.mock.calls) {
-      expect(JSON.stringify(params), 'в фильтре появилось имя').not.toContain('Гвоздь')
+      expect(JSON.stringify(params).toLowerCase(), 'в фильтре появилось имя').not.toContain('name')
     }
   })
 
@@ -55,13 +57,13 @@ describe('findOfferForItem', () => {
     // ⚠ Утверждение о поведении, а не о числе вызовов: совпасть при отсутствии артикула может
     // только имя. Переживает батчинг и кэш.
     const call = vi.fn(async () => ({ offers: [{ id: 5 }] }))
-    expect(await findOfferForItem(undefined, 'Гвоздь', 27, call)).toBeNull()
+    expect(await findOfferForItem(undefined, 27, call)).toBeNull()
     expect(call).not.toHaveBeenCalled()
   })
 
   it('no offers iblock → null (fail-soft, no call)', async () => {
     const call = vi.fn()
-    expect(await findOfferForItem('x', 'y', null, call)).toBeNull()
+    expect(await findOfferForItem('x', null, call)).toBeNull()
     expect(call).not.toHaveBeenCalled()
   })
 })

@@ -8,7 +8,7 @@ import type { RestCall } from './b24Rest'
 // base product — owner ask «приоритет отдавать товару SKU». ACTIVE-only.
 //
 // LIVE-VERIFIED on bel.bitrix24.by: offers iblock 27 (productIblockId 25); `catalog.product.offer.list`
-// REQUIRES `iblockId` in BOTH filter AND select; filtering by `xmlId`/`name`+`active:'Y'` returns the
+// REQUIRES `iblockId` in BOTH filter AND select; filtering by `xmlId`+`active:'Y'` returns the
 // offer; a wrong xmlId → []; and a deal productRow accepts an OFFER id as `productId` (the row shows the
 // offer's name). All FAIL-SOFT: a portal without an offers catalog (or without the catalog subscription)
 // yields null and the caller falls back to the base-product lookup — the pre-offer behaviour.
@@ -52,10 +52,11 @@ export async function findOfferByXmlId(xmlId: string, iblockId: number, call: Re
 }
 
 /** Resolve a document line to an offer id by article-as-xmlId. Null when no offers iblock or nothing
- *  matched. NAME matching does not exist — see `productLookup.findProduct`.
- *  ⚠ `name` остаётся в сигнатуре намеренно: вызывающий передаёт всю строку документа, и молчаливое
- *  исчезновение параметра сделало бы возврат имени сюда правкой на одну строку. */
-export async function findOfferForItem(article: string | undefined, _name: string, iblockId: number | null, call: RestCall): Promise<number | null> {
+ *  matched.
+ *  ⚠ НАЗВАНИЯ ТОВАРА ЗДЕСЬ НЕТ И В СИГНАТУРЕ. Первая редакция оставляла его неиспользуемым
+ *  параметром «чтобы легче было вернуть» — но возвращать нечего: по названию не ищем никогда, и
+ *  параметр, который функция не читает, это ложь сигнатуры и приглашение снова начать читать. */
+export async function findOfferForItem(article: string | undefined, iblockId: number | null, call: RestCall): Promise<number | null> {
   if (!iblockId) return null
   const byArticle = article ? await findOfferByXmlId(article, iblockId, call) : null
   if (byArticle) return byArticle
