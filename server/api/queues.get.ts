@@ -1,7 +1,7 @@
 import { getQueue } from '../queue/connection'
 import { readQueueCounts } from '../queue/stats'
 import type { QueueName } from '../queue/topology'
-import { opsTokenOk } from '../utils/operatorSession'
+import { opsQueuesAllowed } from '../utils/operatorSession'
 
 // GET /api/queues — pipeline queue depths for the ops console. Guarded by the app
 // token via the X-Check-Token HEADER (never a query param → not in access logs);
@@ -15,8 +15,7 @@ export default defineEventHandler(async (event) => {
   // экономия, а ловушка: правильное действие в одном месте оказывается разрушительным в другом.
   // Пусто ⇒ роут закрыт полностью (`opsTokenOk` fail-closed) — это и есть рабочее состояние,
   // человеческий путь в служебную зону идёт через сессию оператора (`/api/ops/queues`).
-  const expectedToken = process.env.OPS_CHECK_TOKEN ?? ''
-  if (!opsTokenOk(expectedToken, String(getHeader(event, 'x-check-token') || ''))) {
+  if (!opsQueuesAllowed(process.env, String(getHeader(event, 'x-check-token') || ''))) {
     setResponseStatus(event, 403)
     return { error: 'forbidden' }
   }

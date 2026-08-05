@@ -79,7 +79,7 @@ export default defineNuxtConfig({
     // Редакции принятых документов (#414) — запекаются на сборке из docs/*.md (см. LEGAL_EDITIONS).
     legalEditions: LEGAL_EDITIONS,
     // Server secrets are read from process.env directly (bare names: DATABASE_URL,
-    // REDIS_URL, B24_CLIENT_ID/SECRET, B24_APPLICATION_TOKEN, B24_TOKEN_ENC_KEY) — NOT
+    // REDIS_URL, B24_CLIENT_ID/SECRET, OPS_CHECK_TOKEN, B24_TOKEN_ENC_KEY) — NOT
     // via runtimeConfig, because Nuxt only overrides runtimeConfig from NUXT_-prefixed
     // env, while the deploy (.env / env_file) uses the bare names. Declaring them here
     // would create dead '' keys that silently shadow the real env (500s / inert gates).

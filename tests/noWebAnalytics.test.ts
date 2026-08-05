@@ -22,8 +22,17 @@ import { describe, expect, it } from 'vitest'
 const ROOT = new URL('..', import.meta.url).pathname
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8')
 
-/** Разрешённые приёмники аналитики. Список именной: новый сервис — отдельное решение и правка документа. */
-const ALLOWED_ANALYTICS_HOSTS = ['mc.yandex.ru', 'mc.yandex.com']
+/**
+ * Разрешённые приёмники аналитики — ВЫВЕДЕНЫ из действующей политики, а не переписаны рядом.
+ *
+ * ⚠ Рукописная копия уже разъехалась: список приёмников стал региональным в `nginx.conf` и в
+ * `edgeSecurity.ts`, а здесь остался прежним — и `public/metrika.js` с вписанным `mc.yandex.by`
+ * проходил скан молча, то есть ровно тот обход, ради которого скан и заведён (счётчик издателя,
+ * подложенный в статику и работающий на инсталляции клиента).
+ */
+const ALLOWED_ANALYTICS_HOSTS = [...new Set(
+  (read('server/utils/edgeSecurity.ts').match(/mc\.yandex\.[a-z.]+/g) ?? [])
+)]
 const FOREIGN_ANALYTICS_HOSTS = ['google-analytics.com', 'googletagmanager.com', 'top-fwz1.mail.ru', 'top.mail.ru']
 
 /**
@@ -87,6 +96,14 @@ describe('границы веб-аналитики (#297)', () => {
         expect(src, `${f}: ${host} разрешён в CSP`).not.toContain(host)
       }
       expect(src, `${f}: приёмник Метрики не разрешён — счётчик будет молча заблокирован`).toContain('mc.yandex.ru')
+      // ⚠ Вебвизор запрещён НЕ только флагом в сниппете, но и отсутствием его приёмников в
+      // политике: это вторая линия, и она самая дорогая для этого продукта — на лендинге стоит
+      // разбор чужой накладной, и запись сессии унесла бы её содержимое на сторону. Флаг может
+      // быть перевёрнут одной правкой; хост в CSP — осознанное решение, и его отсутствие
+      // закрепляется здесь.
+      for (const host of ['mc.webvisor.com', 'mc.webvisor.org']) {
+        expect(src, `${f}: разрешён приёмник Вебвизора`).not.toContain(host)
+      }
     }
   })
 })

@@ -43,7 +43,7 @@ export function checkBackendEnv(env: Record<string, string | undefined>): EnvRep
   // свою `OPS_CHECK_TOKEN`. Оставшееся значение ни на что не влияет, но вводит в заблуждение —
   // говорим об этом вслух, а не молчим.
   if ((env.B24_APPLICATION_TOKEN ?? '').trim()) {
-    warnings.push('B24_APPLICATION_TOKEN задан, но больше не читается: установку он сломать не может, а служебный роут читает OPS_CHECK_TOKEN. Уберите строку из .env')
+    warnings.push('B24_APPLICATION_TOKEN задан, но больше не читается: установку он сломать не может, а служебный роут читает OPS_CHECK_TOKEN. Уберите строку из .env (при возможном откате на прежний образ держите обе)')
   }
 
   if (!env.B24_CLIENT_ID || !env.B24_CLIENT_SECRET) {

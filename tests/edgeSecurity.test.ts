@@ -61,9 +61,11 @@ describe('contentSecurityPolicy', () => {
     // одна на все страницы, поэтому разрешение шире фактического использования.
     const METRIKA = ['https://mc.yandex.ru', 'https://mc.yandex.az', 'https://mc.yandex.by', 'https://mc.yandex.co.il', 'https://mc.yandex.com', 'https://mc.yandex.com.am', 'https://mc.yandex.com.ge', 'https://mc.yandex.com.tr', 'https://mc.yandex.ee', 'https://mc.yandex.fr', 'https://mc.yandex.kg', 'https://mc.yandex.kz', 'https://mc.yandex.lt', 'https://mc.yandex.lv', 'https://mc.yandex.md', 'https://mc.yandex.tj', 'https://mc.yandex.tm', 'https://mc.yandex.uz']
     expect(hosts('connect-src')).toEqual([...expected, ...METRIKA].sort())
-    // ⚠ И в script-src — тот же список: сам тег `tag.js` тоже подгружается с регионального хоста,
-    // а без него счётчик не поднимется вовсе.
-    expect(hosts('script-src')).toEqual([...METRIKA].sort())
+    // ⚠ А в script-src — РОВНО ОДИН хост, и это не забывчивость: `tag.js` грузится только с
+    // `mc.yandex.ru` (адрес зашит в сниппете), а политика одна на все страницы, включая
+    // портальные во фрейме чужой CRM. Расширение здесь дало бы 17 посторонним origin'ам право
+    // исполнять код на экране внутри CRM клиента — ради лендинга.
+    expect(hosts('script-src')).toEqual(['https://mc.yandex.ru'])
   })
   it('relaxed form CSP only for /b24-form.html (unsafe-eval + B24 script hosts)', () => {
     const csp = contentSecurityPolicy('/b24-form.html')

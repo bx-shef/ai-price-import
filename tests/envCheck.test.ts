@@ -34,6 +34,9 @@ describe('checkBackendEnv', () => {
     const left = checkBackendEnv({ ...base, B24_APPLICATION_TOKEN: 'realtoken123' })
     expect(left.errors).toEqual([])
     expect(left.warnings.some(w => /B24_APPLICATION_TOKEN/.test(w))).toBe(true)
+    // ⚠ И называет ЗАМЕНУ: предупреждение существует ради того, чтобы админ не заблуждался, а
+    // мутация «переписать текст на прежнюю переменную» проверку по одному имени переживала.
+    expect(left.warnings.some(w => /OPS_CHECK_TOKEN/.test(w))).toBe(true)
 
     const clean = checkBackendEnv(base)
     expect(clean.errors).toEqual([])
