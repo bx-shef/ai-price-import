@@ -20,7 +20,7 @@ const MAX_UNIT_DICT_ENTRIES = 1000
 
 export function defaultMapping(): PortalMapping {
   return {
-    article: { field: '', kind: 'text' },
+    article: { field: '', kind: 'text', scope: 'product' },
     // #373: по умолчанию НЕ найденный товар вносится произвольной позицией. Прежний «пропустить»
     // на свежем портале (каталог пуст, артикул не сопоставлен) пропускал ВСЕ строки — импорт давал
     // пустую сделку и зелёное «Готово». Произвольная позиция несёт название, цену и количество из
@@ -83,6 +83,11 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
     article: {
       field: typeof art.field === 'string' ? art.field : '',
       kind: art.kind === 'string' ? 'string' : 'text',
+      // ⚠ Дефолт `'product'`, а не «угадать»: настройки, сохранённые до появления поля, выбирались
+      // пикером, который показывал ТОЛЬКО свойства основного каталога товаров. Любое иное значение
+      // коэрсится туда же — искать по свойству не в том инфоблоке опаснее, чем не искать вовсе:
+      // портал молча игнорирует такой фильтр и отдаёт весь список.
+      scope: art.scope === 'offer' ? 'offer' : 'product',
       ...(typeof art.delimiter === 'string' ? { delimiter: art.delimiter } : {})
     },
     product: {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  resolveMainIblockId,
+  resolveIblocks,
   normalizeProperties,
   filterProperties,
   searchCatalogProperties
@@ -36,27 +36,40 @@ function fakeCall(overrides: Partial<Record<string, unknown>> = {}): RestCall {
   }
 }
 
-describe('resolveMainIblockId', () => {
-  it('picks the catalog whose productIblockId is null (main, not offers)', async () => {
-    expect(await resolveMainIblockId(fakeCall())).toBe(25)
+describe('resolveIblocks', () => {
+  it('различает инфоблок предложений и родительский инфоблок товаров', async () => {
+    // ⚠ Прежде читался ТОЛЬКО основной каталог товаров, и свойства торговых предложений в пикер
+    // не попадали вовсе: админ портала с SKU физически не мог выбрать своё свойство артикула.
+    expect(await resolveIblocks(fakeCall())).toEqual({ offer: 27, product: 25 })
   })
-  it('falls back to the first catalog when none has a null parent', async () => {
-    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [{ iblockId: 40, productIblockId: 5 }] } })
-    expect(await resolveMainIblockId(call)).toBe(40)
+  it('портал без предложений: только товары', async () => {
+    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [{ iblockId: 25, productIblockId: null }] } })
+    expect(await resolveIblocks(call)).toEqual({ offer: null, product: 25 })
   })
-  it('returns null when there are no catalogs', async () => {
+  it('родитель берётся у каталога предложений, а не «первый без родителя»', async () => {
+    // ⚠ При нескольких каталогах «первый без productIblockId» может оказаться посторонним; связка
+    // «предложения → их родитель» точнее по построению.
+    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [
+      { iblockId: 40, productIblockId: null },
+      { iblockId: 27, productIblockId: 25 }
+    ] } })
+    expect(await resolveIblocks(call)).toEqual({ offer: 27, product: 25 })
+  })
+  it('каталогов нет → оба null', async () => {
     const call = fakeCall({ 'catalog.catalog.list': { catalogs: [] } })
-    expect(await resolveMainIblockId(call)).toBeNull()
+    expect(await resolveIblocks(call)).toEqual({ offer: null, product: null })
   })
 })
 
 describe('normalizeProperties', () => {
   it('maps to { value: code, label: name }, PROPERTY_<id> when no code', () => {
+    // ⚠ Картинка (`F`) ОТСЕЯНА: под артикул годятся только строковые/текстовые свойства. Прежде
+    // пикер показывал всё подряд, и выбрать картинку можно было в один клик — а последствие
+    // молчаливое: подбор не находит ничего, потому что искомого в этом поле не бывает.
     const opts = normalizeProperties(PROPERTIES)
     expect(opts).toEqual([
-      { value: 'MORE_PHOTO', label: 'Image', code: 'MORE_PHOTO', id: 93 },
-      { value: 'SUPPLIER_ARTICLE', label: 'Артикул поставщика', code: 'SUPPLIER_ARTICLE', id: 99 },
-      { value: 'PROPERTY_100', label: 'Безымянное', code: undefined, id: 100 }
+      { value: 'SUPPLIER_ARTICLE', label: 'Артикул поставщика', code: 'SUPPLIER_ARTICLE', id: 99, scope: 'product', group: 'Товары' },
+      { value: 'PROPERTY_100', label: 'Безымянное', code: undefined, id: 100, scope: 'product', group: 'Товары' }
     ])
   })
   it('drops a property with neither code nor a positive id', () => {
@@ -72,13 +85,14 @@ describe('normalizeProperties', () => {
 describe('filterProperties', () => {
   const opts = normalizeProperties(PROPERTIES)
   it('empty query → all', () => {
-    expect(filterProperties(opts, '')).toHaveLength(3)
+    // Две, а не три: картинка отсеяна по типу.
+    expect(filterProperties(opts, '')).toHaveLength(2)
   })
   it('matches on label (case-insensitive Cyrillic)', () => {
     expect(filterProperties(opts, 'артикул').map(o => o.value)).toEqual(['SUPPLIER_ARTICLE'])
   })
   it('matches on value/code', () => {
-    expect(filterProperties(opts, 'more_photo').map(o => o.label)).toEqual(['Image'])
+    expect(filterProperties(opts, 'supplier').map(o => o.label)).toEqual(['Артикул поставщика'])
   })
 })
 
@@ -97,13 +111,17 @@ function fakeTransport(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe('searchCatalogProperties', () => {
-  it('resolves the main catalog, lists its properties, filters by query', async () => {
+  it('перечисляет ОБА инфоблока, предложения первыми', async () => {
+    // ⚠ Фейк отдаёт один и тот же список свойств на оба инфоблока, поэтому строки удваиваются —
+    // важен здесь ПОРЯДОК групп и то, что второй инфоблок вообще опрашивается.
     const page = await searchCatalogProperties(fakeTransport(), 'артикул')
-    expect(page).toEqual({ items: [{ value: 'SUPPLIER_ARTICLE', label: 'Артикул поставщика', code: 'SUPPLIER_ARTICLE', id: 99 }], hasMore: false })
+    expect(page.items.map(o => o.group)).toEqual(['Торговые предложения (SKU)', 'Товары'])
+    expect(page.items.every(o => o.value === 'SUPPLIER_ARTICLE')).toBe(true)
+    expect(page.hasMore).toBe(false)
   })
   it('empty query returns the full property list', async () => {
     const page = await searchCatalogProperties(fakeTransport(), '')
-    expect(page.items).toHaveLength(3)
+    expect(page.items).toHaveLength(4) // по два годных свойства на каждый из двух инфоблоков
     expect(page.hasMore).toBe(false)
   })
   it('no catalog → empty page (never throws, never lists properties)', async () => {

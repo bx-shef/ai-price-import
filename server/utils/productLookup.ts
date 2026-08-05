@@ -2,7 +2,7 @@ import type { RestCall } from './b24Rest'
 import type { PortalMapping, ArticleFieldConfig } from '~/types/mapping'
 import type { DocumentItem } from '~/types/document'
 import { articleMatches, parseSupplierArticles } from '~/utils/supplierArticles'
-import { findOfferForItem } from './offerLookup'
+import { findOfferByProperty, findOfferByXmlId } from './offerLookup'
 
 // Deterministic product lookup for crm-sync (find_product tool body). DI over RestCall.
 // Strategies (единственная — по артикулу; `mapping.product.by` больше не читается):
@@ -66,54 +66,47 @@ export async function findProductByArticle(article: string, cfg: ArticleFieldCon
   return matched.length ? Math.min(...matched) : null
 }
 
-/** Resolve a document line to a catalog product/offer id per the portal mapping.
- *  - **Trade offers (SKU) have PRIORITY** when the portal has them (`offersIblockId` resolved once per
- *    job): a printed article is often the OFFER's XML_ID, and a deal row can carry the offer id directly
- *    (owner ask «приоритет SKU»). Fail-soft: no offers iblock / no match → fall through to products.
- *  - Base product then tries: the supplier-article property → the external code (XML_ID), both
- *    ACTIVE-only. NAME matching does not exist — see the note at the end of the function. */
+/**
+ * Подобрать товар каталога по строке документа. ТОЛЬКО по артикулу.
+ *
+ * Порядок — от самого сильного признака к настраиваемому (решение владельца 2026-08-05):
+ *   1. **внешний код торгового предложения** (`xmlId`) — напечатанный артикул чаще всего именно он;
+ *   2. **внешний код базового товара** (`XML_ID`) — системное поле, настройки не требует;
+ *   3. **свойство с артикулом поставщика** — ОДИН раз, в том инфоблоке, которому оно принадлежит.
+ *
+ * ⚠ Почему свойство ищется один раз и строго по `article.scope`. Свойство живёт ровно в одном
+ * инфоблоке — предложений либо товаров. Портал при этом **молча игнорирует** фильтр по свойству,
+ * которого в инфоблоке нет, и возвращает ВЕСЬ список (живая проверка 2026-08-05). Значит «поискать
+ * на всякий случай в обоих» дало бы в одном из них весь каталог; спасает только сверка точного
+ * совпадения на клиенте, которая есть у обоих путей — но полагаться на неё как на единственную
+ * защиту не нужно, когда инфоблок известен из настройки.
+ *
+ * ⚠ Оба внешних кода идут ДО свойства намеренно: они не зависят от настройки, поэтому портал,
+ * где админ ничего не выбрал, всё равно подбирает товар. Прежде свойство стояло раньше, а внешний
+ * код базового товара вообще был заперт за настройкой свойства.
+ *
+ * По названию не ищем никогда — `tests/noNameLookup.test.ts`.
+ */
 export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall, offersIblockId: number | null = null): Promise<number | null> {
-  // 1) Offers (SKU / ТП) first — by article-as-xmlId. Only when the portal has an offers iblock;
-  //    otherwise this is a no-op (returns null) and we go straight to the base-product lookup.
+  const article = (item.article ?? '').trim()
+  if (!article) return null
+
+  // 1) Внешний код торгового предложения.
   if (offersIblockId) {
-    const offerId = await findOfferForItem(item.article, offersIblockId, call)
-    if (offerId) return offerId
+    const byOfferXml = await findOfferByXmlId(article, offersIblockId, call)
+    if (byOfferXml) return byOfferXml
   }
-  // 2) Base product: the configured article property, then the external code (XML_ID).
-  //
-  // ⚠ XML_ID стоит ВНЕ гейта `mapping.article.field`, и это правка по существу. Прежде обе ветки
-  // сидели под одним условием, то есть портал, где админ НЕ выбрал свойство артикула, не делал в
-  // каталог ни одного запроса — даже когда артикулы документа буквально равны внешним кодам его
-  // товаров. Внешний код — системное поле `crm.product`, настройки оно не требует, и запирать его
-  // за чужой настройкой было ошибкой. Раньше её частично прикрывал подбор по имени; с его удалением
-  // она стала видимой и дорогой.
-  if (item.article) {
-    if (mapping.article.field) {
-      const byArticle = await findProductByArticle(item.article, mapping.article, call)
-      if (byArticle) return byArticle
+  // 2) Внешний код базового товара.
+  const byXmlId = await findProductByXmlId(article, call)
+  if (byXmlId) return byXmlId
+
+  // 3) Свойство — один раз, в своём инфоблоке.
+  if (mapping.article.field) {
+    if (mapping.article.scope === 'offer') {
+      return offersIblockId ? await findOfferByProperty(article, mapping.article, offersIblockId, call) : null
     }
-    const byXmlId = await findProductByXmlId(item.article, call)
-    if (byXmlId) return byXmlId
+    return await findProductByArticle(article, mapping.article, call)
   }
-  // ⚠ ПОДБОРА ПО ИМЕНИ НЕТ — решение владельца 2026-08-05. Обоснование записано ТОЧНО, потому что
-  // первая его редакция была сильнее фактов и разбор это поймал.
-  //
-  // Чем подбор по имени БЫЛ: `filter: { NAME: q, ACTIVE: 'Y' }` — ТОЧНОЕ совпадение, не подстрока.
-  // Поэтому довод «у каждого поставщика своё написание» работает против самого себя: при разном
-  // написании точный фильтр просто не совпадёт и вернёт null. То есть в этом сценарии подбор по
-  // имени был не опасен, а бесполезен.
-  //
-  // Настоящих оснований два, и оба уже: (1) ТИХИЙ ФОЛБЭК МАСКИРОВАЛ ПОЛОМКУ ветки артикула — живой
-  // прогон был зелёным при том, что свойства артикула на портале не существовало вовсе, и промах
-  // был виден «только по тому, чего в выводе нет»; (2) дубли в каталоге с байт-идентичным активным
-  // названием (та же «Доставка» от двух поставщиков, наследие прошлых импортов) — тогда `minId`
-  // берёт произвольную, старейшую запись, а после #348 строка ещё и переименовывается в каталожное
-  // имя, то есть подмена становится невидимой. Риск узкий, но именно он и есть риск.
-  //
-  // ⚠ Плата названа: документ БЕЗ колонки артикула (в РБ/РФ распространённый вид первички) больше
-  // не связывается с каталогом ни одной строкой. Раньше часть строк подбиралась по названию.
-  // Молчать об этом нельзя — `crmSyncCore` отдельно предупреждает «ни одна позиция не связана с
-  // каталогом»; без такого предупреждения исход был бы неотличим от успешного импорта.
   return null
 }
 

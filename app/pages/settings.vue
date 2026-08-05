@@ -117,8 +117,18 @@ watch(() => mapping.value.article.field, (code) => {
   }
   if (selectedArticle.value?.value !== code) selectedArticle.value = { value: code, label: code }
 }, { immediate: true })
+/**
+ * Выбор свойства артикула.
+ *
+ * ⚠ Вместе с кодом сохраняется ИНФОБЛОК (`scope`): свойство живёт либо у торговых предложений,
+ * либо у товаров, и подбор обязан искать ровно там. Портал молча игнорирует фильтр по свойству,
+ * которого в инфоблоке нет, и возвращает весь список — то есть «поискать в обоих» означало бы в
+ * одном из них получить весь каталог.
+ */
 function onArticlePicked(o: Record<string, unknown> | undefined) {
   selectedArticle.value = o
+  const scope = o?.scope
+  mapping.value.article.scope = scope === 'offer' ? 'offer' : 'product'
 }
 
 // Notify / error chat pickers (P3): search the portal's group chats via /api/chat-search.
@@ -492,20 +502,39 @@ const ARTICLE_KIND_ITEMS = [
                 >
                   <div class="space-y-6">
                     <!-- Поле артикула поставщика -->
-                    <B24FormField label="По какому полю искать товар в каталоге">
+                    <B24FormField label="Свойство каталога с артикулом поставщика">
+                      <!-- ⚠ Принцип подбора раньше не был описан НИГДЕ, и пустое поле выглядело
+                           безобидным: человек не знал ни что артикул — единственный признак, ни что
+                           внешний код работает без всякой настройки. -->
+                      <p class="mb-2 text-xs text-(--ui-color-base-3)">
+                        Товар в каталоге ищется <b>только по артикулу</b> из документа. По названию не
+                        ищем: у каждого поставщика своё написание, и совпадение названий не значит, что
+                        это тот же товар. Порядок: сначала <b>внешний код</b> торгового предложения,
+                        затем внешний код товара — они работают всегда и настройки не требуют, — и
+                        только потом свойство, выбранное здесь. Оставите поле пустым — останутся
+                        внешние коды; если они у товаров не заполнены, каталог задействован не будет и
+                        строки уйдут как есть, названиями из документа.
+                      </p>
                       <AsyncSearchSelect
                         v-model="articleField"
                         :fetcher="articleFetcher"
                         :selected-option="selectedArticle"
                         :min-chars="0"
                         placeholder="Нажмите и выберите свойство каталога…"
+                        group-key="group"
                         @update:selected-option="onArticlePicked"
                       />
+                      <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                        В списке — свойства торговых предложений и товаров, разделённые заголовками.
+                        Показаны только строковые и текстовые свойства: артикул хранится в них.
+                      </p>
+                      <p class="mt-2 mb-1 text-xs text-(--ui-color-base-3)">
+                        Как в этом свойстве записаны артикулы, если их у товара несколько:
+                      </p>
                       <B24RadioGroup
                         v-model="mapping.article.kind"
                         :items="ARTICLE_KIND_ITEMS"
                         orientation="horizontal"
-                        class="mt-2"
                       />
                       <B24Input
                         v-if="mapping.article.kind === 'string'"

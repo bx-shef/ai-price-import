@@ -15,7 +15,9 @@ describe('parsePortalSettings', () => {
       units: { dictionary: { ШТ: '796', bad: 'x' }, defaultCode: 166, autoCreate: true },
       saveFile: false
     })
-    expect(m.article).toEqual({ field: 'PROP', kind: 'string', delimiter: ';' })
+    // ⚠ `scope` дозаписывается дефолтом `'product'`: настройки, сохранённые до его появления,
+    // выбирались пикером, который показывал только свойства основного каталога товаров.
+    expect(m.article).toEqual({ field: 'PROP', kind: 'string', scope: 'product', delimiter: ';' })
     // ⚠ Сохранённое `by: 'name'` КОЭРСИТСЯ в `'article'`: подбора по имени больше нет вовсе
     // (решение владельца 2026-08-05), и портал со старым значением обязан просто работать по
     // единственной оставшейся стратегии, а не оказаться «ненастроенным».
