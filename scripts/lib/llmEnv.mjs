@@ -34,7 +34,12 @@ export function loadLlmEnv(file = '.env') {
   for (const key of ENV_KEYS) {
     if (process.env[key]) continue
     // Anchored to line start so a commented `#KEY=…` or a longer name ending in KEY can't match.
-    const m = text.match(new RegExp(`^\\s*${key}=(.+)$`, 'm'))
+    // ⚠ `[ \t]*`, not `\s*`: `\s` includes the newline, so the leading run could span blank lines
+    // and the claim «anchored to line start» would be false — harmless here, but a comment that
+    // does not describe the code is what the next reader trusts. `export KEY=…` is accepted too:
+    // the previous parser read such a line as «key absent» and the script said «нет ключа» over a
+    // filled-in file.
+    const m = text.match(new RegExp(`^[ \\t]*(?:export[ \\t]+)?${key}=(.+)$`, 'm'))
     if (m) process.env[key] = m[1].trim().replace(/^["']|["']$/g, '')
   }
 }
