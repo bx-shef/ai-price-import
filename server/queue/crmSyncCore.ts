@@ -5,6 +5,7 @@ import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/
 import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
+import { buildImportTitle, supplierNameTrusted } from '~/utils/importTitle'
 import { normalizeUnitKey } from '~/utils/measureCreate'
 import { allLinesSkippedError, lineSkippedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
@@ -407,15 +408,19 @@ export async function runCrmSync(
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
-      title: `Импорт: ${doc.supplier?.name ?? 'документ'}`.slice(0, 255),
+      title: buildImportTitle(doc),
       // Counterparty (#135): supplier FOUND → link companyId (repeat lead / deal on a company).
       // Supplier NOT found on a LEAD target → fill the lead's own companyTitle from the document
       // (a "raw" lead a manager qualifies) — this removes the unmatched dead-end that other
       // targets have. Other target kinds keep the prior behaviour (created without a company).
+      // ⚠ `companyTitle` лида подчиняется ТОМУ ЖЕ правилу, что и заголовок (#440): здесь непроверенное
+      // название становится не подписью, а ПОЛЕМ ДАННЫХ карточки — то есть хуже заголовка. Два
+      // независимых условия разъехались бы, и имя, не попавшее в заголовок, всё равно оказалось бы
+      // в карточке; поэтому обе точки читают один `supplierNameTrusted`.
       ...(companyId
         ? { companyId }
-        : (target.entityTypeId === ENTITY_TYPE_ID.lead && doc.supplier?.name
-            ? { companyTitle: doc.supplier.name.slice(0, 255) }
+        : (target.entityTypeId === ENTITY_TYPE_ID.lead && supplierNameTrusted(doc)
+            ? { companyTitle: supplierNameTrusted(doc)!.slice(0, 255) }
             : {})),
       ...(doc.currency ? { currencyId: doc.currency } : {}),
       // Set the total explicitly (+ manual flag): live-verified that productrow.set does
