@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { archiveFileName, commonDiskFileUrl, MAX_DISK_NAME, DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
 import { buildActivityInput, buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'

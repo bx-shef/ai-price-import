@@ -24,6 +24,7 @@ async function withPortal(opts: { framed?: boolean, callThrows?: boolean, startT
       async start() {
         if (opts.startThrows) throw new Error('pull server unreachable')
       }
+
       destroy() {}
     }
   }))
