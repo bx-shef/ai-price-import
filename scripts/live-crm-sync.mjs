@@ -30,6 +30,7 @@ import { supplierNameTrusted } from '../app/utils/importTitle.ts'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
 import { loadLlmEnv } from './lib/llmEnv.mjs'
 import { readEnvValue } from './lib/envFile.mjs'
+import { SEED_PRODUCTS, SEED_SUPPLIER, catalogNameFor } from './lib/seedFixture.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
@@ -71,9 +72,10 @@ const listCall = async (method, params) => {
   return Array.isArray(r) ? r : []
 }
 
-// A supplier taxId that exists in the seeded portal (crm.requisite RQ_INN) so the
-// company match succeeds; adjust to a value present on your portal.
-const SUPPLIER_TAX_ID = '7712345678'
+// Налоговый номер поставщика — из ОБЩЕЙ фикстуры (`scripts/lib/seedFixture.mjs`), той же, по
+// которой `pnpm seed:b24` заводит компанию. Литерал здесь был третьей копией: разойдись он с
+// посевом — прогон молча уходил бы в ветку «контрагент не найден», а она выглядит штатной.
+const SUPPLIER_TAX_ID = SEED_SUPPLIER.taxId
 
 // The item set deliberately covers the row-write edge cases of #302: a plain 2-dp net line, a
 // SUB-KOPECK unit price with a FRACTIONAL quantity (0.8654 × 12.345 — per-metre pricing; both
@@ -83,11 +85,13 @@ const CRAFTED = {
   documentType: DOC_TYPE,
   currency: 'BYN',
   priceIncludesVat: false,
-  supplier: noTaxId ? { name: 'ООО «Тест-Поставщик»' } : { name: 'ООО «Тест-Поставщик»', taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
+  supplier: noTaxId ? { name: SEED_SUPPLIER.name } : { name: SEED_SUPPLIER.name, taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
   items: [
-    { name: 'Кабель ВВГ 3х2.5', article: 'KAB-325', quantity: 500, unit: 'м', price: 1.20, vatRate: 20 },
-    { name: 'Автомат С16', article: 'AVT-C16', quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 },
-    { name: 'Провод ПВС 2х1.5', article: 'PVS-215', quantity: 12.345, unit: 'м', price: 0.8654, vatRate: 20 },
+    // Названия и артикулы — из ОБЩЕЙ фикстуры: разойдись они с посевом, подбор перестал бы
+    // срабатывать, а прогон печатал бы «товара в каталоге нет» — неотличимо от портала без посева.
+    { name: SEED_PRODUCTS[0].docName, article: SEED_PRODUCTS[0].article, quantity: 500, unit: 'м', price: 1.20, vatRate: 20 },
+    { name: SEED_PRODUCTS[1].docName, article: SEED_PRODUCTS[1].article, quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 },
+    { name: SEED_PRODUCTS[2].docName, article: SEED_PRODUCTS[2].article, quantity: 12.345, unit: 'м', price: 0.8654, vatRate: 20 },
     { name: 'Доставка', article: 'DLV-1', quantity: 1, unit: 'шт', price: 50, vatRate: 0 }
   ]
 }
@@ -96,11 +100,11 @@ const CRAFTED = {
 // 600.00 + 135.00 + round2(0.8654×12.345)=10.68 + 50.00 = 795.68; НДС 120+27+2.14+0 = 149.14.
 const DOC_TEXT = [
   'ТОВАРНАЯ НАКЛАДНАЯ № ТН-2026-777 от 14.07.2026',
-  noTaxId ? 'Поставщик: ООО «Тест-Поставщик»' : `Поставщик: ООО «Тест-Поставщик»  ИНН: ${SUPPLIER_TAX_ID}`,
+  noTaxId ? `Поставщик: ${SEED_SUPPLIER.name}` : `Поставщик: ${SEED_SUPPLIER.name}  ИНН: ${SUPPLIER_TAX_ID}`,
   'Наименование | Артикул | Кол-во | Ед. | Цена | Сумма',
-  'Кабель ВВГ 3х2.5 | KAB-325 | 500 | м | 1.20 | 600.00',
-  'Автомат С16 | AVT-C16 | 30 | шт | 4.50 | 135.00',
-  'Провод ПВС 2х1.5 | PVS-215 | 12.345 | м | 0.8654 | 10.68',
+  `${SEED_PRODUCTS[0].docName} | ${SEED_PRODUCTS[0].article} | 500 | м | 1.20 | 600.00`,
+  `${SEED_PRODUCTS[1].docName} | ${SEED_PRODUCTS[1].article} | 30 | шт | 4.50 | 135.00`,
+  `${SEED_PRODUCTS[2].docName} | ${SEED_PRODUCTS[2].article} | 12.345 | м | 0.8654 | 10.68`,
   'Доставка | DLV-1 | 1 | шт | 50.00 | 50.00',
   'Итого: 795.68', 'НДС 20%: 149.14', 'Всего к оплате: 944.82', 'Валюта: BYN'
 ].join('\n')
@@ -132,20 +136,30 @@ async function extractWithAi(text) {
  * идёт по имени с явной строкой в выводе, а не притворяется, что артикул проверен.
  */
 async function articleFieldOnPortal() {
+  let catalogs
   try {
-    const { catalogs } = await call('catalog.catalog.list', { select: ['id', 'iblockId', 'productIblockId'] })
-    const iblockId = (catalogs ?? []).find(c => c.productIblockId)?.productIblockId ?? (catalogs ?? [])[0]?.iblockId
-    if (!iblockId) return null
-    const { productProperties } = await call('catalog.productProperty.list', { filter: { iblockId }, select: ['id', 'code'] })
-    const found = (productProperties ?? []).find(p => p.code === 'ARTICLE')
-    if (!found) {
-      console.log('  ⚠ свойства артикула на портале нет — подбор пойдёт по имени (`pnpm seed:b24` его заводит)')
-      return null
-    }
-    return `PROPERTY_${found.id}`
-  } catch {
+    ;({ catalogs } = await call('catalog.catalog.list', { select: ['id', 'iblockId', 'productIblockId'] }))
+  } catch (e) {
+    // ⚠ НЕ глотаем. Голый `catch → null` схлопывал четыре разных состояния в одно — «свойства нет»,
+    // «нет права `catalog`», «портал ответил 5xx», «каталога нет вовсе», — печатал утвердительное
+    // «свойства артикула на портале нет», откатывал подбор в прежнюю непроверенную конфигурацию
+    // `by:'name'` и выключал проверку ниже её же гейтом. Прогон при этом оставался ЗЕЛЁНЫМ, то есть
+    // воспроизводился ровно тот класс, который эта правка и чинит: скрипт притворяется, что артикул
+    // проверен. Отказ портала обязан быть отличим от отсутствия свойства.
+    throw new Error(`не удалось прочитать каталог портала: ${e instanceof Error ? e.message : 'ошибка'}`, { cause: e })
+  }
+  const iblockId = (catalogs ?? []).find(c => c.productIblockId)?.productIblockId ?? (catalogs ?? [])[0]?.iblockId
+  if (!iblockId) {
+    console.log('  ⚠ каталога на портале нет — подбор пойдёт по имени')
     return null
   }
+  const { productProperties } = await call('catalog.productProperty.list', { filter: { iblockId }, select: ['id', 'code'] })
+  const found = (productProperties ?? []).find(p => p.code === 'ARTICLE')
+  if (!found) {
+    console.log('  ⚠ свойства артикула на портале нет — подбор пойдёт по имени (`pnpm seed:b24` его заводит)')
+    return null
+  }
+  return `PROPERTY_${found.id}`
 }
 
 const ARTICLE_FIELD = await articleFieldOnPortal()
@@ -279,27 +293,45 @@ try {
     const opp = Number(item.opportunity)
     console.log(`rows: ${rows.length}, Σ price×qty = ${rowSum}`)
 
-    // #348 + приоритетная ветка подбора: при подборе ПО АРТИКУЛУ строка уходит БЕЗ `productName`,
-    // и портал подставляет каталожное название. Значит совпадение имени строки с каталожным — это
-    // и есть доказательство, что товар подобран, а не записан свободной строкой.
+    // Подбор БАЗОВОГО товара: строка подобранного товара уходит БЕЗ `productName` (#348), и портал
+    // подставляет каталожное название. Значит каталожное имя в строке — доказательство подбора.
     //
-    // ⚠ Проверка нужна потому, что промах здесь НЕВИДИМ: не найдя товар, приложение пишет
-    // свободную строку с названием из документа, сумма сходится, статус зелёный. Ровно так ветка
-    // артикула и не работала — `product.by` стоял в `name`, а свойства артикула на портале не было
-    // вовсе, и ни один прогон об этом не сообщил.
-    if (ARTICLE_FIELD && !useAi) {
-      const seeded = await call('crm.product.list', { filter: { ACTIVE: 'Y', [`%${ARTICLE_FIELD}`]: 'KAB-325' }, select: ['ID', 'NAME'] })
-      const catalogName = (seeded ?? [])[0]?.NAME
-      if (!catalogName) {
-        console.log('  ⚠ товара с артикулом KAB-325 в каталоге нет — подбор проверять не на чем (`pnpm seed:b24`)')
+    // ⚠ Проверка нужна потому, что промах здесь НЕВИДИМ: не найдя товар, приложение пишет свободную
+    // строку с названием из документа, сумма сходится, статус зелёный. Ровно так эта ветка и не
+    // работала — `product.by` стоял в `name`, а свойства артикула на портале не было вовсе.
+    // ⚠ Утверждение держится на инварианте «каталожное имя ≠ написания в документе» — иначе то же
+    // совпадение дал бы запасной подбор ПО ИМЕНИ при полностью сломанной ветке артикула, и проверка
+    // стала бы тавтологией. Инвариант проверяется здесь же, а не подразумевается.
+    // ⚠ Проверяются ВСЕ засеянные позиции, а не одна: `.some()` покрывал первую, а две другие могли
+    // молча уехать свободными строками.
+    if (ARTICLE_FIELD) {
+      const known = SEED_PRODUCTS.filter(p => doc.items.some(i => (i.article ?? '') === p.article))
+      if (!known.length) {
+        console.log('  ⚠ ни один засеянный артикул не дошёл до документа — подбор проверять не на чем')
       } else {
-        const matched = rows.some(r => r.productName === catalogName)
-        if (!matched) {
-          throw new Error(`#348: товар с артикулом KAB-325 есть в каталоге («${catalogName}»), но строка ушла свободной — подбор по артикулу не сработал`)
+        for (const p of known) {
+          const expected = catalogNameFor(p.docName)
+          if (expected === p.docName) throw new Error(`фикстура сломана: каталожное имя совпало с документным («${expected}») — проверка стала бы тавтологией`)
+          // Тем же отбором, каким ходит прод (`findProductByArticle`): ACTIVE + порядок по ID.
+          // ⚠ Своё имя переменной: снаружи `rows` — это СТРОКИ СОЗДАННОЙ ЗАПИСИ, и затенение их
+          // каталожной выборкой сравнивало бы каталог сам с собой.
+          const catalogRows = await call('crm.product.list', {
+            filter: { ACTIVE: 'Y', [`%${ARTICLE_FIELD}`]: p.article }, select: ['ID', 'NAME'], order: { ID: 'ASC' }
+          })
+          const inCatalog = (catalogRows ?? []).find(r => r.NAME === expected)
+          if (!inCatalog) {
+            console.log(`  ⚠ товара с артикулом ${p.article} в каталоге нет — проверять не на чем (\`pnpm seed:b24\`)`)
+            continue
+          }
+          const row = rows.find(r => r.productName === expected)
+          if (!row) {
+            throw new Error(`#348: товар с артикулом ${p.article} есть в каталоге («${expected}»), но строка ушла свободной — подбор не сработал`)
+          }
         }
-        console.log(`✓ подбор по артикулу сработал: строка несёт каталожное название «${catalogName}», а не написание документа`)
+        console.log(`✓ подбор по артикулу сработал на ${known.length} позициях: строки несут каталожные названия, а не написание документа`)
       }
     }
+
     // #347: what the OPERATOR sees in the «Цена» column. `taxIncluded` picks which stored number
     // the grid prints, so that column must equal the document's own price — in BOTH directions.
     // Sums alone cannot catch a regression here: flipping the flag leaves every total identical

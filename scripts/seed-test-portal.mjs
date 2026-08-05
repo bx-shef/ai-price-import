@@ -1,43 +1,36 @@
 // Посев тестового портала под живой заход (`docs/PROJECT_MAP.md` §12.1, блок 0).
 //
-// ⚠ Зачем скрипт, если данные «остаются от прошлых прогонов»: на портале `b24-hrbvzq` их НЕ БЫЛО.
-// Каждый `pnpm live:crm` печатал «Контрагент … не найден — запись создана без привязки к компании»,
-// и это читалось как штатное сообщение, хотя означало ровно обратное: **счастливый путь подбора
-// контрагента ни разу не наблюдался вживую**. Так же с артикулом — в инфоблоке каталога вообще не
-// было свойства под него, то есть приоритетная ветка `findProduct` не могла сработать в принципе.
-// Оба пути покрыты юнит-тестами, и оба до сих пор были 🧪, а не ✅.
+// ⚠ ТОЛЬКО ТЕСТОВЫЙ ПОРТАЛ. Скрипт меняет данные и схему: заводит компанию с реквизитом, товары и —
+// если его нет — свойство каталога «Артикул». `--clean` УДАЛЯЕТ заведённое. Гард `assertTestPortal`
+// пускает только на портал из белого списка; его обход (`--yes-target=<домен>`) для этого скрипта
+// означает запись и удаление в чужой CRM, а свойство каталога не откатывается вовсе.
 //
-// ⚠ Идемпотентен: ищет компании по точному имени, товары по внешнему коду, и обновляет их, а не
-// плодит копии. Повторный прогон обязан
-// быть безопасным — иначе после третьего запуска на портале десяток одинаковых «Тест-Поставщиков»,
-// и `findCompanyByTaxId` начинает выбирать из дублей, то есть проверка портит ровно то, что готовит.
+// ⚠ Зачем он нужен: на портале `b24-hrbvzq` этих данных НЕ БЫЛО, и заметить это было нечем. Каждый
+// `pnpm live:crm` печатал «Контрагент … не найден — запись создана без привязки к компании», и это
+// читалось как штатное сообщение, хотя означало обратное: счастливый путь подбора контрагента не
+// наблюдался. Со свойством артикула хуже — его в каталоге не существовало, а обе ветки подбора
+// БАЗОВОГО товара (свойство артикула → внешний код) сидят под одним гейтом `product.by === 'article'`,
+// который в прогоне был зашит в `'name'`. (Приоритетная ветка `findProduct` — торговые предложения;
+// она идёт до этого гейта и проверена отдельно 2026-08-02.)
 //
 //   pnpm seed:b24            # завести/обновить
-//   pnpm seed:b24 --clean    # снести засеянное (компании, товары; свойство каталога остаётся)
+//   pnpm seed:b24 --clean    # снести заведённое (компания, товары; свойство каталога остаётся)
 //
-// Свойство каталога `--clean` НЕ удаляет намеренно: к нему привязаны значения у товаров, которых
-// скрипт мог не заводить, и удаление свойства стёрло бы чужие данные заодно.
+// ⚠ Что `--clean` НЕ убирает и почему: свойство каталога (к нему могут быть привязаны значения
+// чужих товаров) и СДЕЛКИ прошлых прогонов — удаление компании уносит её дела, а сделки остаются
+// в воронке уже без компании. Живые прогоны чистят свои сделки сами; чужие мы не трогаем.
 
 import { readEnvValue } from './lib/envFile.mjs'
 import { makeCall } from './lib/testPortal.mjs'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { SEED_PRODUCTS, SEED_SUPPLIER, catalogNameFor, seedXmlId } from './lib/seedFixture.mjs'
 
 const WEBHOOK = readEnvValue('.env.b24test', 'B24_TEST_WEBHOOK')
 assertTestPortal(WEBHOOK)
 const call = makeCall(WEBHOOK)
 const clean = process.argv.includes('--clean')
 
-// Значения совпадают с фикстурой `live-crm-sync.mjs` — иначе посев готовит не то, что проверяется.
-const SUPPLIER = { name: 'ООО «Тест-Поставщик»', taxId: '7712345678' }
-const XML_ID = 'AIPI_SEED_SUPPLIER'
-const NO_RQ_TITLE = '[TEST] Поставщик без реквизитов'
-const NO_RQ_XML = 'AIPI_SEED_SUPPLIER_NO_RQ'
-const PRODUCTS = [
-  { name: '[TEST] Кабель ВВГ 3х2.5', article: 'KAB-325', price: 1.2 },
-  { name: '[TEST] Автомат С16', article: 'AVT-C16', price: 4.5 },
-  { name: '[TEST] Провод ПВС 2х1.5', article: 'PVS-215', price: 0.8654 }
-]
-const PRODUCT_XML_PREFIX = 'AIPI_SEED_'
+const COMPANY_TITLE = `[TEST] ${SEED_SUPPLIER.name}`
 
 /** Инфоблок товаров портала (у каталога торговых предложений заполнен `productIblockId`). */
 async function productIblockId() {
@@ -69,56 +62,60 @@ async function ensureArticleProperty(iblockId) {
 }
 
 /**
- * Поиск компании по ТОЧНОМУ имени.
+ * Компания — по НАЛОГОВОМУ НОМЕРУ, то есть тем же ключом, каким её ищет приложение
+ * (`findCompanyByTaxId` → `crm.requisite.list`).
  *
- * ⚠ Не по `xmlId`, хотя он и записывается: `crm.item.list` фильтр по нему ОТВЕРГАЕТ
- * (`field 'XML_ID' is not allowed in filter`), а `crm.company.list` — молча ИГНОРИРУЕТ и отдаёт
- * весь список. Второе хуже отказа: поиск «нашёл бы» первую попавшуюся компанию портала, посев решил
- * бы, что всё на месте, и не завёл бы ничего — а живая проверка искала бы контрагента, которого нет.
- * `=title` фильтрует по-настоящему — проверено на портале в обе стороны.
+ * ⚠ Первая редакция искала по точному ИМЕНИ, и это было неверно дважды. Во-первых, имя вообще не
+ * идентификатор: приложение по нему компанию не ищет никогда, поэтому «нашлось по имени» не значит
+ * «приложение найдёт». Во-вторых — и это хуже — при совпадении имени посев ПЕРЕЗАПИСЫВАЛ бы
+ * реквизит чужой компании: подменил бы `RQ_INN` у карточки, которую завёл человек. Тихая порча
+ * чужих данных вместо честного «такой компании нет, завожу свою».
+ * ⚠ По `xmlId` искать нельзя: `crm.item.list` фильтр по нему отвергает, `crm.company.list` — молча
+ * игнорирует и отдаёт весь список, да и в `select` его не возвращает (проверено на портале).
  */
-async function findCompanyByTitle(title) {
-  const { items } = await call('crm.item.list', { entityTypeId: 4, filter: { '=title': title }, select: ['id', 'title'] })
-  return (items ?? [])[0] ?? null
-}
-
-async function ensureCompany({ title, xmlId }) {
-  const found = await findCompanyByTitle(title)
-  if (found) return { id: found.id, created: false }
-  const { item } = await call('crm.item.add', { entityTypeId: 4, fields: { title, xmlId } })
-  return { id: item.id, created: true }
-}
-
-/**
- * Реквизит с налоговым номером — то, по чему приложение и ищет контрагента.
- *
- * ⚠ Номер живёт в `RQ_INN` реквизита, а НЕ в поле компании: `findCompanyByTaxId` читает
- * `crm.requisite.list`. Компания без реквизита выглядит заведённой, а подбор её не находит — ровно
- * то состояние, в котором портал и был.
- */
-async function ensureRequisite(companyId, { name, taxId }) {
-  const list = await call('crm.requisite.list', {
-    filter: { ENTITY_TYPE_ID: 4, ENTITY_ID: companyId }, select: ['ID', 'RQ_INN']
+async function findCompanyByTaxId(taxId) {
+  const rows = await call('crm.requisite.list', {
+    filter: { RQ_INN: taxId }, select: ['ID', 'ENTITY_ID', 'ENTITY_TYPE_ID']
   })
-  const existing = (list ?? [])[0]
-  const fields = { RQ_COMPANY_NAME: name, RQ_INN: taxId, NAME: name }
-  if (existing) {
-    await call('crm.requisite.update', { id: existing.ID, fields })
-    return { id: existing.ID, created: false }
+  const rq = (rows ?? []).find(r => String(r.ENTITY_TYPE_ID) === '4')
+  return rq ? { companyId: Number(rq.ENTITY_ID), requisiteId: rq.ID } : null
+}
+
+async function ensureSupplier() {
+  const found = await findCompanyByTaxId(SEED_SUPPLIER.taxId)
+  if (found) {
+    // Найдена ПО НАШЕМУ номеру — значит она наша по определению, обновлять её безопасно.
+    await call('crm.requisite.update', {
+      id: found.requisiteId,
+      fields: { RQ_COMPANY_NAME: SEED_SUPPLIER.name, RQ_INN: SEED_SUPPLIER.taxId }
+    })
+    return { ...found, created: false }
   }
+  const { item } = await call('crm.item.add', { entityTypeId: 4, fields: { title: COMPANY_TITLE } })
   const presets = await call('crm.requisite.preset.list', {})
   const preset = (presets ?? []).find(p => p.NAME === 'Организация') ?? (presets ?? [])[0]
   if (!preset) throw new Error('на портале нет пресетов реквизитов')
-  const id = await call('crm.requisite.add', {
-    fields: { ENTITY_TYPE_ID: 4, ENTITY_ID: companyId, PRESET_ID: preset.ID, ...fields }
+  const requisiteId = await call('crm.requisite.add', {
+    fields: {
+      ENTITY_TYPE_ID: 4, ENTITY_ID: item.id, PRESET_ID: preset.ID,
+      NAME: SEED_SUPPLIER.name, RQ_COMPANY_NAME: SEED_SUPPLIER.name, RQ_INN: SEED_SUPPLIER.taxId
+    }
   })
-  return { id, created: true }
+  return { companyId: item.id, requisiteId, created: true }
 }
 
+/**
+ * Товар — по ВНЕШНЕМУ КОДУ. Фильтр `crm.product.list` по `XML_ID` действительно фильтрует
+ * (проверено на портале в обе стороны: своё значение → одна строка, несуществующее → пусто), в
+ * отличие от компаний, где такой фильтр молча игнорируется.
+ */
 async function ensureProduct(p, propertyId) {
-  const xmlId = PRODUCT_XML_PREFIX + p.article
+  const xmlId = seedXmlId(p.article)
   const found = await call('crm.product.list', { filter: { XML_ID: xmlId }, select: ['ID'] })
-  const fields = { NAME: p.name, XML_ID: xmlId, PRICE: p.price, CURRENCY_ID: 'BYN', ACTIVE: 'Y', [`PROPERTY_${propertyId}`]: p.article }
+  const fields = {
+    NAME: catalogNameFor(p.docName), XML_ID: xmlId, PRICE: p.price,
+    CURRENCY_ID: 'BYN', ACTIVE: 'Y', [`PROPERTY_${propertyId}`]: p.article
+  }
   if ((found ?? [])[0]) {
     await call('crm.product.update', { id: found[0].ID, fields })
     return { id: found[0].ID, created: false }
@@ -128,50 +125,52 @@ async function ensureProduct(p, propertyId) {
 }
 
 async function removeSeeded() {
-  for (const title of [`[TEST] ${SUPPLIER.name}`, NO_RQ_TITLE]) {
-    const c = await findCompanyByTitle(title)
-    if (c) {
-      await call('crm.item.delete', { entityTypeId: 4, id: c.id })
-      console.log(`  − компания ${c.id} (${title})`)
-    }
+  const found = await findCompanyByTaxId(SEED_SUPPLIER.taxId)
+  if (found) {
+    await call('crm.item.delete', { entityTypeId: 4, id: found.companyId })
+    console.log(`  − компания ${found.companyId} (по налоговому номеру ${SEED_SUPPLIER.taxId})`)
+  } else {
+    console.log('  · компании с нашим налоговым номером нет')
   }
-  for (const p of PRODUCTS) {
-    const found = await call('crm.product.list', { filter: { XML_ID: PRODUCT_XML_PREFIX + p.article }, select: ['ID'] })
-    for (const row of found ?? []) {
+  for (const p of SEED_PRODUCTS) {
+    const rows = await call('crm.product.list', { filter: { XML_ID: seedXmlId(p.article) }, select: ['ID'] })
+    for (const row of rows ?? []) {
       await call('crm.product.delete', { id: row.ID })
       console.log(`  − товар ${row.ID} (${p.article})`)
     }
   }
-  console.log('\n✅ засеянное убрано (свойство каталога оставлено — см. шапку скрипта)')
+  console.log('\n✅ заведённое убрано (свойство каталога и сделки прошлых прогонов остаются — см. шапку)')
 }
 
 if (clean) {
-  console.log('уборка засеянного…')
+  console.log('уборка заведённого…')
   await removeSeeded()
 } else {
   const iblockId = await productIblockId()
-  console.log(`инфоблок товаров: ${iblockId}`)
   const propertyId = await ensureArticleProperty(iblockId)
-  console.log(`свойство артикула: PROPERTY_${propertyId}`)
+  console.log(`инфоблок товаров: ${iblockId}, свойство артикула: PROPERTY_${propertyId}`)
 
-  const supplier = await ensureCompany({ title: `[TEST] ${SUPPLIER.name}`, xmlId: XML_ID })
-  const rq = await ensureRequisite(supplier.id, SUPPLIER)
-  console.log(`компания-поставщик: ${supplier.id} (${supplier.created ? 'заведена' : 'уже была'}), реквизит ${rq.id} (${rq.created ? 'заведён' : 'обновлён'}), УНП/ИНН ${SUPPLIER.taxId}`)
+  const supplier = await ensureSupplier()
+  console.log(`компания-поставщик: ${supplier.companyId} (${supplier.created ? 'заведена' : 'уже была'}), реквизит ${supplier.requisiteId}, УНП/ИНН ${SEED_SUPPLIER.taxId}`)
 
-  const noRq = await ensureCompany({ title: NO_RQ_TITLE, xmlId: NO_RQ_XML })
-  console.log(`компания без реквизитов: ${noRq.id} (${noRq.created ? 'заведена' : 'уже была'}) — путь «контрагент не найден»`)
-
-  for (const p of PRODUCTS) {
+  for (const p of SEED_PRODUCTS) {
     const r = await ensureProduct(p, propertyId)
-    console.log(`товар ${r.id} (${r.created ? 'заведён' : 'обновлён'}): ${p.article} — ${p.name}`)
+    console.log(`товар ${r.id} (${r.created ? 'заведён' : 'обновлён'}): ${p.article} — ${catalogNameFor(p.docName)}`)
   }
 
-  // Проверка ОБРАТНЫМ чтением тем же способом, каким ищет приложение: посев, который «прошёл», но
-  // ничего не находит, хуже отсутствующего — он создаёт уверенность там, где её нет.
-  const back = await call('crm.requisite.list', { filter: { RQ_INN: SUPPLIER.taxId }, select: ['ID', 'ENTITY_ID', 'ENTITY_TYPE_ID'] })
-  const hit = (back ?? []).find(r => String(r.ENTITY_TYPE_ID) === '4' && String(r.ENTITY_ID) === String(supplier.id))
-  if (!hit) throw new Error(`посев не читается обратно: реквизита с RQ_INN=${SUPPLIER.taxId} у компании ${supplier.id} не нашлось`)
-  console.log(`\n✓ обратное чтение: RQ_INN ${SUPPLIER.taxId} → компания ${supplier.id}`)
+  // Обратное чтение ТЕМ ЖЕ способом, каким ищет приложение. Посев, который «прошёл», но ничего не
+  // находит, хуже отсутствующего — он создаёт уверенность там, где её нет.
+  const back = await findCompanyByTaxId(SEED_SUPPLIER.taxId)
+  if (!back || back.companyId !== supplier.companyId) {
+    throw new Error(`посев не читается обратно: по RQ_INN=${SEED_SUPPLIER.taxId} компания ${back?.companyId ?? 'не найдена'}, ожидалась ${supplier.companyId}`)
+  }
+  for (const p of SEED_PRODUCTS) {
+    const rows = await call('crm.product.list', {
+      filter: { [`%PROPERTY_${propertyId}`]: p.article, ACTIVE: 'Y' }, select: ['ID', 'NAME'], order: { ID: 'ASC' }
+    })
+    if (!(rows ?? []).length) throw new Error(`посев не читается обратно: товара с артикулом ${p.article} не нашлось`)
+  }
+  console.log(`\n✓ обратное чтение: номер ${SEED_SUPPLIER.taxId} → компания ${supplier.companyId}; все ${SEED_PRODUCTS.length} артикула находятся`)
   console.log('\n✅ портал засеян. Дальше: `pnpm live:crm` — привязка к компании и подбор по артикулу')
   console.log('   ⚠ в настройках приложения выберите свойство артикула — «Артикул» (иначе подбор пойдёт по имени)')
 }
