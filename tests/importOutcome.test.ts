@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ON_MISSING_ITEMS, ON_MISSING_LABEL } from '../app/config/onMissing'
-import { allLinesSkippedError, lineSkippedWarning, MAX_OUTCOME_TEXT, skippedLinesAdvice } from '../app/utils/importOutcome'
+import { allLinesSkippedError, lineSkippedWarning, MAX_OUTCOME_TEXT, noLinesMatchedWarning, skippedLinesAdvice } from '../app/utils/importOutcome'
 import { MAX_CHAT_REASON, buildSuccessMessage } from '../server/utils/chatNotify'
 import { MAX_ACTIVITY_BLOCKS, buildActivityLines } from '../server/utils/configurableActivity'
 
@@ -171,6 +171,39 @@ describe('#388: бюджет строк в деле таймлайна', () => {
       const total = header + 1 + budget + 1 // шапка + «Проблемы (N):» + предупреждения + совет
       expect(total, `поставщик: ${supplier}`).toBeLessThanOrEqual(MAX_ACTIVITY_BLOCKS)
       expect(budget, 'предупреждений не осталось вовсе').toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('noLinesMatchedWarning: самый тихий исход', () => {
+  it('обе редакции влезают в предел чата', () => {
+    // ⚠ Пин длины обязателен, как у соседей: чат режет строку, а запас у этого текста всего
+    // несколько знаков — следующая правка формулировки обрезала бы его МОЛЧА, и человек прочитал
+    // бы полфразы про то, что каталог не использовался.
+    for (const configured of [true, false]) {
+      expect(noLinesMatchedWarning(configured).length, `field=${configured}`).toBeLessThanOrEqual(MAX_OUTCOME_TEXT)
+    }
+  })
+
+  it('причина названа УСЛОВНО и разная у двух состояний настройки', () => {
+    // ⚠ Со стороны воркера две ситуации неразличимы: поле не выбрано либо выбрано верно, а
+    // артикулов нет в самом документе. Утверждать первое означало бы гнать админа править
+    // настройку, которая может быть в порядке.
+    const noField = noLinesMatchedWarning(false)
+    const withField = noLinesMatchedWarning(true)
+    expect(noField).not.toBe(withField)
+    expect(noField).toContain('не выбрано поле')
+    expect(withField).toContain('нет колонки с артикулом')
+    for (const t of [noField, withField]) expect(t).toContain('Скорее всего')
+  })
+
+  it('говорит, что строки ВНЕСЕНЫ, а не пропущены', () => {
+    // ⚠ Отличие от `skippedLinesAdvice`: там строк в записи НЕТ и человек видит это по короткому
+    // документу; здесь записаны все до единой, и заметить нечего — поэтому текст обязан сказать
+    // именно про связь с каталогом, а не про пропуск.
+    for (const t of [noLinesMatchedWarning(true), noLinesMatchedWarning(false)]) {
+      expect(t).toContain('внесены как есть')
+      expect(t).not.toContain('пропущен')
     }
   })
 })

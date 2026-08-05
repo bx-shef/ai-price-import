@@ -27,7 +27,7 @@ const listCall = async (method, params) => {
 }
 
 const mapping = {
-  article: { field: '', kind: 'text' }, product: { by: 'name', onMissing: 'freeform' },
+  article: { field: '', kind: 'text' }, product: { by: 'article', onMissing: 'freeform' },
   units: { dictionary: { шт: 796 }, defaultCode: 796, autoCreate: false },
   saveFile: false, routingRules: [], defaultTarget: { entityTypeId: 2, categoryId: 0 }
 }

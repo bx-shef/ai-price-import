@@ -44,10 +44,16 @@ describe('findOfferForItem', () => {
     const call = vi.fn(async () => ({ offers: [] }))
     expect(await findOfferForItem('A-1', 'Гвоздь', 27, call)).toBeNull()
     expect(call).toHaveBeenCalledTimes(1)
-    expect(JSON.stringify(call.mock.calls[0]?.[1]), 'в фильтре появилось имя').not.toContain('Гвоздь')
+    // ⚠ По ВСЕМ вызовам: прежняя проверяла только первый (а он всегда фильтр по xmlId), то есть
+    // была истинна по построению и второй линией защиты не являлась.
+    for (const [, params] of call.mock.calls) {
+      expect(JSON.stringify(params), 'в фильтре появилось имя').not.toContain('Гвоздь')
+    }
   })
 
-  it('нет артикула → null БЕЗ запросов', async () => {
+  it('КАНАРЕЙКА: нет артикула, портал отвечает совпадением на ЛЮБОЙ запрос → всё равно null', async () => {
+    // ⚠ Утверждение о поведении, а не о числе вызовов: совпасть при отсутствии артикула может
+    // только имя. Переживает батчинг и кэш.
     const call = vi.fn(async () => ({ offers: [{ id: 5 }] }))
     expect(await findOfferForItem(undefined, 'Гвоздь', 27, call)).toBeNull()
     expect(call).not.toHaveBeenCalled()

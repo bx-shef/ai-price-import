@@ -7,7 +7,7 @@ import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
 import { buildImportTitle, supplierNameTrusted } from '~/utils/importTitle'
 import { normalizeUnitKey } from '~/utils/measureCreate'
-import { allLinesSkippedError, lineSkippedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
+import { allLinesSkippedError, lineSkippedWarning, noLinesMatchedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
@@ -256,6 +256,7 @@ export async function runCrmSync(
   const rows: Array<Record<string, unknown>> = []
   const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
   let skippedLines = 0
+  let matchedLines = 0
   let sort = 10
   for (const item of doc.items) {
     // Only a positive rate is matched (validated in the pre-pass); 0 / absent = «Без НДС» → taxRate
@@ -268,6 +269,7 @@ export async function runCrmSync(
       skippedLines++
       continue
     }
+    if (productId) matchedLines++
     // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
     // free-form position (productId undefined) carrying the document name/price.
 
@@ -383,6 +385,15 @@ export async function runCrmSync(
   // печатал «Проблемы (4)» на трёх пропущенных строках, а сама подсказка читалась как четвёртая
   // поломка документа. Отдельное поле снимает и обрезку, и счётчик разом.
   const advice = skippedLines > 0 ? skippedLinesAdvice() : undefined
+
+  // ⚠ «Ни одна строка не связалась с каталогом» — ОТДЕЛЬНОЕ предупреждение и самый тихий исход из
+  // возможных: строки записаны все до единой, сумма верна, статус «Готово», а связи с номенклатурой
+  // нет ни у одной. Заметить нечего, всплывает недели спустя в отчёте по товарам. Ставится только
+  // при `freeform` (при `skip-warn` строк просто не будет и сработает другой текст) и только когда
+  // записанные строки ЕСТЬ — иначе оно повторяло бы отказ выше.
+  if (rows.length > 0 && matchedLines === 0 && mapping.product.onMissing === 'freeform') {
+    warnings.push(noLinesMatchedWarning(Boolean(mapping.article.field)))
+  }
 
   const entityTypeId = target.entityTypeId
   let entityId: number

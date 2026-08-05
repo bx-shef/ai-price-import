@@ -5,7 +5,7 @@ import { articleMatches, parseSupplierArticles } from '~/utils/supplierArticles'
 import { findOfferForItem } from './offerLookup'
 
 // Deterministic product lookup for crm-sync (find_product tool body). DI over RestCall.
-// Strategies (mapping.product.by):
+// Strategies (единственная — по артикулу; `mapping.product.by` больше не читается):
 //   • 'article' → the admin-configured catalog property (mapping.article.field) holding
 //     the supplier article(s) AND the product's external code (XML_ID / «внешний код»).
 //     Supports BOTH field variants (kind 'text' = one article per line / 'string' = delimiter-separated).
@@ -79,21 +79,41 @@ export async function findProduct(item: DocumentItem, mapping: PortalMapping, ca
     const offerId = await findOfferForItem(item.article, item.name, offersIblockId, call)
     if (offerId) return offerId
   }
-  // 2) Base product by the configured article property, then by external code (XML_ID).
-  if (mapping.article.field && item.article) {
-    const byArticle = await findProductByArticle(item.article, mapping.article, call)
-    if (byArticle) return byArticle
+  // 2) Base product: the configured article property, then the external code (XML_ID).
+  //
+  // ⚠ XML_ID стоит ВНЕ гейта `mapping.article.field`, и это правка по существу. Прежде обе ветки
+  // сидели под одним условием, то есть портал, где админ НЕ выбрал свойство артикула, не делал в
+  // каталог ни одного запроса — даже когда артикулы документа буквально равны внешним кодам его
+  // товаров. Внешний код — системное поле `crm.product`, настройки оно не требует, и запирать его
+  // за чужой настройкой было ошибкой. Раньше её частично прикрывал подбор по имени; с его удалением
+  // она стала видимой и дорогой.
+  if (item.article) {
+    if (mapping.article.field) {
+      const byArticle = await findProductByArticle(item.article, mapping.article, call)
+      if (byArticle) return byArticle
+    }
     const byXmlId = await findProductByXmlId(item.article, call)
     if (byXmlId) return byXmlId
   }
-  // ⚠ ПОДБОРА ПО ИМЕНИ НЕТ, и это решение владельца (2026-08-05), а не пропуск. Имя товара —
-  // не идентификатор: у каждого поставщика своё написание одной и той же позиции, и совпадение
-  // строки означает лишь совпадение строки. Цена ошибки несимметрична — неверно подобранный товар
-  // пишет в карточку клиента ЧУЖУЮ позицию (со своей ценой, единицей и остатком), и обнаруживается
-  // это уже в отчётах, а не при импорте; ненайденная позиция всего лишь уходит свободной строкой
-  // с названием из документа, то есть ровно тем, что в документе и написано.
-  // ⚠ Плата названа: на портале без свойства артикула и на документе без артикулов не совпадёт
-  // НИЧЕГО, и каждая строка станет свободной. Это ожидаемо и лучше тихой подмены товара.
+  // ⚠ ПОДБОРА ПО ИМЕНИ НЕТ — решение владельца 2026-08-05. Обоснование записано ТОЧНО, потому что
+  // первая его редакция была сильнее фактов и разбор это поймал.
+  //
+  // Чем подбор по имени БЫЛ: `filter: { NAME: q, ACTIVE: 'Y' }` — ТОЧНОЕ совпадение, не подстрока.
+  // Поэтому довод «у каждого поставщика своё написание» работает против самого себя: при разном
+  // написании точный фильтр просто не совпадёт и вернёт null. То есть в этом сценарии подбор по
+  // имени был не опасен, а бесполезен.
+  //
+  // Настоящих оснований два, и оба уже: (1) ТИХИЙ ФОЛБЭК МАСКИРОВАЛ ПОЛОМКУ ветки артикула — живой
+  // прогон был зелёным при том, что свойства артикула на портале не существовало вовсе, и промах
+  // был виден «только по тому, чего в выводе нет»; (2) дубли в каталоге с байт-идентичным активным
+  // названием (та же «Доставка» от двух поставщиков, наследие прошлых импортов) — тогда `minId`
+  // берёт произвольную, старейшую запись, а после #348 строка ещё и переименовывается в каталожное
+  // имя, то есть подмена становится невидимой. Риск узкий, но именно он и есть риск.
+  //
+  // ⚠ Плата названа: документ БЕЗ колонки артикула (в РБ/РФ распространённый вид первички) больше
+  // не связывается с каталогом ни одной строкой. Раньше часть строк подбиралась по названию.
+  // Молчать об этом нельзя — `crmSyncCore` отдельно предупреждает «ни одна позиция не связана с
+  // каталогом»; без такого предупреждения исход был бы неотличим от успешного импорта.
   return null
 }
 
