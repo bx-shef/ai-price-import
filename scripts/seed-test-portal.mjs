@@ -16,16 +16,23 @@
 //   pnpm seed:b24            # завести/обновить
 //   pnpm seed:b24 --clean    # снести заведённое (компания, товары; свойство каталога остаётся)
 //
+// ⚠ `--clean` удаляет ЛЮБУЮ компанию с нашим налоговым номером, даже заведённую человеком. Это
+// симметрично посеву («нашлась по нашему номеру ⇒ наша») и безопасно ровно потому, что номер
+// заведомо фиктивный; на портале с настоящими контрагентами так делать нельзя.
+//
 // ⚠ Что `--clean` НЕ убирает и почему: свойство каталога (к нему могут быть привязаны значения
 // чужих товаров) и СДЕЛКИ прошлых прогонов — удаление компании уносит её дела, а сделки остаются
 // в воронке уже без компании. Живые прогоны чистят свои сделки сами; чужие мы не трогаем.
 
-import { readEnvValue } from './lib/envFile.mjs'
-import { makeCall } from './lib/testPortal.mjs'
+import { makeCall, readHook } from './lib/testPortal.mjs'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
 import { SEED_PRODUCTS, SEED_SUPPLIER, catalogNameFor, seedXmlId } from './lib/seedFixture.mjs'
 
-const WEBHOOK = readEnvValue('.env.b24test', 'B24_TEST_WEBHOOK')
+// ⚠ Адрес берётся ТЕМ ЖЕ хелпером, что и у остальных живых скриптов. Своё чтение
+// `B24_TEST_WEBHOOK` было четвёртой дорогой к порталу: разойдись два ключа в `.env.b24test` — посев
+// и прогон уехали бы на РАЗНЫЕ порталы, и получилось бы ровно «часть проверок зелена, часть красна,
+// и обе врут о причине».
+const WEBHOOK = readHook('.env.b24test')
 assertTestPortal(WEBHOOK)
 const call = makeCall(WEBHOOK)
 const clean = process.argv.includes('--clean')
