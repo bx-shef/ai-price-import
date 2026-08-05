@@ -121,9 +121,43 @@ async function extractWithAi(text) {
   return out.document
 }
 
+/**
+ * Свойство артикула ТОГО портала, на котором идёт прогон.
+ *
+ * ⚠ Раньше здесь стояло `PROPERTY_ARTICLE` литералом, и такого свойства на портале нет вовсе —
+ * `findProduct` молча падал на подбор по имени, строки уезжали как ненайденные (с названием из
+ * документа), а прогон печатал зелёное. То есть ПРИОРИТЕТНАЯ ветка подбора не проверялась ни разу,
+ * и это не было видно: расхождение проявляется только в том, чего в выводе НЕТ.
+ * ⚠ Ищем по коду `ARTICLE` — его заводит `pnpm seed:b24`. Нет свойства ⇒ отдаём литерал: прогон
+ * тогда честно идёт по имени, а не притворяется, что проверил артикул.
+ */
+async function articleFieldOnPortal() {
+  try {
+    const { catalogs } = await call('catalog.catalog.list', { select: ['id', 'iblockId', 'productIblockId'] })
+    const iblockId = (catalogs ?? []).find(c => c.productIblockId)?.productIblockId ?? (catalogs ?? [])[0]?.iblockId
+    if (!iblockId) return null
+    const { productProperties } = await call('catalog.productProperty.list', { filter: { iblockId }, select: ['id', 'code'] })
+    const found = (productProperties ?? []).find(p => p.code === 'ARTICLE')
+    if (!found) {
+      console.log('  ⚠ свойства артикула на портале нет — подбор пойдёт по имени (`pnpm seed:b24` его заводит)')
+      return null
+    }
+    return `PROPERTY_${found.id}`
+  } catch {
+    return null
+  }
+}
+
+const ARTICLE_FIELD = await articleFieldOnPortal()
+console.log(`подбор товара: ${ARTICLE_FIELD ? `по артикулу (${ARTICLE_FIELD})` : 'по имени — свойства артикула на портале нет'}`)
+
 const mapping = {
-  article: { field: 'PROPERTY_ARTICLE', kind: 'text' },
-  product: { by: 'name', onMissing: 'freeform' },
+  article: { field: ARTICLE_FIELD ?? '', kind: 'text' },
+  // ⚠ `by: 'article'` только когда свойство артикула на портале ЕСТЬ. Прежде здесь стояло
+  // безусловное `by: 'name'`, и ветка артикула — приоритетная в `findProduct` — не запускалась
+  // ВООБЩЕ: она гейтится этим самым полем. Прогон при этом был зелёным, потому что имя тоже даёт
+  // подбор; расхождение видно только по тому, чего в выводе нет.
+  product: { by: ARTICLE_FIELD ? 'article' : 'name', onMissing: 'freeform' },
   units: { dictionary: { шт: 796, м: 6 }, defaultCode: 796, autoCreate: false },
   saveFile: false,
   routingRules: [
@@ -244,6 +278,28 @@ try {
     const rowSum = Math.round(rows.reduce((s, r) => s + Number(r.price) * Number(r.quantity), 0) * 100) / 100
     const opp = Number(item.opportunity)
     console.log(`rows: ${rows.length}, Σ price×qty = ${rowSum}`)
+
+    // #348 + приоритетная ветка подбора: при подборе ПО АРТИКУЛУ строка уходит БЕЗ `productName`,
+    // и портал подставляет каталожное название. Значит совпадение имени строки с каталожным — это
+    // и есть доказательство, что товар подобран, а не записан свободной строкой.
+    //
+    // ⚠ Проверка нужна потому, что промах здесь НЕВИДИМ: не найдя товар, приложение пишет
+    // свободную строку с названием из документа, сумма сходится, статус зелёный. Ровно так ветка
+    // артикула и не работала — `product.by` стоял в `name`, а свойства артикула на портале не было
+    // вовсе, и ни один прогон об этом не сообщил.
+    if (ARTICLE_FIELD && !useAi) {
+      const seeded = await call('crm.product.list', { filter: { ACTIVE: 'Y', [`%${ARTICLE_FIELD}`]: 'KAB-325' }, select: ['ID', 'NAME'] })
+      const catalogName = (seeded ?? [])[0]?.NAME
+      if (!catalogName) {
+        console.log('  ⚠ товара с артикулом KAB-325 в каталоге нет — подбор проверять не на чем (`pnpm seed:b24`)')
+      } else {
+        const matched = rows.some(r => r.productName === catalogName)
+        if (!matched) {
+          throw new Error(`#348: товар с артикулом KAB-325 есть в каталоге («${catalogName}»), но строка ушла свободной — подбор по артикулу не сработал`)
+        }
+        console.log(`✓ подбор по артикулу сработал: строка несёт каталожное название «${catalogName}», а не написание документа`)
+      }
+    }
     // #347: what the OPERATOR sees in the «Цена» column. `taxIncluded` picks which stored number
     // the grid prints, so that column must equal the document's own price — in BOTH directions.
     // Sums alone cannot catch a regression here: flipping the flag leaves every total identical
