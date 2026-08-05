@@ -7,7 +7,7 @@
 // (`items` и голый массив), другой только первую; один проверял результат удаления, другой глотал
 // отказ и всё равно печатал «удалено N».
 
-import { readFileSync } from 'node:fs'
+import { readEnvValue } from './envFile.mjs'
 
 /**
  * Адрес вебхука тест-портала.
@@ -18,15 +18,8 @@ import { readFileSync } from 'node:fs'
  * иначе продолжал бы ходить на прежний портал.
  */
 export function readHook(envPath) {
-  let value = ''
-  try {
-    const text = readFileSync(envPath, 'utf8')
-    for (const m of text.matchAll(/^B24_HOOK=(.*)$/gm)) value = m[1]
-  } catch { /* нет файла — ниже переменная или честная ошибка */ }
-  if (!value) value = process.env.B24_HOOK ?? ''
-  // Кавычки вокруг значения — обычное написание в .env; без снятия `new URL` бросает, и скрипт
-  // сообщает «не разобрать адрес вебхука», уводя от настоящей причины.
-  const hook = value.trim().replace(/^["']|["']$/g, '')
+  const fromFile = readEnvValue(envPath, 'B24_HOOK', { required: false })
+  const hook = fromFile || (process.env.B24_HOOK ?? '').trim().replace(/^["']|["']$/g, '')
   if (!hook) throw new Error('нет B24_HOOK: положите вебхук в .env.b24test')
   return hook
 }

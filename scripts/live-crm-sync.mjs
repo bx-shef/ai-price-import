@@ -15,7 +15,6 @@
 // счёт→smart-invoice (xmlId marker) are DISTINCT idempotency code paths, so both are worth a
 // live run. Reads git-ignored env: .env.b24test (B24_TEST_WEBHOOK) and, with --ai, the LLM
 // provider from env (LLM_PROVIDER + DEEPSEEK_API_KEY / VIBE_API_KEY). Creates then deletes a [TEST] entity.
-import { readFileSync } from 'node:fs'
 import { buildExtractionPrompt } from '../prompts/extract.ts'
 import { runCrmSync } from '../server/queue/crmSyncCore.ts'
 import { resolveLlmConfig } from '../server/agent/llmConfig.ts'
@@ -30,6 +29,7 @@ import { findExistingItemId } from '../server/utils/originLookup.ts'
 import { supplierNameTrusted } from '../app/utils/importTitle.ts'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
 import { loadLlmEnv } from './lib/llmEnv.mjs'
+import { readEnvValue } from './lib/envFile.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
@@ -52,14 +52,7 @@ const DOC_TYPE = typeArg || 'накладная'
 // уйдёт в запись, и тип сверяется с закрытым списком.
 const noTaxId = args.has('--no-taxid')
 
-const readEnv = (file, key) => {
-  // Anchor to line start (^…$ with the m flag) so a commented `#KEY=…` or a longer
-  // variable ending with KEY can't be captured; strip surrounding quotes.
-  const m = readFileSync(file, 'utf8').match(new RegExp(`^\\s*${key}=(.+)$`, 'm'))
-  if (!m) throw new Error(`${key} not found in ${file}`)
-  return m[1].trim().replace(/^["']|["']$/g, '')
-}
-const WEBHOOK = readEnv('.env.b24test', 'B24_TEST_WEBHOOK')
+const WEBHOOK = readEnvValue('.env.b24test', 'B24_TEST_WEBHOOK')
 assertTestPortal(WEBHOOK)
 
 const call = async (method, params = {}) => {
