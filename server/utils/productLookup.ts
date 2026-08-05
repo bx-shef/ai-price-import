@@ -6,7 +6,6 @@ import { findOfferForItem } from './offerLookup'
 
 // Deterministic product lookup for crm-sync (find_product tool body). DI over RestCall.
 // Strategies (mapping.product.by):
-//   • 'name'    → exact product NAME via crm.product.list (verified live: {ID, NAME}).
 //   • 'article' → the admin-configured catalog property (mapping.article.field) holding
 //     the supplier article(s) AND the product's external code (XML_ID / «внешний код»).
 //     Supports BOTH field variants (kind 'text' = one article per line / 'string' = delimiter-separated).
@@ -21,14 +20,6 @@ import { findOfferForItem } from './offerLookup'
 // live-verify on a catalog-enabled portal before relying on them (this dev webhook has no catalog REST).
 // SKU / trade-offer («торговое предложение») matching with priority over the base product is a
 // documented follow-up (needs catalog.product.offer.* + a subscription portal) — see docs.
-
-/** Find an ACTIVE catalog product id by exact name, or null (min id on duplicates). */
-export async function findProductByName(name: string, call: RestCall): Promise<number | null> {
-  const q = (name ?? '').trim()
-  if (!q) return null
-  const rows = await call('crm.product.list', { filter: { NAME: q, ACTIVE: 'Y' }, select: ['ID'] }) as Array<{ ID: string }> | undefined
-  return minId(rows)
-}
 
 /**
  * Find an ACTIVE catalog product by its external code (XML_ID / «внешний код»), or null. Distributors
@@ -79,24 +70,31 @@ export async function findProductByArticle(article: string, cfg: ArticleFieldCon
  *  - **Trade offers (SKU) have PRIORITY** when the portal has them (`offersIblockId` resolved once per
  *    job): a printed article is often the OFFER's XML_ID, and a deal row can carry the offer id directly
  *    (owner ask «приоритет SKU»). Fail-soft: no offers iblock / no match → fall through to products.
- *  - Article strategy then tries: the supplier-article property → the external code (XML_ID) — both
- *    ACTIVE-only — then an exact NAME match (never drops the line here). */
+ *  - Base product then tries: the supplier-article property → the external code (XML_ID), both
+ *    ACTIVE-only. NAME matching does not exist — see the note at the end of the function. */
 export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall, offersIblockId: number | null = null): Promise<number | null> {
-  // 1) Offers (SKU / ТП) first — by article-as-xmlId, then by name. Only when the portal has an offers
-  //    iblock; otherwise this is a no-op (returns null) and we go straight to the base-product lookup.
+  // 1) Offers (SKU / ТП) first — by article-as-xmlId. Only when the portal has an offers iblock;
+  //    otherwise this is a no-op (returns null) and we go straight to the base-product lookup.
   if (offersIblockId) {
     const offerId = await findOfferForItem(item.article, item.name, offersIblockId, call)
     if (offerId) return offerId
   }
   // 2) Base product by the configured article property, then by external code (XML_ID).
-  if (mapping.product.by === 'article' && mapping.article.field && item.article) {
+  if (mapping.article.field && item.article) {
     const byArticle = await findProductByArticle(item.article, mapping.article, call)
     if (byArticle) return byArticle
     const byXmlId = await findProductByXmlId(item.article, call)
     if (byXmlId) return byXmlId
   }
-  // 3) Fall back to an exact product name.
-  return findProductByName(item.name, call)
+  // ⚠ ПОДБОРА ПО ИМЕНИ НЕТ, и это решение владельца (2026-08-05), а не пропуск. Имя товара —
+  // не идентификатор: у каждого поставщика своё написание одной и той же позиции, и совпадение
+  // строки означает лишь совпадение строки. Цена ошибки несимметрична — неверно подобранный товар
+  // пишет в карточку клиента ЧУЖУЮ позицию (со своей ценой, единицей и остатком), и обнаруживается
+  // это уже в отчётах, а не при импорте; ненайденная позиция всего лишь уходит свободной строкой
+  // с названием из документа, то есть ровно тем, что в документе и написано.
+  // ⚠ Плата названа: на портале без свойства артикула и на документе без артикулов не совпадёт
+  // НИЧЕГО, и каждая строка станет свободной. Это ожидаемо и лучше тихой подмены товара.
+  return null
 }
 
 /**

@@ -86,7 +86,10 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
       ...(typeof art.delimiter === 'string' ? { delimiter: art.delimiter } : {})
     },
     product: {
-      by: prod.by === 'name' ? 'name' : 'article',
+      // ⚠ Сохранённое `'name'` КОЭРСИТСЯ в `'article'`, а не отвергается: подбора по имени больше
+      // нет вовсе, и портал, у которого в настройках лежит старое значение, обязан просто работать
+      // по единственной оставшейся стратегии, а не оказаться «ненастроенным».
+      by: 'article',
       // Product creation was removed; the legacy `'create'` degrades to `'freeform'` (keep the line
       // as a free-form position — the closest non-dropping behaviour).
       // ⚠ `'skip-warn'` требует ЯВНО сохранённого значения, всё остальное падает на дефолт `'freeform'`
@@ -155,7 +158,10 @@ export function isPortalConfigured(m: PortalMapping): boolean {
   // нетронутого портала — гейт настройки молча выключился бы для всех (ровно та же ловушка, что была
   // с `saveFile` в #328). Ссылка на `defaultMapping()` делает такое расхождение невозможным.
   const d = defaultMapping()
-  if (m.product.by !== d.product.by || m.product.onMissing !== d.product.onMissing) return true
+  // ⚠ `product.by` здесь БОЛЬШЕ НЕ СВЕРЯЕТСЯ: стратегия подбора одна (по артикулу), выбирать нечего,
+  // и сравнение всегда давало бы `false` — то есть было бы мёртвым кодом, который следующий читатель
+  // принял бы за работающую проверку.
+  if (m.product.onMissing !== d.product.onMissing) return true
   if (m.units.defaultCode !== d.units.defaultCode || m.units.autoCreate !== d.units.autoCreate) return true
   // Default target moved off the fallback anchor (deal / direction 0 / no stage)? categoryId 0 IS
   // the anchor (default deal pipeline), so only a non-zero funnel or a set stage counts as configured.

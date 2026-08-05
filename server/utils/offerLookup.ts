@@ -51,22 +51,15 @@ export async function findOfferByXmlId(xmlId: string, iblockId: number, call: Re
   return minOfferId(res?.offers)
 }
 
-/** Find an ACTIVE offer id by exact name, or null. */
-export async function findOfferByName(name: string, iblockId: number, call: RestCall): Promise<number | null> {
-  const q = (name ?? '').trim()
-  if (!q || !iblockId) return null
-  const res = await call('catalog.product.offer.list', {
-    select: ['id', 'iblockId'],
-    filter: { iblockId, name: q, active: 'Y' }
-  }) as { offers?: unknown } | undefined
-  return minOfferId(res?.offers)
-}
-
-/** Resolve a document line to an offer id: by article-as-xmlId first (the strong signal), then by exact
- *  name. Null when no offers iblock or nothing matched. */
-export async function findOfferForItem(article: string | undefined, name: string, iblockId: number | null, call: RestCall): Promise<number | null> {
+/** Resolve a document line to an offer id by article-as-xmlId. Null when no offers iblock or nothing
+ *  matched. NAME matching does not exist — see `productLookup.findProduct`.
+ *  ⚠ `name` остаётся в сигнатуре намеренно: вызывающий передаёт всю строку документа, и молчаливое
+ *  исчезновение параметра сделало бы возврат имени сюда правкой на одну строку. */
+export async function findOfferForItem(article: string | undefined, _name: string, iblockId: number | null, call: RestCall): Promise<number | null> {
   if (!iblockId) return null
   const byArticle = article ? await findOfferByXmlId(article, iblockId, call) : null
   if (byArticle) return byArticle
-  return findOfferByName(name, iblockId, call)
+  // ⚠ По имени НЕ ищем — см. `productLookup.findProduct`: имя не идентификатор ни у товара, ни у
+  // торгового предложения, а ошибочно подобранное ТП пишет в карточку клиента чужую позицию.
+  return null
 }

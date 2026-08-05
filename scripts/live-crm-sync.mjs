@@ -171,7 +171,7 @@ const mapping = {
   // безусловное `by: 'name'`, и ветка артикула — приоритетная в `findProduct` — не запускалась
   // ВООБЩЕ: она гейтится этим самым полем. Прогон при этом был зелёным, потому что имя тоже даёт
   // подбор; расхождение видно только по тому, чего в выводе нет.
-  product: { by: ARTICLE_FIELD ? 'article' : 'name', onMissing: 'freeform' },
+  product: { by: 'article', onMissing: 'freeform' },
   units: { dictionary: { шт: 796, м: 6 }, defaultCode: 796, autoCreate: false },
   saveFile: false,
   routingRules: [

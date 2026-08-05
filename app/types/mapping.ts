@@ -42,8 +42,10 @@ export interface ArticleFieldConfig {
 
 /** Product lookup strategy. */
 export interface ProductLookupConfig {
-  /** 'article' → by supplier article; 'name' → by full product name. */
-  by: 'article' | 'name'
+  /** Единственная стратегия — по артикулу (свойство каталога → внешний код). Подбора по ИМЕНИ нет:
+   *  решение владельца 2026-08-05, обоснование — в `server/utils/productLookup.findProduct`. Поле
+   *  оставлено как `'article'`-литерал, чтобы сохранённые настройки порталов читались без миграции. */
+  by: 'article'
   /** What to do when no product matched. Creating a catalog product was removed (too complex an
    *  operation for a multitenant import) — an unmatched line is either dropped with a warning
    *  (`skip-warn`) or written as a free-form position without a product id (`freeform`). */

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { resolveOffersIblockId, findOfferByXmlId, findOfferByName, findOfferForItem } from '../server/utils/offerLookup'
+import { resolveOffersIblockId, findOfferByXmlId, findOfferForItem } from '../server/utils/offerLookup'
 
 describe('resolveOffersIblockId', () => {
   it('picks the catalog whose productIblockId is set (the offers iblock)', async () => {
@@ -37,35 +37,25 @@ describe('findOfferByXmlId', () => {
   })
 })
 
-describe('findOfferByName', () => {
-  it('filters by iblockId + name + active → min id', async () => {
-    const call = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27 }] }))
-    expect(await findOfferByName('Мешок', 27, call)).toBe(3)
-    expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { select: ['id', 'iblockId'], filter: { iblockId: 27, name: 'Мешок', active: 'Y' } })
-  })
-})
-
 describe('findOfferForItem', () => {
-  it('article-as-xmlId first, then name', async () => {
-    // article hit → one call, no name lookup
-    const artHit = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27 }] }))
-    expect(await findOfferForItem('1030162', 'Мешок', 27, artHit)).toBe(3)
-    expect(artHit).toHaveBeenCalledTimes(1)
-    // article miss → falls to name
-    const call = vi.fn()
-      .mockResolvedValueOnce({ offers: [] }) // xmlId miss
-      .mockResolvedValueOnce({ offers: [{ id: 8, iblockId: 27 }] }) // name hit
-    expect(await findOfferForItem('NOPE', 'Мешок', 27, call)).toBe(8)
-    expect(call).toHaveBeenCalledTimes(2)
+  it('ПО ИМЕНИ НЕ ИЩЕМ: артикул не совпал → null после РОВНО одного запроса', async () => {
+    // ⚠ Зеркало решения по базовому товару: ошибочно подобранное торговое предложение так же пишет
+    // в карточку клиента чужую позицию. Второй вызов здесь — это и есть возврат подбора по имени.
+    const call = vi.fn(async () => ({ offers: [] }))
+    expect(await findOfferForItem('A-1', 'Гвоздь', 27, call)).toBeNull()
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(call.mock.calls[0]?.[1]), 'в фильтре появилось имя').not.toContain('Гвоздь')
   })
+
+  it('нет артикула → null БЕЗ запросов', async () => {
+    const call = vi.fn(async () => ({ offers: [{ id: 5 }] }))
+    expect(await findOfferForItem(undefined, 'Гвоздь', 27, call)).toBeNull()
+    expect(call).not.toHaveBeenCalled()
+  })
+
   it('no offers iblock → null (fail-soft, no call)', async () => {
     const call = vi.fn()
     expect(await findOfferForItem('x', 'y', null, call)).toBeNull()
     expect(call).not.toHaveBeenCalled()
-  })
-  it('both article-xmlId and name miss → null after exactly 2 calls', async () => {
-    const call = vi.fn(async () => ({ offers: [] }))
-    expect(await findOfferForItem('NOPE', 'Тоже нет', 27, call)).toBeNull()
-    expect(call).toHaveBeenCalledTimes(2)
   })
 })

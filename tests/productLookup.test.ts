@@ -1,29 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { findProduct, findProductByArticle, findProductByName, findProductByXmlId } from '../server/utils/productLookup'
+import { findProduct, findProductByArticle, findProductByXmlId } from '../server/utils/productLookup'
 import { defaultMapping } from '../app/utils/portalSettings'
 import type { DocumentItem } from '../app/types/document'
 
 const item = (over: Partial<DocumentItem> = {}): DocumentItem => ({ name: 'Гвоздь', price: 1, quantity: 1, ...over })
-
-describe('findProductByName', () => {
-  it('filters by NAME and returns the smallest positive id', async () => {
-    const call = vi.fn(async () => [{ ID: '31' }, { ID: '29' }])
-    expect(await findProductByName('Гвоздь', call)).toBe(29)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
-  })
-  it('null on empty name or no rows', async () => {
-    const call = vi.fn(async () => [])
-    expect(await findProductByName('   ', call)).toBeNull()
-    expect(call).not.toHaveBeenCalled()
-    expect(await findProductByName('x', vi.fn(async () => undefined))).toBeNull()
-  })
-  it('filters out non-finite / non-positive ids (minId guard)', async () => {
-    const call = vi.fn(async () => [{ ID: 'abc' }, { ID: '-1' }, { ID: '0' }, { ID: '7' }])
-    expect(await findProductByName('x', call)).toBe(7)
-    const allBad = vi.fn(async () => [{ ID: 'abc' }, { ID: '-1' }])
-    expect(await findProductByName('x', allBad)).toBeNull()
-  })
-})
 
 const artCfg = (over: Partial<ReturnType<typeof defaultMapping>['article']> = {}) => ({ ...defaultMapping().article, field: '130', kind: 'text' as const, ...over })
 
@@ -97,29 +77,40 @@ describe('findProductByXmlId (external code «внешний код», ACTIVE-on
 })
 
 describe('findProduct (strategy routing)', () => {
-  it('by:\'name\' always uses NAME (ignores article), ACTIVE-only', async () => {
+  it('ПО ИМЕНИ НЕ ИЩЕМ: артикул не совпал ни свойством, ни внешним кодом → null, третьего вызова нет', async () => {
+    // ⚠ Решение владельца 2026-08-05. Имя товара не идентификатор: у каждого поставщика своё
+    // написание одной позиции. Неверно подобранный товар пишет в карточку клиента ЧУЖУЮ позицию —
+    // со своей ценой, единицей и остатком, — и всплывает это в отчётах, а не при импорте.
+    // Проверяется ЧИСЛО вызовов: возврат подбора по имени — это ровно третий `crm.product.list`.
     const m = defaultMapping()
-    m.product.by = 'name'
-    const call = vi.fn(async () => [{ ID: '5' }])
-    await findProduct(item({ article: 'A-1' }), m, call)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
-  })
-  it('by:\'article\' tries the article property, then XML_ID, then falls back to NAME', async () => {
-    const m = defaultMapping()
-    m.product.by = 'article'
     m.article.field = '130'
-    const call = vi.fn()
-      .mockResolvedValueOnce([]) // article-property miss
-      .mockResolvedValueOnce([]) // XML_ID miss
-      .mockResolvedValueOnce([{ ID: '9' }]) // name hit
-    expect(await findProduct(item({ article: 'A-1' }), m, call)).toBe(9)
-    expect(call).toHaveBeenNthCalledWith(1, 'crm.product.list', { filter: { '%PROPERTY_130': 'A-1', 'ACTIVE': 'Y' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
-    expect(call).toHaveBeenNthCalledWith(2, 'crm.product.list', { filter: { XML_ID: 'A-1', ACTIVE: 'Y' }, select: ['ID'] })
-    expect(call).toHaveBeenNthCalledWith(3, 'crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
+    const call = vi.fn(async () => [])
+    expect(await findProduct(item({ article: 'A-1' }), m, call)).toBeNull()
+    expect(call).toHaveBeenCalledTimes(2)
+    for (const [, params] of call.mock.calls) {
+      expect(JSON.stringify(params), 'в фильтре появилось имя товара').not.toContain('NAME')
+    }
   })
-  it('by:\'article\' — article-property miss but XML_ID (внешний код) hit → returns it, no NAME call', async () => {
+
+  it('нет артикула в документе → null БЕЗ единого запроса', async () => {
+    // ⚠ Раньше эта строка уходила искать по имени. Теперь запроса нет вовсе: искать нечем.
     const m = defaultMapping()
-    m.product.by = 'article'
+    m.article.field = '130'
+    const call = vi.fn(async () => [{ ID: '4' }])
+    expect(await findProduct(item(), m, call)).toBeNull()
+    expect(call).not.toHaveBeenCalled()
+  })
+
+  it('нет свойства артикула в настройках → null БЕЗ запросов (внешний код под тем же гейтом)', async () => {
+    const m = defaultMapping()
+    m.article.field = ''
+    const call = vi.fn(async () => [{ ID: '4' }])
+    expect(await findProduct(item({ article: 'A-1' }), m, call)).toBeNull()
+    expect(call).not.toHaveBeenCalled()
+  })
+
+  it('by:\'article\' — article-property miss but XML_ID (внешний код) hit → returns it, no name lookup at all', async () => {
+    const m = defaultMapping()
     m.article.field = '130'
     const call = vi.fn()
       .mockResolvedValueOnce([]) // article-property miss
@@ -128,9 +119,8 @@ describe('findProduct (strategy routing)', () => {
     expect(call).toHaveBeenCalledTimes(2)
     expect(call).toHaveBeenNthCalledWith(2, 'crm.product.list', { filter: { XML_ID: 'EXT-1', ACTIVE: 'Y' }, select: ['ID'] })
   })
-  it('by:\'article\' with a matching property returns it WITHOUT XML_ID / NAME fallback', async () => {
+  it('by:\'article\' with a matching property returns it WITHOUT the XML_ID call', async () => {
     const m = defaultMapping()
-    m.product.by = 'article'
     m.article.field = '130'
     const call = vi.fn(async () => [{ ID: '12', PROPERTY_130: 'A-1' }])
     expect(await findProduct(item({ article: 'A-1' }), m, call)).toBe(12)
@@ -138,28 +128,8 @@ describe('findProduct (strategy routing)', () => {
     expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { '%PROPERTY_130': 'A-1', 'ACTIVE': 'Y' }, select: ['ID', 'PROPERTY_130'], order: { ID: 'ASC' } })
   })
 
-  it('by:\'article\' with property-miss AND XML_ID-miss AND name-miss → null (3 calls)', async () => {
-    const m = defaultMapping()
-    m.product.by = 'article'
-    m.article.field = '130'
-    const call = vi.fn(async () => [])
-    expect(await findProduct(item({ article: 'A-1' }), m, call)).toBeNull()
-    expect(call).toHaveBeenCalledTimes(3)
-  })
-
-  it('by:\'article\' with no article printed goes straight to NAME', async () => {
-    const m = defaultMapping()
-    m.product.by = 'article'
-    m.article.field = '130'
-    const call = vi.fn(async () => [{ ID: '4' }])
-    expect(await findProduct(item(), m, call)).toBe(4)
-    expect(call).toHaveBeenCalledTimes(1)
-    expect(call).toHaveBeenCalledWith('crm.product.list', { filter: { NAME: 'Гвоздь', ACTIVE: 'Y' }, select: ['ID'] })
-  })
-
   it('OFFER (SKU) has PRIORITY: article matches an offer xmlId → returns offer id, no product lookup', async () => {
     const m = defaultMapping()
-    m.product.by = 'article'
     m.article.field = '130'
     const call = vi.fn(async (method: string) =>
       method === 'catalog.product.offer.list' ? { offers: [{ id: 3, iblockId: 27 }] } : [])
@@ -171,7 +141,6 @@ describe('findProduct (strategy routing)', () => {
 
   it('offer miss → falls through to the base-product lookup', async () => {
     const m = defaultMapping()
-    m.product.by = 'article'
     m.article.field = '130'
     const call = vi.fn(async (method: string) =>
       method === 'catalog.product.offer.list' ? { offers: [] } : [{ ID: '77', PROPERTY_130: 'A-1' }])
@@ -182,7 +151,6 @@ describe('findProduct (strategy routing)', () => {
 
   it('offersIblockId null (no SKU catalog) → offers skipped entirely (pre-offer behaviour)', async () => {
     const m = defaultMapping()
-    m.product.by = 'article'
     m.article.field = '130'
     const call = vi.fn(async () => [{ ID: '9', PROPERTY_130: 'A-1' }])
     expect(await findProduct(item({ article: 'A-1' }), m, call, null)).toBe(9)
