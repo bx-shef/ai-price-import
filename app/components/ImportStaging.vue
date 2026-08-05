@@ -4,6 +4,7 @@ import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import AttachIcon from '@bitrix24/b24icons-vue/outline/AttachIcon'
 import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_GENERIC_ERROR, formatBytes, validateUploadFile, type UploadOutcome } from '~/utils/importUpload'
 import { FORMATS_HUMAN } from '~/config/uploadFormats'
+import { MAX_ITEMS } from '~/utils/extractedDocument'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
 import { readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
@@ -55,6 +56,9 @@ const props = defineProps<{
 // Surface the «идёт импорт» state to the parent so it can BLOCK the rest of the UI while the run is
 // in flight — the operator shouldn't touch settings/metrics mid-run (owner ask).
 const emit = defineEmits<{ 'update:busy': [boolean] }>()
+
+/** «10 000», а не «10000»: длинное число без разделителя читается как случайный набор цифр. */
+const maxItemsHuman = MAX_ITEMS.toLocaleString('ru-RU')
 
 const staged = ref<StagedFile[]>([])
 let nextId = 1
@@ -346,7 +350,11 @@ function cancelImport(): void {
         Нажмите, чтобы выбрать файл или сделать фото. Можно просто перетащить файлы сюда
       </span>
       <span class="text-sm text-(--ui-color-base-3)">
-        {{ importing ? 'Заблокировано, пока идёт импорт' : `${FORMATS_HUMAN} · до 20 МБ · чтобы начать, нажмите «Импортировать» внизу` }}
+        <!-- ⚠ Предел строк назван ЗДЕСЬ, до загрузки. Прайс дистрибьютора на десятки тысяч
+             позиций — обычное дело, а не экзотика, и узнавать о пределе после разбора значило бы
+             получить отказ на документ, который вообще не следовало отправлять. Число берётся из
+             того же `MAX_ITEMS`, которым предохранитель и проверяет: рукописное разъехалось бы. -->
+        {{ importing ? 'Заблокировано, пока идёт импорт' : `${FORMATS_HUMAN} · до 20 МБ · до ${maxItemsHuman} строк товаров · чтобы начать, нажмите «Импортировать» внизу` }}
       </span>
       <input
         ref="fileInput"

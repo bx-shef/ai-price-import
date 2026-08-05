@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildChatRequest, runChatExtract, type ChatFn } from '../server/agent/chatExtract'
+// ⚠ Через классификатор, а не по подстроке: несущее утверждение — что НАШ отказ доедет до человека
+// СВОИМ текстом. Проверка голой подстроки проходила бы и при потерянной пометке `ownFailure`, когда
+// «разделите файл» подменяется советом «попробуйте позже».
+import { describeLlmFailure } from '../server/agent/llmFailure'
 
 const INSTR = 'извлеки JSON'
 const DOC = 'Накладная ... Болт М6 100 шт 0.45'
@@ -67,7 +71,8 @@ describe('runChatExtract', () => {
     const chat: ChatFn = async () => JSON.stringify({ documentType: 'счёт', items: [] })
     const out = await runChatExtract({ documentText: DOC, instructions: INSTR, model: 'm' }, { chat, ...noWait })
     expect(out.ok).toBe(false)
-    expect(out.error).toContain('табличную часть')
+    expect(describeLlmFailure(out.error).kind, 'наш отказ ушёл бы советом про провайдера').toBe('own')
+    expect(describeLlmFailure(out.error).message).toContain('не нашлась таблица товаров')
   })
 
   it('rejects a reply with too many items (hard error, no silent truncation)', async () => {
@@ -75,7 +80,10 @@ describe('runChatExtract', () => {
     const chat: ChatFn = async () => JSON.stringify(many)
     const out = await runChatExtract({ documentText: DOC, instructions: INSTR, model: 'm' }, { chat, ...noWait })
     expect(out.ok).toBe(false)
-    expect(out.error).toContain('слишком много позиций')
+    expect(describeLlmFailure(out.error).kind, 'наш отказ ушёл бы советом про провайдера').toBe('own')
+    // ⚠ Разделитель разрядов — неразрывный пробел из `toLocaleString('ru-RU')`, обычный пробел в
+    // сравнении не совпадёт; и это правильное написание, а не то, что надо чинить.
+    expect(describeLlmFailure(out.error).message).toMatch(/10\s000 строк товаров/)
   })
 
   it('advances the attempt counter across a retry that ends in a terminal validation fail', async () => {
@@ -87,7 +95,8 @@ describe('runChatExtract', () => {
     const out = await runChatExtract({ documentText: DOC, instructions: INSTR, model: 'm' }, { chat, ...noWait })
     expect(out.ok).toBe(false)
     expect(out.attempts).toBe(2)
-    expect(out.error).toContain('табличную часть')
+    expect(describeLlmFailure(out.error).kind, 'наш отказ ушёл бы советом про провайдера').toBe('own')
+    expect(describeLlmFailure(out.error).message).toContain('не нашлась таблица товаров')
     expect(chat).toHaveBeenCalledTimes(2)
   })
 
@@ -96,7 +105,8 @@ describe('runChatExtract', () => {
     const out = await runChatExtract({ documentText: DOC, instructions: INSTR, model: 'm' }, { chat, ...noWait })
     expect(out.ok).toBe(false)
     expect(out.attempts).toBe(1)
-    expect(out.error).toContain('табличную часть')
+    expect(describeLlmFailure(out.error).kind, 'наш отказ ушёл бы советом про провайдера').toBe('own')
+    expect(describeLlmFailure(out.error).message).toContain('не нашлась таблица товаров')
   })
 
   it('unwraps JSON even if the model wraps it in stray prose', async () => {

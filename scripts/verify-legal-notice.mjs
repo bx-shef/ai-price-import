@@ -13,7 +13,8 @@
 // ⚠ Объявление здесь СИНТЕТИЧЕСКОЕ: реестр в приложении пуст (механизм заведён до первого
 // изменения документов), и брать оттуда нечего. Сообщение шлётся в [TEST]-чат и удаляется.
 import { readFileSync } from 'node:fs'
-import { buildLegalNotice, buildLegalNoticeChat, effectiveDate, formatRuDate, noticeProblems } from '../app/utils/legalNotice.ts'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { NOTICE_DAYS, buildLegalNotice, buildLegalNoticeChat, effectiveDate, formatRuDate, noticeProblems } from '../app/utils/legalNotice.ts'
 import { sendChatMessage } from '../server/utils/chatNotify.ts'
 
 const CHAT_TITLE = '[TEST] verify:legal-notice — уведомление об изменении документов'
@@ -30,7 +31,9 @@ function hook() {
   throw new Error('нет B24_HOOK: положите вебхук в .env.b24test')
 }
 
-const base = hook().replace(/\/?$/, '/')
+const HOOK = hook()
+assertTestPortal(HOOK)
+const base = HOOK.replace(/\/?$/, '/')
 async function call(method, params = {}) {
   const res = await fetch(`${base}${method}.json`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params)
@@ -48,9 +51,13 @@ const ok = (label, cond, note = '') => {
 
 // Берём РЕАЛЬНЫЕ даты из архива редакций: выдуманная дата дала бы ссылку в 404 и проверка ссылок
 // стала бы декоративной.
-const { LEGAL_ARCHIVE } = await import('../app/config/legalArchive.ts')
-const eula = LEGAL_ARCHIVE.find(d => d.slug === 'eula')
-const current = eula.editions[0]
+const { findArchiveDoc, isCurrentEdition } = await import('../app/utils/legalArchive.ts')
+const eula = findArchiveDoc('eula')
+if (!eula) throw new Error('в реестре нет документа eula')
+// ⚠ Действующая редакция — та, у которой нет даты замены, а НЕ первая в списке: порядок вывода не
+// обязан совпадать со смыслом, и на первой же смене редакции проверка молча ушла бы на старую.
+const current = eula.editions.find(isCurrentEdition)
+if (!current) throw new Error('в реестре eula нет действующей редакции')
 
 const edition = {
   slug: 'eula',
@@ -62,7 +69,9 @@ const edition = {
     'Добавлен раздел о переносе приложения на сервер лицензиата.',
     'Срок хранения отзывов сокращён до двенадцати месяцев.'
   ],
-  previousDate: null
+  // Прежняя редакция — настоящая заменённая, если она есть: без неё вторая ссылка не строится
+  // вовсе, и проверка «обе ссылки на месте» проходила бы, ничего не проверяя.
+  previousDate: eula.editions.find(e => !isCurrentEdition(e))?.date ?? null
 }
 
 ok('объявление проходит проверку перед публикацией', noticeProblems(edition).length === 0,
@@ -76,7 +85,13 @@ ok('названа дата вступления', text.includes(eff), eff)
 ok('сказано, ЧТО меняется', edition.changes.every(c => text.includes(c)))
 ok('есть ссылка на новую редакцию', text.includes(`${SITE}${notice.newHref}`))
 ok('названо право удалить приложение без последствий', /удалить с портала до .*без последствий/.test(text))
-ok('срок — 30 дней (изменение существенное)', effectiveDate(edition) !== edition.publishedAt)
+
+// ⚠ Проверяем ИМЕННО 30 дней, а не «дата сдвинулась»: 10 дней (несущественное изменение) сдвиг тоже
+// дают, и прежняя формулировка была верна для обоих сроков — то есть не проверяла ничего.
+const days = Math.round(
+  (Date.parse(`${effectiveDate(edition)}T00:00:00Z`) - Date.parse(`${edition.publishedAt}T00:00:00Z`)) / 86_400_000
+)
+ok('срок — 30 дней (изменение существенное)', days === NOTICE_DAYS.material, `${days} дн.`)
 
 // Ссылка обязана вести на живую страницу: опечатка в дате даёт 404 в сообщении, УЖЕ разосланном по
 // чужим чатам, откуда его не отозвать.
@@ -101,18 +116,37 @@ async function testChat() {
 }
 const dialogId = await testChat()
 
-const id = await sendChatMessage(dialogId, text, call)
-ok('уведомление доставлено в чат портала', id !== null, `msgId=${id}`)
+// ⚠ Первой строкой — пометка «это проверка»: текст ниже выглядит настоящим уведомлением об
+// изменении лицензии (реальная дата редакции, рабочая ссылка, право удалить приложение). Пока
+// сообщение висит в чате, любой прочитавший обязан видеть, что оно техническое.
+const MARK = '⚠ ПРОВЕРКА, это НЕ уведомление — техническое сообщение, его сейчас удалят.'
 
-// Прочитать обратно: портал мог принять вызов и обрезать/переварить текст.
-if (id) {
-  const back = await call('im.dialog.messages.get', { DIALOG_ID: dialogId, LIMIT: 1 })
-  const got = String(back?.messages?.[0]?.text ?? '')
-  ok('текст в чате не обрезан', got.includes(edition.changes[1]), `${got.length} знаков`)
-  ok('обе ссылки уцелели в чате', got.includes(notice.newHref))
-  if (!keep) {
-    await call('im.message.delete', { MESSAGE_ID: id }).catch(() => {})
-    console.log('\nсообщение удалено')
+let id = null
+try {
+  id = await sendChatMessage(dialogId, `${MARK}\n\n${text}`, call)
+  ok('уведомление доставлено в чат портала', id !== null, `msgId=${id}`)
+
+  // Прочитать обратно: портал мог принять вызов и обрезать/переварить текст.
+  if (id) {
+    const back = await call('im.dialog.messages.get', { DIALOG_ID: dialogId, LIMIT: 1 })
+    const got = String(back?.messages?.[0]?.text ?? '')
+    ok('текст в чате не обрезан', got.includes(edition.changes[1]), `${got.length} знаков`)
+    ok('ссылка на новую редакцию уцелела в чате', got.includes(notice.newHref))
+    ok('ссылка на прежнюю редакцию уцелела в чате',
+      notice.currentHref === null || got.includes(notice.currentHref),
+      notice.currentHref ?? 'прежней редакции нет — проверять нечего')
+  }
+} finally {
+  // ⚠ Уборка в `finally` и БЕЗ глотания отказа: не удалённое сообщение — это оставшийся в чате текст,
+  // который читается как настоящее уведомление. Молчаливый `catch` прятал бы ровно это.
+  if (id && !keep) {
+    try {
+      await call('im.message.delete', { MESSAGE_ID: id })
+      console.log('\nсообщение удалено')
+    } catch (e) {
+      failed++
+      console.error(`✗ сообщение НЕ удалено (msgId=${id}) — уберите вручную: ${e.message}`)
+    }
   }
 }
 

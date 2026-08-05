@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { classifyLlmFailure, describeLlmFailure, llmErrorSignature, llmFailureMessage, type LlmFailureKind } from '../server/agent/llmFailure'
+import { PROVIDER_FAILURE_KINDS, classifyLlmFailure, describeLlmFailure, llmErrorSignature, llmFailureMessage, ownFailure, type LlmFailureKind } from '../server/agent/llmFailure'
 import { handleAgentRunJob } from '../server/queue/handlers'
 import { checkBackendEnv } from '../server/utils/envCheck'
 import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
@@ -10,7 +10,9 @@ import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
 
-const ALL_KINDS: LlmFailureKind[] = ['quota', 'auth', 'unavailable', 'too-long', 'unparsable', 'unknown']
+// ⚠ Список берётся ИЗ МОДУЛЯ, а не переписывается здесь: третья рукописная копия разъехалась бы с
+// таблицей текстов молча — новый класс просто не попал бы ни в одну проверку.
+const ALL_KINDS: LlmFailureKind[] = [...PROVIDER_FAILURE_KINDS]
 
 describe('#416: класс отказа по строке провайдера', () => {
   it.each([
@@ -227,5 +229,31 @@ describe('#416: отказ по-прежнему доезжает до чата'
     expect(failJob).toHaveBeenCalledOnce()
     const wiring = read('../server/queue/liveDeps.ts')
     expect(wiring, 'failJob перестал уведомлять').toMatch(/failJob:[\s\S]{0,220}notifyImportFailure/)
+  })
+})
+
+describe('#416: ловушки классификации, найденные разбором', () => {
+  // Каждая строка ниже — реальный ответ провайдера, на котором прежний порядок правил давал НЕВЕРНЫЙ
+  // совет. Тест закрепляет именно исход, а не порядок в таблице: порядок — деталь реализации.
+  it.each([
+    ['401 Unauthorized, contact billing support', 'auth'],
+    ['400 prompt is too long: 300000 tokens', 'too-long'],
+    ['502 Bad Gateway <html>unexpected token <', 'unavailable'],
+    ['429 You exceeded your current quota, insufficient_quota', 'quota']
+  ])('«%s» → %s', (raw, kind) => {
+    expect(classifyLlmFailure(raw)).toBe(kind)
+  })
+
+  it('наш собственный отказ доезжает СВОИМ текстом, а не подменяется советом про провайдера', () => {
+    // ⚠ Мутация «убрать ownFailure из chatExtract» вернула бы сотруднику совет «попробуйте позже»
+    // вместо «разделите файл» — то есть ровно неверное действие.
+    const mine = ownFailure('Импорт остановлен: в документе больше 10 000 строк товаров.')
+    const { kind, message } = describeLlmFailure(mine)
+    expect(kind).toBe('own')
+    expect(message).toBe('Импорт остановлен: в документе больше 10 000 строк товаров.')
+  })
+
+  it('«own» не попадает в список классов провайдера', () => {
+    expect(PROVIDER_FAILURE_KINDS).not.toContain('own')
   })
 })

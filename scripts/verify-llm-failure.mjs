@@ -10,7 +10,8 @@
 // ⚠ Сообщения шлются в [TEST]-чат и удаляются. Портал берётся из `.env.b24test` (в репозиторий не
 // коммитится), скоуп вебхука — `im`.
 import { readFileSync } from 'node:fs'
-import { LLM_FAILURE_KINDS, describeLlmFailure, llmErrorSignature, llmFailureMessage } from '../server/agent/llmFailure.ts'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { PROVIDER_FAILURE_KINDS, describeLlmFailure, llmErrorSignature, llmFailureMessage } from '../server/agent/llmFailure.ts'
 import { planFailureNotify } from '../server/utils/failureNotify.ts'
 import { MAX_CHAT_REASON, sendChatMessage } from '../server/utils/chatNotify.ts'
 
@@ -29,7 +30,9 @@ function hook() {
   throw new Error('нет B24_HOOK: положите вебхук в .env.b24test')
 }
 
-const base = hook().replace(/\/?$/, '/')
+const HOOK = hook()
+assertTestPortal(HOOK)
+const base = HOOK.replace(/\/?$/, '/')
 async function call(method, params = {}) {
   const res = await fetch(`${base}${method}.json`, {
     method: 'POST',
@@ -74,50 +77,56 @@ const REAL_ERRORS = {
   'unknown': 'что-то пошло не так'
 }
 
+// ⚠ Только классы ОТКАЗА ПРОВАЙДЕРА: класс `own` — это наши собственные сообщения (нет таблицы,
+// слишком много позиций), у него нет строки провайдера и проверять здесь нечего.
 const sent = []
-for (const kind of LLM_FAILURE_KINDS) {
-  const raw = REAL_ERRORS[kind]
-  const { kind: got, message } = describeLlmFailure(raw)
-  ok(`${kind}: настоящая строка провайдера классифицируется верно`, got === kind, `получено «${got}»`)
+try {
+  for (const kind of PROVIDER_FAILURE_KINDS) {
+    const raw = REAL_ERRORS[kind]
+    const { kind: got, message } = describeLlmFailure(raw)
+    ok(`${kind}: настоящая строка провайдера классифицируется верно`, got === kind, `получено «${got}»`)
 
-  // Ключевое утверждение задачи: наружу не уходит ни строка провайдера, ни секрет, ни текст документа.
-  ok(`${kind}: строки провайдера нет в тексте для человека`,
-    !message.includes(raw) && !/api.?key|token|401|429|503|upstream|JSON/i.test(message))
+    // Ключевое утверждение задачи: наружу не уходит ни строка провайдера, ни секрет, ни текст документа.
+    ok(`${kind}: строки провайдера нет в тексте для человека`,
+      !message.includes(raw) && !/api.?key|token|401|429|503|upstream|JSON/i.test(message))
 
-  const planned = planFailureNotify({
-    claimed: true,
-    uploaderId: myId,
-    fileName: 'накладная №77 от ООО «Ромашка».pdf',
-    reason: message,
-    errorChatId: myId,
-    alsoErrorChat: true,
-    jobId: `verify-llm-${kind}`,
-    appUrl: 'https://price-import.bx-shef.by/app'
-  })
+    const planned = planFailureNotify({
+      claimed: true,
+      uploaderId: myId,
+      fileName: 'накладная №77 от ООО «Ромашка».pdf',
+      reason: message,
+      errorChatId: myId,
+      alsoErrorChat: true,
+      jobId: `verify-llm-${kind}`,
+      appUrl: 'https://price-import.bx-shef.by/app'
+    })
 
-  // Обрыв на пределе чата означал бы совет, до которого сотрудник не дочитает.
-  const forEmployee = planned[0].message
-  ok(`${kind}: текст доезжает целиком, не обрезан`,
-    forEmployee.includes(message.slice(-24)), `${message.length} ≤ ${MAX_CHAT_REASON}`)
+    // Обрыв на пределе чата означал бы совет, до которого сотрудник не дочитает.
+    const forEmployee = planned[0].message
+    ok(`${kind}: текст доезжает целиком, не обрезан`,
+      forEmployee.includes(message.slice(-24)), `${message.length} ≤ ${MAX_CHAT_REASON}`)
 
-  const id = await sendChatMessage(dialogId, forEmployee, call)
-  ok(`${kind}: доставлено в чат`, id !== null, `msgId=${id}`)
-  if (id) sent.push(id)
-}
+    const id = await sendChatMessage(dialogId, forEmployee, call)
+    ok(`${kind}: доставлено в чат`, id !== null, `msgId=${id}`)
+    if (id) sent.push(id)
+  }
 
-// Подпись для журнала: коды остаются, ключ и любой не-латинский текст — нет.
-const sig = llmErrorSignature(REAL_ERRORS.auth)
-ok('журнал: эхо ключа вырезано', !sig.includes('test') && sig.includes('<hidden>'), sig)
-ok('журнал: кириллицы (наименований, контрагентов) не остаётся',
-  !/[А-Яа-яЁё]/.test(llmErrorSignature('ошибка при разборе ООО «Ромашка» накладная')))
+  // Подпись для журнала: коды остаются, ключ и любой не-латинский текст — нет.
+  const sig = llmErrorSignature(REAL_ERRORS.auth)
+  ok('журнал: эхо ключа вырезано', !sig.includes('test') && sig.includes('<hidden>'), sig)
+  ok('журнал: кириллицы (наименований, контрагентов) не остаётся',
+    !/[А-Яа-яЁё]/.test(llmErrorSignature('ошибка при разборе ООО «Ромашка» накладная')))
 
-// Каждый класс говорит своим текстом — иначе классификация декоративна.
-const texts = new Set(LLM_FAILURE_KINDS.map(llmFailureMessage))
-ok('у каждого класса свой текст', texts.size === LLM_FAILURE_KINDS.length)
-
-if (!keep) {
-  for (const id of sent) await call('im.message.delete', { MESSAGE_ID: id }).catch(() => {})
-  console.log(`\nудалено сообщений: ${sent.length}`)
+  // Каждый класс говорит своим текстом — иначе классификация декоративна.
+  const texts = new Set(PROVIDER_FAILURE_KINDS.map(llmFailureMessage))
+  ok('у каждого класса свой текст', texts.size === PROVIDER_FAILURE_KINDS.length)
+} finally {
+  // ⚠ Уборка в `finally`: падение в середине цикла иначе оставляло бы половину сообщений в чате —
+  // ровно тот мусор, ради которого заведён `[TEST]`-чат и гард портала.
+  if (!keep && sent.length) {
+    for (const id of sent) await call('im.message.delete', { MESSAGE_ID: id }).catch(() => {})
+    console.log(`\nудалено сообщений: ${sent.length}`)
+  }
 }
 
 console.log(failed ? `\n❌ провалено: ${failed}` : '\n✅ все проверки прошли')
