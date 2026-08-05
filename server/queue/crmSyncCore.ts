@@ -405,10 +405,12 @@ export async function runCrmSync(
     if (!allLinesWritten && doc.total != null && Number.isFinite(doc.total)) {
       warnings.push('Часть строк пропущена, поэтому сумма записи меньше итога документа. Сверьте сумму вручную или добавьте недостающие товары в каталог и повторите импорт.')
     }
+    // Одно вычисление на обе точки: повторный вызов с `!` ломался бы молча при следующей правке.
+    const trustedSupplierName = supplierNameTrusted(doc)
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
-      title: buildImportTitle(doc),
+      title: buildImportTitle(doc, opportunityValue),
       // Counterparty (#135): supplier FOUND → link companyId (repeat lead / deal on a company).
       // Supplier NOT found on a LEAD target → fill the lead's own companyTitle from the document
       // (a "raw" lead a manager qualifies) — this removes the unmatched dead-end that other
@@ -419,8 +421,8 @@ export async function runCrmSync(
       // в карточке; поэтому обе точки читают один `supplierNameTrusted`.
       ...(companyId
         ? { companyId }
-        : (target.entityTypeId === ENTITY_TYPE_ID.lead && supplierNameTrusted(doc)
-            ? { companyTitle: supplierNameTrusted(doc)!.slice(0, 255) }
+        : (target.entityTypeId === ENTITY_TYPE_ID.lead && trustedSupplierName
+            ? { companyTitle: trustedSupplierName.slice(0, 255) }
             : {})),
       ...(doc.currency ? { currencyId: doc.currency } : {}),
       // Set the total explicitly (+ manual flag): live-verified that productrow.set does

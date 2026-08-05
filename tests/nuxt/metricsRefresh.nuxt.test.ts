@@ -17,19 +17,36 @@ describe('#444: метрики пересчитываются после имп�
     expect(page).toMatch(/watch\(busy,\s*\(now, was\)\s*=>\s*\{\s*if \(was && !now\) void loadMetrics\(\{ silent: true \}\)/)
   })
 
+  /**
+   * Поднимает композабл В КОНТЕКСТЕ ПОРТАЛА.
+   *
+   * ⚠ Без подставленного фрейма `load()` выходит ДО запроса (нет фрейм-токена), и застабленный
+   * `$fetch` не зовётся ни разу: проверка «молчаливый отказ не выставляет ошибку» проходила бы
+   * через ветку авторизации, а не через `catch`. То есть мутация «убрать `if (silent) return` из
+   * catch» — отмена несущего поведения задачи — тестами НЕ ловилась.
+   */
+  async function withMetrics(fetchImpl: () => Promise<unknown>) {
+    vi.resetModules()
+    window.name = 'test-frame'
+    vi.doMock('@bitrix24/b24jssdk', () => ({
+      initializeB24Frame: async () => ({ auth: { getAuthData: () => ({ access_token: 't', domain: 'p.bitrix24.by' }) } })
+    }))
+    const $fetch = vi.fn(fetchImpl)
+    vi.stubGlobal('$fetch', $fetch)
+    const { useMetrics } = await import('~/composables/useMetrics')
+    return { m: useMetrics(), $fetch }
+  }
+
   it('фоновое обновление молчит об отказе и не гасит уже показанные числа', async () => {
     // ⚠ Два разных требования приёмки, и оба про одно: перечитывание — удобство, а не действие,
     // которого человек ждёт. Ошибка поверх успешного импорта сообщала бы о поломке, которой нет;
     // индикатор загрузки ради свежих чисел на секунду отнял бы те, что уже есть.
-    vi.resetModules()
-    const $fetch = vi.fn(async () => {
+    const { m, $fetch } = await withMetrics(async () => {
       throw new Error('сеть недоступна')
     })
-    vi.stubGlobal('$fetch', $fetch)
-    const { useMetrics } = await import('~/composables/useMetrics')
-    const m = useMetrics()
-    // Молчаливое чтение: отказ не выставляет ни ошибку, ни признак «загружаем».
     await m.load({ silent: true })
+    // Несущая проверка: запрос ДЕЙСТВИТЕЛЬНО ушёл и упал — то есть отработала ветка `catch`.
+    expect($fetch).toHaveBeenCalled()
     expect(m.error.value).toBe('')
     expect(m.loadError.value).toBe('')
     expect(m.loading.value).toBe(false)
@@ -38,14 +55,44 @@ describe('#444: метрики пересчитываются после имп�
   it('обычное чтение об отказе сообщает — иначе экран молчит там, где человек ждёт ответа', async () => {
     // ⚠ Зеркальное утверждение: `silent` не должен стать поведением по умолчанию. При открытии
     // страницы и по кнопке «Обновить» человек ждёт данных и обязан узнать, если их не будет.
-    vi.resetModules()
-    vi.stubGlobal('$fetch', vi.fn(async () => {
+    const { m, $fetch } = await withMetrics(async () => {
       throw new Error('сеть недоступна')
-    }))
-    const { useMetrics } = await import('~/composables/useMetrics')
-    const m = useMetrics()
+    })
     await m.load()
+    expect($fetch).toHaveBeenCalled()
     expect(m.loadError.value).not.toBe('')
+  })
+
+  it('молчаливое обновление НЕ стирает сообщение о неудавшемся сбросе счётчиков', async () => {
+    // ⚠ Общий `error` пишет и `reset()`. Админ, увидевший «Не удалось сбросить метрики», терял бы
+    // его от случайно совпавшего по времени фонового чтения: предупреждение мигнуло бы и исчезло,
+    // не успев быть прочитанным.
+    const { m } = await withMetrics(async () => ({ counters: {}, savings: {} }))
+    m.error.value = 'Не удалось сбросить метрики'
+    await m.load({ silent: true })
+    expect(m.error.value).toBe('Не удалось сбросить метрики')
+  })
+
+  it('молчаливое чтение реально ходит на сервер и ЗАМЕНЯЕТ числа', async () => {
+    // ⚠ Успешный путь не проверялся вовсе: мутация «`if (silent) return` первой строкой `load`» —
+    // то есть автообновление выключено целиком — проходила зелёной. Проверка отказа этого не
+    // видит: там запрос тоже «не даёт результата», только по другой причине.
+    const { m, $fetch } = await withMetrics(async () => ({
+      counters: { docs: 7 }, savings: { hours: 3 }
+    }))
+    await m.load({ silent: true })
+    expect($fetch).toHaveBeenCalledWith('/api/import/metrics', expect.anything())
+    expect(m.counters.value).toEqual({ docs: 7 })
+    expect(m.savings.value).toEqual({ hours: 3 })
+  })
+
+  it('счётчики поднимаются ДО перевода задания в готовое — иначе экран прочитает старые', () => {
+    // ⚠ Экран читает метрики ровно в момент, когда последнее задание пачки становится `done`.
+    // При обратном порядке между этими действиями лежал апсерт в Postgres, и чтение попадало в
+    // окно: числа «на один документ назад». Промах не самозаживает — второго обновления не будет
+    // до следующего импорта, а правдоподобно неверная картинка хуже необновлённой.
+    const src = read('../../server/queue/handlers.ts')
+    expect(src.indexOf('bumpMetricsSafe(deps.bumpMetrics')).toBeLessThan(src.indexOf('await deps.setJobStatus('))
   })
 })
 

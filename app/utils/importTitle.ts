@@ -19,6 +19,17 @@ import type { ExtractedDocument } from '~/types/document'
 const FALLBACK = 'документ'
 
 /**
+ * Типы документа, которые задаёт промпт (`prompts/extract.ts`).
+ *
+ * ⚠ Список ЗАКРЫТЫЙ, и это принципиально: `validateExtractedDocument` принимает в это поле любую
+ * строку до 120 знаков, то есть запасной заголовок, придуманный ИЗ-ЗА недоверия к модели, сам
+ * целиком состоял бы из её нефильтрованного текста. На криво прочитанной шапке получилось бы
+ * «Импорт: Счёт-фактура № 12/… на …» — то есть ровно то, от чего заголовок и уводят. Довод «тип
+ * виден глазами и проверяем» держится только при сверке со списком.
+ */
+const KNOWN_TYPES = new Set(['накладная', 'счёт', 'КП', 'спецификация', 'прайс'])
+
+/**
  * Заголовок записи: «Импорт: <название>» либо, при нераспознанном номере, «Импорт: <тип> на <сумма>».
  *
  * ⚠ Запасной вариант НЕ «Импорт: документ»: в списке из полусотни сделок такие строки неразличимы,
@@ -26,11 +37,24 @@ const FALLBACK = 'документ'
  * видно глазами на бумаге, они проверяемы и моделью не выдуманы в том смысле, в каком выдумано
  * может быть название.
  */
-export function buildImportTitle(doc: Pick<ExtractedDocument, 'supplier' | 'documentType' | 'total' | 'currency'>): string {
+export function buildImportTitle(
+  doc: Pick<ExtractedDocument, 'supplier' | 'documentType' | 'total' | 'currency'>,
+  /**
+   * Сумма, которая реально уйдёт в запись.
+   *
+   * ⚠ Не `doc.total`: печатный итог документа и сумма записи расходятся штатно — нетто-счёт с
+   * напечатанным «Итого 8 600» (субтотал без НДС) создаёт сделку на 10 320, а частичная запись
+   * (пропущенные строки) даёт сумму только записанных. Заголовок, взявший печатный итог, навсегда
+   * назвал бы запись числом, которого в ней нет, — то самое расхождение «шапка против вкладки
+   * товаров», ради которого писались #302 и #347, только теперь в имени записи.
+   */
+  recordTotal?: number | null
+): string {
   const trusted = supplierNameTrusted(doc)
   if (trusted) return `Импорт: ${trusted}`.slice(0, 255)
-  const kind = (doc.documentType ?? '').trim() || FALLBACK
-  const amount = formatDocTotal(doc.total, doc.currency)
+  const rawKind = (doc.documentType ?? '').trim()
+  const kind = KNOWN_TYPES.has(rawKind) ? rawKind : FALLBACK
+  const amount = formatDocTotal(recordTotal ?? doc.total, doc.currency)
   return `Импорт: ${amount ? `${kind} на ${amount}` : kind}`.slice(0, 255)
 }
 

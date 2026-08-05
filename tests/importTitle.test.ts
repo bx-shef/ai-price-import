@@ -47,8 +47,36 @@ describe('#440: название поставщика в заголовке — 
     expect(buildImportTitle({ supplier: { name: '  ', taxId: '1' }, documentType: '  ' })).toBe('Импорт: документ')
   })
 
-  it('заголовок капнут — портал режет поле, а обрезка на его стороне непредсказуема', () => {
+  it('заголовок капнут в ОБЕИХ ветках — портал режет поле, а его обрезка непредсказуема', () => {
     expect(buildImportTitle({ supplier: { name: 'Я'.repeat(400), taxId: '1' } })).toHaveLength(255)
+    // ⚠ И в запасной тоже: `documentType` приходит от модели (валидатор пропускает до 120 знаков),
+    // то есть заголовок, придуманный ИЗ-ЗА недоверия к чтению, сам бы из него и вылезал за поле.
+    expect(buildImportTitle({ documentType: 'Я'.repeat(400) }).length).toBeLessThanOrEqual(255)
+  })
+
+  it('тип документа сверяется с закрытым списком, а не берётся как есть', () => {
+    // ⚠ `validateExtractedDocument` принимает в это поле ЛЮБУЮ строку до 120 знаков. Без сверки
+    // запасной заголовок целиком состоял бы из нефильтрованного текста модели: на криво прочитанной
+    // шапке вышло бы «Импорт: Счёт-фактура № 12/… на …» — ровно то, от чего заголовок и уводят.
+    expect(buildImportTitle({ documentType: 'Счёт-фактура № 12/44 от 03.08' })).toBe('Импорт: документ')
+    expect(buildImportTitle({ documentType: 'накладная' })).toBe('Импорт: накладная')
+  })
+
+  it('нечисловая сумма не печатается в имя записи', () => {
+    // ⚠ «Импорт: счёт на NaN» осталось бы именем записи в CRM навсегда.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(buildImportTitle({ documentType: 'счёт', total: bad, currency: 'BYN' })).toBe('Импорт: счёт')
+    }
+  })
+
+  it('сумма в заголовке — та, что уйдёт в запись, а не печатный итог документа', () => {
+    // ⚠ Расходятся они штатно: нетто-счёт с напечатанным «Итого 8 600» (субтотал без НДС) создаёт
+    // сделку на 10 320, а частичная запись даёт сумму только записанных строк. Заголовок с печатным
+    // итогом навсегда назвал бы запись числом, которого в ней нет, — то самое расхождение «шапка
+    // против вкладки товаров», ради которого писались #302 и #347, только теперь в имени записи.
+    const t = buildImportTitle({ documentType: 'счёт', total: 8600, currency: 'BYN' }, 10320)
+    expect(t).toMatch(/10\s320,00/)
+    expect(t).not.toContain('8')
   })
 
   it('поле лида `companyTitle` подчиняется ТОМУ ЖЕ правилу', () => {
@@ -57,8 +85,13 @@ describe('#440: название поставщика в заголовке — 
     // оказалось бы в карточке. Проверяем по проводке, что обе точки читают одну функцию.
     const src = readFileSync(new URL('../server/queue/crmSyncCore.ts', import.meta.url), 'utf8')
       .replace(/\/\/.*$/gm, '')
-    expect(src, 'заголовок собирается мимо общего правила').toContain('title: buildImportTitle(doc)')
+    // ⚠ Греп сторожит вызов И его аргумент: без второго проверка пропускала бы пост-обработку
+    // («…».replace(...)) и подстановку имени обратно — то есть отмену правки при зелёном тесте.
+    expect(src, 'заголовок собирается мимо общего правила').toMatch(/title: buildImportTitle\(doc, opportunityValue\),/)
+    expect(src, 'результат заголовка постобрабатывается').not.toMatch(/buildImportTitle\([^)]*\)\s*[.+]/)
     expect(src, 'companyTitle заполняется мимо общего правила').not.toMatch(/companyTitle:\s*doc\.supplier/)
-    expect(src).toMatch(/companyTitle:\s*supplierNameTrusted\(doc\)/)
+    // Имя вычисляется ОДИН раз и переиспользуется — повторный вызов с `!` ломался бы молча.
+    expect(src).toMatch(/const trustedSupplierName = supplierNameTrusted\(doc\)/)
+    expect(src).toMatch(/companyTitle:\s*trustedSupplierName/)
   })
 })

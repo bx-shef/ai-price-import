@@ -3,7 +3,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { extractDemo, type DemoResult } from '~/utils/demoExtract'
 import { FORMATS_HUMAN, buildAccept } from '~/config/uploadFormats'
 import { pollDemoJob, type DemoPollResponse } from '~/utils/demoPoll'
-import { llmDisplayName } from '~/config/llmDisplay'
 
 // Public landing tryout: attach a document → see who the supplier is + goods table.
 // Built-in samples parse client-side (instant, no rate-limit) via the same pure core;
@@ -31,13 +30,21 @@ const sourceName = ref('')
 
 // Название работающего ИИ-сервиса (#437). Приходит с сервера, а не запекается на сборке: лендинг
 // пререндерится, и запечённое значение показывало бы сервис, настроенный на машине сборки.
-// ⚠ Пока ответа нет — обобщённое «ИИ-сервис»: предупреждение обязано быть на месте с первой
-// отрисовки, а не появляться после запроса. Отказ запроса оставляет ровно этот вариант — текст
-// остаётся верным, просто менее конкретным.
-const provider = ref(llmDisplayName(undefined))
+// ⚠ Пока ответа нет (а лендинг пререндерится, так что это КАЖДЫЙ первый кадр) — имени нет, и
+// предупреждение читается «передаётся внешнему ИИ-сервису»: факт передачи наружу назван всегда,
+// имя лишь уточняет. Отказ запроса оставляет ровно этот вариант — текст остаётся верным.
+const provider = ref<{ name: string, vendor: string }>({ name: '', vendor: '' })
+// ⚠ Хвост собирается ВЫЧИСЛЯЕМЫМ, а не цепочкой `<template v-if>` в разметке: Vue схлопывает
+// переносы строк внутри шаблона в пробел, и получалось «… Битрикс24 .» — пробел перед точкой.
+const providerSuffix = computed(() => {
+  const { name, vendor } = provider.value
+  if (!name) return ''
+  return vendor ? ` — ${name} (${vendor})` : ` — ${name}`
+})
 onMounted(async () => {
   try {
-    provider.value = await $fetch<{ name: string, vendor?: string }>('/api/demo/provider')
+    // `retry: 0` — иначе ofetch повторяет GET, и текст меняется вторым скачком ещё позже.
+    provider.value = await $fetch<{ name: string, vendor: string }>('/api/demo/provider', { retry: 0 })
   } catch { /* остаётся обобщённое название — предупреждение не пропадает */ }
 })
 
@@ -259,19 +266,24 @@ const money = (n: number) => n.toLocaleString('ru-RU', { minimumFractionDigits: 
            не делаем. Полный состав получателей, страны и условия — в Политике, в одном клике, где
            они расписаны подробно (п. 5.3).
            ⚠ Написать «данные не используются для обучения» НЕЛЬЗЯ ни в каком виде: по условиям
-           BitrixGPT правообладатель ВПРАВЕ обучать на переданных запросах (п. 3.10 Политики).
-           Сказать «МЫ не сохраняем и не используем» — правда; «никто не использует» — ложь, и
-           проверяется она первой. -->
+           BitrixGPT правообладатель ВПРАВЕ обучать на переданных запросах. Сказать «МЫ не сохраняем
+           и не используем» — правда; «никто не использует» — ложь, и проверяется она первой.
+           ⚠ Ссылка ведёт на ПОЛИТИКУ САЙТА, а не приложения: посетитель демо приложение не
+           устанавливал, и Политика приложения сама себя из этой области исключает (её п. 1.1).
+           Демо-разбор расписан в `docs/site-privacy.md` §4 — там и таблица провайдеров с
+           юрисдикциями, и срок хранения, и право обучать.
+           ⚠ Факт передачи НАРУЖУ назван безусловно, до имени сервиса: имя приходит с сервера и
+           может не прийти вовсе, а «внешнему ИИ-сервису» посетитель должен прочитать всегда.
+           ⚠ «Текст, извлечённый из документа», а не «документ»: сам файл провайдеру не уходит
+           (п. 4.1 Политики сайта), и прежняя формулировка это затуманивала. -->
       <p class="mb-3 rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 text-xs leading-relaxed text-amber-200/90">
-        Документ распознаёт ИИ-сервис <strong class="font-semibold">{{ provider.name }}</strong><template v-if="provider.vendor">
-          — {{ provider.vendor }}
-        </template>.
-        <span class="text-amber-200/70">Сам файл и распознанный текст не сохраняются, в CRM ничего не
+        Текст, извлечённый из документа, передаётся на распознавание внешнему ИИ-сервису{{ providerSuffix }}.
+        <span class="text-amber-200/70">Сам файл не передаётся и не сохраняется, в CRM ничего не
           записывается. Не загружайте документы со сведениями ограниченного доступа. Подробнее — в
           <NuxtLink
-            to="/privacy"
-            class="underline underline-offset-2 hover:text-amber-100"
-          >Политике</NuxtLink>.</span>
+            to="/site-privacy"
+            class="rounded-sm underline underline-offset-2 hover:text-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-200"
+          >Политике сайта</NuxtLink>.</span>
       </p>
 
       <!-- Dropzone -->

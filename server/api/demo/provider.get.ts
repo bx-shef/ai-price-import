@@ -9,10 +9,13 @@ import { llmDisplayName } from '~/config/llmDisplay'
 //
 // ⚠ Наружу уходит ТОЛЬКО витринное имя. Ни ключа, ни адреса провайдера, ни версии модели: ключ —
 // секрет, адрес ничего не объясняет человеку, а версия перекрывается переменной окружения и на
-// проде может отличаться от названной. Метка `label` техническая (`bitrixgpt`), поэтому в текст
-// она тоже не идёт — только через `llmDisplayName`.
+// проде может отличаться от названной.
+// ⚠ Ключ — `provider` (типизированный union), а НЕ `label`: у метки документированная роль «для
+// журналов и телеметрии», и в ветке `custom` она приходит из `LLM_LABEL`, то есть задаётся
+// владельцем инсталляции — `LLM_LABEL=bitrixgpt` со своим адресом заставил бы страницу уверенно
+// написать «BitrixGPT», пока документ уходит другому получателю.
 export default defineEventHandler((event) => {
   // Публичная и неизменная в пределах жизни процесса величина — можно кэшировать на границе.
   setResponseHeader(event, 'cache-control', 'public, max-age=300')
-  return llmDisplayName(resolveLlmConfig(process.env).label)
+  return llmDisplayName(resolveLlmConfig(process.env).provider)
 })
