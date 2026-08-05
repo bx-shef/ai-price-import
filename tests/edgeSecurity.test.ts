@@ -51,14 +51,19 @@ describe('contentSecurityPolicy', () => {
     // frame-ancestors — РОВНО официальный список, без исключений: лишний хост здесь это дыра
     // кликджекинга (чужая страница получает право показать наш портальный экран в своём фрейме).
     expect(hosts('frame-ancestors')).toEqual(expected)
-    // connect-src шире ровно на приёмники Метрики (#297): счётчик отправляет туда отчёты, а
-    // резервный домен `mc.yandex.com` он выбирает сам, когда основной недоступен. Список
-    // ИМЕНОВАННЫЙ — новый посторонний хост в исходящих соединениях по-прежнему роняет тест, и
-    // это главное, что здесь сторожится: connect-src — канал, по которому со страницы уходят
-    // данные. Счётчик работает только на лендинге (во фрейме он себя глушит), но политика одна
-    // на все страницы, поэтому разрешение шире фактического использования.
-    const METRIKA = ['https://mc.yandex.ru', 'https://mc.yandex.com']
+    // connect-src шире ровно на приёмники Метрики (#297), и список РЕГИОНАЛЬНЫЙ: приёмник
+    // выбирает не наш код, а счётчик — по региону ПОСЕТИТЕЛЯ. Одного `.ru` мало (живая находка
+    // 2026-08-05: посетитель из Беларуси уходит на `mc.yandex.by`, отчёты блокировались, а
+    // страница выглядела исправной — то есть аналитика на основном рынке была мертва при зелёных
+    // тестах). Список ИМЕНОВАННЫЙ — посторонний хост в исходящих соединениях по-прежнему роняет
+    // тест, и это главное, что здесь сторожится: connect-src — канал, по которому со страницы
+    // уходят данные. Счётчик работает только на лендинге (во фрейме он себя глушит), но политика
+    // одна на все страницы, поэтому разрешение шире фактического использования.
+    const METRIKA = ['https://mc.yandex.ru', 'https://mc.yandex.az', 'https://mc.yandex.by', 'https://mc.yandex.co.il', 'https://mc.yandex.com', 'https://mc.yandex.com.am', 'https://mc.yandex.com.ge', 'https://mc.yandex.com.tr', 'https://mc.yandex.ee', 'https://mc.yandex.fr', 'https://mc.yandex.kg', 'https://mc.yandex.kz', 'https://mc.yandex.lt', 'https://mc.yandex.lv', 'https://mc.yandex.md', 'https://mc.yandex.tj', 'https://mc.yandex.tm', 'https://mc.yandex.uz']
     expect(hosts('connect-src')).toEqual([...expected, ...METRIKA].sort())
+    // ⚠ И в script-src — тот же список: сам тег `tag.js` тоже подгружается с регионального хоста,
+    // а без него счётчик не поднимется вовсе.
+    expect(hosts('script-src')).toEqual([...METRIKA].sort())
   })
   it('relaxed form CSP only for /b24-form.html (unsafe-eval + B24 script hosts)', () => {
     const csp = contentSecurityPolicy('/b24-form.html')
