@@ -398,374 +398,389 @@ const ARTICLE_KIND_ITEMS = [
             description="Откройте главный экран приложения и подтвердите Лицензионное соглашение и Политику конфиденциальности. До этого настройка недоступна, а документы не принимаются."
           />
 
-          <!-- Блоки-пары шаблона (#259, §1.3 issue): тонированная шапка + тело, вместе читаются как
+          <!-- ⚠ Форма — под состоянием загрузки (#408). Прежде она рисовалась ДО прихода серверной
+               копии, то есть со значениями по умолчанию: администратор видел настройки, которых не
+               выбирал, и они на глазах подменялись сохранёнными. На медленной сети это читается как
+               сброс настроек — худшая из возможных трактовок для экрана, где лежит конфигурация
+               записи в CRM. Прежнее полумерное `opacity-50` от этого не спасало: приглушённые
+               значения всё равно НАПИСАНЫ, а человек читает то, что видит, а не то, что кликабельно.
+               `inert` — вне портала: там фрейм-токена нет, загрузка не начнётся никогда. -->
+          <ScreenState
+            :loaded="loaded"
+            :error="error"
+            :inert="!inPortal"
+          >
+            <template #skeleton>
+              <SettingsLoader />
+            </template>
+            <!-- Блоки-пары шаблона (#259, §1.3 issue): тонированная шапка + тело, вместе читаются как
              одна карточка. Скругления «rounded-none / sm:rounded-*-3xl» — как в референсе: на
              мобильном блок на всю ширину, на десктопе пара склеена. -->
-          <div
-            v-if="!showReadOnly && !blockedByConsent"
-            class="flex flex-col gap-4 sm:gap-6"
-            :class="{ 'pointer-events-none opacity-50': loading }"
-          >
-            <section
-              :id="SECTIONS[0].id"
-              class="scroll-mt-16"
+            <div
+              v-if="!showReadOnly && !blockedByConsent"
+              class="flex flex-col gap-4 sm:gap-6"
             >
-              <B24PageCard
-                variant="tinted"
-                :title="SECTIONS[0].label"
-                :description="SECTIONS[0].description"
-                :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
-              />
-              <B24PageCard
-                variant="outline"
-                :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+              <section
+                :id="SECTIONS[0].id"
+                class="scroll-mt-16"
               >
-                <div class="space-y-6">
-                  <!-- Целевая сущность по умолчанию — тот же TargetPicker, что и на импорте (без «Авто»). -->
-                  <B24FormField label="Куда вносить документы по умолчанию">
-                    <TargetPicker
-                      v-model:target="defaultTargetModel"
-                      :include-auto="false"
-                    />
-                  </B24FormField>
-
-                  <!-- Правила маршрутизации: по СЛОВАМ → цель (тот же TargetPicker). Первое совпавшее выигрывает. -->
-                  <B24FormField label="Правила: какие документы куда вносить">
-                    <p class="mb-2 text-xs text-(--ui-color-base-3)">
-                      Приложение читает документ и ищет в нём эти слова. Сработает первое подходящее правило — документ уйдёт в его цель. Если ни одно не подошло, документ уйдёт в цель по умолчанию, указанную выше.
-                    </p>
-                    <div class="space-y-3">
-                      <div
-                        v-for="(row, i) in routingRows"
-                        :key="row.id"
-                        class="flex flex-wrap items-center gap-2 rounded-lg border border-(--ui-color-base-5) p-2"
-                      >
-                        <B24Input
-                          v-model="row.keywords"
-                          placeholder="например: накладная, ттн"
-                          class="w-56"
-                          :aria-label="`Правило ${i + 1}: ключевые слова`"
-                        />
-                        <span
-                          class="text-(--ui-color-base-4)"
-                          aria-hidden="true"
-                        >→</span>
-                        <TargetPicker
-                          :target="rowTarget(row)"
-                          :include-auto="false"
-                          @update:target="(t: TargetRef | null) => setRowTarget(row, t)"
-                        />
-                        <B24Button
-                          color="air-tertiary-no-accent"
-                          size="sm"
-                          label="✕"
-                          :aria-label="`Удалить правило ${i + 1}`"
-                          @click="() => removeRoutingRow(row.id)"
-                        />
-                      </div>
-                    </div>
-                    <B24Button
-                      class="mt-2"
-                      color="air-tertiary"
-                      size="sm"
-                      label="+ Добавить правило"
-                      @click="addRoutingRow"
-                    />
-                  </B24FormField>
-                </div>
-              </B24PageCard>
-            </section>
-
-            <section
-              :id="SECTIONS[1].id"
-              class="scroll-mt-16"
-            >
-              <B24PageCard
-                variant="tinted"
-                :title="SECTIONS[1].label"
-                :description="SECTIONS[1].description"
-                :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
-              />
-              <B24PageCard
-                variant="outline"
-                :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
-              >
-                <div class="space-y-6">
-                  <!-- Поле артикула поставщика -->
-                  <B24FormField label="По какому полю искать товар в каталоге">
-                    <AsyncSearchSelect
-                      v-model="articleField"
-                      :fetcher="articleFetcher"
-                      :selected-option="selectedArticle"
-                      :min-chars="0"
-                      placeholder="Нажмите и выберите свойство каталога…"
-                      @update:selected-option="onArticlePicked"
-                    />
-                    <B24RadioGroup
-                      v-model="mapping.article.kind"
-                      :items="ARTICLE_KIND_ITEMS"
-                      orientation="horizontal"
-                      class="mt-2"
-                    />
-                    <B24Input
-                      v-if="mapping.article.kind === 'string'"
-                      v-model="mapping.article.delimiter"
-                      placeholder="разделитель, например ;"
-                      class="mt-2 w-32"
-                    />
-                  </B24FormField>
-
-                  <!-- Стратегия товара -->
-                  <B24FormField :label="ON_MISSING_FIELD_LABEL">
-                    <B24Select
-                      v-model="mapping.product.onMissing"
-                      :items="ON_MISSING_ITEMS"
-                      class="w-full"
-                    />
-                    <!-- #373: у поля не было подсказки вовсе, а «пропустить» стояло первым в списке и
-                     читалось как дефолт. На пустом каталоге оно пропускало ВЕСЬ документ. -->
-                    <p class="mt-1 text-xs text-(--ui-color-base-3)">
-                      По умолчанию строка вносится как есть. «Пропустить» подходит только при
-                      заполненном каталоге: если не найдётся ни один товар, импорт остановится с
-                      ошибкой и запись не создастся.
-                    </p>
-                  </B24FormField>
-
-                  <!-- Единицы измерения -->
-                  <B24FormField label="Единицы измерения">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span class="text-xs text-(--ui-color-base-3)">Какую единицу подставить, если в документе встретилась незнакомая:</span>
-                      <B24Select
-                        v-model="defaultMeasure"
-                        :items="measureItems"
-                        placeholder="единица в Б24"
-                        class="w-56"
-                        aria-label="Единица по умолчанию"
+                <B24PageCard
+                  variant="tinted"
+                  :title="SECTIONS[0].label"
+                  :description="SECTIONS[0].description"
+                  :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
+                />
+                <B24PageCard
+                  variant="outline"
+                  :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+                >
+                  <div class="space-y-6">
+                    <!-- Целевая сущность по умолчанию — тот же TargetPicker, что и на импорте (без «Авто»). -->
+                    <B24FormField label="Куда вносить документы по умолчанию">
+                      <TargetPicker
+                        v-model:target="defaultTargetModel"
+                        :include-auto="false"
                       />
-                    </div>
+                    </B24FormField>
 
-                    <!-- Пустая таблица раньше читалась как «ничего не работает, заполняйте руками»,
-                     хотя встроенный словарь уже покрывает обычные единицы (#272). -->
-                    <p class="mt-3 text-xs text-(--ui-color-base-3)">
-                      Без настройки уже распознаются обычные единицы: {{ builtinUnitHint }} — вместе с
-                      вариантами написания: «шт.», «ШТ», «штук», «м2» и «м²». Если такой единицы нет в
-                      вашем Битрикс24, приложение её не подставит. Ниже добавляйте исключения: свои
-                      единицы и те, что нужно сопоставить по-другому.
-                    </p>
+                    <!-- Правила маршрутизации: по СЛОВАМ → цель (тот же TargetPicker). Первое совпавшее выигрывает. -->
+                    <B24FormField label="Правила: какие документы куда вносить">
+                      <p class="mb-2 text-xs text-(--ui-color-base-3)">
+                        Приложение читает документ и ищет в нём эти слова. Сработает первое подходящее правило — документ уйдёт в его цель. Если ни одно не подошло, документ уйдёт в цель по умолчанию, указанную выше.
+                      </p>
+                      <div class="space-y-3">
+                        <div
+                          v-for="(row, i) in routingRows"
+                          :key="row.id"
+                          class="flex flex-wrap items-center gap-2 rounded-lg border border-(--ui-color-base-5) p-2"
+                        >
+                          <B24Input
+                            v-model="row.keywords"
+                            placeholder="например: накладная, ттн"
+                            class="w-56"
+                            :aria-label="`Правило ${i + 1}: ключевые слова`"
+                          />
+                          <span
+                            class="text-(--ui-color-base-4)"
+                            aria-hidden="true"
+                          >→</span>
+                          <TargetPicker
+                            :target="rowTarget(row)"
+                            :include-auto="false"
+                            @update:target="(t: TargetRef | null) => setRowTarget(row, t)"
+                          />
+                          <B24Button
+                            color="air-tertiary-no-accent"
+                            size="sm"
+                            label="✕"
+                            :aria-label="`Удалить правило ${i + 1}`"
+                            @click="() => removeRoutingRow(row.id)"
+                          />
+                        </div>
+                      </div>
+                      <B24Button
+                        class="mt-2"
+                        color="air-tertiary"
+                        size="sm"
+                        label="+ Добавить правило"
+                        @click="addRoutingRow"
+                      />
+                    </B24FormField>
+                  </div>
+                </B24PageCard>
+              </section>
 
-                    <p class="mt-3 mb-1 text-xs text-(--ui-color-base-3)">
-                      Как называется единица в документе и какой единице Битрикс24 она соответствует:
-                    </p>
-                    <div class="space-y-2">
-                      <div
-                        v-for="(row, i) in unitRows"
-                        :key="row.id"
-                        class="flex items-center gap-2"
-                      >
-                        <B24Input
-                          v-model="row.unit"
-                          placeholder="как в документе, напр. м"
-                          class="w-40"
-                          :aria-label="`Единица ${i + 1}: из документа`"
-                        />
-                        <span
-                          class="text-(--ui-color-base-4)"
-                          aria-hidden="true"
-                        >→</span>
+              <section
+                :id="SECTIONS[1].id"
+                class="scroll-mt-16"
+              >
+                <B24PageCard
+                  variant="tinted"
+                  :title="SECTIONS[1].label"
+                  :description="SECTIONS[1].description"
+                  :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
+                />
+                <B24PageCard
+                  variant="outline"
+                  :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+                >
+                  <div class="space-y-6">
+                    <!-- Поле артикула поставщика -->
+                    <B24FormField label="По какому полю искать товар в каталоге">
+                      <AsyncSearchSelect
+                        v-model="articleField"
+                        :fetcher="articleFetcher"
+                        :selected-option="selectedArticle"
+                        :min-chars="0"
+                        placeholder="Нажмите и выберите свойство каталога…"
+                        @update:selected-option="onArticlePicked"
+                      />
+                      <B24RadioGroup
+                        v-model="mapping.article.kind"
+                        :items="ARTICLE_KIND_ITEMS"
+                        orientation="horizontal"
+                        class="mt-2"
+                      />
+                      <B24Input
+                        v-if="mapping.article.kind === 'string'"
+                        v-model="mapping.article.delimiter"
+                        placeholder="разделитель, например ;"
+                        class="mt-2 w-32"
+                      />
+                    </B24FormField>
+
+                    <!-- Стратегия товара -->
+                    <B24FormField :label="ON_MISSING_FIELD_LABEL">
+                      <B24Select
+                        v-model="mapping.product.onMissing"
+                        :items="ON_MISSING_ITEMS"
+                        class="w-full"
+                      />
+                      <!-- #373: у поля не было подсказки вовсе, а «пропустить» стояло первым в списке и
+                     читалось как дефолт. На пустом каталоге оно пропускало ВЕСЬ документ. -->
+                      <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                        По умолчанию строка вносится как есть. «Пропустить» подходит только при
+                        заполненном каталоге: если не найдётся ни один товар, импорт остановится с
+                        ошибкой и запись не создастся.
+                      </p>
+                    </B24FormField>
+
+                    <!-- Единицы измерения -->
+                    <B24FormField label="Единицы измерения">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-xs text-(--ui-color-base-3)">Какую единицу подставить, если в документе встретилась незнакомая:</span>
                         <B24Select
-                          :model-value="row.code != null ? String(row.code) : undefined"
+                          v-model="defaultMeasure"
                           :items="measureItems"
                           placeholder="единица в Б24"
                           class="w-56"
-                          :aria-label="`Единица ${i + 1}: соответствие Б24`"
-                          @update:model-value="(v) => { row.code = v ? Number(v) : null }"
-                        />
-                        <B24Button
-                          color="air-tertiary-no-accent"
-                          size="sm"
-                          label="✕"
-                          :aria-label="`Удалить единицу ${i + 1}`"
-                          @click="() => removeUnitRow(row.id)"
+                          aria-label="Единица по умолчанию"
                         />
                       </div>
-                    </div>
-                    <B24Button
-                      class="mt-2"
-                      color="air-tertiary"
-                      size="sm"
-                      label="+ Добавить единицу"
-                      @click="addUnitRow"
-                    />
-                    <B24Alert
-                      v-if="duplicateUnits"
-                      class="mt-2"
-                      color="air-primary-warning"
-                      title="Если одна и та же единица указана дважды, сработает последняя строка."
-                    />
-                  </B24FormField>
-                </div>
-              </B24PageCard>
-            </section>
 
-            <section
-              :id="SECTIONS[2].id"
-              class="scroll-mt-16"
-            >
-              <B24PageCard
-                variant="tinted"
-                :title="SECTIONS[2].label"
-                :description="SECTIONS[2].description"
-                :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
-              />
-              <B24PageCard
-                variant="outline"
-                :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+                      <!-- Пустая таблица раньше читалась как «ничего не работает, заполняйте руками»,
+                     хотя встроенный словарь уже покрывает обычные единицы (#272). -->
+                      <p class="mt-3 text-xs text-(--ui-color-base-3)">
+                        Без настройки уже распознаются обычные единицы: {{ builtinUnitHint }} — вместе с
+                        вариантами написания: «шт.», «ШТ», «штук», «м2» и «м²». Если такой единицы нет в
+                        вашем Битрикс24, приложение её не подставит. Ниже добавляйте исключения: свои
+                        единицы и те, что нужно сопоставить по-другому.
+                      </p>
+
+                      <p class="mt-3 mb-1 text-xs text-(--ui-color-base-3)">
+                        Как называется единица в документе и какой единице Битрикс24 она соответствует:
+                      </p>
+                      <div class="space-y-2">
+                        <div
+                          v-for="(row, i) in unitRows"
+                          :key="row.id"
+                          class="flex items-center gap-2"
+                        >
+                          <B24Input
+                            v-model="row.unit"
+                            placeholder="как в документе, напр. м"
+                            class="w-40"
+                            :aria-label="`Единица ${i + 1}: из документа`"
+                          />
+                          <span
+                            class="text-(--ui-color-base-4)"
+                            aria-hidden="true"
+                          >→</span>
+                          <B24Select
+                            :model-value="row.code != null ? String(row.code) : undefined"
+                            :items="measureItems"
+                            placeholder="единица в Б24"
+                            class="w-56"
+                            :aria-label="`Единица ${i + 1}: соответствие Б24`"
+                            @update:model-value="(v) => { row.code = v ? Number(v) : null }"
+                          />
+                          <B24Button
+                            color="air-tertiary-no-accent"
+                            size="sm"
+                            label="✕"
+                            :aria-label="`Удалить единицу ${i + 1}`"
+                            @click="() => removeUnitRow(row.id)"
+                          />
+                        </div>
+                      </div>
+                      <B24Button
+                        class="mt-2"
+                        color="air-tertiary"
+                        size="sm"
+                        label="+ Добавить единицу"
+                        @click="addUnitRow"
+                      />
+                      <B24Alert
+                        v-if="duplicateUnits"
+                        class="mt-2"
+                        color="air-primary-warning"
+                        title="Если одна и та же единица указана дважды, сработает последняя строка."
+                      />
+                    </B24FormField>
+                  </div>
+                </B24PageCard>
+              </section>
+
+              <section
+                :id="SECTIONS[2].id"
+                class="scroll-mt-16"
               >
-                <div class="space-y-6">
-                  <!-- Сохранение файла -->
-                  <B24Switch
-                    v-model="mapping.saveFile"
-                    label="Сохранять исходный файл"
-                    description="Копия каждого загруженного документа сохранится на Диск портала, в папку приложения с разбивкой по месяцам."
-                  />
-
-                  <!-- Чат уведомлений об успешном импорте -->
-                  <B24FormField label="Чат уведомлений">
-                    <AsyncSearchSelect
-                      v-model="notifyChatId"
-                      :fetcher="chatFetcher"
-                      :selected-option="selectedNotifyChat"
-                      :min-chars="3"
-                      placeholder="Нажмите и выберите чат…"
-                      @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
+                <B24PageCard
+                  variant="tinted"
+                  :title="SECTIONS[2].label"
+                  :description="SECTIONS[2].description"
+                  :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
+                />
+                <B24PageCard
+                  variant="outline"
+                  :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+                >
+                  <div class="space-y-6">
+                    <!-- Сохранение файла -->
+                    <B24Switch
+                      v-model="mapping.saveFile"
+                      label="Сохранять исходный файл"
+                      description="Копия каждого загруженного документа сохранится на Диск портала, в папку приложения с разбивкой по месяцам."
                     />
-                    <p class="mt-1 text-xs text-(--ui-color-base-3)">
-                      Сюда придёт сообщение, когда документ успешно внесён в CRM. Не выбирайте чат, если уведомления не нужны.
-                    </p>
-                  </B24FormField>
 
-                  <!-- Чат ошибок -->
-                  <B24FormField label="Чат ошибок">
-                    <AsyncSearchSelect
-                      v-model="errorChatId"
-                      :fetcher="chatFetcher"
-                      :selected-option="selectedErrorChat"
-                      :min-chars="3"
-                      placeholder="Нажмите и выберите чат…"
-                      @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
-                    />
-                    <p class="mt-1 text-xs text-(--ui-color-base-3)">
-                      Сюда придёт сообщение, если документ внести не удалось — например, в портале нет нужной ставки НДС или валюты. Не выбирайте чат, если уведомления не нужны.
-                    </p>
-                  </B24FormField>
-                </div>
-              </B24PageCard>
-            </section>
+                    <!-- Чат уведомлений об успешном импорте -->
+                    <B24FormField label="Чат уведомлений">
+                      <AsyncSearchSelect
+                        v-model="notifyChatId"
+                        :fetcher="chatFetcher"
+                        :selected-option="selectedNotifyChat"
+                        :min-chars="3"
+                        placeholder="Нажмите и выберите чат…"
+                        @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
+                      />
+                      <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                        Сюда придёт сообщение, когда документ успешно внесён в CRM. Не выбирайте чат, если уведомления не нужны.
+                      </p>
+                    </B24FormField>
 
-            <section
-              :id="SECTIONS[3].id"
-              class="scroll-mt-16"
-            >
-              <B24PageCard
-                variant="tinted"
-                :title="SECTIONS[3].label"
-                :description="SECTIONS[3].description"
-                :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
-              />
-              <B24PageCard
-                variant="outline"
-                :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+                    <!-- Чат ошибок -->
+                    <B24FormField label="Чат ошибок">
+                      <AsyncSearchSelect
+                        v-model="errorChatId"
+                        :fetcher="chatFetcher"
+                        :selected-option="selectedErrorChat"
+                        :min-chars="3"
+                        placeholder="Нажмите и выберите чат…"
+                        @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
+                      />
+                      <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                        Сюда придёт сообщение, если документ внести не удалось — например, в портале нет нужной ставки НДС или валюты. Не выбирайте чат, если уведомления не нужны.
+                      </p>
+                    </B24FormField>
+                  </div>
+                </B24PageCard>
+              </section>
+
+              <section
+                :id="SECTIONS[3].id"
+                class="scroll-mt-16"
               >
-                <div class="space-y-6">
-                  <!-- Показываем ТОЛЬКО когда точно знаем, что валюты нет: в портале, после успешной
+                <B24PageCard
+                  variant="tinted"
+                  :title="SECTIONS[3].label"
+                  :description="SECTIONS[3].description"
+                  :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
+                />
+                <B24PageCard
+                  variant="outline"
+                  :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+                >
+                  <div class="space-y-6">
+                    <!-- Показываем ТОЛЬКО когда точно знаем, что валюты нет: в портале, после успешной
                    загрузки и когда чтение валюты не падало. Иначе страница утверждала бы «валюты
                    нет» на таймауте или до первой загрузки. -->
-                  <B24Alert
-                    v-if="inPortal && loaded && !error && !currencyUnknown && !baseCurrency"
-                    color="air-primary-alert"
-                    title="В портале нет базовой валюты"
-                    description="Приложение не знает, в какой валюте считать сумму, поэтому плитка «Сэкономлено денег» не появится. Откройте настройки валют Битрикс24 и отметьте одну валюту базовой. Сэкономленное время показывается и без этого."
-                  >
-                    <!-- v-if на самом template: слот actions рендерит свою обёртку по факту наличия
-                     слота, а не содержимого — иначе без ссылки остаётся пустой отступ. -->
-                    <!-- Ссылку строим только для облачных адресов Битрикс24. У портала на своём домене
-                     её не будет — тогда вместо тупика показываем сам путь словами. -->
-                    <template #actions>
-                      <a
-                        v-if="currencyLink"
-                        :href="currencyLink"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="text-sm underline"
-                      >
-                        Открыть настройки валют
-                      </a>
-                      <span
-                        v-else
-                        class="text-sm"
-                      >CRM → Настройки → Валюты</span>
-                    </template>
-                  </B24Alert>
-
-                  <B24FormField label="Стоимость часа работы сотрудника">
-                    <div class="flex items-center gap-2">
-                      <B24InputNumber
-                        v-model="savingsRate"
-                        :min="0"
-                        :max="MAX_SAVINGS_RATE"
-                        :step="0.01"
-                        :format-options="rateFormatOptions"
-                        locale="ru"
-                        class="w-56"
-                      />
-                      <span
-                        v-if="baseCurrency"
-                        class="text-sm text-(--ui-color-base-2)"
-                      >в час</span>
-                    </div>
-                    <!-- Только когда значение ДЕЙСТВИТЕЛЬНО подставлено: текст говорит «Подставлен ориентир»,
-                     и над пустым полем (не-админ, уже настроенный портал) он был бы неправдой. -->
-                    <p
-                      v-if="rateHint && rateSeeded"
-                      class="mt-1 text-xs text-(--ui-color-base-2)"
+                    <B24Alert
+                      v-if="inPortal && loaded && !error && !currencyUnknown && !baseCurrency"
+                      color="air-primary-alert"
+                      title="В портале нет базовой валюты"
+                      description="Приложение не знает, в какой валюте считать сумму, поэтому плитка «Сэкономлено денег» не появится. Откройте настройки валют Битрикс24 и отметьте одну валюту базовой. Сэкономленное время показывается и без этого."
                     >
-                      {{ rateHint.text }}
-                    </p>
-                    <p class="mt-1 text-xs text-(--ui-color-base-3)">
-                      Нужна только для плитки «Сэкономлено денег»: сэкономленное время × эта ставка.
-                      Валюта — базовая валюта вашего портала, приложение берёт её из Битрикс24, вводить
-                      не нужно. Оставьте пусто — плитки не будет, останется только время.
-                    </p>
-                  </B24FormField>
-                </div>
-              </B24PageCard>
-            </section>
-          </div>
+                      <!-- v-if на самом template: слот actions рендерит свою обёртку по факту наличия
+                     слота, а не содержимого — иначе без ссылки остаётся пустой отступ. -->
+                      <!-- Ссылку строим только для облачных адресов Битрикс24. У портала на своём домене
+                     её не будет — тогда вместо тупика показываем сам путь словами. -->
+                      <template #actions>
+                        <a
+                          v-if="currencyLink"
+                          :href="currencyLink"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="text-sm underline"
+                        >
+                          Открыть настройки валют
+                        </a>
+                        <span
+                          v-else
+                          class="text-sm"
+                        >CRM → Настройки → Валюты</span>
+                      </template>
+                    </B24Alert>
 
-          <div
-            v-if="!showReadOnly"
-            class="mt-8 flex items-center gap-3"
-          >
-            <B24Button
-              color="air-primary-success"
-              :loading="saving"
-              :disabled="saving || loading || !isAdmin"
-              :label="saving ? 'Сохраняем…' : 'Сохранить'"
-              @click="saveAndClose"
-            />
-            <B24Button
-              color="air-tertiary"
-              :disabled="saving"
-              label="Отмена"
-              @click="cancel"
-            />
-            <span
-              v-if="saved && !saving"
-              class="text-sm text-(--ui-color-accent-main-success)"
-              role="status"
-              aria-live="polite"
-            >Настройки сохранены ✓</span>
-          </div>
+                    <B24FormField label="Стоимость часа работы сотрудника">
+                      <div class="flex items-center gap-2">
+                        <B24InputNumber
+                          v-model="savingsRate"
+                          :min="0"
+                          :max="MAX_SAVINGS_RATE"
+                          :step="0.01"
+                          :format-options="rateFormatOptions"
+                          locale="ru"
+                          class="w-56"
+                        />
+                        <span
+                          v-if="baseCurrency"
+                          class="text-sm text-(--ui-color-base-2)"
+                        >в час</span>
+                      </div>
+                      <!-- Только когда значение ДЕЙСТВИТЕЛЬНО подставлено: текст говорит «Подставлен ориентир»,
+                     и над пустым полем (не-админ, уже настроенный портал) он был бы неправдой. -->
+                      <p
+                        v-if="rateHint && rateSeeded"
+                        class="mt-1 text-xs text-(--ui-color-base-2)"
+                      >
+                        {{ rateHint.text }}
+                      </p>
+                      <p class="mt-1 text-xs text-(--ui-color-base-3)">
+                        Нужна только для плитки «Сэкономлено денег»: сэкономленное время × эта ставка.
+                        Валюта — базовая валюта вашего портала, приложение берёт её из Битрикс24, вводить
+                        не нужно. Оставьте пусто — плитки не будет, останется только время.
+                      </p>
+                    </B24FormField>
+                  </div>
+                </B24PageCard>
+              </section>
+            </div>
+
+            <div
+              v-if="!showReadOnly"
+              class="mt-8 flex items-center gap-3"
+            >
+              <B24Button
+                color="air-primary-success"
+                :loading="saving"
+                :disabled="saving || loading || !isAdmin"
+                :label="saving ? 'Сохраняем…' : 'Сохранить'"
+                @click="saveAndClose"
+              />
+              <B24Button
+                color="air-tertiary"
+                :disabled="saving"
+                label="Отмена"
+                @click="cancel"
+              />
+              <span
+                v-if="saved && !saving"
+                class="text-sm text-(--ui-color-accent-main-success)"
+                role="status"
+                aria-live="polite"
+              >Настройки сохранены ✓</span>
+            </div>
+          </ScreenState>
 
           <BuildFooter />
         </div>

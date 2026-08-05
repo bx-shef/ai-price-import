@@ -1,0 +1,51 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+// #408. Состояние загрузки было ровно на одном экране из трёх: `/app` его имел (#256), а `/settings`
+// и `/metrics` рисовали содержимое сразу и утверждали то, чего ещё не знали. Три независимые
+// реализации одного состояния разъехались бы — поэтому правило одно, а гард перечисляет экраны
+// поимённо: четвёртый обязан попасть в список явно, а не быть замеченным глазами на следующем круге.
+const SCREENS = [
+  { file: 'app/pages/app.vue', skeleton: 'AppLoader' },
+  { file: 'app/pages/settings.vue', skeleton: 'SettingsLoader' },
+  { file: 'app/pages/metrics.vue', skeleton: 'MetricsLoader' }
+]
+
+const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url).pathname, 'utf8')
+/** Комментарии вырезаем: гард, проходящий по пояснению, сторожит пояснение, а не код. */
+const strip = (s: string) => s.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+
+describe('#408: ни один экран не показывает данные до их прихода', () => {
+  for (const { file, skeleton } of SCREENS) {
+    it(`${file}: содержимое под состоянием загрузки, заглушка своя`, () => {
+      const src = strip(read(file))
+      // ⚠ Заглушка обязана быть СВОЯ: смысл скелетона в том, что контент появляется на месте
+      // заглушки и экран не перестраивается. Общий прямоугольник сам вызывает тот скачок, ради
+      // устранения которого его ставят.
+      expect(src, `${file}: нет заглушки ${skeleton}`).toContain(`<${skeleton}`)
+    })
+  }
+
+  it('/settings и /metrics ждут именно завершения первой попытки, а не «не грузится сейчас»', () => {
+    // ⚠ `loading` стартует со `false`, поэтому условие на нём означало бы «уже загрузили» ещё до
+    // первого запроса — то есть ровно тот дефект, который чинится: нули и значения по умолчанию,
+    // прочитанные человеком как факт.
+    for (const file of ['app/pages/settings.vue', 'app/pages/metrics.vue']) {
+      expect(strip(read(file)), `${file}: состояние строится не на loaded`).toMatch(/:loaded="loaded"/)
+    }
+  })
+
+  it('вне портала человека не держат в скелетоне вечно', () => {
+    // Фрейм-токена там нет, запрос не уйдёт, `loaded` не станет true.
+    for (const file of ['app/pages/settings.vue', 'app/pages/metrics.vue']) {
+      expect(strip(read(file)), `${file}: нет ветки вне портала`).toMatch(/:inert="!inPortal"/)
+    }
+  })
+
+  it('приглушение формы вместо скелетона не вернулось', () => {
+    // ⚠ Полумера, которая была на `/settings` до правки: `opacity-50` на форме во время загрузки.
+    // Приглушённые значения по умолчанию всё равно НАПИСАНЫ, а человек читает то, что видит, а не
+    // то, что кликабельно.
+    expect(strip(read('app/pages/settings.vue'))).not.toMatch(/opacity-50['"]?\s*:\s*loading/)
+  })
+})

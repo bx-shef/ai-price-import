@@ -17,6 +17,14 @@ export function useMetrics() {
   // showing nothing and leaving the admin to guess.
   const moneyBlocker = ref<MoneyBlocker | null>(null)
   const loading = ref(false)
+  /**
+   * Первая попытка загрузки завершилась — успехом или отказом (#408).
+   *
+   * ⚠ Отдельный флаг, а не `!loading`: `loading` стартует со `false`, поэтому условие на нём
+   * означало бы «уже загрузили» ещё до первого запроса — а именно тогда экран и рисовал нули,
+   * которые человек читал как факт о своём портале.
+   */
+  const loaded = ref(false)
   const resetting = ref(false)
   const error = ref('')
 
@@ -27,7 +35,9 @@ export function useMetrics() {
 
   async function load(): Promise<void> {
     const h = await headers()
-    if (!h) return // outside a portal: stay graceful (panel shows zeros, no error surfaced)
+    // Вне портала фрейм-токена нет и загрузка не начнётся никогда. Страница остаётся
+    // работоспособной (предпросмотр), но и `loaded` не выставляем — состояние решает `inert`.
+    if (!h) return
     loading.value = true
     try {
       const res = await $fetch<MetricsView>('/api/import/metrics', { headers: h })
@@ -39,6 +49,7 @@ export function useMetrics() {
       error.value = fetchErrorMessage(e, 'Не удалось получить метрики')
     } finally {
       loading.value = false
+      loaded.value = true
     }
   }
 
@@ -59,5 +70,5 @@ export function useMetrics() {
     }
   }
 
-  return { counters, savings, moneyBlocker, loading, resetting, error, load, reset }
+  return { counters, savings, moneyBlocker, loading, loaded, resetting, error, load, reset }
 }
