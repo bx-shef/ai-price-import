@@ -97,6 +97,42 @@ export function buildActivityLines(input: {
   return [...header, ...problems, ...(input.advice ? [input.advice] : [])]
 }
 
+/**
+ * Сборка ВХОДА дела из данных импорта — чистая и экспортированная по той же причине, что и
+ * `buildActivityLines`: в проводке её не достать тестом.
+ *
+ * ⚠ Мутация, которая это потребовала: в `liveDeps` можно было оставить верную строку
+ * `clean: warnings.length === 0` и дописать ниже `...({ clean: true })` — последний ключ выигрывает,
+ * дело закрывается всегда, дефект #328 возвращается целиком, и все проверки зелены. Текстовый греп
+ * по проводке сторожил НАЛИЧИЕ строки, а не значение, дошедшее до билдера, и был вдобавок хрупок:
+ * безобидный `clean: !warnings.length` красил бы его при верном поведении.
+ */
+export function buildActivityInput(input: {
+  entityTypeId: number
+  entityId: number
+  companyId?: number | null
+  supplierName?: string
+  rowCount: number
+  warnings: string[]
+  advice?: string
+  sourceFileUrl?: string | null
+  sourceFileName?: string
+}): ActivityLayoutInput {
+  const hasCompany = !!input.companyId && input.companyId > 0
+  return {
+    ownerTypeId: hasCompany ? COMPANY_ENTITY_TYPE_ID : input.entityTypeId,
+    ownerId: hasCompany ? input.companyId! : input.entityId,
+    title: `Импорт: ${input.supplierName ?? 'документ'}`,
+    lines: buildActivityLines(input),
+    openPath: entityOpenPath(input.entityTypeId, input.entityId),
+    showOpenButton: hasCompany,
+    // Признак чистоты берётся из ТЕХ ЖЕ warnings, что печатаются в теле: два независимых источника
+    // разъехались бы, и дело закрывалось бы при видимом списке проблем.
+    clean: input.warnings.length === 0,
+    ...(input.sourceFileUrl ? { sourceFileUrl: input.sourceFileUrl, sourceFileName: input.sourceFileName ?? '' } : {})
+  }
+}
+
 export function buildConfigurableActivity(input: ActivityLayoutInput): Record<string, unknown> {
   // Footer carries ONE button — «Открыть» (opt). The source file used to be a second button; it is
   // now bound INTO the activity body instead (#328, owner ask): a document belongs with the record,

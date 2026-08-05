@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { deletePortal, getApplicationToken, getToken, saveToken, updateTokensOnRefresh } from '../server/utils/tokenStore'
 import type { PortalToken } from '../server/utils/tokenStore'
@@ -171,5 +172,26 @@ describe('ensureFreshToken', () => {
     })
     await expect(ensureFreshToken('m1', deps)).rejects.toThrow(/no token/)
     expect(deps.refreshTransport).not.toHaveBeenCalled()
+  })
+})
+
+describe('#438: механизм согласия снят целиком, а не спрятан', () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
+
+  it('таблица сносится миграцией, а не остаётся жить у развёрнутых инстансов', () => {
+    // ⚠ Мутация «убрать DROP» не роняла ничего, а последствие содержательное: у уже развёрнутого
+    // инстанса таблица с датами согласия переживает деинсталляцию порталов навсегда — чистить её
+    // больше нечем, `deletePortal` этой таблицы не знает.
+    expect(read('../server/db/schema.ts')).toContain('DROP TABLE IF EXISTS portal_consent')
+  })
+
+  it('гейт согласия не вернулся на приём документа', () => {
+    // ⚠ Проверка по ИСХОДНИКУ и с вырезанными комментариями: надгробие «здесь больше нет гейта»
+    // объясняет решение и обязано жить, а вот вызов — нет. Мутация «вернуть consentGate» тестами
+    // не ловилась вовсе: роут по этой ветке не покрыт.
+    const src = read('../server/api/import/upload.post.ts').replace(/\/\/.*$/gm, '')
+    for (const dead of ['consentGate', 'getConsent', 'portal_consent']) {
+      expect(src, `вернулся ${dead}`).not.toContain(dead)
+    }
   })
 })

@@ -32,7 +32,7 @@ import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_ME
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { buildActivityLines, buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
+import { buildActivityInput, buildConfigurableActivity } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
@@ -642,28 +642,27 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // Сборка тела дела — чистая функция (`buildActivityLines`): здесь она была невидима для
       // тестов, и мутация «убрать совет» или «вернуть его внутрь обрезаемого списка» проходила
       // при всех зелёных проверках.
-      const lines = buildActivityLines({ rowCount, supplierName, warnings, advice })
-      const title = `Импорт: ${supplierName ?? 'документ'}`
-      const hasCompany = !!companyId && companyId > 0
       const call = (await need()).call
+      // Компания найдена → она владелец дела, а созданная сущность привязывается вторым шагом.
+      const hasCompany = !!companyId && companyId > 0
+      // Вход дела собирает ЧИСТАЯ функция (`buildActivityInput`): здесь её было не достать тестом,
+      // и подмена признака «чистый импорт» дублирующим ключом проходила при зелёных проверках.
       // ONE дело. Owner = the client company when matched (its card is the natural home), else the
       // created entity. «Открыть» jumps to the created entity from the company timeline; with no company
       // the owner IS the entity → no button (nothing else to open).
-      const res = await call('crm.activity.configurable.add', buildConfigurableActivity({
-        ownerTypeId: hasCompany ? COMPANY_ENTITY_TYPE_ID : entityTypeId,
-        ownerId: hasCompany ? companyId! : entityId,
-        title,
-        lines,
-        openPath: entityOpenPath(entityTypeId, entityId),
-        showOpenButton: hasCompany,
-        // Чистый импорт → дело закрыто; с замечаниями → остаётся открытым и со своим значком
-        // (#328). Признак берётся из ТЕХ ЖЕ warnings, что печатаются в теле: два независимых
-        // источника разъехались бы, и дело закрывалось бы при видимом списке проблем.
-        clean: warnings.length === 0,
+      const res = await call('crm.activity.configurable.add', buildConfigurableActivity(buildActivityInput({
+        entityTypeId,
+        entityId,
+        companyId,
+        supplierName,
+        rowCount,
+        warnings,
+        advice,
+        sourceFileUrl,
         // Имя файла — подпись ссылки в деле (#328). Берём из задания; нет — билдер подставит
         // нейтральное «Открыть файл».
-        ...(sourceFileUrl ? { sourceFileUrl, sourceFileName: (await getJob(memberId, jobId, jobRedis))?.fileName ?? '' } : {})
-      })) as { activity?: { id?: number } } | undefined
+        ...(sourceFileUrl ? { sourceFileName: (await getJob(memberId, jobId, jobRedis))?.fileName ?? '' } : {})
+      }))) as { activity?: { id?: number } } | undefined
       // Additional binding to the created entity so the SAME дело shows on both the company AND the
       // entity timeline (crm.activity.binding.add — live-verified with a configurable activity). Best-
       // effort: the дело is already on the company timeline; a binding failure (or already-bound) is fine.

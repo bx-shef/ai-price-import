@@ -207,7 +207,6 @@ export async function deletePortal(memberId: string, query: QueryFn, eventTs = 0
   // NOTE: import_job (#202) and job_result (#135) are intentionally absent — both were dropped. Listing
   // a non-existent table here would make DELETE raise 42P01 and abort the purge AFTER portal_tokens is
   // already gone, orphaning client documents (import_text/import_doc) — a data-minimisation breach.
-  // связан галочкой, которую нажал предыдущий.
   // portal_legal_notice — по той же логике (#418): отметки об уведомлении относятся к установке,
   // которой больше нет. Оставленные, они молча погасили бы баннер и сообщение в чат у портала,
   // поставившего приложение заново, — то есть уведомление, которое обязаны доставить, не ушло бы.

@@ -38,13 +38,6 @@ const isSlider = ref(false)
 // Show the "read-only for non-admins" notice once settings have loaded (in a portal) and the
 // caller isn't an admin. Writes are also blocked server-side + in useSettings.
 const showReadOnly = computed(() => !loading.value && !error.value && !isAdmin.value)
-// Настройка закрыта, пока портал не принял EULA и Политику (#414). Настройка — это уже работа с
-// порталом: администратор выбирает каталог и целевую сущность, ни разу не увидев, куда уходит
-// содержимое документов. Порядок «сначала условия, потом настройка» задаёт issue.
-// ⚠ Это гейт ИНТЕРФЕЙСА, и он честно назван так: серверная граница стоит на приёме документов
-// (`/api/import/upload`), где содержимое реально уходит на инференс. Повесить её ещё и на запись
-// настроек нельзя дёшево — `POST /api/settings` намеренно проверяет только токен, без `member_id`
-// (#182), чтобы гонка установки не отвергала валидного админа, а согласие хранится по `member_id`.
 
 onMounted(async () => {
   // Detect the portal frame + slider mode (inert/no-op standalone) so Save/Cancel close correctly.
@@ -386,7 +379,6 @@ const ARTICLE_KIND_ITEMS = [
             v-if="showReadOnly"
             class="mb-4"
             color="air-primary-warning"
-            variant="soft"
             title="Настройки доступны только администратору"
             description="Менять эти настройки может только администратор портала Bitrix24. Попросите его открыть эту страницу."
           />

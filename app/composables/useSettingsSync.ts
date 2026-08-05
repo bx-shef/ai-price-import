@@ -37,10 +37,15 @@ export function useSettingsSync() {
   const state = ref<SettingsSyncState>('idle')
   const failure = ref<SettingsSyncFailure | null>(null)
 
+  // ⚠ Отказ объявляется ОДИН РАЗ НА ПРИЧИНУ, а не на попытку: канал best-effort, а `notifyReload`
+  // зовётся на каждое сохранение — иначе портал с выключенным pull получал бы строку в журнале при
+  // каждом нажатии «Сохранить», и полезное сообщение утонуло бы в собственном шуме.
+  const announced = new Set<SettingsSyncFailure>()
   function degrade(reason: SettingsSyncFailure) {
     state.value = 'unavailable'
     failure.value = reason
-    // Один раз на причину, а не на каждую попытку: канал best-effort, и журнал не должен шуметь.
+    if (announced.has(reason)) return
+    announced.add(reason)
     console.warn(`[settings-sync] живое обновление настроек недоступно (${reason})`)
   }
 

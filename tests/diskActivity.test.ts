@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { archiveFileName, commonDiskFileUrl, MAX_DISK_NAME, DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
-import { buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
+import { buildActivityInput, buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
 
 describe('disk — common storage + monthly folder', () => {
   it('picks the ENTITY_TYPE=common drive (live shape)', () => {
@@ -418,10 +418,38 @@ describe('#328: импорт с замечаниями не выглядит к�
     expect(a.fields.completed).toBe('N')
   })
 
-  it('признак берётся из тех же warnings, что печатаются в теле', () => {
-    // Два независимых источника разъехались бы, и дело закрывалось бы при видимом списке проблем.
-    const wiring = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
-      .replace(/\/\/.*$/gm, '')
-    expect(wiring).toContain('clean: warnings.length === 0')
+  it('признак берётся из ТЕХ ЖЕ warnings, что печатаются в теле — по поведению, а не по строке', () => {
+    // ⚠ Прежняя проверка грепала проводку на строку `clean: warnings.length === 0` и пропускала
+    // мутацию «дописать ниже `...({ clean: true })`»: последний ключ выигрывает, дело закрывается
+    // всегда, дефект возвращается целиком. Плюс она краснела на безобидном `!warnings.length`.
+    // Теперь сборка входа — чистая функция, и утверждение о ней поведенческое.
+    const dirty = buildActivityInput({ entityTypeId: 2, entityId: 7, rowCount: 3, warnings: ['товар не найден'] })
+    expect(dirty.clean).toBe(false)
+    expect(dirty.lines.join(' ')).toContain('товар не найден')
+
+    const clean = buildActivityInput({ entityTypeId: 2, entityId: 7, rowCount: 3, warnings: [] })
+    expect(clean.clean).toBe(true)
+    expect(clean.lines.join(' ')).not.toContain('Проблемы')
+  })
+
+  it('и доезжает до самого вызова портала — вход собирается в билдер без потерь', () => {
+    const a = buildConfigurableActivity(
+      buildActivityInput({ entityTypeId: 2, entityId: 7, rowCount: 1, warnings: ['итог не сошёлся'] })
+    ) as { fields: Record<string, unknown>, layout: { icon: { code: string } } }
+    expect(a.fields.completed).toBe('N')
+    expect(a.layout.icon.code).toBe('attention')
+  })
+
+  it('компания найдена → дело живёт в её карточке, иначе — в созданной сущности', () => {
+    const withCompany = buildActivityInput({ entityTypeId: 2, entityId: 7, companyId: 42, rowCount: 1, warnings: [] })
+    expect(withCompany.ownerId).toBe(42)
+    expect(withCompany.showOpenButton).toBe(true)
+    // ⚠ Нулевой/отрицательный id компании — это «не найдена», а не «найдена с id 0»: иначе дело
+    // ушло бы владельцем в несуществующую карточку и пропало бы из обоих таймлайнов.
+    for (const companyId of [0, -1, null, undefined]) {
+      const none = buildActivityInput({ entityTypeId: 2, entityId: 7, companyId, rowCount: 1, warnings: [] })
+      expect(none.ownerId).toBe(7)
+      expect(none.showOpenButton).toBe(false)
+    }
   })
 })
