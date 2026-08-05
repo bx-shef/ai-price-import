@@ -17,6 +17,9 @@ import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
 import { findExistingItemId } from '../utils/originLookup'
 import { bumpCounter, METRICS } from '../utils/metricsStore'
 import { readMapping } from '../utils/appSettings'
+import { markNoticeChatSent, portalsAwaitingNoticeChat } from '../utils/legalNoticeStore'
+import { noticeProblems } from '../../app/utils/legalNotice'
+import { legalDocUrl } from '../utils/legalNoticeUrl'
 import { defaultMapping } from '~/utils/portalSettings'
 import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
@@ -225,6 +228,40 @@ export function resolvePortalBotId(memberId: string, infra: LiveInfra, call: () 
     // this portal signs its notices with a person's name.
     onRefused: m => bumpCounter(m, METRICS.botRefused, 1, infra.query).catch(() => {})
   }, botIdCache)
+}
+
+/**
+ * Deps для рассылки уведомления об изменении документов (#418).
+ *
+ * ⚠ Адресат — **чат уведомлений портала** из его же настроек. Личный диалог того, кто установил
+ * приложение, был бы точнее по букве п. 9.3.3, но идентификатор установившего мы не храним
+ * (отметки об уведомлении — уровня портала, как и согласие), а чат уведомлений это место, куда
+ * приложение уже пишет и куда администратор смотрит. Чат не настроен ⇒ доставки нет, портал
+ * остаётся в очереди и получит сообщение, как только чат появится.
+ */
+export function liveLegalNoticeDeps(infra: LiveInfra) {
+  const rest = restResolver(infra)
+  return {
+    pendingPortals: (key: string, limit: number, after: string) => portalsAwaitingNoticeChat(key, limit, after, infra.query),
+    markSent: (memberId: string, key: string) => markNoticeChatSent(memberId, key, infra.query),
+    problems: noticeProblems,
+    send: async (memberId: string, text: string): Promise<'sent' | 'failed' | 'no-channel'> => {
+      const t = await rest(memberId)
+      // Токена нет — состояние временное (портал мог только что переустановиться), пробуем снова.
+      if (!t) return 'failed'
+      const mapping = await readMapping(t.call).catch(() => null)
+      const dialogId = mapping?.notifyChatId
+      // ⚠ Чат не выбран — это НЕ сбой, а постоянное состояние портала, и отличать его обязательно:
+      // слитое с отказом, оно делало очередь неотличимой от рабочей ровно тогда, когда она стояла.
+      if (!dialogId) return 'no-channel'
+      const id = await sendChatMessage(dialogId, text, t.call, await resolvePortalBotId(memberId, infra, async () => t.call), console.warn)
+      // ⚠ `null` значит «не доставлено» и отметку НЕ ставит: иначе первый же сбой похоронил бы
+      // уведомление навсегда — следующий проход счёл бы портал уведомлённым.
+      return id === null ? 'failed' : 'sent'
+    },
+    docUrl: legalDocUrl,
+    log: (msg: string) => console.info(msg)
+  }
 }
 
 /**
