@@ -7,10 +7,15 @@ import { opsTokenOk } from '../utils/operatorSession'
 // token via the X-Check-Token HEADER (never a query param → not in access logs);
 // nginx should `deny all` externally. Not the operator-session path (/api/ops/queues).
 export default defineEventHandler(async (event) => {
-  // process.env (bare name), NOT useRuntimeConfig — Nuxt only maps NUXT_-prefixed vars,
-  // so cfg.b24ApplicationToken is always '' at runtime and the token check would 403
-  // even when B24_APPLICATION_TOKEN is set. Matches envCheck / events.post.ts.
-  const expectedToken = process.env.B24_APPLICATION_TOKEN ?? ''
+  // process.env (bare name), NOT useRuntimeConfig — Nuxt only maps NUXT_-prefixed vars, so a
+  // cfg lookup would always see '' at runtime and 403 even with the token set.
+  // ⚠ СВОЯ переменная, а не `B24_APPLICATION_TOKEN`, которой этот роут пользовался раньше: у той
+  // переменной есть второй, несвязанный смысл в установке приложения, и заполнив её ради этой
+  // служебной страницы, админ ломал бы установку клиентам. Один секрет с двумя смыслами — это не
+  // экономия, а ловушка: правильное действие в одном месте оказывается разрушительным в другом.
+  // Пусто ⇒ роут закрыт полностью (`opsTokenOk` fail-closed) — это и есть рабочее состояние,
+  // человеческий путь в служебную зону идёт через сессию оператора (`/api/ops/queues`).
+  const expectedToken = process.env.OPS_CHECK_TOKEN ?? ''
   if (!opsTokenOk(expectedToken, String(getHeader(event, 'x-check-token') || ''))) {
     setResponseStatus(event, 403)
     return { error: 'forbidden' }

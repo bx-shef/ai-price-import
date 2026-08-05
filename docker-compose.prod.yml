@@ -6,9 +6,12 @@
 #   - запущенный общий Watchtower на хосте (docker-compose.watchtower.yml) — он один на
 #     сервер и сам подхватит контейнеры по метке watchtower.enable ниже;
 #   - .env рядом с этим файлом (git-ignored) со всеми переменными backend (см. .env.example):
-#     NUXT_PUBLIC_SITE_URL, LETSENCRYPT_EMAIL, POSTGRES_PASSWORD, B24_TOKEN_ENC_KEY,
-#     B24_CLIENT_ID/SECRET, ANTHROPIC_*, DATABASE_URL, REDIS_URL … (B24_APPLICATION_TOKEN
-#     оставляем ПУСТЫМ — токен приходит в ONAPPINSTALL и запоминается по порталу).
+#     LETSENCRYPT_EMAIL, POSTGRES_PASSWORD, B24_TOKEN_ENC_KEY, B24_CLIENT_ID/SECRET,
+#     LLM_PROVIDER + ключ провайдера, OPERATOR_* … ⚠ `B24_APPLICATION_TOKEN` не задаётся ВООБЩЕ
+#     (токен приходит в ONAPPINSTALL и запоминается по каждому порталу), а `NUXT_PUBLIC_SITE_URL`
+#     приезжает build-arg'ом из repo-переменной и уже лежит в окружении из образа — строка в .env
+#     только перебила бы его, а пустая строка стёрла бы (и обнулила адрес обработчика событий
+#     на /install: портал поставит приложение, а backend о нём не узнает).
 # Свой Watchtower здесь НЕ поднимаем: второй экземпляр конфликтует по имени и плодит
 # двойные перезапуски (см. docs/PROCESS.md).
 #
@@ -62,7 +65,9 @@ services:
     expose:
       - "3000"
     # Все переменные backend — из .env (bare-имена: B24_TOKEN_ENC_KEY, B24_CLIENT_*,
-    # B24_APPLICATION_TOKEN, ANTHROPIC_*, NUXT_PUBLIC_SITE_URL, OPERATOR_*, UPLOAD_DIR …).
+    # LLM_PROVIDER + ключ провайдера, OPERATOR_*, UPLOAD_DIR …). ⚠ `env_file` СИЛЬНЕЕ `ENV`
+    # образа, причём пустое присваивание тоже побеждает — поэтому запекаемые на сборке значения
+    # (`NUXT_PUBLIC_SITE_URL`, `NUXT_PUBLIC_METRIKA_ID`) здесь не задают ни пустыми, ни какими.
     env_file: .env
     environment:
       # DATABASE_URL/REDIS_URL — единый источник: строим из POSTGRES_* и имён сервисов,

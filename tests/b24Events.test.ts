@@ -77,9 +77,15 @@ describe('decideB24Event', () => {
       expect(decideB24Event(ok, null)).toEqual({ status: 200, action: 'register', verifyAccessToken: true })
       expect(decideB24Event(ok, '')).toEqual({ status: 200, action: 'register', verifyAccessToken: true })
     })
-    it('optional env gate: matches → register+verify, mismatch → 403', () => {
-      expect(decideB24Event(ok, null, 'T')).toEqual({ status: 200, action: 'register', verifyAccessToken: true })
-      expect(decideB24Event(ok, null, 'OTHER')).toEqual({ status: 403, action: 'ignore' })
+    it('глобального гейта нет: любое стороннее значение не влияет на решение', () => {
+      // ⚠ Глобального пред-разделённого токена НЕТ и быть не может: `application_token` Битрикс
+      // выдаёт НА УСТАНОВКУ, у каждого портала свой. Одно общее значение совпало бы максимум с
+      // одним тенантом, а всем остальным первая установка отвечала бы 403 — то есть приложение
+      // устанавливалось бы ровно один раз за всю жизнь, и молча. Прежний третий параметр это
+      // предлагал как «дополнительный гейт»; проверка ниже стережёт, чтобы он не вернулся:
+      // подпись принимает ДВА аргумента, лишний третий не влияет ни на что.
+      expect(decideB24Event(ok, null, 'OTHER' as never)).toEqual({ status: 200, action: 'register', verifyAccessToken: true })
+      expect(decideB24Event.length).toBe(2)
     })
     it('403 on any non-install event for an unknown portal (unverifiable)', () => {
       expect(decideB24Event({ ...ok, event: 'ONAPPUNINSTALL' }, null)).toEqual({ status: 403, action: 'ignore' })

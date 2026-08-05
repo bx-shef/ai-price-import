@@ -105,8 +105,10 @@ ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
 # REQUEST time. Set only in the build stage, both would stay at the nuxt.config defaults here and
 # `<lastmod>` would never ship. Since #304 the baked canonical/og:url ignore the build-arg entirely
 # (always the prod constant); SITE_URL on both stages still matters for the /install prerender and
-# the runtime Sitemap:/<loc>, whose base comes from `env_file`, which outranks image ENV.
-# That override is also why an existing deploy setting these in .env is unaffected.
+# the runtime Sitemap:/<loc>. The runtime stage is what makes the repo variable the SINGLE source:
+# the crawler routes read it from the container env, which the image provides — so a prod .env does
+# not need the line at all. `env_file` still outranks image ENV, which is the escape hatch for a
+# client deploy on its own domain (and the trap: a bare `KEY=` wipes the baked value).
 ARG NUXT_PUBLIC_SITE_URL=""
 ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
 ARG BUILD_DATE=""
