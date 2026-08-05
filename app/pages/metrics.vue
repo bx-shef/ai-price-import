@@ -17,12 +17,20 @@ import { formatRate, summarizeMetrics } from '~/utils/metricsView'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Метрики импорта', meta: [{ name: 'robots', content: 'noindex' }] }) // in-portal shell, see /app
 
-const { counters, savings, resetting, error, load, reset } = useMetrics()
+const { counters, savings, loaded, resetting, error, loadError, load, reset } = useMetrics()
 
 // Opened as a B24 slider (openSliderAppPage({place:'metrics'})) or by in-frame navigation, so the
 // «back» control closes the slider overlay vs navigates to /app. Standalone → plain navigation.
-const { init: initB24, placementPlace, closeSlider, isAdmin } = useB24()
+const { init: initB24, placementPlace, closeSlider, isAdmin, inFrame } = useB24()
 const isSlider = ref(false)
+/**
+ * Мы во фрейме портала? `null` — ЕЩЁ НЕ ЗНАЕМ (#408).
+ *
+ * ⚠ Три состояния, а не два. Со стартовым `false` условие «вне портала — сразу готово» срабатывало
+ * на первом же клиентском рендере, до того как завершилось рукопожатие с порталом: экран успевал
+ * отрисовать нули — ровно тот дефект, который чинится, просто короче. Неизвестно — значит грузим.
+ */
+const inPortal = ref<boolean | null>(null)
 
 // Обнуление счётчиков — только администратору (#411). Признак берём из фрейма (`IS_ADMIN` приезжает
 // вместе с токеном), сервер ради этого не расширяем.
@@ -38,6 +46,7 @@ onMounted(async () => {
     await initB24()
     isSlider.value = placementPlace() === APP_SLIDER_PLACE_METRICS
     admin.value = isAdmin()
+    inPortal.value = inFrame()
   } catch { /* standalone → остаётся false: вне портала сброс не показываем никому */ }
   await load()
 })
@@ -119,87 +128,106 @@ async function doReset(): Promise<void> {
           <p class="mb-4 text-sm text-(--ui-color-base-3)">
             Сколько документов приложение обработало и сколько времени вам сэкономило.
           </p>
+          <!-- ⚠ Всё содержимое под состоянием загрузки (#408). Прежде плитки рисовались сразу, и
+               пока данные шли, счётчики были нулевые: человек читал «0 документов» как факт о своём
+               портале, а при нулях срабатывала ещё и ветка пустого состояния — портал, где импорт
+               шёл месяцами, на долю секунды сообщал, что импортов не было.
+               `inert` — вне портала: там фрейм-токена нет, загрузка не начнётся никогда, и без
+               этого человек остался бы наедине с вечным скелетоном. -->
+          <ScreenState
+            :loaded="loaded"
+            :error="loadError"
+            :inert="inPortal === false"
+          >
+            <template #skeleton>
+              <MetricsLoader />
+            </template>
+
+            <!-- Экономия — те же плитки B24PageCard, что на /app: два экрана одной фичи читаются одинаково. -->
+            <B24PageGrid :class="hasMoneyTile ? 'sm:grid-cols-2 lg:grid-cols-2' : 'sm:grid-cols-1 lg:grid-cols-1'">
+              <B24PageCard
+                variant="tinted-no-accent"
+                title="Сэкономлено времени"
+                :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+              >
+                <p class="text-[22px] leading-tight font-semibold">
+                  {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+                </p>
+              </B24PageCard>
+              <!-- Деньги — только при заданной стоимости часа (валюта портала, не константа; #270). -->
+              <B24PageCard
+                v-if="hasMoneyTile"
+                variant="tinted-no-accent"
+                title="Сэкономлено денег (примерно)"
+                :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+              >
+                <p class="text-[22px] leading-tight font-semibold">
+                  {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
+                </p>
+              </B24PageCard>
+            </B24PageGrid>
+
+            <!-- Успешность — карточка шаблона, а не ручной div.border (#259): один визуальный язык со
+             всеми блоками страницы. -->
+            <B24PageCard
+              variant="outline"
+              class="mt-3"
+            >
+              <div class="flex items-baseline justify-between">
+                <span class="text-sm text-(--ui-color-base-3)">Документов дошло до CRM</span>
+                <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
+              </div>
+              <p class="mt-1 text-xs text-(--ui-color-base-4)">
+                Из скольких загруженных документов получилась запись в CRM. Остальные — с ошибкой, их видно в списке операций.
+              </p>
+            </B24PageCard>
+
+            <!-- Детальная разбивка — пара «тонированная шапка + тело», как блоки настроек (#259 §1.3). -->
+            <div class="mt-3">
+              <B24PageCard
+                variant="tinted"
+                title="Счётчики"
+                :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
+              />
+              <B24PageCard
+                variant="outline"
+                :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
+              >
+                <p
+                  v-if="summary.empty"
+                  class="py-2 text-center text-sm text-(--ui-color-base-4)"
+                >
+                  Пока пусто. Загрузите первый документ на главной странице — счётчики появятся здесь.
+                </p>
+                <ul
+                  v-else
+                  class="divide-y divide-(--ui-color-divider-default)"
+                >
+                  <li
+                    v-for="row in summary.rows"
+                    :key="row.key"
+                    class="flex items-center justify-between py-2.5 text-sm"
+                  >
+                    <span class="text-(--ui-color-base-3)">{{ row.label }}</span>
+                    <span class="font-semibold text-(--ui-color-base-1) tabular-nums">{{ row.value }}</span>
+                  </li>
+                </ul>
+              </B24PageCard>
+            </div>
+          </ScreenState>
+
+          <!-- ⚠ Ошибки, НЕ связанные с загрузкой (сброс счётчиков), — здесь: об отказе загрузки
+               говорит `ScreenState` выше, а отказ сброса иначе не показывался бы нигде вовсе. -->
           <B24Alert
-            v-if="error"
-            class="mb-4"
+            v-if="error && !loadError"
+            class="mt-4"
             color="air-primary-warning"
             size="sm"
             :title="error"
           />
 
-          <!-- Экономия — те же плитки B24PageCard, что на /app: два экрана одной фичи читаются одинаково. -->
-          <B24PageGrid :class="hasMoneyTile ? 'sm:grid-cols-2 lg:grid-cols-2' : 'sm:grid-cols-1 lg:grid-cols-1'">
-            <B24PageCard
-              variant="tinted-no-accent"
-              title="Сэкономлено времени"
-              :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-            >
-              <p class="text-[22px] leading-tight font-semibold">
-                {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-              </p>
-            </B24PageCard>
-            <!-- Деньги — только при заданной стоимости часа (валюта портала, не константа; #270). -->
-            <B24PageCard
-              v-if="hasMoneyTile"
-              variant="tinted-no-accent"
-              title="Сэкономлено денег (примерно)"
-              :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-            >
-              <p class="text-[22px] leading-tight font-semibold">
-                {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
-              </p>
-            </B24PageCard>
-          </B24PageGrid>
-
-          <!-- Успешность — карточка шаблона, а не ручной div.border (#259): один визуальный язык со
-             всеми блоками страницы. -->
-          <B24PageCard
-            variant="outline"
-            class="mt-3"
-          >
-            <div class="flex items-baseline justify-between">
-              <span class="text-sm text-(--ui-color-base-3)">Документов дошло до CRM</span>
-              <span class="text-lg font-semibold text-(--ui-color-base-1)">{{ formatRate(summary.successRate) }}</span>
-            </div>
-            <p class="mt-1 text-xs text-(--ui-color-base-4)">
-              Из скольких загруженных документов получилась запись в CRM. Остальные — с ошибкой, их видно в списке операций.
-            </p>
-          </B24PageCard>
-
-          <!-- Детальная разбивка — пара «тонированная шапка + тело», как блоки настроек (#259 §1.3). -->
-          <div class="mt-3">
-            <B24PageCard
-              variant="tinted"
-              title="Счётчики"
-              :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
-            />
-            <B24PageCard
-              variant="outline"
-              :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
-            >
-              <p
-                v-if="summary.empty"
-                class="py-2 text-center text-sm text-(--ui-color-base-4)"
-              >
-                Пока пусто. Загрузите первый документ на главной странице — счётчики появятся здесь.
-              </p>
-              <ul
-                v-else
-                class="divide-y divide-(--ui-color-divider-default)"
-              >
-                <li
-                  v-for="row in summary.rows"
-                  :key="row.key"
-                  class="flex items-center justify-between py-2.5 text-sm"
-                >
-                  <span class="text-(--ui-color-base-3)">{{ row.label }}</span>
-                  <span class="font-semibold text-(--ui-color-base-1) tabular-nums">{{ row.value }}</span>
-                </li>
-              </ul>
-            </B24PageCard>
-          </div>
-
-          <!-- Сброс -->
+          <!-- Сброс — ВНЕ состояния загрузки: «Обновить» это способ повторить попытку, и он обязан
+               быть доступен как раз тогда, когда данные не пришли. -->
           <div class="mt-4 flex items-center gap-2">
             <B24Button
               :icon="RefreshIcon"
