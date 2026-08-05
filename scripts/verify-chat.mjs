@@ -17,21 +17,9 @@ import { resolveLlmConfig } from '../server/agent/llmConfig.ts'
 import { makeChatFn } from '../server/agent/openaiChat.ts'
 import { runChatExtract } from '../server/agent/chatExtract.ts'
 import { buildExtractionPrompt } from '../prompts/extract.ts'
+import { loadLlmEnv } from './lib/llmEnv.mjs'
 
-// Load the provider vars from the git-ignored .env into process.env (anchored to line start).
-const ENV_KEYS = [
-  'LLM_PROVIDER',
-  'DEEPSEEK_API_KEY', 'DEEPSEEK_BASE_URL', 'DEEPSEEK_MODEL',
-  'BITRIXGPT_API_KEY', 'VIBE_API_KEY', 'BITRIXGPT_BASE_URL', 'BITRIXGPT_MODEL',
-  'LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL', 'LLM_LABEL'
-]
-try {
-  const envText = readFileSync('.env', 'utf8')
-  for (const key of ENV_KEYS) {
-    const m = envText.match(new RegExp(`^\\s*${key}=(.+)$`, 'm'))
-    if (m) process.env[key] = m[1].trim().replace(/^["']|["']$/g, '')
-  }
-} catch { /* no .env — rely on the ambient environment */ }
+loadLlmEnv()
 
 // --provider <p> overrides LLM_PROVIDER for this run (so one .env can test both, step 2 then 3).
 const argProvider = (() => {

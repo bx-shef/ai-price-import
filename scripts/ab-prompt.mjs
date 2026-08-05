@@ -39,7 +39,6 @@
 //   flag=true                  how often the model claimed VAT-inclusive prices. Direction, not harm.
 // The paired block at the end is what actually decides: a NET difference proves nothing, only the
 // count of documents that DISAGREE between the two sides does (McNemar over the discordant pairs).
-import { readFileSync } from 'node:fs'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -50,20 +49,9 @@ import { makeChatFn } from '../server/agent/openaiChat.ts'
 import { runChatExtract } from '../server/agent/chatExtract.ts'
 import { buildExtractionPrompt } from '../prompts/extract.ts'
 import { reconcilePricing } from '../app/utils/pricing.ts'
+import { loadLlmEnv } from './lib/llmEnv.mjs'
 
-const ENV_KEYS = [
-  'LLM_PROVIDER',
-  'DEEPSEEK_API_KEY', 'DEEPSEEK_BASE_URL', 'DEEPSEEK_MODEL',
-  'BITRIXGPT_API_KEY', 'VIBE_API_KEY', 'BITRIXGPT_BASE_URL', 'BITRIXGPT_MODEL',
-  'LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL', 'LLM_LABEL'
-]
-try {
-  const envText = readFileSync('.env', 'utf8')
-  for (const key of ENV_KEYS) {
-    const m = envText.match(new RegExp(`^\\s*${key}=(.+)$`, 'm'))
-    if (m) process.env[key] = m[1].trim().replace(/^["']|["']$/g, '')
-  }
-} catch { /* no .env — rely on the ambient environment */ }
+loadLlmEnv()
 
 /**
  * Read `--name <value>`.

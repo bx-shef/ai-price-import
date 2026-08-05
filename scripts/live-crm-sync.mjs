@@ -8,6 +8,7 @@
 //   pnpm live:crm --type счёт  # crafted счёт → smart-invoice (entityTypeId 31, xmlId marker)
 //   pnpm live:crm --type акт   # crafted акт → dynamic smart process (env LIVE_SP_ETID, default 1120)
 //   pnpm live:crm --ai        # document TEXT → chat extractor → runCrmSync → verify → delete
+//   pnpm live:crm --no-taxid  # supplier WITHOUT a tax id → the fallback title branch (#440)
 //   pnpm live:crm --keep      # do not delete the created entity
 //
 // `--type` exercises the routing table below: накладная→deal (originId marker) and
@@ -26,7 +27,9 @@ import { fetchVatRates } from '../server/utils/portalVat.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite.ts'
 import { findExistingItemId } from '../server/utils/originLookup.ts'
+import { supplierNameTrusted } from '../app/utils/importTitle.ts'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { loadLlmEnv } from './lib/llmEnv.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
@@ -42,6 +45,12 @@ const typeArg = (() => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : ''
 })()
 const DOC_TYPE = typeArg || 'накладная'
+// #440: прогон ЗАПАСНОЙ ветки заголовка. По умолчанию у поставщика есть налоговый номер, и
+// заголовок всегда берёт его название — то есть вживую наблюдалась ровно одна ветка из двух, а
+// вторая (номер не распознан → «Импорт: <тип> на <сумма>») существовала только в юнит-тестах.
+// Именно она несёт риск: сумма берётся НЕ из печатного итога документа, а из той, что реально
+// уйдёт в запись, и тип сверяется с закрытым списком.
+const noTaxId = args.has('--no-taxid')
 
 const readEnv = (file, key) => {
   // Anchor to line start (^…$ with the m flag) so a commented `#KEY=…` or a longer
@@ -81,7 +90,7 @@ const CRAFTED = {
   documentType: DOC_TYPE,
   currency: 'BYN',
   priceIncludesVat: false,
-  supplier: { name: 'ООО «Тест-Поставщик»', taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
+  supplier: noTaxId ? { name: 'ООО «Тест-Поставщик»' } : { name: 'ООО «Тест-Поставщик»', taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
   items: [
     { name: 'Кабель ВВГ 3х2.5', article: 'KAB-325', quantity: 500, unit: 'м', price: 1.20, vatRate: 20 },
     { name: 'Автомат С16', article: 'AVT-C16', quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 },
@@ -94,7 +103,7 @@ const CRAFTED = {
 // 600.00 + 135.00 + round2(0.8654×12.345)=10.68 + 50.00 = 795.68; НДС 120+27+2.14+0 = 149.14.
 const DOC_TEXT = [
   'ТОВАРНАЯ НАКЛАДНАЯ № ТН-2026-777 от 14.07.2026',
-  `Поставщик: ООО «Тест-Поставщик»  ИНН: ${SUPPLIER_TAX_ID}`,
+  noTaxId ? 'Поставщик: ООО «Тест-Поставщик»' : `Поставщик: ООО «Тест-Поставщик»  ИНН: ${SUPPLIER_TAX_ID}`,
   'Наименование | Артикул | Кол-во | Ед. | Цена | Сумма',
   'Кабель ВВГ 3х2.5 | KAB-325 | 500 | м | 1.20 | 600.00',
   'Автомат С16 | AVT-C16 | 30 | шт | 4.50 | 135.00',
@@ -107,6 +116,7 @@ async function extractWithAi(text) {
   // The production extractor path: runChatExtract → makeChatFn against an OpenAI-compatible provider
   // (DeepSeek/BitrixGPT), exactly what the worker runs. Provider + key from env (LLM_PROVIDER +
   // DEEPSEEK_API_KEY / VIBE_API_KEY). Returns a validated ExtractedDocument.
+  loadLlmEnv()
   const cfg = resolveLlmConfig(process.env)
   if (!cfg.apiKey) throw new Error(`нет ключа для провайдера '${cfg.label}' (задай DEEPSEEK_API_KEY / VIBE_API_KEY)`)
   console.log(`extract: provider=${cfg.label} model=${cfg.model}`)
@@ -177,6 +187,57 @@ try {
   if (res.entityId) {
     const { item } = await call('crm.item.get', { entityTypeId: res.entityTypeId, id: res.entityId })
     console.log('entity:', JSON.stringify({ entityTypeId: res.entityTypeId, id: item.id, title: item.title, categoryId: item.categoryId, companyId: item.companyId, currencyId: item.currencyId, opportunity: item.opportunity }))
+    // #440: the title is the record's NAME IN THE CLIENT'S CRM FOREVER, so assert its form rather
+    // than print it. Trusted branch → the supplier's own name; no tax id → «Импорт: <тип> на
+    // <сумма>», where the sum is the one that actually reached the record (`opportunity`), NOT the
+    // document's printed total — those diverge by design on a net invoice.
+    // ⚠ Утверждается НЕСУЩЕЕ свойство, а не форма строки. Пересобрать здесь ожидаемый заголовок
+    // из тех же `toLocaleString`/типа/валюты значило бы переписать `buildImportTitle` вторым
+    // экземпляром — и на `--type акт` проверка ЛОЖНО падала бы при исправном проде: «акт» вне
+    // закрытого списка типов, прод пишет «документ». В `--ai` то же самое даёт любой
+    // documentType от модели вне списка («товарная накладная»).
+    //
+    // ⚠ Сверять при этом есть что и помимо формы: `item.opportunity` приходит С ПОРТАЛА, поэтому
+    // сравнение числа из заголовка с ним — не тавтология. Именно оно ловит подмену
+    // `recordTotal → doc.total`, ради которой заголовок и берёт ушедшую в запись сумму.
+    // ⚠ Ветку ожидания выбирает СОСТОЯНИЕ ДОКУМЕНТА, а не флаг командной строки. Флаг лишь
+    // собирает фикстуру без номера; какую ветку возьмёт прод, решает то, что вернула модель. В
+    // `--ai --no-taxid` она вправе выдумать `taxId` из номера накладной — прод честно уйдёт в
+    // доверенную ветку и напишет имя, а сверка по флагу объявила бы это дефектом, то есть красным
+    // при исправном коде.
+    const trusted = Boolean(supplierNameTrusted(doc))
+    // ⚠ Флаг при этом не выброшен, а работает ПЕРЕКРЁСТНОЙ проверкой: сам `supplierNameTrusted`
+    // тоже может быть сломан, и тогда обе стороны съехали бы вместе — «всегда null» превратил бы
+    // утверждение «имя не утекло» в самоисполняющееся. На крафченой фикстуре состояние документа
+    // известно точно, поэтому расхождение с флагом — отказ. В `--ai` оно законно (модель вправе
+    // выдумать номер из номера накладной), там это предупреждение.
+    if (noTaxId && trusted) {
+      const msg = '#440: флаг --no-taxid, а документ считается доверенным (налоговый номер есть)'
+      if (!useAi) throw new Error(msg)
+      console.log(`  ⚠ ${msg} — модель вернула номер; проверяем доверенную ветку`)
+    }
+    if (!noTaxId && !trusted) throw new Error('#440: номер в фикстуре есть, а документ доверенным не считается')
+    const supplierName = (doc.supplier?.name ?? '').trim()
+    // ⚠ Пустое имя НЕ считается «имени в заголовке нет»: `includes('')` истинно всегда, то есть
+    // молчаливо пропустило бы утечку. В доверенной ветке это отказ самой фикстуры.
+    if (!supplierName && trusted) throw new Error('#440: в документе нет названия поставщика — проверять нечего')
+    const nameInTitle = Boolean(supplierName) && item.title.includes(supplierName)
+    if (!trusted && nameInTitle) throw new Error(`#440: номер не распознан, а название поставщика всё равно в заголовке — «${item.title}»`)
+    if (trusted && !nameInTitle) throw new Error(`#440: номер распознан, но названия поставщика в заголовке нет — «${item.title}»`)
+    if (!trusted) {
+      // Запасной заголовок обязан быть различим в списке сделок: «Импорт: документ» без суммы —
+      // ровно та строка, ради ухода от которой в него кладут тип и сумму. Проверка «есть цифра»
+      // была бы почти пустой: её прошёл бы и заголовок с ЧУЖИМ числом. Нормализуем разделители
+      // (`ru-RU` разделяет тысячи НЕРАЗРЫВНЫМ пробелом U+00A0) и сверяем с суммой записи.
+      const shown = item.title.match(/\d[\d\s\u00a0\u202f]*(?:[.,]\d+)?/)
+      if (!shown) throw new Error(`#440: запасной заголовок без суммы — «${item.title}»`)
+      const num = Number(shown[0].replace(/[\s\u00a0\u202f]/g, '').replace(',', '.'))
+      if (Math.abs(num - Number(item.opportunity)) > 0.01) {
+        throw new Error(`#440: в заголовке сумма ${num}, а в записи ${item.opportunity} — «${item.title}»`)
+      }
+    }
+    console.log(`✓ заголовок записи — ${!trusted ? 'запасной, без названия поставщика, сумма сходится с записью' : 'название поставщика (номер распознан)'}: «${item.title}»`)
+
     // #302: read the rows BACK and hold the invariant «Σ price×qty == сумма сущности». The old
     // check printed `opportunity` — the number WE set — so rows understated by the whole VAT
     // still passed as «live-verified». The portal computes the product tab from row `price`
