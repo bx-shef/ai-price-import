@@ -14,32 +14,16 @@
 //   B24_OAUTH_REFRESH_TOKEN=<plaintext refresh>    # optional (only needed if access expired)
 //   B24_CLIENT_ID=<app client_id>
 //   B24_CLIENT_SECRET=<app client_secret>
-import { readFileSync } from 'node:fs'
 import { makePortalSdkCall } from '../server/utils/b24Sdk.ts'
-
-const readEnv = (file, key, required = true) => {
-  let txt
-  try {
-    txt = readFileSync(file, 'utf8')
-  } catch {
-    if (required) throw new Error(`${file} not found`)
-    return ''
-  }
-  const m = txt.match(new RegExp(`^\\s*${key}=(.+)$`, 'm'))
-  if (!m) {
-    if (required) throw new Error(`${key} not found in ${file}`)
-    return ''
-  }
-  return m[1].trim().replace(/^["']|["']$/g, '')
-}
+import { readEnvValue } from './lib/envFile.mjs'
 
 const F = '.env.b24oauth'
-const domain = readEnv(F, 'B24_OAUTH_DOMAIN')
-const memberId = readEnv(F, 'B24_OAUTH_MEMBER_ID')
-const accessToken = readEnv(F, 'B24_OAUTH_ACCESS_TOKEN')
-const refreshToken = readEnv(F, 'B24_OAUTH_REFRESH_TOKEN', false)
-const clientId = readEnv(F, 'B24_CLIENT_ID')
-const clientSecret = readEnv(F, 'B24_CLIENT_SECRET')
+const domain = readEnvValue(F, 'B24_OAUTH_DOMAIN')
+const memberId = readEnvValue(F, 'B24_OAUTH_MEMBER_ID')
+const accessToken = readEnvValue(F, 'B24_OAUTH_ACCESS_TOKEN')
+const refreshToken = readEnvValue(F, 'B24_OAUTH_REFRESH_TOKEN', { required: false })
+const clientId = readEnvValue(F, 'B24_CLIENT_ID')
+const clientSecret = readEnvValue(F, 'B24_CLIENT_SECRET')
 
 // In-memory token (decrypt/encrypt are identity — refreshTokenEnc holds plaintext).
 const token = {

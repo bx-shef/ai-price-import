@@ -2,7 +2,6 @@
 // (webhook, scope crm). Runs the REAL runCrmSync twice with the SAME jobId and asserts the second
 // run FINDS the created entity by its marker (originId/originatorId) → created=false, no duplicate.
 // Not part of SSG / CI. Run: node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-idempotency-live.mjs
-import { readFileSync } from 'node:fs'
 import { runCrmSync } from '../server/queue/crmSyncCore.ts'
 import { findExistingItemId } from '../server/utils/originLookup.ts'
 import { originSearchFilter } from '../server/utils/originMarker.ts'
@@ -12,13 +11,9 @@ import { fetchVatRates } from '../server/utils/portalVat.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, setProductRows } from '../server/utils/crmWrite.ts'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { readEnvValue } from './lib/envFile.mjs'
 
-const readEnv = (file, key) => {
-  const line = readFileSync(file, 'utf8').split('\n').find(l => l.startsWith(key + '='))
-  if (!line) throw new Error(`${key} not in ${file}`)
-  return line.slice(key.length + 1).trim()
-}
-const WEBHOOK = readEnv('.env.b24test', 'B24_TEST_WEBHOOK').replace(/\/?$/, '/')
+const WEBHOOK = readEnvValue('.env.b24test', 'B24_TEST_WEBHOOK').replace(/\/?$/, '/')
 assertTestPortal(WEBHOOK)
 const call = async (method, params = {}) => {
   const r = await fetch(`${WEBHOOK}${method}.json`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params) })
