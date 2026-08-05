@@ -36,3 +36,11 @@
   }
   [data-glow-card]:hover::after { opacity: 1; }
 }
+
+/* Скелетоны загрузки не должны пульсировать у того, кто просил убрать движение (#408).
+   ⚠ `animate-pulse` Tailwind сам по `prefers-reduced-motion` не глушится, а `B24Skeleton` вешает
+   его на каждую плашку — в заглушке метрик их семнадцать. Остальные анимации проекта гасят себя
+   сами в своих компонентах; у скелетонов своего места нет, поэтому правило общее. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse { animation: none; }
+}

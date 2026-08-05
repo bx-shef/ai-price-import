@@ -27,6 +27,12 @@ export function useMetrics() {
   const loaded = ref(false)
   const resetting = ref(false)
   const error = ref('')
+  /**
+   * Ошибка ИМЕННО первой загрузки (#408). Отдельная от общей: `error` пишет и `reset()`, поэтому
+   * неудачный сброс счётчиков прятал бы уже загруженные метрики за «Не удалось загрузить данные» —
+   * данные-то загружены.
+   */
+  const loadError = ref('')
 
   async function headers(): Promise<Record<string, string> | null> {
     await init()
@@ -45,8 +51,10 @@ export function useMetrics() {
       savings.value = res.savings
       moneyBlocker.value = res.moneyBlocker ?? null
       error.value = ''
+      loadError.value = ''
     } catch (e) {
       error.value = fetchErrorMessage(e, 'Не удалось получить метрики')
+      loadError.value = error.value
     } finally {
       loading.value = false
       loaded.value = true
@@ -70,5 +78,5 @@ export function useMetrics() {
     }
   }
 
-  return { counters, savings, moneyBlocker, loading, loaded, resetting, error, load, reset }
+  return { counters, savings, moneyBlocker, loading, loaded, resetting, error, loadError, load, reset }
 }

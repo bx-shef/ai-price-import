@@ -17,6 +17,17 @@ export function useSettings() {
   const saving = ref(false)
   const saved = ref(false)
   const error = ref('')
+  /**
+   * Ошибка ИМЕННО первой загрузки (#408).
+   *
+   * ⚠ Отдельная от общей `error`, и это не педантизм: `error` пишут и `load`, и `save`. Состояние
+   * экрана строится на ней, поэтому неудачное СОХРАНЕНИЕ уносило бы всю форму вместе с
+   * несохранёнными правками администратора — и на её месте появлялось бы «Не удалось загрузить
+   * данные», то есть ложь о причине. Восстановление было бы только перезагрузкой, то есть потерей
+   * введённого. Ровно это и запрещает комментарий в `settings.vue`: форму на ошибке сохранения
+   * держим открытой, чтобы можно было повторить.
+   */
+  const loadError = ref('')
   // Whether the CALLING portal user is an admin (from GET /api/settings, verified server-side).
   // Non-admins may view settings but not save — writes are also enforced admin-only on the server.
   //
@@ -58,8 +69,10 @@ export function useSettings() {
       currencyUnknown.value = res.currencyUnknown === true
       saved.value = false
       error.value = ''
+      loadError.value = ''
     } catch (e) {
       error.value = fetchErrorMessage(e, 'Не удалось загрузить настройки')
+      loadError.value = error.value
     } finally {
       loading.value = false
       loaded.value = true
@@ -101,5 +114,5 @@ export function useSettings() {
     }
   }
 
-  return { mapping, loading, saving, saved, error, isAdmin, baseCurrency, currencyUnknown, loaded, load, save }
+  return { mapping, loading, saving, saved, error, loadError, isAdmin, baseCurrency, currencyUnknown, loaded, load, save }
 }

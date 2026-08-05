@@ -10,24 +10,31 @@
 // этого не спасало: приглушённые значения по умолчанию всё равно НАПИСАНЫ, а человек читает то,
 // что видит, а не то, что кликабельно.
 //
-// Повторяет блоки-пары страницы: тонированная шапка + тело с полями.
+// ⚠ Число секций и полей взято ИЗ РЕАЛЬНОЙ формы, а не «на глаз»: заглушка из трёх секций по два
+// поля была примерно втрое ниже настоящей, и после загрузки страница не проявлялась на месте, а
+// вырастала. Секций четыре (`SECTIONS` в `settings.vue`), полей в них 4 / 6 / 4 / 2.
+//
+// ⚠ Рамка — тем же токеном, что у настоящей карточки b24ui (`design-outline-stroke`), а не
+// `base-6`: последний заметно контрастнее, и заглушка была обведена жирнее того, что придёт на её
+// место. Тем же токеном пользуется `MetricsLoader` — три заглушки одного приложения не должны
+// обводиться по-разному.
+const FIELDS_PER_SECTION = [4, 6, 4, 2]
 </script>
 
 <template>
   <div class="flex flex-col gap-4 sm:gap-6">
     <section
-      v-for="i in 3"
+      v-for="(fields, i) in FIELDS_PER_SECTION"
       :key="i"
     >
-      <!-- Шапка блока -->
+      <!-- Шапка блока: у настоящей пары есть и заголовок, и описание — отсюда высота. -->
       <B24Skeleton
-        accent="less"
-        class="h-16 w-full rounded-none sm:rounded-t-3xl"
+        class="h-24 w-full rounded-none sm:rounded-t-3xl"
       />
-      <!-- Тело блока: подпись + поле, дважды -->
-      <div class="space-y-6 rounded-none border border-t-0 border-(--ui-color-base-6) p-4 sm:rounded-b-3xl sm:p-6">
+      <!-- Тело блока: подпись + поле на каждое поле формы -->
+      <div class="space-y-6 rounded-none border border-t-0 border-(--ui-color-design-outline-stroke) p-4 sm:rounded-b-3xl sm:p-6">
         <div
-          v-for="j in 2"
+          v-for="j in fields"
           :key="j"
           class="space-y-2"
         >

@@ -12,15 +12,16 @@
 
 <template>
   <div class="flex flex-col gap-3">
-    <!-- Подводка -->
-    <B24Skeleton class="h-4 w-2/3 rounded" />
+    <!-- ⚠ Полосы под подводку здесь НЕТ, и это важно: сам абзац «Сколько документов приложение
+         обработало…» стоит ВЫШЕ состояния загрузки и виден всё время. Заглушка рисовала под ним
+         серого двойника, и при готовности всё содержимое подпрыгивало вверх на ~28 px. -->
 
-    <!-- Плитки экономии (в рабочем состоянии — B24PageGrid из одной-двух карточек) -->
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <!-- Плитки экономии. ⚠ Одна колонка: вторая (денежная) плитка появляется только когда задана
+         ставка часа, а по умолчанию её нет — заглушка из двух колонок расходилась с реальностью
+         на каждом портале, где ставку не задали. -->
+    <B24PageGrid class="sm:grid-cols-1 lg:grid-cols-1">
       <div
-        v-for="i in 2"
-        :key="i"
-        class="flex flex-col gap-2 rounded-3xl border border-(--ui-color-base-6) p-4 sm:p-6"
+        class="flex flex-col gap-2 rounded-lg border border-(--ui-color-design-outline-stroke) p-4 sm:p-6"
       >
         <B24Skeleton
           accent="less"
@@ -28,24 +29,29 @@
         />
         <B24Skeleton class="h-6 w-24 rounded" />
       </div>
-    </div>
+    </B24PageGrid>
 
-    <!-- Успешность -->
-    <div class="flex items-center justify-between rounded-3xl border border-(--ui-color-base-6) p-4 sm:p-6">
+    <!-- Успешность: в настоящей карточке под строкой есть абзац-пояснение — отсюда высота. -->
+    <div class="rounded-lg border border-(--ui-color-design-outline-stroke) p-4 sm:p-6">
+      <div class="flex items-center justify-between">
+        <B24Skeleton
+          accent="less"
+          class="h-4 w-48 rounded"
+        />
+        <B24Skeleton class="h-5 w-14 rounded" />
+      </div>
       <B24Skeleton
         accent="less"
-        class="h-4 w-48 rounded"
+        class="mt-2 h-8 w-full rounded"
       />
-      <B24Skeleton class="h-5 w-14 rounded" />
     </div>
 
     <!-- Счётчики: тонированная шапка + строки списка -->
     <div>
-      <B24Skeleton
-        accent="less"
-        class="h-11 w-full rounded-t-3xl"
-      />
-      <div class="rounded-b-3xl border border-t-0 border-(--ui-color-base-6) p-4 sm:p-6">
+      <!-- Шапка «Счётчики» — тонированная карточка, а не тонкая серая полоса: `accent="less"` на
+           светлой теме почти сливается с фоном (≈1,13:1), и вместо шапки была пустота. -->
+      <B24Skeleton class="h-[69px] w-full rounded-t-3xl" />
+      <div class="rounded-b-3xl border border-t-0 border-(--ui-color-design-outline-stroke) p-4 sm:p-6">
         <div
           v-for="i in 5"
           :key="i"

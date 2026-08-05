@@ -23,7 +23,7 @@ import { portalCurrencySettingsUrl } from '~/utils/entityLink'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Настройки импорта', meta: [{ name: 'robots', content: 'noindex' }] }) // in-portal shell, see /app
 
-const { mapping, loading, saving, saved, error, isAdmin, baseCurrency, currencyUnknown, loaded, load, save } = useSettings()
+const { mapping, loading, saving, saved, error, loadError, isAdmin, baseCurrency, currencyUnknown, loaded, load, save } = useSettings()
 const { notifyReload } = useSettingsSync()
 const { init: initB24, get: getFrame, auth: frameAuth, placementPlace, closeSlider } = useB24()
 // How settings was reached, so Save/Cancel do the right «close»:
@@ -31,7 +31,9 @@ const { init: initB24, get: getFrame, auth: frameAuth, placementPlace, closeSlid
 //    overlay (parent.closeApplication); the /app frame behind it live-reloads via the pull.
 //  • inPortal (not slider) — reached by in-frame navigation (SDK slider unavailable) → return to /app.
 //  • standalone (neither) — a plain page/direct link → stay put (Save shows ✓, Cancel reloads).
-const inPortal = ref(false)
+// ⚠ `null` — ещё не знаем (#408): со стартовым `false` экран на первом рендере считал себя «вне
+// портала» и успевал показать значения по умолчанию до завершения рукопожатия.
+const inPortal = ref<boolean | null>(null)
 const isSlider = ref(false)
 // Show the "read-only for non-admins" notice once settings have loaded (in a portal) and the
 // caller isn't an admin. Writes are also blocked server-side + in useSettings.
@@ -373,8 +375,10 @@ const ARTICLE_KIND_ITEMS = [
           <p class="mb-4 text-sm text-(--ui-color-base-3)">
             Здесь вы задаёте, куда приложение вносит товары из документов и как ищет их в вашем каталоге.
           </p>
+          <!-- ⚠ Только НЕ-загрузочные ошибки (сохранение): при отказе загрузки о нём говорит
+               `ScreenState` ниже, и без этого условия человек видел два алерта об одном отказе. -->
           <B24Alert
-            v-if="error"
+            v-if="error && !loadError"
             class="mb-4"
             color="air-primary-warning"
             :title="error"
@@ -407,8 +411,8 @@ const ARTICLE_KIND_ITEMS = [
                `inert` — вне портала: там фрейм-токена нет, загрузка не начнётся никогда. -->
           <ScreenState
             :loaded="loaded"
-            :error="error"
-            :inert="!inPortal"
+            :error="loadError"
+            :inert="inPortal === false"
           >
             <template #skeleton>
               <SettingsLoader />

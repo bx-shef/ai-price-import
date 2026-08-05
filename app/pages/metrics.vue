@@ -17,14 +17,20 @@ import { formatRate, summarizeMetrics } from '~/utils/metricsView'
 definePageMeta({ layout: 'clear' })
 useHead({ title: 'Метрики импорта', meta: [{ name: 'robots', content: 'noindex' }] }) // in-portal shell, see /app
 
-const { counters, savings, loaded, resetting, error, load, reset } = useMetrics()
+const { counters, savings, loaded, resetting, error, loadError, load, reset } = useMetrics()
 
 // Opened as a B24 slider (openSliderAppPage({place:'metrics'})) or by in-frame navigation, so the
 // «back» control closes the slider overlay vs navigates to /app. Standalone → plain navigation.
 const { init: initB24, placementPlace, closeSlider, isAdmin, inFrame } = useB24()
 const isSlider = ref(false)
-// Вне портала фрейм-токена нет ⇒ запроса не будет ⇒ ждать нечего (#408).
-const inPortal = ref(false)
+/**
+ * Мы во фрейме портала? `null` — ЕЩЁ НЕ ЗНАЕМ (#408).
+ *
+ * ⚠ Три состояния, а не два. Со стартовым `false` условие «вне портала — сразу готово» срабатывало
+ * на первом же клиентском рендере, до того как завершилось рукопожатие с порталом: экран успевал
+ * отрисовать нули — ровно тот дефект, который чинится, просто короче. Неизвестно — значит грузим.
+ */
+const inPortal = ref<boolean | null>(null)
 
 // Обнуление счётчиков — только администратору (#411). Признак берём из фрейма (`IS_ADMIN` приезжает
 // вместе с токеном), сервер ради этого не расширяем.
@@ -130,8 +136,8 @@ async function doReset(): Promise<void> {
                этого человек остался бы наедине с вечным скелетоном. -->
           <ScreenState
             :loaded="loaded"
-            :error="error"
-            :inert="!inPortal"
+            :error="loadError"
+            :inert="inPortal === false"
           >
             <template #skeleton>
               <MetricsLoader />
@@ -209,6 +215,16 @@ async function doReset(): Promise<void> {
               </B24PageCard>
             </div>
           </ScreenState>
+
+          <!-- ⚠ Ошибки, НЕ связанные с загрузкой (сброс счётчиков), — здесь: об отказе загрузки
+               говорит `ScreenState` выше, а отказ сброса иначе не показывался бы нигде вовсе. -->
+          <B24Alert
+            v-if="error && !loadError"
+            class="mt-4"
+            color="air-primary-warning"
+            size="sm"
+            :title="error"
+          />
 
           <!-- Сброс — ВНЕ состояния загрузки: «Обновить» это способ повторить попытку, и он обязан
                быть доступен как раз тогда, когда данные не пришли. -->
