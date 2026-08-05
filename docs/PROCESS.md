@@ -576,6 +576,23 @@ Redis недоступен, счёт временно ведётся в памя
    заканчивается разобранным документом.
 5. Попросить сотрудника повторить загрузку — сами задания не повторятся.
 
+**Как проверить путь отказа, не ломая рабочий ключ** (прогон 2026-08-05):
+
+```bash
+# Живой отказ провайдера: настоящий запрос, заведомо неверный ключ.
+LLM_PROVIDER=deepseek DEEPSEEK_API_KEY=sk-invalid pnpm verify:chat --provider deepseek
+# → «401 Authentication Fails, Your api key: ****alid is invalid» — это строка ПРОВАЙДЕРА.
+# Сотруднику уходит наш текст класса `auth`, в журнал — та же строка с вырезанным ключом.
+
+# Гейт провайдера: недопустимое значение обязано ронять старт.
+LLM_PROVIDER=openai node .output/server/index.mjs        # → FATAL, код выхода 1
+LLM_PROVIDER=custom node .output/server/index.mjs        # → FATAL (нужен SELF_HOSTED=1)
+LLM_PROVIDER=custom SELF_HOSTED=1 node .output/server/index.mjs   # → поднимается
+```
+
+⚠ Доставку сообщения в чат портала этой проверкой НЕ увидеть — она идёт из воркера по OAuth-токену
+установленного портала. Для неё нужен живой портал с действующей подпиской на REST.
+
 ⚠ **Ключ должен быть Вайбкод-ключом.** Живой прогон 2026-08-04 показал, что AI Router принимает
 `Authorization: Bearer` **только** для ключей `vibe_*`, а прочим отвечает `401 API key required. Use
 X-Api-Key header instead`. Наш транспорт шлёт Bearer (так работает OpenAI-совместимый клиент),
