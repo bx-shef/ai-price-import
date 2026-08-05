@@ -40,9 +40,16 @@ export function safeEqual(a: string, b: string): boolean {
  * Decide what to do with a parsed event.
  * @param storedToken the portal's remembered application_token, or null when the
  *        portal is unknown (never installed / already uninstalled).
- * @param envToken optional global gate (B24_APPLICATION_TOKEN). Empty = no gate.
+ *
+ * ⚠ There is NO global pre-shared token here, and there cannot be one. Bitrix24 issues
+ * `application_token` PER INSTALLATION, so a single value from env could only ever match one
+ * portal — every other tenant's first install would 403, silently, and the app would be
+ * installable exactly once. The former `envToken` parameter offered that as an "optional extra
+ * gate"; in a multitenant cloud app it is a switch that breaks the product for everyone else.
+ * Its marginal value was nil even single-tenant: a first install is already authenticated by the
+ * delivered access_token (`verifyAccessToken`) and bound to its member_id (#162).
  */
-export function decideB24Event(ev: ParsedB24Event, storedToken: string | null, envToken = ''): B24EventDecision {
+export function decideB24Event(ev: ParsedB24Event, storedToken: string | null): B24EventDecision {
   if (!ev.event || !ev.memberId) return { status: 400, action: 'ignore' }
 
   // Known portal → authoritative per-portal comparison (covers ONAPPUNINSTALL).
@@ -56,8 +63,6 @@ export function decideB24Event(ev: ParsedB24Event, storedToken: string | null, e
   // Unknown portal → only a first install can bootstrap trust; anything else is
   // unverifiable (no stored token, and non-install events carry nothing to prove).
   if (ev.event !== 'ONAPPINSTALL') return { status: 403, action: 'ignore' }
-  // Optional extra gate: when a global token is configured it must match first.
-  if (envToken && !safeEqual(ev.applicationToken, envToken)) return { status: 403, action: 'ignore' }
   // A first install must carry an application_token to remember for later events.
   if (!ev.applicationToken) return { status: 400, action: 'ignore' }
   return { status: 200, action: 'register', verifyAccessToken: true }

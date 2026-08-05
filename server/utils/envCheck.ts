@@ -18,8 +18,6 @@ export interface EnvReport {
 /** Провайдеры, которые вообще существуют в коде (`server/agent/llmConfig.ts`). */
 const KNOWN_PROVIDERS = ['bitrixgpt', 'deepseek', 'custom']
 
-const PLACEHOLDERS = ['', 'change_me', 'changeme', 'todo', 'xxx', 'your_token_here']
-
 /** Validate backend env. Returns errors (misconfig) + warnings (degraded). */
 export function checkBackendEnv(env: Record<string, string | undefined>): EnvReport {
   const errors: string[] = []
@@ -37,14 +35,15 @@ export function checkBackendEnv(env: Record<string, string | undefined>): EnvRep
 
   if (!env.DATABASE_URL) errors.push('DATABASE_URL is not set')
 
-  // B24_APPLICATION_TOKEN is OPTIONAL: application_token is delivered by ONAPPINSTALL
-  // and remembered per-portal; a first install authenticates via its access_token
-  // (see server/utils/verifyInstallToken). Empty is the normal setup. A LEFTOVER
-  // placeholder is a footgun — it becomes a global gate that never matches, so every
-  // first install 403s. Flag that, but treat empty as fine.
-  const appToken = (env.B24_APPLICATION_TOKEN ?? '').trim()
-  if (appToken && PLACEHOLDERS.includes(appToken.toLowerCase())) {
-    errors.push('B24_APPLICATION_TOKEN is a placeholder — leave it empty or set a real token (else every install 403s)')
+  // ⚠ B24_APPLICATION_TOKEN БОЛЬШЕ НЕ ЧИТАЕТСЯ НИГДЕ. `application_token` Битрикс выдаёт НА
+  // УСТАНОВКУ, то есть у каждого портала свой: одно общее значение могло совпасть максимум с
+  // одним тенантом, а всем прочим первая установка отвечала бы 403 — молча и навсегда. Прежде
+  // она вдобавок служила паролем служебного роута `/api/queues`, и это худшая часть: заполнив
+  // её ради служебной страницы, админ ломал установку клиентам. Служебный роут переведён на
+  // свою `OPS_CHECK_TOKEN`. Оставшееся значение ни на что не влияет, но вводит в заблуждение —
+  // говорим об этом вслух, а не молчим.
+  if ((env.B24_APPLICATION_TOKEN ?? '').trim()) {
+    warnings.push('B24_APPLICATION_TOKEN задан, но больше не читается: установку он сломать не может, а служебный роут читает OPS_CHECK_TOKEN. Уберите строку из .env (при возможном откате на прежний образ держите обе)')
   }
 
   if (!env.B24_CLIENT_ID || !env.B24_CLIENT_SECRET) {

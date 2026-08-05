@@ -41,6 +41,17 @@ RUN test -f .output/public/index.html \
     || { echo 'BUILD FAILED: .output/public/index.html missing — is "/" still in nitro.prerender.routes?' >&2; exit 1; }; \
     grep -oE '<meta[^>]*property="og:image"[^>]*>' .output/public/index.html | grep -q 'content="https\?://' \
     || { echo 'BUILD FAILED: og:image in the prerendered landing is not an absolute URL.' >&2; exit 1; }
+# The one value the image cannot recover from at runtime. Every page is PRERENDERED, so
+# `/install` reads its event-handler URL from the baked `window.__NUXT__.config` — an empty
+# `siteUrl` there means the page refuses to bind ONAPPINSTALL, i.e. a portal installs the app and
+# the backend never learns about it. Invisible everywhere else: unit tests do not build, and the
+# landing and robots.txt fall back to the prod constant, so nothing else goes red.
+# Asserted on the ARTEFACT, not on the env var: the env only proves an ARG was passed, while this
+# proves the value actually reached the frozen page — the same reason the og:image guard above
+# reads the HTML instead of the source.
+RUN grep -oE 'siteUrl:"[^"]*"' .output/public/install/index.html | grep -qE 'siteUrl:"https?://' \
+    || { echo 'BUILD FAILED: prerendered /install carries an empty siteUrl — it would refuse to bind B24 events. Set the NUXT_PUBLIC_SITE_URL repo variable.' >&2; exit 1; }
+
 # The same assertion for the OTHER half of the policy, on the RENDERED output rather than on source.
 # The unit guard reads `app/pages/*.vue`, so it cannot see how a tag actually serialises, nor a page
 # reaching the crawler through a mechanism other than a page file. Here every spelling question and
@@ -105,8 +116,13 @@ ENV NUXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA
 # REQUEST time. Set only in the build stage, both would stay at the nuxt.config defaults here and
 # `<lastmod>` would never ship. Since #304 the baked canonical/og:url ignore the build-arg entirely
 # (always the prod constant); SITE_URL on both stages still matters for the /install prerender and
-# the runtime Sitemap:/<loc>, whose base comes from `env_file`, which outranks image ENV.
-# That override is also why an existing deploy setting these in .env is unaffected.
+# the runtime Sitemap:/<loc>. Two DIFFERENT readers, verified by booting the built server:
+#   - PAGES are all prerendered and served as static bytes, so `window.__NUXT__.config` is a baked
+#     JSON blob — `/install` (and its event-handler URL) can only ever see the BUILD-stage value;
+#   - SERVER ROUTES read the process env per request — that is what the runtime stage is for.
+# Together they make the repo variable the single source, and a prod .env needs no line at all.
+# `env_file` still outranks image ENV for the routes (and a bare `KEY=` wipes the baked value), but
+# it can NOT reach the prerendered pages — a client deploy on its own domain must rebuild.
 ARG NUXT_PUBLIC_SITE_URL=""
 ENV NUXT_PUBLIC_SITE_URL=$NUXT_PUBLIC_SITE_URL
 ARG BUILD_DATE=""

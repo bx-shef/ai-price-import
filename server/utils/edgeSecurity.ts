@@ -80,12 +80,29 @@ function expandV6(addr: string): string[] | null {
 // («приложение не работает») with the error only in the console. Self-hosted (custom-domain) boxes
 // are still NOT covered: that needs an env-driven list, which would break the byte-parity with
 // nginx.conf — tracked in #323.
+// Приёмники Яндекс Метрики — ВСЕ региональные (официальный список, «Установка счетчика на сайт с
+// CSP»), и ТОЛЬКО в `connect-src`. Одного `mc.yandex.ru` там мало: счётчик выбирает приёмник ПО
+// РЕГИОНУ ПОСЕТИТЕЛЯ, и посетитель из Беларуси уходит на `mc.yandex.by` — живая находка
+// 2026-08-05, отчёты блокировались браузером, то есть на нашем же основном рынке счётчик не
+// работал бы вовсе, а страница выглядела исправной.
+// ⚠ В `script-src` остаётся ОДИН `mc.yandex.ru`: наш сниппет грузит `tag.js` именно с него
+// (адрес зашит в `nuxt.config.ts`), региональные адреса нужны только для отправки отчётов.
+// Расширять `script-src` было бы дорого и не по делу: политика ОДНА на все страницы, включая
+// портальные (`/app`, `/settings`) — те живут во фрейме чужой CRM, счётчик там самозаглушён, и
+// право исполнять код на них получили бы 17 посторонних origin'ов ради лендинга. Компрометация
+// любой периферийной зоны (`mc.yandex.az`, `.tm`, `.co.il`) означала бы исполнение кода на экране
+// внутри CRM клиента. Отчёты при этом не страдают: XHR разрешён, и JSONP-фолбэк, который и
+// пытался грузить скрипт с регионального хоста, включался ровно потому, что XHR был заблокирован. `mc.webvisor.*` не нужен: Вебвизор выключен в коде (#297). ⚠ Это НЕ новый получатель
+// данных: оператор тот же (ООО «Яндекс»), меняется только адрес приёма — Политика сайта называет
+// сервис, а не домен, и правки не требует.
+const METRIKA = 'https://mc.yandex.ru https://mc.yandex.az https://mc.yandex.by https://mc.yandex.co.il https://mc.yandex.com https://mc.yandex.com.am https://mc.yandex.com.ge https://mc.yandex.com.tr https://mc.yandex.ee https://mc.yandex.fr https://mc.yandex.kg https://mc.yandex.kz https://mc.yandex.lt https://mc.yandex.lv https://mc.yandex.md https://mc.yandex.tj https://mc.yandex.tm https://mc.yandex.uz'
+
 const B24_CLOUD = 'https://*.bitrix24.com https://*.bitrix24.ru https://*.bitrix24.by https://*.bitrix24.eu https://*.bitrix24.kz https://*.bitrix24.de https://*.bitrix24.uk https://*.bitrix24.pl https://*.bitrix24.fr https://*.bitrix24.it https://*.bitrix24.ae https://*.bitrix24.com.tr https://*.bitrix24.in https://*.bitrix24.co https://*.bitrix24.mx https://*.bitrix24.es https://*.bitrix24.com.br https://*.bitrix24.cn https://*.bitrix24.vn https://*.bitrix24.jp https://*.bitrix24.id'
 
 const PAGE_CSP
   = 'default-src \'self\'; img-src \'self\' data: https:; style-src \'self\' \'unsafe-inline\'; '
     + 'script-src \'self\' \'unsafe-inline\' https://mc.yandex.ru; '
-    + `connect-src 'self' https://mc.yandex.ru https://mc.yandex.com ${B24_CLOUD}; `
+    + `connect-src 'self' ${METRIKA} ${B24_CLOUD}; `
     + `frame-ancestors 'self' ${B24_CLOUD}; `
     + 'base-uri \'self\'; object-src \'none\''
 

@@ -8,7 +8,6 @@ describe('checkBackendEnv', () => {
     const r = checkBackendEnv({
       B24_TOKEN_ENC_KEY: key32,
       DATABASE_URL: 'postgres://x',
-      B24_APPLICATION_TOKEN: 'realtoken123',
       B24_CLIENT_ID: 'id',
       B24_CLIENT_SECRET: 'sec',
       REDIS_URL: 'redis://x',
@@ -20,18 +19,28 @@ describe('checkBackendEnv', () => {
     expect(r.warnings).toEqual([])
   })
 
-  it('flags missing/short key, missing DB, placeholder token', () => {
-    const r = checkBackendEnv({ B24_TOKEN_ENC_KEY: Buffer.alloc(16).toString('base64'), B24_APPLICATION_TOKEN: 'CHANGE_ME' })
+  it('flags missing/short key, missing DB', () => {
+    const r = checkBackendEnv({ B24_TOKEN_ENC_KEY: Buffer.alloc(16).toString('base64') })
     expect(r.errors.some(e => /32 bytes/.test(e))).toBe(true)
     expect(r.errors.some(e => /DATABASE_URL/.test(e))).toBe(true)
-    expect(r.errors.some(e => /placeholder/.test(e))).toBe(true)
   })
 
-  it('empty B24_APPLICATION_TOKEN is OK (optional — installs authenticate via access_token)', () => {
-    // No token set: not an error. application_token is learned from ONAPPINSTALL.
-    const r = checkBackendEnv({ B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_CLIENT_ID: 'i', B24_CLIENT_SECRET: 's', REDIS_URL: 'r', VIBE_API_KEY: 'k' })
-    expect(r.errors).toEqual([])
-    expect(r.errors.some(e => /APPLICATION_TOKEN/.test(e))).toBe(false)
+  it('оставленный B24_APPLICATION_TOKEN — предупреждение, а не ошибка и не молчание', () => {
+    // ⚠ Переменная больше не читается нигде: `application_token` выдаётся НА УСТАНОВКУ, у каждого
+    // портала свой, и общее значение отвечало бы 403 всем тенантам кроме одного. Прежде она вдобавок
+    // была паролем служебного роута — то есть заполнение ради служебной страницы ломало установку
+    // клиентам. Молчать о ней нельзя: администратор будет считать её работающей защитой.
+    const base = { B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_CLIENT_ID: 'i', B24_CLIENT_SECRET: 's', REDIS_URL: 'r', VIBE_API_KEY: 'k' }
+    const left = checkBackendEnv({ ...base, B24_APPLICATION_TOKEN: 'realtoken123' })
+    expect(left.errors).toEqual([])
+    expect(left.warnings.some(w => /B24_APPLICATION_TOKEN/.test(w))).toBe(true)
+    // ⚠ И называет ЗАМЕНУ: предупреждение существует ради того, чтобы админ не заблуждался, а
+    // мутация «переписать текст на прежнюю переменную» проверку по одному имени переживала.
+    expect(left.warnings.some(w => /OPS_CHECK_TOKEN/.test(w))).toBe(true)
+
+    const clean = checkBackendEnv(base)
+    expect(clean.errors).toEqual([])
+    expect(clean.warnings).toEqual([])
   })
 
   it('warns (not errors) on missing OAuth creds / Redis', () => {

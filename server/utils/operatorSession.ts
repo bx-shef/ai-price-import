@@ -21,6 +21,31 @@ export function operatorAllowed(cookie: string | undefined, env: Record<string, 
 
 /** Constant-time app-token check for /api/queues (X-Check-Token). Fail-closed when
  * the expected token is unset — an empty provided header must NOT compare equal. */
+/**
+ * Ожидаемый токен служебного роута `/api/queues`.
+ *
+ * ⚠ Читается ТОЛЬКО `OPS_CHECK_TOKEN`. Раньше роут брал `B24_APPLICATION_TOKEN` — переменную, у
+ * которой есть второй, несвязанный смысл в установке приложения; заполнив её ради мониторинга,
+ * администратор ломал установку клиентам. Возврат к ней — мутация, которую до этой функции не
+ * ловил ни один тест: роут не был покрыт вовсе.
+ * ⚠ Пусто ⇒ роут закрыт (`opsTokenOk` fail-closed), и это рабочее состояние: человек ходит в
+ * служебную зону сессией оператора.
+ */
+export function opsCheckToken(env: Record<string, string | undefined>): string {
+  return env.OPS_CHECK_TOKEN ?? ''
+}
+
+/**
+ * Решение служебного роута: пускать или нет, и читать ли статистику.
+ *
+ * ⚠ Вынесено из роута ради ПОВЕДЕНЧЕСКОЙ проверки: мутация «снять гейт целиком» переживала все
+ * тесты, потому что про этот роут не спрашивал никто. Несущее утверждение — «при отказе очереди НЕ
+ * читались»: иначе защита исчезает вместе с интерфейсом, а в журнале ничего не остаётся.
+ */
+export function opsQueuesAllowed(env: Record<string, string | undefined>, provided: string): boolean {
+  return opsTokenOk(opsCheckToken(env), provided)
+}
+
 export function opsTokenOk(expected: string, provided: string): boolean {
   if (!expected) return false
   const a = Buffer.from(expected)

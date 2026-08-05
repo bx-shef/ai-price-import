@@ -56,10 +56,18 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       # Full build so the backend extraction toolchain (pdftotext/libreoffice/tesseract)
       # AND the app nginx config are validated in CI, not only on deploy. No push here.
+      # ⚠ The SAME build-args as deploy.yml, and that is the point: the image asserts on its own
+      # prerendered output (empty siteUrl → /install would refuse to bind B24 events), so a
+      # validation build without them checks a DIFFERENT image than the one that ships — it would
+      # go red on a healthy change and green on a broken deploy config. An unset repo variable
+      # failing every PR is the intended signal, not a nuisance: it is exactly what would ship.
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           target: ${{ matrix.target }}
           push: false
+          build-args: |
+            NUXT_PUBLIC_SITE_URL=${{ vars.NUXT_PUBLIC_SITE_URL }}
+            NUXT_PUBLIC_METRIKA_ID=${{ vars.NUXT_PUBLIC_METRIKA_ID }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}

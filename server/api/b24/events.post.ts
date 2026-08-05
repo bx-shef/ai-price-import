@@ -20,16 +20,16 @@ export default defineEventHandler(async (event) => {
 
   // Secrets come from process.env (bare names), NOT useRuntimeConfig(): Nuxt only
   // overrides runtimeConfig from NUXT_-prefixed vars, but the deploy sets bare
-  // B24_TOKEN_ENC_KEY / B24_APPLICATION_TOKEN (env_file .env) — same as worker.ts /
-  // envCheck. Reading them via cfg would silently see '' and 500 every install.
+  // B24_TOKEN_ENC_KEY (env_file .env) — same as worker.ts / envCheck. Reading it via cfg
+  // would silently see '' and 500 every install.
 
   // Trust model (B24 «Безопасность в обработчиках»): a known portal is verified
   // against ITS stored application_token; a first install is authenticated via the
-  // delivered access_token (application_token is learned, not pre-shared). The env
-  // token is an OPTIONAL extra gate on first install — normally empty.
-  const envToken = process.env.B24_APPLICATION_TOKEN ?? ''
+  // delivered access_token (application_token is learned, not pre-shared).
+  // ⚠ No global env token takes part — see decideB24Event: it is per-installation, so one
+  // shared value would 403 every tenant but one.
   const storedToken = (dbEnabled() && ev.memberId) ? await getApplicationToken(ev.memberId, query) : null
-  const decision = decideB24Event(ev, storedToken, envToken)
+  const decision = decideB24Event(ev, storedToken)
   setResponseStatus(event, decision.status)
 
   if (decision.action === 'ignore') {
