@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { useB24 } from './useB24'
-import { buildFrameHeaders, fetchErrorMessage } from '~/utils/frameHeaders'
+import { buildFrameHeaders, fetchErrorMessage, frameAuthMessage } from '~/utils/frameHeaders'
 import type { MoneyBlocker, Savings } from '~/utils/savings'
 
 // In-portal metrics client: read the per-portal dashboard counters + time/money-saved
@@ -10,7 +10,7 @@ import type { MoneyBlocker, Savings } from '~/utils/savings'
 export interface MetricsView { counters: Record<string, number>, savings: Savings, moneyBlocker?: MoneyBlocker | null }
 
 export function useMetrics() {
-  const { init, ensureAuth } = useB24()
+  const { init, ensureAuth, inFrame } = useB24()
   const counters = ref<Record<string, number>>({})
   const savings = ref<Savings | null>(null)
   // Why there is no money tile (server-decided) — so the dashboard can say it instead of
@@ -41,9 +41,19 @@ export function useMetrics() {
 
   async function load(): Promise<void> {
     const h = await headers()
-    // Вне портала фрейм-токена нет и загрузка не начнётся никогда. Страница остаётся
-    // работоспособной (предпросмотр), но и `loaded` не выставляем — состояние решает `inert`.
-    if (!h) return
+    if (!h) {
+      // ⚠ Попытка ЗАВЕРШИЛАСЬ, пусть и ничем — `loaded` обязан стать true.
+      //
+      // Прежде здесь стоял голый `return`, и это оставляло экран в скелетоне НАВСЕГДА в самом
+      // неприятном случае: сотрудник ВНУТРИ портала, но фрейм-авторизация истекла и обновиться не
+      // смогла (портал ушёл на логин, рукопожатие сорвалось). `inert` там false, `loaded` false —
+      // заглушка без данных, без объяснения и без реакции на «Обновить», потому что повтор шёл тем
+      // же путём. До этой задачи человек видел хотя бы нули и понимал, что экран живой.
+      loaded.value = true
+      error.value = frameAuthMessage(inFrame(), 'Метрики доступны')
+      loadError.value = error.value
+      return
+    }
     loading.value = true
     try {
       const res = await $fetch<MetricsView>('/api/import/metrics', { headers: h })

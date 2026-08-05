@@ -17,6 +17,8 @@ const props = defineProps<{
   error?: string | null
   /** Экран работоспособен без серверных данных (вне портала). Тогда состояние сразу «готово». */
   inert?: boolean
+  /** Повторить загрузку. Пусто — кнопки нет (у экрана свой способ повтора). */
+  onRetry?: () => void
 }>()
 
 const state = computed(() => screenState({ loaded: props.loaded, error: props.error, inert: props.inert }))
@@ -50,7 +52,21 @@ const state = computed(() => screenState({ loaded: props.loaded, error: props.er
     role="alert"
     color="air-primary-warning"
     title="Не удалось загрузить данные"
-    :description="error || 'Попробуйте обновить страницу.'"
-  />
+    :description="error || 'Попробуйте ещё раз.'"
+  >
+    <!-- ⚠ Выход из отказа обязателен. У метрик есть своя «Обновить» рядом, а у настроек не было
+         ничего: единственным способом вернуться была перезагрузка страницы. -->
+    <template
+      v-if="onRetry"
+      #actions
+    >
+      <B24Button
+        color="air-secondary-accent"
+        size="sm"
+        label="Повторить"
+        @click="onRetry"
+      />
+    </template>
+  </B24Alert>
   <slot v-else />
 </template>

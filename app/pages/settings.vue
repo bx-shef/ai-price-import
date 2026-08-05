@@ -413,6 +413,7 @@ const ARTICLE_KIND_ITEMS = [
             :loaded="loaded"
             :error="loadError"
             :inert="inPortal === false"
+            :on-retry="() => { void load() }"
           >
             <template #skeleton>
               <SettingsLoader />

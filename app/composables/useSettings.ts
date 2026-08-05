@@ -57,7 +57,12 @@ export function useSettings() {
   async function load(): Promise<void> {
     const h = await headers()
     if (!h) {
+      // ⚠ Попытка ЗАВЕРШИЛАСЬ, пусть и ничем — `loaded` обязан стать true, иначе экран остаётся в
+      // скелетоне НАВСЕГДА у сотрудника ВНУТРИ портала, чья фрейм-авторизация истекла и не
+      // обновилась. `inert` там false, и без этой строки не было бы ни данных, ни объяснения.
+      loaded.value = true
       error.value = frameAuthMessage(inFrame(), 'Настройки доступны')
+      loadError.value = error.value
       return
     }
     loading.value = true
