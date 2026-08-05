@@ -19,6 +19,7 @@ import { uploadFile } from '../server/utils/disk.ts'
 import { commitFeedbackFile } from '../server/utils/feedbackGithub.ts'
 import { resolveFeedbackConfig } from '../server/utils/feedbackConfig.ts'
 import { feedbackFilePath } from '../app/utils/feedback.ts'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
 
 const argv = process.argv.slice(2)
 const doCommit = argv.includes('--commit')
@@ -29,6 +30,7 @@ const readEnv = (file, key) => {
   return m[1].trim().replace(/^["']|["']$/g, '')
 }
 const WEBHOOK = readEnv('.env.b24test', 'B24_TEST_WEBHOOK')
+assertTestPortal(WEBHOOK)
 // Portal host for the SSRF guard (DOWNLOAD_URL must be on this host).
 const DOMAIN = new URL(WEBHOOK).host
 

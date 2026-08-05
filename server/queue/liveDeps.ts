@@ -439,7 +439,7 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
       // OpenAI-compatible extractor (DeepSeek/BitrixGPT). An unset provider key does NOT silently
       // degrade — chatFn is a throwing transport, so the job fails LOUDLY ("provider not configured").
       const r = await runChatExtract({ documentText, instructions, model: infra.llmModel }, { chat: infra.chatFn, sleep, random })
-      return { document: r.document, ...(r.error ? { error: r.error } : {}) }
+      return { document: r.document, ...(r.error ? { error: r.error } : {}), ...(r.own ? { own: r.own } : {}) }
     },
     saveDocument: (m, j, stored) => saveDocument(m, j, stored, infra.query),
     enqueueCrmSync: (m, j) => enqueueCrmSync({ memberId: m, jobId: j }),

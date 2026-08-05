@@ -9,6 +9,15 @@ export interface ExtractOutcome {
   document: ExtractedDocument | null
   attempts: number
   error?: string
+  /**
+   * Причина написана НАМИ и уходит человеку дословно.
+   *
+   * ⚠ Раньше это был префикс в самой строке (`ours:`), и признак «слать наружу дословно» задавался
+   * текстом, который на других ветках приходит ОТ ПРОВАЙДЕРА. То есть ответ провайдера, начавшийся
+   * с этой пометки, пересылался бы в чат портала как есть — вместе со всем, что провайдер решил
+   * процитировать. Поле провайдер выставить не может по построению.
+   */
+  own?: true
 }
 
 // OpenAI-compatible chat extractor (the extractor — replaced the claude-code subprocess).
@@ -98,12 +107,12 @@ export async function runChatExtract(input: ChatExtractInput, deps: ChatExtractD
     const raw = extractJson(content)
     const rawItems = (raw as { items?: unknown })?.items
     if (Array.isArray(rawItems) && rawItems.length > MAX_ITEMS) {
-      return { ok: false, document: null, attempts: attempt, error: `слишком много позиций (>${MAX_ITEMS}) — разбейте документ на части` }
+      return { ok: false, document: null, attempts: attempt, error: `Импорт остановлен: в документе больше ${MAX_ITEMS.toLocaleString('ru-RU')} строк товаров — столько за раз не обрабатываем. Разделите файл на части и загрузите по отдельности.`, own: true }
     }
     const doc = validateExtractedDocument(raw)
     if (doc) return { ok: true, document: doc, attempts: attempt }
     // Clean reply but no usable tabular part → terminal (same input won't re-extract).
-    return { ok: false, document: null, attempts: attempt, error: 'агент не извлёк табличную часть' }
+    return { ok: false, document: null, attempts: attempt, error: 'Импорт остановлен: в документе не нашлась таблица товаров. Проверьте, что таблица в файле видна и не является картинкой низкого качества, и загрузите ещё раз.', own: true }
   }
   return { ok: false, document: null, attempts: attempt, error: lastError }
 }

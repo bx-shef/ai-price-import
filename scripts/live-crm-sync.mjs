@@ -26,6 +26,7 @@ import { fetchVatRates } from '../server/utils/portalVat.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite.ts'
 import { findExistingItemId } from '../server/utils/originLookup.ts'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
@@ -50,6 +51,7 @@ const readEnv = (file, key) => {
   return m[1].trim().replace(/^["']|["']$/g, '')
 }
 const WEBHOOK = readEnv('.env.b24test', 'B24_TEST_WEBHOOK')
+assertTestPortal(WEBHOOK)
 
 const call = async (method, params = {}) => {
   const r = await fetch(`${WEBHOOK}${method}.json`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params) })

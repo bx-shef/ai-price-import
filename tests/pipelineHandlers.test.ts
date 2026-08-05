@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { handleAgentRunJob, handleFileExtractJob, MAX_DOCUMENT_TEXT, MAX_ROUTING_TEXT } from '../server/queue/handlers'
+import { llmFailureMessage } from '../server/agent/llmFailure'
 import type { ExtractedDocument } from '../app/types/document'
 
 const doc: ExtractedDocument = { documentType: 'накладная', currency: 'BYN', items: [{ name: 'a', price: 1, quantity: 1 }] }
@@ -154,7 +155,7 @@ describe('handleAgentRunJob', () => {
     expect(r.ok).toBe(false)
     // С #416 наружу уходит НАШ текст по классу отказа, а не строка провайдера: она ничего не
     // объясняет человеку и вправе процитировать присланный запрос. Подробнее — tests/llmFailure.
-    expect(d.failJob).toHaveBeenCalledWith('m', 'j', expect.stringContaining('табличная часть не извлечена'))
+    expect(d.failJob).toHaveBeenCalledWith('m', 'j', llmFailureMessage('unparsable'))
     expect(d.enqueueCrmSync).not.toHaveBeenCalled()
   })
   it('cleanup (deleteText) failure never blocks enqueue', async () => {

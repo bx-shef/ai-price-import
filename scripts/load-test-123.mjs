@@ -11,6 +11,7 @@
 // no writes to the live portal.
 import { readFileSync } from 'node:fs'
 import { B24Hook } from '@bitrix24/b24jssdk'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
 
 const hookUrl = (() => {
   // Prefer the B24_HOOK env var (the live test-portal webhook per CLAUDE.md); fall back to the
@@ -27,6 +28,7 @@ const hookUrl = (() => {
   if (!m) throw new Error('B24_TEST_WEBHOOK not set in .env.b24test (and B24_HOOK env var empty)')
   return m[1].trim().replace(/^["']|["']$/g, '')
 })()
+assertTestPortal(hookUrl)
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(name)

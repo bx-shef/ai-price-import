@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { classifyLlmFailure, describeLlmFailure, llmErrorSignature, llmFailureMessage, type LlmFailureKind } from '../server/agent/llmFailure'
+import { PROVIDER_FAILURE_KINDS, classifyLlmFailure, describeLlmFailure, llmErrorSignature, llmFailureMessage, type LlmFailureKind } from '../server/agent/llmFailure'
 import { handleAgentRunJob } from '../server/queue/handlers'
 import { checkBackendEnv } from '../server/utils/envCheck'
 import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
@@ -10,7 +10,9 @@ import { MAX_CHAT_REASON } from '../server/utils/chatNotify'
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
 
-const ALL_KINDS: LlmFailureKind[] = ['quota', 'auth', 'unavailable', 'too-long', 'unparsable', 'unknown']
+// ⚠ Список берётся ИЗ МОДУЛЯ, а не переписывается здесь: третья рукописная копия разъехалась бы с
+// таблицей текстов молча — новый класс просто не попал бы ни в одну проверку.
+const ALL_KINDS: LlmFailureKind[] = [...PROVIDER_FAILURE_KINDS]
 
 describe('#416: класс отказа по строке провайдера', () => {
   it.each([
@@ -73,7 +75,12 @@ describe('#416: текст для сотрудника', () => {
     // «Не обвинять клиента в том, что от него не зависит»: квота, ключ и доступность — сторона
     // приложения, и человек не должен искать причину в своём документе.
     expect(llmFailureMessage('quota')).toMatch(/на стороне приложения/i)
-    expect(llmFailureMessage('auth')).toMatch(/на нашей стороне/i)
+    expect(llmFailureMessage('auth')).toMatch(/на стороне приложения/i)
+    // ⚠ И у каждого из этих трёх назван ДОСТУПНЫЙ адресат: «сообщите издателю» бухгалтер клиента
+    // выполнить не может — ни канала, ни реквизитов издателя в сообщении нет.
+    for (const k of ['quota', 'auth', 'unparsable', 'unknown'] as const) {
+      expect(llmFailureMessage(k), `класс ${k} адресует туда, куда сотруднику не дойти`).not.toMatch(/издател/i)
+    }
   })
 
   it('в текстах нет ни кодов, ни имён провайдеров', () => {
@@ -142,13 +149,16 @@ describe('#416: строка провайдера не покидает серв
   })
 
   it('эхо ключа из ответа провайдера не доезжает до журнала', () => {
-    // Найдено ЖИВЫМ прогоном: DeepSeek отвечает «Your api key: ****alid is invalid», а фильтр
-    // символов выбрасывал звёздочки и оставлял хвост настоящего ключа. Порядок «сначала редакция
-    // ключа, потом фильтр» держит именно этот случай.
+    // Найдено ЖИВЫМ прогоном: DeepSeek отвечает «Your api key: ****alid is invalid», а прежний
+    // фильтр символов выбрасывал звёздочки и оставлял хвост настоящего ключа. Отдельная вырезка
+    // эха больше не нужна: сам ключ — токен вне белого списка и не проходит по построению, в том
+    // числе в формах, которые вырезка НЕ ловила (`vibe_api_secretkey`, `sk-proj-liveKEY`).
     const sig = llmErrorSignature('401 Authentication Fails, Your api key: ****sk3Ta1L is invalid')
     expect(sig).not.toContain('sk3Ta1L')
-    expect(sig).toContain('<hidden>')
     expect(sig).toContain('401')
+    for (const key of ['vibe_api_secretkey', 'sk_live_secretkey', 'sk-proj-liveKEY']) {
+      expect(llmErrorSignature(`401 Invalid token ${key}`), `ключ ${key} уехал в журнал`).not.toContain(key)
+    }
   })
 
   it('describeLlmFailure — одна дверь: класс и текст всегда согласованы', () => {
@@ -227,5 +237,69 @@ describe('#416: отказ по-прежнему доезжает до чата'
     expect(failJob).toHaveBeenCalledOnce()
     const wiring = read('../server/queue/liveDeps.ts')
     expect(wiring, 'failJob перестал уведомлять').toMatch(/failJob:[\s\S]{0,220}notifyImportFailure/)
+  })
+})
+
+describe('#416: ловушки классификации, найденные разбором', () => {
+  // Каждая строка ниже — реальный ответ провайдера, на котором прежний порядок правил давал НЕВЕРНЫЙ
+  // совет. Тест закрепляет именно исход, а не порядок в таблице: порядок — деталь реализации.
+  it.each([
+    ['401 Unauthorized, contact billing support', 'auth'],
+    ['400 prompt is too long: 300000 tokens', 'too-long'],
+    ['502 Bad Gateway <html>unexpected token <', 'unavailable'],
+    ['429 You exceeded your current quota, insufficient_quota', 'quota']
+  ])('«%s» → %s', (raw, kind) => {
+    expect(classifyLlmFailure(raw)).toBe(kind)
+  })
+
+  it('наш собственный отказ доезжает СВОИМ текстом, а не подменяется советом про провайдера', () => {
+    // ⚠ Мутация «потерять флаг own в chatExtract» вернула бы сотруднику совет «попробуйте позже»
+    // вместо «разделите файл» — то есть ровно неверное действие.
+    const mine = 'Импорт остановлен: в документе больше 10 000 строк товаров.'
+    const { kind, message } = describeLlmFailure(mine, true)
+    expect(kind).toBe('own')
+    expect(message).toBe('Импорт остановлен: в документе больше 10 000 строк товаров.')
+  })
+
+  it('«own» не попадает в список классов провайдера', () => {
+    expect(PROVIDER_FAILURE_KINDS).not.toContain('own')
+  })
+})
+
+describe('#416: подпись журнала — инвариант «только коды», а не один частный случай', () => {
+  // ⚠ Прежняя проверка спрашивала ровно про кириллицу — то есть про случай, который работал и до
+  // правки. Три из четырёх правил белого списка и сама его закрытость не проверялись ничем.
+  it('цифры документа не проходят: остаётся только код статуса', () => {
+    const sig = llmErrorSignature('400 УНП 191234567 сумма 10320.00 invoice 2026-0431')
+    expect(sig).toContain('400')
+    expect(sig).not.toMatch(/191234567|10320|2026/)
+  })
+
+  it('английский инвойс не проходит по частям', () => {
+    const sig = llmErrorSignature('502 ACME Trading Ltd Widget assembly gateway')
+    expect(sig).toContain('502')
+    expect(sig).toContain('gateway')
+    for (const w of ['ACME', 'Trading', 'Ltd', 'Widget', 'assembly']) expect(sig).not.toContain(w)
+  })
+
+  it('ЗАГЛАВНЫЕ слова документа не выдают себя за код сети', () => {
+    // Правило `^E[A-Z]{3,}$` пропускало ENERGOSBYT/EXPORT/ELECTRIC/EURO — наименование, вид
+    // операции и валюту из инвойса латиницей.
+    const sig = llmErrorSignature('400 TERMOIZOL EXPRESS ENERGOSBYT ELECTRIC EURO')
+    for (const w of ['TERMOIZOL', 'EXPRESS', 'ENERGOSBYT', 'ELECTRIC', 'EURO']) expect(sig).not.toContain(w)
+  })
+
+  it('почта и артикул не выдают себя за код провайдера', () => {
+    // Разделитель токенов режет по `@`, поэтому локальная часть почты оставалась целым токеном и
+    // подходила под форму `snake_case`.
+    const sig = llmErrorSignature('400 Bad request: contact ivan_petrov@romashka.by, ref ooo_romashka')
+    expect(sig).not.toContain('ivan_petrov')
+    expect(sig).not.toContain('ooo_romashka')
+  })
+
+  it('но настоящие коды остаются — иначе журнал нечитаем', () => {
+    expect(llmErrorSignature('429 insufficient_quota')).toContain('insufficient_quota')
+    expect(llmErrorSignature('ECONNRESET socket hang up')).toContain('ECONNRESET')
+    expect(llmErrorSignature('400 context_length_exceeded')).toContain('context_length_exceeded')
   })
 })

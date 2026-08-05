@@ -11,6 +11,7 @@ import { findProduct } from '../server/utils/productLookup.ts'
 import { fetchVatRates } from '../server/utils/portalVat.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, setProductRows } from '../server/utils/crmWrite.ts'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
 
 const readEnv = (file, key) => {
   const line = readFileSync(file, 'utf8').split('\n').find(l => l.startsWith(key + '='))
@@ -18,6 +19,7 @@ const readEnv = (file, key) => {
   return line.slice(key.length + 1).trim()
 }
 const WEBHOOK = readEnv('.env.b24test', 'B24_TEST_WEBHOOK').replace(/\/?$/, '/')
+assertTestPortal(WEBHOOK)
 const call = async (method, params = {}) => {
   const r = await fetch(`${WEBHOOK}${method}.json`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params) })
   const j = await r.json()
