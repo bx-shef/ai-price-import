@@ -13,8 +13,6 @@ import { bodySizeStatus, edgeSecurityEnabled } from '../../utils/edgeSecurity'
 import { withFrameRouteSpan } from '../../utils/frameRouteSpan'
 import { query } from '../../db/client'
 import { checkUploadRate, uploadRateMessage } from '../../utils/uploadRateLimit'
-import { getConsent } from '../../utils/consentStore'
-import { consentGate } from '../../utils/consentGate'
 
 /** A plain UUID (v1–v5) — the only shape accepted for a client-supplied jobId (Redis key safety). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -43,20 +41,14 @@ export default defineEventHandler(async (event) => {
         return { error: 'authorization failed', reason: member.reason }
       }
 
-      // Документы не принимаются, пока портал не принял EULA и Политику (#414). Стоит ПЕРВЫМ из
-      // отказов и до чтения тела: обращение к модели идёт под учётной записью издателя, а условия
-      // провайдера требуют от него гарантировать права на передаваемые данные — гарантия держится
-      // ровно на этом подтверждении. Пропустить документ «пока», а спросить потом, нельзя: он уже
-      // уйдёт на инференс. Экран согласия в интерфейсе — удобство, граница здесь.
-      const consent = await getConsent(member.memberId, query)
-      const gate = consentGate(consent)
-      if (!gate.allowed) {
-        // Свой исход, не общий 'forbidden': по телеметрии «портал не принял условия» обязано
-        // отличаться от «сотрудник не админ» — это разные поломки с разным лечением.
-        span.outcome = 'forbidden'
-        setResponseStatus(event, gate.status)
-        return { error: gate.message }
-      }
+      // ⚠ Гейта «портал принял условия» здесь БОЛЬШЕ НЕТ (#438, решение владельца 2026-08-05).
+      // Принятие собирает Маркет Битрикс24 ДО установки — тремя галочками со ссылками в диалоге
+      // установки, — а п. 4.3.2 Лицензионного соглашения привязывает подтверждение прав к
+      // действию загрузки приложения. Запись о принятии видна издателю в личном кабинете Маркета.
+      // ⚠ Не восстанавливать: собственная проверка здесь недостижима по построению — без принятия
+      // нет установки, без установки нет токена портала, а без него запрос не проходит проверку
+      // фрейм-токена строкой выше. Условие, которое не может оказаться ложным, защищает не
+      // приложение, а видимость проверки — и стоило лишнего обращения к базе на каждый документ.
 
       // Refuse early if the pipeline can't run — otherwise we'd store bytes + a job that
       // never processes (orphaned file, job stuck 'queued'). Checked BEFORE the rate limit so a

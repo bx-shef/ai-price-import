@@ -45,8 +45,7 @@ const showReadOnly = computed(() => !loading.value && !error.value && !isAdmin.v
 // (`/api/import/upload`), где содержимое реально уходит на инференс. Повесить её ещё и на запись
 // настроек нельзя дёшево — `POST /api/settings` намеренно проверяет только токен, без `member_id`
 // (#182), чтобы гонка установки не отвергала валидного админа, а согласие хранится по `member_id`.
-const { accepted: consentAccepted, resolved: consentResolved, load: loadConsent } = useConsent()
-const blockedByConsent = computed(() => consentResolved.value && !consentAccepted.value)
+
 onMounted(async () => {
   // Detect the portal frame + slider mode (inert/no-op standalone) so Save/Cancel close correctly.
   try {
@@ -56,7 +55,6 @@ onMounted(async () => {
     // Portal domain for the «завести валюту» link. Standalone → stays empty → no link rendered.
     portalDomain.value = frameAuth()?.domain ?? ''
   } catch { /* standalone → stay put on Save/Cancel */ }
-  await loadConsent()
   await load()
   seedUnitRows() // build editable unit rows from the freshly-loaded dictionary (once)
   seedRoutingRows() // build editable routing rules from the loaded mapping (once)
@@ -360,7 +358,7 @@ const ARTICLE_KIND_ITEMS = [
 
         <!-- Тулбар каркаса: навигация по разделам вместо схлопывания (#259). Аккордеон прятал
              настройки — «что вообще можно настроить» было видно только по заголовкам секций. -->
-        <B24DashboardToolbar v-if="!showReadOnly && !blockedByConsent">
+        <B24DashboardToolbar v-if="!showReadOnly">
           <!-- Без `highlight`: vue-router не учитывает hash при сравнении активного маршрута,
                поэтому подсветка горела бы на всех четырёх пунктах разом. -->
           <B24NavigationMenu
@@ -393,15 +391,6 @@ const ARTICLE_KIND_ITEMS = [
             description="Менять эти настройки может только администратор портала Bitrix24. Попросите его открыть эту страницу."
           />
 
-          <B24Alert
-            v-if="blockedByConsent"
-            class="mb-4"
-            color="air-primary-warning"
-            variant="soft"
-            title="Сначала примите условия использования"
-            description="Откройте главный экран приложения и подтвердите Лицензионное соглашение и Политику конфиденциальности. До этого настройка недоступна, а документы не принимаются."
-          />
-
           <!-- ⚠ Форма — под состоянием загрузки (#408). Прежде она рисовалась ДО прихода серверной
                копии, то есть со значениями по умолчанию: администратор видел настройки, которых не
                выбирал, и они на глазах подменялись сохранёнными. На медленной сети это читается как
@@ -422,7 +411,7 @@ const ARTICLE_KIND_ITEMS = [
              одна карточка. Скругления «rounded-none / sm:rounded-*-3xl» — как в референсе: на
              мобильном блок на всю ширину, на десктопе пара склеена. -->
             <div
-              v-if="!showReadOnly && !blockedByConsent"
+              v-if="!showReadOnly"
               class="flex flex-col gap-4 sm:gap-6"
             >
               <section
