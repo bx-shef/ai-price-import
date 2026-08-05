@@ -205,7 +205,7 @@ export interface AgentRunDeps {
   /** Load the raw DOCUMENT_TEXT for the job (from file-extract). */
   getDocumentText: (memberId: string, jobId: string) => Promise<string | null>
   /** Run the extraction agent → validated document (null = nothing usable). */
-  extractDocument: (documentText: string) => Promise<{ document: ExtractedDocument | null, error?: string }>
+  extractDocument: (documentText: string) => Promise<{ document: ExtractedDocument | null, error?: string, own?: true }>
   /** Persist the extracted structure + routing signals for crm-sync. */
   saveDocument: (memberId: string, jobId: string, stored: { doc: ExtractedDocument, signals: RoutingSignals }) => Promise<void>
   enqueueCrmSync: (memberId: string, jobId: string) => Promise<void>
@@ -233,12 +233,12 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
     return { ok: false }
   }
   await markProgress(deps.markProcessing, job.memberId, job.jobId)
-  const { document, error } = await deps.extractDocument(text)
+  const { document, error, own } = await deps.extractDocument(text)
   if (!document) {
     // ⚠ Наружу уходит НАШ текст по классу отказа, а не строка провайдера (#416): она ничего не
     // объясняет человеку и вправе процитировать присланный запрос, то есть текст документа
     // клиента. Исходная строка остаётся только в журнале, и туда идёт просеянной.
-    const { kind, message } = describeLlmFailure(error)
+    const { kind, message } = describeLlmFailure(error, own)
     deps.logLlmFailure?.(kind, llmErrorSignature(error))
     await deps.failJob(job.memberId, job.jobId, message)
     // Terminal extraction failure (re-extraction of the same text won't differ) →

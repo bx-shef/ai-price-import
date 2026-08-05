@@ -9,8 +9,8 @@
 //
 // ⚠ Сообщения шлются в [TEST]-чат и удаляются. Портал берётся из `.env.b24test` (в репозиторий не
 // коммитится), скоуп вебхука — `im`.
-import { readFileSync } from 'node:fs'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { cleanupOnSignals, deleteMessages, findOrCreateTestChat, makeCall, readHook } from './lib/testPortal.mjs'
 import { PROVIDER_FAILURE_KINDS, describeLlmFailure, llmErrorSignature, llmFailureMessage } from '../server/agent/llmFailure.ts'
 import { planFailureNotify } from '../server/utils/failureNotify.ts'
 import { MAX_CHAT_REASON, sendChatMessage } from '../server/utils/chatNotify.ts'
@@ -18,31 +18,9 @@ import { MAX_CHAT_REASON, sendChatMessage } from '../server/utils/chatNotify.ts'
 const CHAT_TITLE = '[TEST] verify:llm-failure — отказы распознавания'
 const keep = process.argv.includes('--keep')
 
-function hook() {
-  // ⚠ Файл ПЕРВЫМ, переменная окружения — запасным. Тот же капкан, что описан в
-  // `verify-fail-notify.mjs`: в оболочке живёт `B24_HOOK` прежнего портала, и он отвечает
-  // «REST is available only by subscription» — проверка выглядит сломанной, хотя сломан адрес.
-  try {
-    const m = /^B24_HOOK=(.+)$/m.exec(readFileSync(new URL('../.env.b24test', import.meta.url), 'utf8'))
-    if (m) return m[1].trim()
-  } catch { /* нет файла — ниже переменная или честная ошибка */ }
-  if (process.env.B24_HOOK) return process.env.B24_HOOK
-  throw new Error('нет B24_HOOK: положите вебхук в .env.b24test')
-}
-
-const HOOK = hook()
+const HOOK = readHook(new URL('../.env.b24test', import.meta.url))
 assertTestPortal(HOOK)
-const base = HOOK.replace(/\/?$/, '/')
-async function call(method, params = {}) {
-  const res = await fetch(`${base}${method}.json`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(params)
-  })
-  const data = await res.json()
-  if (data.error) throw new Error(`${method}: ${data.error} ${data.error_description ?? ''}`)
-  return data.result
-}
+const call = makeCall(HOOK)
 
 let failed = 0
 const ok = (label, cond, note = '') => {
@@ -53,17 +31,7 @@ const ok = (label, cond, note = '') => {
 const me = await call('profile')
 const myId = String(me.ID)
 
-async function testChat() {
-  const recent = await call('im.recent.list', {})
-  const items = Array.isArray(recent?.items) ? recent.items : (Array.isArray(recent) ? recent : [])
-  const hit = items.find(i => String(i.title ?? '') === CHAT_TITLE)
-  if (hit) {
-    const raw = hit.chat_id ?? hit.id
-    return String(raw).startsWith('chat') ? String(raw) : `chat${raw}`
-  }
-  return `chat${await call('im.chat.add', { TYPE: 'CHAT', TITLE: CHAT_TITLE, USERS: [Number(myId)] })}`
-}
-const dialogId = await testChat()
+const dialogId = await findOrCreateTestChat(call, CHAT_TITLE, myId)
 console.log(`портал: #${myId}, шлём в ${dialogId} («${CHAT_TITLE}»)\n`)
 
 // Строки провайдеров — НАСТОЯЩИЕ, снятые живыми прогонами. Догадка о формулировках проверяла бы
@@ -80,6 +48,7 @@ const REAL_ERRORS = {
 // ⚠ Только классы ОТКАЗА ПРОВАЙДЕРА: класс `own` — это наши собственные сообщения (нет таблицы,
 // слишком много позиций), у него нет строки провайдера и проверять здесь нечего.
 const sent = []
+cleanupOnSignals(() => deleteMessages(call, keep ? [] : sent.map(m => m.id)))
 try {
   for (const kind of PROVIDER_FAILURE_KINDS) {
     const raw = REAL_ERRORS[kind]
@@ -101,21 +70,35 @@ try {
       appUrl: 'https://price-import.bx-shef.by/app'
     })
 
-    // Обрыв на пределе чата означал бы совет, до которого сотрудник не дочитает.
     const forEmployee = planned[0].message
-    ok(`${kind}: текст доезжает целиком, не обрезан`,
-      forEmployee.includes(message.slice(-24)), `${message.length} ≤ ${MAX_CHAT_REASON}`)
-
     const id = await sendChatMessage(dialogId, forEmployee, call)
     ok(`${kind}: доставлено в чат`, id !== null, `msgId=${id}`)
-    if (id) sent.push(id)
+    if (id) sent.push({ id, kind, message })
+  }
+
+  // ⚠ Обрыв проверяется по ПРОЧИТАННОМУ ИЗ ПОРТАЛА тексту, а не по локально построенному: прежняя
+  // версия сверяла строку саму с собой, то есть зелёный результат был совместим с порталом,
+  // который обрезал каждое сообщение. Читаем по id, а не «последнее в диалоге»: чат переиспользуется
+  // между прогонами и может содержать остатки после `--keep` или прерывания.
+  const back = await call('im.dialog.messages.get', { DIALOG_ID: dialogId, LIMIT: 50 })
+  const byId = new Map((back?.messages ?? []).map(m => [String(m.id), String(m.text ?? '')]))
+  for (const { id, kind, message } of sent) {
+    const got = byId.get(String(id)) ?? ''
+    // Хвост текста — это ровно совет, что делать; на нём и обрывалось в #373.
+    ok(`${kind}: текст доехал целиком, не обрезан`,
+      got.includes(message.slice(-24)), `${got.length} знаков, предел причины ${MAX_CHAT_REASON}`)
+    ok(`${kind}: в чате нет строки провайдера`,
+      !/api.?key|upstream|insufficient_quota|context length/i.test(got))
   }
 
   // Подпись для журнала: коды остаются, ключ и любой не-латинский текст — нет.
   const sig = llmErrorSignature(REAL_ERRORS.auth)
-  ok('журнал: эхо ключа вырезано', !sig.includes('test') && sig.includes('<hidden>'), sig)
+  ok('журнал: хвост ключа не остаётся', !sig.includes('test'), sig)
   ok('журнал: кириллицы (наименований, контрагентов) не остаётся',
     !/[А-Яа-яЁё]/.test(llmErrorSignature('ошибка при разборе ООО «Ромашка» накладная')))
+  ok('журнал: латинского наименования и сумм не остаётся',
+    !/ENERGOSBYT|ACME|191234567|10320/.test(
+      llmErrorSignature('400 ACME ENERGOSBYT LTD УНП 191234567 сумма 10320.00')))
 
   // Каждый класс говорит своим текстом — иначе классификация декоративна.
   const texts = new Set(PROVIDER_FAILURE_KINDS.map(llmFailureMessage))
@@ -123,10 +106,7 @@ try {
 } finally {
   // ⚠ Уборка в `finally`: падение в середине цикла иначе оставляло бы половину сообщений в чате —
   // ровно тот мусор, ради которого заведён `[TEST]`-чат и гард портала.
-  if (!keep && sent.length) {
-    for (const id of sent) await call('im.message.delete', { MESSAGE_ID: id }).catch(() => {})
-    console.log(`\nудалено сообщений: ${sent.length}`)
-  }
+  if (!keep && (await deleteMessages(call, sent.map(m => m.id))).length) failed++
 }
 
 console.log(failed ? `\n❌ провалено: ${failed}` : '\n✅ все проверки прошли')

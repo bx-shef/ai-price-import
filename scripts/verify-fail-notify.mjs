@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs'
 import { planFailureNotify } from '../server/utils/failureNotify.ts'
 import { sendChatMessage } from '../server/utils/chatNotify.ts'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
 
 const keep = process.argv.includes('--keep')
 
@@ -43,6 +44,7 @@ function loadHook() {
   process.exit(1)
 }
 const HOOK = loadHook().replace(/\/+$/, '')
+assertTestPortal(HOOK)
 
 /** Minimal RestCall over the webhook. Throws on portal-level errors — a silent failure here would
  *  make the whole check meaningless. */

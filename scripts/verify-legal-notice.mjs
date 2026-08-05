@@ -3,7 +3,8 @@
 //
 // Что именно доказывается (и чего НЕ доказывается):
 //   ✓ текст, который строит `buildLegalNoticeChat`, принимается порталом и виден в чате;
-//   ✓ в нём есть дата вступления, содержание изменений, ОБЕ ссылки на архив и право удалить
+//   ✓ в нём есть дата вступления, содержание изменений, ссылки на архив (на прежнюю редакцию —
+//     только если она есть; сегодня редакция одна, и вторая ссылка не строится) и право удалить
 //     приложение без последствий — без любого из них уведомление юридически не работает, но
 //     выглядит нормально, и это выяснилось бы только в споре;
 //   ✓ ссылки ведут на живые адреса (проверяются запросом, а не глазами).
@@ -12,8 +13,8 @@
 //
 // ⚠ Объявление здесь СИНТЕТИЧЕСКОЕ: реестр в приложении пуст (механизм заведён до первого
 // изменения документов), и брать оттуда нечего. Сообщение шлётся в [TEST]-чат и удаляется.
-import { readFileSync } from 'node:fs'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { cleanupOnSignals, deleteMessages, findOrCreateTestChat, makeCall, readHook } from './lib/testPortal.mjs'
 import { NOTICE_DAYS, buildLegalNotice, buildLegalNoticeChat, effectiveDate, formatRuDate, noticeProblems } from '../app/utils/legalNotice.ts'
 import { sendChatMessage } from '../server/utils/chatNotify.ts'
 
@@ -21,27 +22,9 @@ const CHAT_TITLE = '[TEST] verify:legal-notice — уведомление об �
 const SITE = 'https://price-import.bx-shef.by'
 const keep = process.argv.includes('--keep')
 
-function hook() {
-  // Файл ПЕРВЫМ: в оболочке живёт вебхук прежнего портала (см. `verify-fail-notify.mjs`).
-  try {
-    const m = /^B24_HOOK=(.+)$/m.exec(readFileSync(new URL('../.env.b24test', import.meta.url), 'utf8'))
-    if (m) return m[1].trim()
-  } catch { /* ниже переменная или честная ошибка */ }
-  if (process.env.B24_HOOK) return process.env.B24_HOOK
-  throw new Error('нет B24_HOOK: положите вебхук в .env.b24test')
-}
-
-const HOOK = hook()
+const HOOK = readHook(new URL('../.env.b24test', import.meta.url))
 assertTestPortal(HOOK)
-const base = HOOK.replace(/\/?$/, '/')
-async function call(method, params = {}) {
-  const res = await fetch(`${base}${method}.json`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params)
-  })
-  const data = await res.json()
-  if (data.error) throw new Error(`${method}: ${data.error} ${data.error_description ?? ''}`)
-  return data.result
-}
+const call = makeCall(HOOK)
 
 let failed = 0
 const ok = (label, cond, note = '') => {
@@ -104,17 +87,7 @@ try {
 }
 
 const me = await call('profile')
-async function testChat() {
-  const recent = await call('im.recent.list', {})
-  const items = Array.isArray(recent?.items) ? recent.items : []
-  const hit = items.find(i => String(i.title ?? '') === CHAT_TITLE)
-  if (hit) {
-    const raw = hit.chat_id ?? hit.id
-    return String(raw).startsWith('chat') ? String(raw) : `chat${raw}`
-  }
-  return `chat${await call('im.chat.add', { TYPE: 'CHAT', TITLE: CHAT_TITLE, USERS: [Number(me.ID)] })}`
-}
-const dialogId = await testChat()
+const dialogId = await findOrCreateTestChat(call, CHAT_TITLE, String(me.ID))
 
 // ⚠ Первой строкой — пометка «это проверка»: текст ниже выглядит настоящим уведомлением об
 // изменении лицензии (реальная дата редакции, рабочая ссылка, право удалить приложение). Пока
@@ -122,14 +95,17 @@ const dialogId = await testChat()
 const MARK = '⚠ ПРОВЕРКА, это НЕ уведомление — техническое сообщение, его сейчас удалят.'
 
 let id = null
+cleanupOnSignals(() => deleteMessages(call, id && !keep ? [id] : []))
 try {
   id = await sendChatMessage(dialogId, `${MARK}\n\n${text}`, call)
   ok('уведомление доставлено в чат портала', id !== null, `msgId=${id}`)
 
   // Прочитать обратно: портал мог принять вызов и обрезать/переварить текст.
   if (id) {
-    const back = await call('im.dialog.messages.get', { DIALOG_ID: dialogId, LIMIT: 1 })
-    const got = String(back?.messages?.[0]?.text ?? '')
+    // ⚠ По id, а не «последнее в диалоге»: чат переиспользуется между прогонами и может нести
+    // остаток после `--keep` или прерывания — тогда проверка подтвердила бы ПРОШЛУЮ доставку.
+    const back = await call('im.dialog.messages.get', { DIALOG_ID: dialogId, LIMIT: 20 })
+    const got = String((back?.messages ?? []).find(m => String(m.id) === String(id))?.text ?? '')
     ok('текст в чате не обрезан', got.includes(edition.changes[1]), `${got.length} знаков`)
     ok('ссылка на новую редакцию уцелела в чате', got.includes(notice.newHref))
     ok('ссылка на прежнюю редакцию уцелела в чате',
@@ -139,15 +115,7 @@ try {
 } finally {
   // ⚠ Уборка в `finally` и БЕЗ глотания отказа: не удалённое сообщение — это оставшийся в чате текст,
   // который читается как настоящее уведомление. Молчаливый `catch` прятал бы ровно это.
-  if (id && !keep) {
-    try {
-      await call('im.message.delete', { MESSAGE_ID: id })
-      console.log('\nсообщение удалено')
-    } catch (e) {
-      failed++
-      console.error(`✗ сообщение НЕ удалено (msgId=${id}) — уберите вручную: ${e.message}`)
-    }
-  }
+  if (id && !keep && (await deleteMessages(call, [id])).length) failed++
 }
 
 console.log(failed ? `\n❌ провалено: ${failed}` : '\n✅ все проверки прошли')

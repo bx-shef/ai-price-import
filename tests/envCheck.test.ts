@@ -61,3 +61,27 @@ describe('checkBackendEnv', () => {
     expect(checkBackendEnv({ ...base, QUEUE_CRM_CONCURRENCY: '2' }).warnings.some(w => /CONCURRENCY/.test(w))).toBe(false) // valid
   })
 })
+
+describe('#416: адрес провайдера в облаке подменять нельзя', () => {
+  // ⚠ Гейт заведён ради юридического инварианта: п. 5.3 Политики называет получателей поимённо, а
+  // `LLM_PROVIDER=bitrixgpt` + `BITRIXGPT_BASE_URL=https://кто-угодно/v1` проходил гейт `custom` —
+  // сервис поднимался, тексты документов уходили третьему лицу, а журнал писал «bitrixgpt».
+  // Мутация «вырезать весь блок» не роняла НИ ОДНОГО теста.
+  const key32 = Buffer.alloc(32).toString('base64')
+  const base = { B24_TOKEN_ENC_KEY: key32, DATABASE_URL: 'x', B24_APPLICATION_TOKEN: 't', B24_CLIENT_ID: 'i', B24_CLIENT_SECRET: 's', REDIS_URL: 'r', VIBE_API_KEY: 'k' }
+
+  it.each(['DEEPSEEK_BASE_URL', 'BITRIXGPT_BASE_URL', 'LLM_BASE_URL'])('%s в облаке — фатально', (key) => {
+    const r = checkBackendEnv({ ...base, [key]: 'https://elsewhere.example/v1' })
+    expect(r.fatal.some(f => f.includes(key)), `${key} не проверяется`).toBe(true)
+  })
+
+  it('при SELF_HOSTED=1 это законно — инверсия условия сломала бы инсталляцию клиента', () => {
+    const r = checkBackendEnv({ ...base, SELF_HOSTED: '1', LLM_BASE_URL: 'https://internal.example/v1', BITRIXGPT_BASE_URL: 'https://internal.example/v1' })
+    expect(r.fatal).toEqual([])
+  })
+
+  it('пустое значение не фатально — иначе закомментированная строка роняла бы старт', () => {
+    const r = checkBackendEnv({ ...base, LLM_BASE_URL: '   ' })
+    expect(r.fatal).toEqual([])
+  })
+})
