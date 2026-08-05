@@ -1,20 +1,5 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
-import { readFileSync } from 'node:fs'
-import { parseLegalEdition } from './app/utils/legalEdition'
 import { allArchiveRoutes } from './app/utils/legalArchive'
-
-// Редакции документов приложения читаются ИЗ САМИХ ДОКУМЕНТОВ на сборке (#414) и уезжают в
-// runtimeConfig — оттуда их берёт запись о согласии.
-//
-// ⚠ Почему не `?raw`-импорт, как на страницах: rollup Nitro суффикс `?raw` не разбирает и падает на
-// сборке («ENOENT ... privacy-policy.md?raw») — проверено. Чтение здесь даёт то же самое свойство,
-// ради которого весь приём и заведён: второй копии дат в коде нет, источник один — сам документ.
-// ⚠ Падение при отсутствии даты — намеренное (см. parseLegalEdition): сломанный документ обязан
-// ронять сборку, а не уезжать в запись о согласии пустым полем.
-const LEGAL_EDITIONS = {
-  eula: parseLegalEdition(readFileSync(new URL('./docs/eula.md', import.meta.url), 'utf8'), 'docs/eula.md'),
-  privacy: parseLegalEdition(readFileSync(new URL('./docs/privacy-policy.md', import.meta.url), 'utf8'), 'docs/privacy-policy.md')
-}
 
 // Яндекс Метрика — ТОЛЬКО лендинг, и с тремя ограничениями (#297, решение владельца 2026-08-04:
 // счётчик нужен, чтобы вести рекламу и видеть клики).
@@ -76,8 +61,6 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
 
   runtimeConfig: {
-    // Редакции принятых документов (#414) — запекаются на сборке из docs/*.md (см. LEGAL_EDITIONS).
-    legalEditions: LEGAL_EDITIONS,
     // Server secrets are read from process.env directly (bare names: DATABASE_URL,
     // REDIS_URL, B24_CLIENT_ID/SECRET, OPS_CHECK_TOKEN, B24_TOKEN_ENC_KEY) — NOT
     // via runtimeConfig, because Nuxt only overrides runtimeConfig from NUXT_-prefixed

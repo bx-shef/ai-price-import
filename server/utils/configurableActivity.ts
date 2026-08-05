@@ -44,6 +44,19 @@ export interface ActivityLayoutInput {
   sourceFileUrl?: string
   /** File name shown as the link text. External (chosen by the uploader) — neutralised and capped. */
   sourceFileName?: string
+  /**
+   * Импорт прошёл без замечаний.
+   *
+   * ⚠ Дело закрывается (`completed:'Y'`) ТОЛЬКО у чистого импорта (#328 п.1). Прежде оно
+   * закрывалось всегда, и документ, у которого не нашлась половина товаров или не сошёлся итог,
+   * выглядел в таймлайне ровно как безупречный: закрытое дело — это «сделано, смотреть незачем».
+   * Замечания при этом были В ТЕЛЕ, то есть человек узнавал о них, только если открывал дело,
+   * которое сам же и счёл законченным. Незакрытое дело остаётся в списке текущих и попадается на
+   * глаза — это единственный сигнал, который работает без чтения.
+   * ⚠ Отсутствие флага трактуется как «замечания есть»: пропущенное поле не должно молча
+   * закрывать дело — это возврат прежнего поведения.
+   */
+  clean?: boolean
 }
 
 /** Build the crm.activity.configurable.add params. Pure. */
@@ -82,6 +95,42 @@ export function buildActivityLines(input: {
     ? [`Проблемы (${input.warnings.length}):`, ...input.warnings.slice(0, budget).map(w => `• ${w}`)]
     : []
   return [...header, ...problems, ...(input.advice ? [input.advice] : [])]
+}
+
+/**
+ * Сборка ВХОДА дела из данных импорта — чистая и экспортированная по той же причине, что и
+ * `buildActivityLines`: в проводке её не достать тестом.
+ *
+ * ⚠ Мутация, которая это потребовала: в `liveDeps` можно было оставить верную строку
+ * `clean: warnings.length === 0` и дописать ниже `...({ clean: true })` — последний ключ выигрывает,
+ * дело закрывается всегда, дефект #328 возвращается целиком, и все проверки зелены. Текстовый греп
+ * по проводке сторожил НАЛИЧИЕ строки, а не значение, дошедшее до билдера, и был вдобавок хрупок:
+ * безобидный `clean: !warnings.length` красил бы его при верном поведении.
+ */
+export function buildActivityInput(input: {
+  entityTypeId: number
+  entityId: number
+  companyId?: number | null
+  supplierName?: string
+  rowCount: number
+  warnings: string[]
+  advice?: string
+  sourceFileUrl?: string | null
+  sourceFileName?: string
+}): ActivityLayoutInput {
+  const hasCompany = !!input.companyId && input.companyId > 0
+  return {
+    ownerTypeId: hasCompany ? COMPANY_ENTITY_TYPE_ID : input.entityTypeId,
+    ownerId: hasCompany ? input.companyId! : input.entityId,
+    title: `Импорт: ${input.supplierName ?? 'документ'}`,
+    lines: buildActivityLines(input),
+    openPath: entityOpenPath(input.entityTypeId, input.entityId),
+    showOpenButton: hasCompany,
+    // Признак чистоты берётся из ТЕХ ЖЕ warnings, что печатаются в теле: два независимых источника
+    // разъехались бы, и дело закрывалось бы при видимом списке проблем.
+    clean: input.warnings.length === 0,
+    ...(input.sourceFileUrl ? { sourceFileUrl: input.sourceFileUrl, sourceFileName: input.sourceFileName ?? '' } : {})
+  }
 }
 
 export function buildConfigurableActivity(input: ActivityLayoutInput): Record<string, unknown> {
@@ -128,11 +177,17 @@ export function buildConfigurableActivity(input: ActivityLayoutInput): Record<st
     ownerId: input.ownerId,
     fields: {
       typeId: 'CONFIGURABLE',
-      completed: 'Y',
+      completed: input.clean ? 'Y' : 'N',
       ...(input.responsibleId ? { responsibleId: input.responsibleId } : {})
     },
     layout: {
-      icon: { code: 'document' },
+      // Значок — второй сигнал, читаемый без открытия дела (#328 п.3): у импорта с замечаниями он
+      // не такой, как у чистого.
+      // ⚠ Оба кода СВЕРЕНЫ С ЖИВЫМ ПОРТАЛОМ (`crm.timeline.icon.list`, 51 системный код,
+      // 2026-08-05). Первая редакция ставила `warning` — такого кода нет, и портал отверг бы
+      // вызов целиком: дело не записалось бы ВООБЩЕ, то есть попытка сделать замечания заметнее
+      // стёрла бы и сам след импорта. Подходящий системный код — `attention`.
+      icon: { code: input.clean ? 'document' : 'attention' },
       header: { title: neutralizeBb(input.title).slice(0, 255) },
       body: {
         // `logo` (LogoDto) is REQUIRED by B24 — a missing logo fails with «Поле logo в

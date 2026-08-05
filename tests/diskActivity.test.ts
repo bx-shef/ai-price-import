@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { archiveFileName, commonDiskFileUrl, MAX_DISK_NAME, DISK_APP_FOLDER, ensureSubfolder, makeSaveSourceFile, monthlySubfolderName, pickCommonStorage, sanitizeFileName, saveSourceFileToDisk, uploadFile } from '../server/utils/disk'
-import { buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
+import { buildActivityInput, buildConfigurableActivity, companyOpenPath, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
 
 describe('disk — common storage + monthly folder', () => {
   it('picks the ENTITY_TYPE=common drive (live shape)', () => {
@@ -386,5 +386,69 @@ describe('configurableActivity', () => {
     expect(url).toContain('procure-ai%20%28') // space → %20, «(» → %28
     expect(url).toContain('%20%D0%B8%D1%8E%D0%BD%D1%8C.xls') // «·июнь.xls» encoded, dot kept
     expect(url.endsWith('?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER')).toBe(true)
+  })
+})
+
+describe('#328: импорт с замечаниями не выглядит как чистый', () => {
+  const base = { ownerTypeId: 2, ownerId: 7, title: 'Импорт: ООО «Ромашка»', lines: ['Позиций: 3'], openPath: '/crm/deal/details/7/' }
+
+  it('чистый импорт — дело закрыто, значок обычный', () => {
+    const a = buildConfigurableActivity({ ...base, clean: true }) as { fields: Record<string, unknown>, layout: { icon: { code: string } } }
+    expect(a.fields.completed).toBe('Y')
+    expect(a.layout.icon.code).toBe('document')
+  })
+
+  it('импорт с замечаниями — дело ОСТАЁТСЯ открытым и со своим значком', () => {
+    // ⚠ Несущее утверждение задачи. Прежде дело закрывалось всегда, и документ, у которого не
+    // нашлась половина товаров, читался в таймлайне как безупречный: закрытое дело значит
+    // «сделано, смотреть незачем». Замечания лежали В ТЕЛЕ — то есть человек узнавал о них,
+    // только открыв дело, которое сам же и счёл законченным.
+    const a = buildConfigurableActivity({ ...base, clean: false }) as { fields: Record<string, unknown>, layout: { icon: { code: string } } }
+    expect(a.fields.completed).toBe('N')
+    // ⚠ Код сверен с живым порталом: выдуманный (`warning`) портал отвергает целиком, и дело не
+    // записывается вовсе — попытка сделать замечания заметнее стёрла бы и сам след импорта.
+    expect(a.layout.icon.code).toBe('attention')
+  })
+
+  it('признак не задан — считаем, что замечания ЕСТЬ', () => {
+    // ⚠ Пропущенное поле не должно молча закрывать дело: это ровно возврат прежнего поведения,
+    // причём незаметный — вызывающий код просто забыл бы передать флаг.
+    const a = buildConfigurableActivity(base) as { fields: Record<string, unknown> }
+    expect(a.fields.completed).toBe('N')
+  })
+
+  it('признак берётся из ТЕХ ЖЕ warnings, что печатаются в теле — по поведению, а не по строке', () => {
+    // ⚠ Прежняя проверка грепала проводку на строку `clean: warnings.length === 0` и пропускала
+    // мутацию «дописать ниже `...({ clean: true })`»: последний ключ выигрывает, дело закрывается
+    // всегда, дефект возвращается целиком. Плюс она краснела на безобидном `!warnings.length`.
+    // Теперь сборка входа — чистая функция, и утверждение о ней поведенческое.
+    const dirty = buildActivityInput({ entityTypeId: 2, entityId: 7, rowCount: 3, warnings: ['товар не найден'] })
+    expect(dirty.clean).toBe(false)
+    expect(dirty.lines.join(' ')).toContain('товар не найден')
+
+    const clean = buildActivityInput({ entityTypeId: 2, entityId: 7, rowCount: 3, warnings: [] })
+    expect(clean.clean).toBe(true)
+    expect(clean.lines.join(' ')).not.toContain('Проблемы')
+  })
+
+  it('и доезжает до самого вызова портала — вход собирается в билдер без потерь', () => {
+    const a = buildConfigurableActivity(
+      buildActivityInput({ entityTypeId: 2, entityId: 7, rowCount: 1, warnings: ['итог не сошёлся'] })
+    ) as { fields: Record<string, unknown>, layout: { icon: { code: string } } }
+    expect(a.fields.completed).toBe('N')
+    expect(a.layout.icon.code).toBe('attention')
+  })
+
+  it('компания найдена → дело живёт в её карточке, иначе — в созданной сущности', () => {
+    const withCompany = buildActivityInput({ entityTypeId: 2, entityId: 7, companyId: 42, rowCount: 1, warnings: [] })
+    expect(withCompany.ownerId).toBe(42)
+    expect(withCompany.showOpenButton).toBe(true)
+    // ⚠ Нулевой/отрицательный id компании — это «не найдена», а не «найдена с id 0»: иначе дело
+    // ушло бы владельцем в несуществующую карточку и пропало бы из обоих таймлайнов.
+    for (const companyId of [0, -1, null, undefined]) {
+      const none = buildActivityInput({ entityTypeId: 2, entityId: 7, companyId, rowCount: 1, warnings: [] })
+      expect(none.ownerId).toBe(7)
+      expect(none.showOpenButton).toBe(false)
+    }
   })
 })
