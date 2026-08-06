@@ -9,6 +9,8 @@
 //   pnpm live:crm --type акт   # crafted акт → dynamic smart process (env LIVE_SP_ETID, default 1120)
 //   pnpm live:crm --ai        # document TEXT → chat extractor → runCrmSync → verify → delete
 //   pnpm live:crm --no-taxid  # supplier WITHOUT a tax id → the fallback title branch (#440)
+//   pnpm live:crm --dead-funnel # направление удалено в CRM → запасная цель + предупреждение
+//   pnpm live:crm --lead        # лид на портале БЕЗ лидов → редирект в сделку + предупреждение
 //   pnpm live:crm --keep      # do not delete the created entity
 //
 // `--type` exercises the routing table below: накладная→deal (originId marker) and
@@ -23,6 +25,10 @@ import { runChatExtract } from '../server/agent/chatExtract.ts'
 import { findCompanyByTaxId } from '../server/utils/companyLookup.ts'
 import { findProduct } from '../server/utils/productLookup.ts'
 import { fetchVatRates } from '../server/utils/portalVat.ts'
+import { fetchCrmCategories } from '../server/utils/categoryLookup.ts'
+import { fetchCrmMode, leadsEnabled } from '../server/utils/crmMode.ts'
+import { fetchMeasureRows } from '../server/utils/measureList.ts'
+import { buildMeasureIndex, lookupExistingMeasure } from '../app/utils/measureCreate.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite.ts'
 import { findExistingItemId } from '../server/utils/originLookup.ts'
@@ -30,7 +36,7 @@ import { supplierNameTrusted } from '../app/utils/importTitle.ts'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
 import { loadLlmEnv } from './lib/llmEnv.mjs'
 import { readEnvValue } from './lib/envFile.mjs'
-import { SEED_PRODUCTS, SEED_SUPPLIER, catalogNameFor } from './lib/seedFixture.mjs'
+import { SEED_PRODUCTS, SEED_SUPPLIER, SEED_UNIT_PROBES, catalogNameFor } from './lib/seedFixture.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
@@ -52,6 +58,13 @@ const DOC_TYPE = typeArg || 'накладная'
 // Именно она несёт риск: сумма берётся НЕ из печатного итога документа, а из той, что реально
 // уйдёт в запись, и тип сверяется с закрытым списком.
 const noTaxId = args.has('--no-taxid')
+// Две ветки-фолбэка, каждая существует ради ПРЕДУПРЕЖДЕНИЯ человеку, и ни одна раньше не гонялась.
+// ⚠ `--dead-funnel`: настройка указывает на воронку, которой в CRM больше нет. Без фолбэка документ
+// уходил бы в несуществующее направление, и разбираться пришлось бы по факту.
+// ⚠ `--lead`: цель — лид, а портал в простом режиме CRM. Такой лид создаётся и тут же
+// авто-конвертируется, то есть работа сделана впустую, а человек об этом не знает.
+const deadFunnel = args.has('--dead-funnel')
+const asLead = args.has('--lead')
 
 const WEBHOOK = readEnvValue('.env.b24test', 'B24_TEST_WEBHOOK')
 assertTestPortal(WEBHOOK)
@@ -92,12 +105,17 @@ const CRAFTED = {
     { name: SEED_PRODUCTS[0].docName, article: SEED_PRODUCTS[0].article, quantity: 500, unit: 'м', price: 1.20, vatRate: 20 },
     { name: SEED_PRODUCTS[1].docName, article: SEED_PRODUCTS[1].article, quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 },
     { name: SEED_PRODUCTS[2].docName, article: SEED_PRODUCTS[2].article, quantity: 12.345, unit: 'м', price: 0.8654, vatRate: 20 },
-    { name: 'Доставка', article: 'DLV-1', quantity: 1, unit: 'шт', price: 50, vatRate: 0 }
+    { name: 'Доставка', article: 'DLV-1', quantity: 1, unit: 'шт', price: 50, vatRate: 0 },
+    // Зонды единиц (#272): проверяют ОБЕ ветки встроенного словаря — код, который на портале есть,
+    // и код, которого нет. Цены круглые, чтобы не сдвигать сверку сумм на копейки.
+    { name: 'Смесь сухая', quantity: 2, unit: SEED_UNIT_PROBES[0].unit, price: 10, vatRate: 20 },
+    { name: 'Перчатки', quantity: 1, unit: SEED_UNIT_PROBES[1].unit, price: 30, vatRate: 20 }
   ]
 }
 
 // Printed totals follow document arithmetic (per-line net rounded to kopecks, VAT per line):
-// 600.00 + 135.00 + round2(0.8654×12.345)=10.68 + 50.00 = 795.68; НДС 120+27+2.14+0 = 149.14.
+// 600.00 + 135.00 + round2(0.8654×12.345)=10.68 + 50.00 + 20.00 + 30.00 = 845.68;
+// НДС 120+27+2.14+0+4+6 = 159.14; к оплате 1004.82.
 const DOC_TEXT = [
   'ТОВАРНАЯ НАКЛАДНАЯ № ТН-2026-777 от 14.07.2026',
   noTaxId ? `Поставщик: ${SEED_SUPPLIER.name}` : `Поставщик: ${SEED_SUPPLIER.name}  ИНН: ${SUPPLIER_TAX_ID}`,
@@ -106,7 +124,9 @@ const DOC_TEXT = [
   `${SEED_PRODUCTS[1].docName} | ${SEED_PRODUCTS[1].article} | 30 | шт | 4.50 | 135.00`,
   `${SEED_PRODUCTS[2].docName} | ${SEED_PRODUCTS[2].article} | 12.345 | м | 0.8654 | 10.68`,
   'Доставка | DLV-1 | 1 | шт | 50.00 | 50.00',
-  'Итого: 795.68', 'НДС 20%: 149.14', 'Всего к оплате: 944.82', 'Валюта: BYN'
+  `Смесь сухая |  | 2 | ${SEED_UNIT_PROBES[0].unit} | 10.00 | 20.00`,
+  `Перчатки |  | 1 | ${SEED_UNIT_PROBES[1].unit} | 30.00 | 30.00`,
+  'Итого: 845.68', 'НДС 20%: 159.14', 'Всего к оплате: 1004.82', 'Валюта: BYN'
 ].join('\n')
 
 async function extractWithAi(text) {
@@ -175,7 +195,10 @@ const mapping = {
   units: { dictionary: { шт: 796, м: 6 }, defaultCode: 796, autoCreate: false },
   saveFile: false,
   routingRules: [
-    { match: { type: 'накладная' }, target: { entityTypeId: 2, categoryId: 1 } },
+    // ⚠ `--dead-funnel` подменяет направление на заведомо несуществующее (999): именно так выглядит
+    // портал, где воронку удалили, а настройка импорта осталась прежней.
+    // ⚠ `--lead` целит в ЛИД (entityTypeId 1). Портал в простом режиме CRM, лидов там нет.
+    { match: { type: 'накладная' }, target: asLead ? { entityTypeId: 1 } : { entityTypeId: 2, categoryId: deadFunnel ? 999 : 1 } },
     { match: { type: 'счёт' }, target: { entityTypeId: 31 } },
     // Dynamic smart process (BACKLOG §1 «Живой проход в смарт-процесс»): xmlId marker path on a
     // portal-specific entityTypeId — override with env LIVE_SP_ETID (there is no --etid flag).
@@ -204,6 +227,22 @@ const deps = {
     return entityId
   },
   setRows: (e, i, r) => setProductRows(e, i, r, call),
+  // ⚠ Каталог мер портала — раньше скрипт его НЕ подставлял вовсе, и ветка «сверить встроенный код
+  // с тем, что на портале заведено» уходила в fail-open: без каталога `matched` истинно всегда, то
+  // есть код писался без единой проверки. Именно эта сверка и не давала записать молча неверную
+  // единицу на свежем портале, где мер всего пяток.
+  // ⚠ Обе зависимости ниже прогон раньше НЕ подставлял, и оба пути молчали:
+  //   • без `listCategoryIds` документ с удалённым направлением уходил бы туда, куда указывает
+  //     настройка, — то есть в несуществующую воронку, и разбираться пришлось бы по факту;
+  //   • без `leadsEnabled` лид на портале без лидов создавался бы и тут же авто-конвертировался.
+  // Оба фолбэка существуют ради ПРЕДУПРЕЖДЕНИЯ человеку, и оно проверяется ниже.
+  listCategoryIds: async etid => (await fetchCrmCategories(etid, call)).map(c => c.id),
+  leadsEnabled: async () => leadsEnabled(await fetchCrmMode(call)),
+  measureCatalog: async () => {
+    const idx = buildMeasureIndex(await fetchMeasureRows(call))
+    const codes = new Set(idx.codes)
+    return { hasCode: c => codes.has(c), byName: u => lookupExistingMeasure(u, idx) }
+  },
   reportErrors: async m => console.log('  ⚠ errors →', m),
   notifySuccess: async s => console.log('  ✓ notifySuccess', JSON.stringify(s))
 }
@@ -341,6 +380,47 @@ try {
           console.log(`✓ подбор по артикулу сработал на ${asserted} из ${known.length} позиций: строки несут каталожные названия, а не написание документа`)
         }
       }
+    }
+
+    // Фолбэки цели (#262/#269): оба существуют ради ПРЕДУПРЕЖДЕНИЯ и оба до 2026-08-06 не гонялись.
+    //
+    // ⚠ Утверждается ПАРА «куда попало + сказали ли человеку». Одного текста мало: предупреждение
+    // без редиректа означало бы, что документ всё-таки уехал в несуществующее направление, а
+    // редирект без предупреждения — что человек не узнает, почему запись не там, где он её ждёт.
+    if (deadFunnel) {
+      if (item.categoryId !== 0) throw new Error(`фолбэк направления: запись в воронке ${item.categoryId}, ожидалась запасная (0)`)
+      if (!(res.warnings ?? []).some(w => w.includes('Воронка'))) throw new Error('фолбэк направления сработал, но человеку не сказали')
+      console.log('✓ удалённое направление → запасная воронка + предупреждение')
+    }
+    if (asLead) {
+      if (res.entityTypeId !== 2) throw new Error(`лид на портале без лидов: создан тип ${res.entityTypeId}, ожидалась сделка (2)`)
+      if (!(res.warnings ?? []).some(w => w.includes('отключены лиды'))) throw new Error('лид перенаправлен в сделку, но человеку не сказали')
+      console.log('✓ лид на портале без лидов → сделка + предупреждение')
+    }
+
+    // #272: ЕДИНИЦЫ. Утверждается ПРЕДУПРЕЖДЕНИЕ, а не записанный код — и это не придирка.
+    //
+    // ⚠ Живая находка 2026-08-06: портал САМ подменяет неизвестный код единицы на единицу по
+    // умолчанию. Проверено прямой пробой — строка, записанная с `measureCode: 778` (такой меры в
+    // каталоге нет), читается обратно как 796 «шт». Значит по КОДУ отличить «наша сверка с каталогом
+    // сработала» от «портал починил за нас» невозможно: обе ветки дают 796. Первая редакция этой
+    // проверки утверждала именно код и потому была бутафорией — мутация «убрать каталог мер из
+    // зависимостей» проходила зелёной.
+    //
+    // ⚠ Отсюда же следует, ЧТО на самом деле даёт сверка с каталогом портала: не верную единицу
+    // (её обеспечивает портал), а ПРЕДУПРЕЖДЕНИЕ человеку. Без неё `matched` остаётся истинным,
+    // предупреждение не собирается, и админ не узнаёт, что «упак» в его каталоге нет — единица
+    // молча становится штукой. Это и проверяем.
+    const warnText = (res.warnings ?? []).join(' | ')
+    for (const probe of SEED_UNIT_PROBES) {
+      const warned = warnText.includes(`«${probe.unit}»`)
+      if (probe.expect === 'default' && !warned) {
+        throw new Error(`#272: единицы «${probe.unit}» нет в каталоге портала, но предупреждения нет — админ не узнает, что она стала штукой`)
+      }
+      if (probe.expect === 'builtin' && warned) {
+        throw new Error(`#272: единица «${probe.unit}» ЕСТЬ в каталоге портала, а предупреждение всё равно выдано`)
+      }
+      console.log(`✓ единица «${probe.unit}»: ${warned ? 'предупреждение выдано' : 'предупреждения нет'} — ${probe.why}`)
     }
 
     // #347: what the OPERATOR sees in the «Цена» column. `taxIncluded` picks which stored number
