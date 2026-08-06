@@ -32,10 +32,11 @@
 //
 //   pnpm probe:328:oauth
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
-import { readEnvValue } from './lib/envFile.mjs'
+import { liveOauth } from './lib/oauthToken.mjs'
 
-const DOMAIN = readEnvValue('.env.b24oauth', 'B24_OAUTH_DOMAIN')
-const TOKEN = readEnvValue('.env.b24oauth', 'B24_OAUTH_ACCESS_TOKEN')
+// ⚠ Токен берём через `liveOauth`, а не из файла напрямую: access живёт час, и прогон падал
+// `expired_token` на середине, успев наплодить записей на портале.
+const { domain: DOMAIN, token: TOKEN } = await liveOauth()
 assertTestPortal(`https://${DOMAIN}/`)
 
 const raw = async (method, params = {}) => {

@@ -21,10 +21,11 @@
 //   pnpm probe:328:show --clean
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
-import { readEnvValue } from './lib/envFile.mjs'
+import { liveOauth } from './lib/oauthToken.mjs'
 
-const DOMAIN = readEnvValue('.env.b24oauth', 'B24_OAUTH_DOMAIN')
-const TOKEN = readEnvValue('.env.b24oauth', 'B24_OAUTH_ACCESS_TOKEN')
+// ⚠ Токен берём через `liveOauth`, а не из файла напрямую: access живёт час, и прогон падал
+// `expired_token` на середине, успев наплодить записей на портале.
+const { domain: DOMAIN, token: TOKEN } = await liveOauth()
 assertTestPortal(`https://${DOMAIN}/`)
 
 const STATE = 'probe-328-showcase.json'
@@ -147,7 +148,11 @@ const build = async () => {
     ['FILES = ["n<id>"]', { FILES: [`n${diskId}`] }],
     ['FILES = [<id> числом]', { FILES: [diskId] }],
     ['WEBDAV_ELEMENTS = [{ id }]', { WEBDAV_ELEMENTS: [{ id: diskId }] }],
-    ['WEBDAV_ELEMENTS = ["n<id>"]', { WEBDAV_ELEMENTS: [`n${diskId}`] }]
+    ['WEBDAV_ELEMENTS = ["n<id>"]', { WEBDAV_ELEMENTS: [`n${diskId}`] }],
+    // ⚠ Седьмая форма — из примера на странице САМОГО метода `crm.activity.add`:
+    // `FILES:[{"fileData":["example.jpg","base64…"]}]`. Первые шесть перебирали формы из статьи
+    // про файловые поля, а страница метода показывает свою — и именно её я до сих пор не пробовал.
+    ['FILES = [{ fileData: [имя, base64] }]', { FILES: [{ fileData: [fileName, bytes] }] }]
   ]
   for (const [label, fields] of forms) {
     const todo = await call('crm.activity.todo.add', {
@@ -174,6 +179,36 @@ const build = async () => {
       }
     })
     ok(`(б) ${label} → дело ${todoId} · update=${JSON.stringify(upd.result ?? upd.error)} · блоки=${JSON.stringify(blocks.result ?? blocks.error)}`)
+  }
+
+  // --- (г) СИСТЕМНОЕ дело `crm.activity.add` — метод, в примере которого и показан `fileData` ---
+  //
+  // ⚠ Метод DEPRECATED и в продукт не пойдёт. Он здесь ровно затем, чтобы отделить два вопроса:
+  // «форма значения неверна» и «у дела этого ТИПА вложение не рисуется вовсе». Если скрепка
+  // появится тут и не появится у `todo` — дело в типе, и вариант «б» отпадает по построению.
+  for (const [label, FILES] of [
+    ['fileData', [{ fileData: [fileName, bytes] }]],
+    ['{ id }', [{ id: diskId }]]
+  ]) {
+    const sys = await raw('crm.activity.add', {
+      fields: {
+        OWNER_TYPE_ID: 2,
+        OWNER_ID: deal,
+        TYPE_ID: 4,
+        SUBJECT: `(г) СИСТЕМНОЕ дело · FILES = ${label}`,
+        DESCRIPTION: `${SUPPLIER} · ${DOC}`,
+        COMPLETED: 'Y',
+        RESPONSIBLE_ID: 1,
+        COMMUNICATIONS: [{ TYPE: 'EMAIL', VALUE: 'probe@example.com' }],
+        FILES
+      }
+    })
+    if (sys.result) {
+      state.activities.push(Number(sys.result))
+      ok(`(г) системное дело FILES=${label} → id=${sys.result}`)
+    } else {
+      bad(`(г) системное дело FILES=${label} → ${sys.error}: ${sys.error_description || ''}`)
+    }
   }
 
   // --- (в) конфигурируемое дело + отдельный комментарий с ВЛОЖЕНИЕМ ---------------------------
