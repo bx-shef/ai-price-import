@@ -2,9 +2,13 @@
 // ТРИ варианта подачи документа рядом, чтобы владелец сравнил их глазами. НИЧЕГО НЕ УБИРАЕТ.
 //
 //   а) как сейчас — конфигурируемое дело: наш вид, подвал с кнопками, файл ССЫЛКОЙ;
-//   б) вариант «б» — универсальное дело + `crm.activity.layout.blocks.set` (наши блоки) +
-//      `FILES` объектом `{id}` (форма из документации). Подвала с кнопками у этого типа НЕТ,
-//      поэтому «Открыть» и «Исходный файл» приходится делать блоками-ссылками;
+//   б) вариант «б» — универсальное дело + `crm.activity.layout.blocks.set` (наши блоки).
+//      ⚠ Прикрепление файла кладётся ШЕСТЬЮ формами сразу, по делу на форму, с формой в
+//      заголовке: `[{id}]`, `[[имя,base64]]`, `["n<id>"]`, `[<id>]`, и то же через
+//      `WEBDAV_ELEMENTS`. Прочитать результат по REST нельзя (поле не возвращается ни одним
+//      чтением), портал принимает любую форму без ошибки — значит единственный наблюдатель
+//      человек, и формы надо положить рядом и подписать. Подвала с кнопками у этого типа НЕТ,
+//      поэтому «Открыть» становится блоком-ссылкой;
 //   в) вариант «в» — конфигурируемое дело + ОТДЕЛЬНЫЙ комментарий таймлайна с настоящим вложением.
 //
 // ⚠ Уборки нет намеренно (решение владельца 06.08.2026): смысл в том, чтобы посмотреть. Убрать —
@@ -84,7 +88,9 @@ const build = async () => {
   const bytes = Buffer.from(
     `${DOC}\nПоставщик: ${SUPPLIER}\nПозиций: ${LINES}\nВсего к оплате: ${TOTAL}\n`, 'utf8'
   ).toString('base64')
-  const fileName = `Накладная ТН-000451__demo.txt`
+  // ⚠ Имя уникально на прогон: Диск отвергает повтор (`DISK_OBJ_22000`), и вторая витрина
+  // падала бы на первом же шаге — а прошлая при этом уже висит на портале.
+  const fileName = `Накладная ТН-000451__demo-${Date.now()}.txt`
   const up = await call('disk.folder.uploadfile', {
     id: common.ROOT_OBJECT_ID,
     data: { NAME: fileName },
@@ -129,32 +135,46 @@ const build = async () => {
   state.activities.push(Number(a.activity.id))
   ok(`(а) конфигурируемое дело: id=${a.activity.id} — файл ССЫЛКОЙ в подвале`)
 
-  // --- (б) универсальное дело + наши блоки + FILES объектом {id} ------------------------------
-  const todo = await call('crm.activity.todo.add', {
-    ownerTypeId: 2,
-    ownerId: deal,
-    deadline: new Date(Date.now() + 864e5).toISOString(),
-    title: `(б) ВАРИАНТ Б · Импорт документа · ${TOTAL}`,
-    description: `${SUPPLIER} · ${DOC}`,
-    responsibleId: 1
-  })
-  const todoId = Number(todo.id)
-  state.activities.push(todoId)
-  const upd = await raw('crm.activity.update', { id: todoId, fields: { FILES: [{ id: diskId }] } })
-  const blocks = await raw('crm.activity.layout.blocks.set', {
-    entityTypeId: 2,
-    entityId: deal,
-    activityId: todoId,
-    layout: {
-      blocks: {
-        ...counters,
-        // Подвала с кнопками у этого типа НЕТ — «Открыть» приходится делать блоком-ссылкой.
-        open: { type: 'link', properties: { text: 'Открыть сделку', bold: true, action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } } },
-        source: { type: 'link', properties: { text: 'Исходный файл', action: { type: 'redirect', uri: fileUrl } } }
+  // --- (б) универсальное дело + наши блоки + ПЕРЕБОР ФОРМ ПРИКРЕПЛЕНИЯ -----------------------
+  //
+  // ⚠ Почему перебор, а не одна «правильная» форма: прочитать `FILES` обратно НЕЛЬЗЯ — ни `get`,
+  // ни `list` с явным `select` его не отдают (проверено под OAuth). Портал принимает ЛЮБУЮ форму
+  // без ошибки, поэтому «вызов прошёл» ничего не доказывает. Единственный доступный наблюдатель —
+  // человек, открывший карточку. Значит, кладём все формы РЯДОМ и подписываем каждую в заголовке.
+  const forms = [
+    ['FILES = [{ id }]', { FILES: [{ id: diskId }] }],
+    ['FILES = [[имя, base64]]', { FILES: [[fileName, bytes]] }],
+    ['FILES = ["n<id>"]', { FILES: [`n${diskId}`] }],
+    ['FILES = [<id> числом]', { FILES: [diskId] }],
+    ['WEBDAV_ELEMENTS = [{ id }]', { WEBDAV_ELEMENTS: [{ id: diskId }] }],
+    ['WEBDAV_ELEMENTS = ["n<id>"]', { WEBDAV_ELEMENTS: [`n${diskId}`] }]
+  ]
+  for (const [label, fields] of forms) {
+    const todo = await call('crm.activity.todo.add', {
+      ownerTypeId: 2,
+      ownerId: deal,
+      deadline: new Date(Date.now() + 864e5).toISOString(),
+      title: `(б) ${label}`,
+      description: `${SUPPLIER} · ${DOC} · файл на Диске id=${diskId}`,
+      responsibleId: 1
+    })
+    const todoId = Number(todo.id)
+    state.activities.push(todoId)
+    const upd = await raw('crm.activity.update', { id: todoId, fields })
+    const blocks = await raw('crm.activity.layout.blocks.set', {
+      entityTypeId: 2,
+      entityId: deal,
+      activityId: todoId,
+      layout: {
+        blocks: {
+          ...counters,
+          // Подвала с кнопками у этого типа НЕТ — «Открыть» становится блоком-ссылкой.
+          open: { type: 'link', properties: { text: 'Открыть сделку', bold: true, action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } } }
+        }
       }
-    }
-  })
-  ok(`(б) универсальное дело: id=${todoId} · FILES=${JSON.stringify(upd.result ?? upd.error)} · блоки=${JSON.stringify(blocks.result ?? blocks.error)}`)
+    })
+    ok(`(б) ${label} → дело ${todoId} · update=${JSON.stringify(upd.result ?? upd.error)} · блоки=${JSON.stringify(blocks.result ?? blocks.error)}`)
+  }
 
   // --- (в) конфигурируемое дело + отдельный комментарий с ВЛОЖЕНИЕМ ---------------------------
   const c = await call('crm.activity.configurable.add', {
