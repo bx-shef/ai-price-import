@@ -6,6 +6,7 @@ import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { navigateTo } from '#app'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
+import { ON_MISSING_LABEL } from '~/config/onMissing'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
@@ -396,6 +397,30 @@ watch(jobs, (list) => {
             <!-- PRIMARY ACTION: stage files → ONE target for the batch → «Импортировать» uploads the batch
              and WAITS for every result, holding the page locked (owner rework, round 2). `upload`/`jobDone`
              come from THIS page's single useImport() so the run and the list below share one poll. -->
+            <!-- Предупреждение о выбранной настройке «Пропустить строку и предупредить» (решение
+             владельца 06.08.2026: поведение оставляем как есть, но человека предупреждаем ЗАРАНЕЕ).
+             Что происходит без него: если ни одна позиция документа не подобралась по артикулу, при
+             этой настройке пропускаются ВСЕ строки, и импорт отвечает жёсткой ошибкой — запись не
+             создаётся вовсе. Для документа без колонки артикула (в РБ/РФ обычная первичка) это
+             штатный исход, а выглядит как поломка приложения, потому что узнаёт о нём человек уже
+             ПОСЛЕ загрузки, из текста отказа.
+             ⚠ Показываем ТОЛЬКО при явно выбранном `skip-warn`: на дефолте (`freeform`) строки
+             вносятся как есть, отказа нет, и предупреждать не о чем — баннер на каждом портале
+             читался бы как шум и перестал бы работать там, где нужен.
+             ⚠ `B24Banner` с заданным `id` сам помнит закрытие (localStorage) — отдельного маркера
+             заводить не нужно. Закрывается навсегда осознанно: это свойство НАСТРОЙКИ портала, а не
+             событие; кто её выбрал, тот про неё знает, и напоминать ему на каждый заход незачем.
+             Сменят настройку на `freeform` — баннер исчезнет сам по условию. -->
+            <B24Banner
+              v-if="mapping.product.onMissing === 'skip-warn'"
+              id="import-skip-warn-notice"
+              class="mb-4"
+              color="air-primary-warning"
+              :icon="WarningAlarmIcon"
+              :title="`Выбрано «${ON_MISSING_LABEL['skip-warn']}»: документ, в котором ни одна позиция не найдена в каталоге по артикулу, будет отклонён целиком — запись в CRM не создастся. Так и задумано, но проверьте, что в ваших документах есть колонка с артикулами.`"
+              close
+            />
+
             <ImportStaging
               :upload="upload"
               :job-done="jobDone"
