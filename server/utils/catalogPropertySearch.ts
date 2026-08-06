@@ -13,8 +13,12 @@
 // Normalized to one shape ({ value: code, label: name }); the query is applied in-memory
 // (the REST list has no name-substring filter).
 
-import type { RestCall } from './b24Rest'
 import type { SdkTransport } from './b24Sdk'
+import { resolveIblocks } from './catalogLookup'
+
+// ⚠ `resolveIblocks` живёт в ядре подбора (`catalogLookup.ts`), а не здесь: инфоблок нужен КАЖДОМУ
+// запросу подбора, а не только пикеру настроек. Реэкспорта тут нет намеренно — авто-импорт Nitro
+// на двух путях к одному имени ругается и молча выбирает один из них.
 
 /** One pickable property: `value` is the stored code (or PROPERTY_<id> fallback),
  *  `label` the human name. `id`/`code` are carried for callers that need them. */
@@ -50,33 +54,6 @@ export const ARTICLE_PROPERTY_TYPES = new Set(['S'])
 export interface PropertySearchPage {
   items: PropertyOption[]
   hasMore: boolean
-}
-
-/**
- * Инфоблоки каталога: предложения и товары.
- *
- * ⚠ Прежде читался ТОЛЬКО основной каталог товаров, и свойства торговых предложений в пикер не
- * попадали вовсе — то есть админ портала с SKU физически не мог выбрать своё свойство артикула.
- * Свойство при этом живёт ровно в одном инфоблоке, и подбор обязан знать, в каком именно.
- */
-export async function resolveIblocks(call: RestCall): Promise<{ offer: number | null, product: number | null }> {
-  // The transport's `.call` (makeSdkRestCall) returns the UNWRAPPED `result`, so read
-  // `catalogs` directly — NOT `result.catalogs` (that double-unwrap yields undefined in prod).
-  const resp = await call('catalog.catalog.list', {}) as { catalogs?: Array<Record<string, unknown>> }
-  const catalogs = resp?.catalogs ?? []
-  const num = (v: unknown) => {
-    const n = Number(v)
-    return Number.isInteger(n) && n > 0 ? n : null
-  }
-  // Каталог предложений — тот, что УКАЗЫВАЕТ на родительский инфоблок товаров.
-  const offers = catalogs.find(c => num(c.productIblockId))
-  const main = catalogs.find(c => c.productIblockId == null) ?? catalogs[0]
-  return {
-    offer: offers ? num(offers.iblockId ?? offers.id) : null,
-    // Родитель берётся у каталога предложений, если он есть: так связка «ТП → товар» точнее, чем
-    // «первый каталог без productIblockId», когда каталогов несколько.
-    product: (offers ? num(offers.productIblockId) : null) ?? (main ? num(main.iblockId ?? main.id) : null)
-  }
 }
 
 /**

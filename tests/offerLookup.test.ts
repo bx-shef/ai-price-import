@@ -26,7 +26,7 @@ describe('findOfferByXmlId', () => {
   it('filters by iblockId + xmlId + active (iblockId in select too) → min id', async () => {
     const call = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27 }, { id: 5, iblockId: 27 }] }))
     expect(await findOfferByXmlId('1030162', 27, call)).toBe(3)
-    expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { select: ['id', 'iblockId'], filter: { iblockId: 27, xmlId: '1030162', active: 'Y' } })
+    expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { filter: { iblockId: 27, xmlId: '1030162', active: 'Y' }, select: ['id', 'iblockId', 'xmlId'] })
   })
   it('null on empty xmlId / missing iblock / no offers (no bad call)', async () => {
     const empty = vi.fn(async () => ({ offers: [] }))

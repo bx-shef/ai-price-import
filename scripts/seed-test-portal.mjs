@@ -112,26 +112,33 @@ async function ensureSupplier() {
 }
 
 /**
- * Товар — по ВНЕШНЕМУ КОДУ. Фильтр `crm.product.list` по `XML_ID` действительно фильтрует
- * (проверено на портале в обе стороны: своё значение → одна строка, несуществующее → пусто), в
- * отличие от компаний, где такой фильтр молча игнорируется.
+ * Товар — по ВНЕШНЕМУ КОДУ. Фильтр по `xmlId` действительно фильтрует (проверено на портале в обе
+ * стороны: своё значение → одна строка, несуществующее → пусто), в отличие от компаний, где такой
+ * фильтр молча игнорируется.
+ *
+ * ⚠ Методы `catalog.product.*`, а НЕ `crm.product.*`: вторые помечены DEPRECATED. Отличий по форме
+ * три, и каждое роняет вызов молча: `iblockId` обязателен и в фильтре, и в `select`; поля в
+ * lowerCamel (`xmlId`, `active`); строки приходят под ключом `products`, а добавленный товар — под
+ * `element`.
  */
-async function ensureProduct(p, propertyId) {
+async function ensureProduct(p, propertyId, iblockId) {
   const xmlId = seedXmlId(p.article)
-  const found = await call('crm.product.list', { filter: { XML_ID: xmlId }, select: ['ID'] })
+  const { products } = await call('catalog.product.list', {
+    filter: { iblockId, xmlId }, select: ['id', 'iblockId']
+  })
   const fields = {
-    NAME: catalogNameFor(p.docName), XML_ID: xmlId, PRICE: p.price,
-    CURRENCY_ID: 'BYN', ACTIVE: 'Y', [`PROPERTY_${propertyId}`]: p.article
+    iblockId, name: catalogNameFor(p.docName), xmlId,
+    active: 'Y', [`property${propertyId}`]: p.article
   }
-  if ((found ?? [])[0]) {
-    await call('crm.product.update', { id: found[0].ID, fields })
-    return { id: found[0].ID, created: false }
+  if ((products ?? [])[0]) {
+    await call('catalog.product.update', { id: products[0].id, fields })
+    return { id: products[0].id, created: false }
   }
-  const id = await call('crm.product.add', { fields })
-  return { id, created: true }
+  const { element } = await call('catalog.product.add', { fields })
+  return { id: element.id, created: true }
 }
 
-async function removeSeeded() {
+async function removeSeeded(iblockId) {
   const found = await findCompanyByTaxId(SEED_SUPPLIER.taxId)
   if (found) {
     await call('crm.item.delete', { entityTypeId: 4, id: found.companyId })
@@ -140,10 +147,12 @@ async function removeSeeded() {
     console.log('  · компании с нашим налоговым номером нет')
   }
   for (const p of SEED_PRODUCTS) {
-    const rows = await call('crm.product.list', { filter: { XML_ID: seedXmlId(p.article) }, select: ['ID'] })
-    for (const row of rows ?? []) {
-      await call('crm.product.delete', { id: row.ID })
-      console.log(`  − товар ${row.ID} (${p.article})`)
+    const { products } = await call('catalog.product.list', {
+      filter: { iblockId, xmlId: seedXmlId(p.article) }, select: ['id', 'iblockId']
+    })
+    for (const row of products ?? []) {
+      await call('catalog.product.delete', { id: row.id })
+      console.log(`  − товар ${row.id} (${p.article})`)
     }
   }
   console.log('\n✅ заведённое убрано (свойство каталога и сделки прошлых прогонов остаются — см. шапку)')
@@ -151,7 +160,7 @@ async function removeSeeded() {
 
 if (clean) {
   console.log('уборка заведённого…')
-  await removeSeeded()
+  await removeSeeded(await productIblockId())
 } else {
   const iblockId = await productIblockId()
   const propertyId = await ensureArticleProperty(iblockId)
@@ -161,7 +170,7 @@ if (clean) {
   console.log(`компания-поставщик: ${supplier.companyId} (${supplier.created ? 'заведена' : 'уже была'}), реквизит ${supplier.requisiteId}, УНП/ИНН ${SEED_SUPPLIER.taxId}`)
 
   for (const p of SEED_PRODUCTS) {
-    const r = await ensureProduct(p, propertyId)
+    const r = await ensureProduct(p, propertyId, iblockId)
     console.log(`товар ${r.id} (${r.created ? 'заведён' : 'обновлён'}): ${p.article} — ${catalogNameFor(p.docName)}`)
   }
 
@@ -172,10 +181,11 @@ if (clean) {
     throw new Error(`посев не читается обратно: по RQ_INN=${SEED_SUPPLIER.taxId} компания ${back?.companyId ?? 'не найдена'}, ожидалась ${supplier.companyId}`)
   }
   for (const p of SEED_PRODUCTS) {
-    const rows = await call('crm.product.list', {
-      filter: { [`%PROPERTY_${propertyId}`]: p.article, ACTIVE: 'Y' }, select: ['ID', 'NAME'], order: { ID: 'ASC' }
+    const { products } = await call('catalog.product.list', {
+      filter: { iblockId, [`%property${propertyId}`]: p.article, active: 'Y' },
+      select: ['id', 'iblockId', 'name'], order: { id: 'asc' }
     })
-    if (!(rows ?? []).length) throw new Error(`посев не читается обратно: товара с артикулом ${p.article} не нашлось`)
+    if (!(products ?? []).length) throw new Error(`посев не читается обратно: товара с артикулом ${p.article} не нашлось`)
   }
   console.log(`\n✓ обратное чтение: номер ${SEED_SUPPLIER.taxId} → компания ${supplier.companyId}; все ${SEED_PRODUCTS.length} артикула находятся`)
   console.log('\n✅ портал засеян. Дальше: `pnpm live:crm` — привязка к компании и подбор по артикулу')

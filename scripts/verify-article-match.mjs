@@ -41,7 +41,11 @@ const PROBES = [
   { key: 'cyr', name: '[PROBE] кириллица в артикуле', article: 'ZQ-СYR-1', active: 'Y' },
   { key: 'multi', name: '[PROBE] несколько артикулов через запятую', article: 'ZQ-M1,ZQ-M2', active: 'Y' },
   { key: 'lines', name: '[PROBE] несколько артикулов строками', article: 'ZQ-L1\r\nZQ-L2', active: 'Y' },
-  { key: 'xml', name: '[PROBE] только внешний код', article: '', active: 'Y', xmlOnly: 'ZQ-XMLONLY' }
+  { key: 'xml', name: '[PROBE] только внешний код', article: '', active: 'Y', xmlOnly: 'ZQ-XMLONLY' },
+  // Пара, различающаяся ТОЛЬКО регистром внешнего кода. Живая проба 06.08.2026: портал вернул ОБА
+  // товара на каждый из четырёх запросов (верхний, нижний, вперемешку, с префиксом `=`).
+  { key: 'caseUp', name: '[PROBE] регистр: верхний', article: '', active: 'Y', xmlOnly: 'ZQ-CASE-DUP' },
+  { key: 'caseLow', name: '[PROBE] регистр: нижний', article: '', active: 'Y', xmlOnly: 'zq-case-dup' }
 ]
 
 /** Инфоблок товаров + числовой id свойства «Артикул» (его заводит `pnpm seed:b24`). */
@@ -60,31 +64,32 @@ async function catalogContext() {
 
 const xmlIdFor = key => `${PROBE}${key.toUpperCase()}`
 
-async function createProbes(propertyId) {
+async function createProbes(iblockId, propertyId) {
   const made = []
   for (const p of PROBES) {
     const fields = {
-      NAME: p.name,
-      XML_ID: p.xmlOnly ?? xmlIdFor(p.key),
-      PRICE: 1, CURRENCY_ID: 'BYN', ACTIVE: p.active
+      iblockId,
+      name: p.name,
+      xmlId: p.xmlOnly ?? xmlIdFor(p.key),
+      active: p.active
     }
-    if (p.article) fields[`PROPERTY_${propertyId}`] = p.article
-    const id = await call('crm.product.add', { fields })
-    made.push({ ...p, id: Number(id) })
+    if (p.article) fields[`property${propertyId}`] = p.article
+    const { element } = await call('catalog.product.add', { fields })
+    made.push({ ...p, id: Number(element.id) })
   }
   return made
 }
 
-async function removeProbes() {
+async function removeProbes(iblockId) {
   let removed = 0
   // Уборка по ВНЕШНЕМУ КОДУ, а не по сохранённым id: упавший на середине прогон оставил бы часть
   // зондов, о которых текущий процесс ничего не знает.
   for (const p of PROBES) {
     const code = p.xmlOnly ?? xmlIdFor(p.key)
-    // Неактивный товар тоже надо убрать, поэтому фильтр без `ACTIVE`.
-    const rows = await call('crm.product.list', { filter: { XML_ID: code }, select: ['ID'] })
-    for (const row of rows ?? []) {
-      await call('crm.product.delete', { id: row.ID })
+    // Неактивный товар тоже надо убрать, поэтому фильтр без `active`.
+    const { products } = await call('catalog.product.list', { filter: { iblockId, xmlId: code }, select: ['id', 'iblockId'] })
+    for (const row of products ?? []) {
+      await call('catalog.product.delete', { id: row.id })
       removed++
     }
   }
@@ -97,7 +102,8 @@ const mappingFor = (propertyId, kind, delimiter) => ({
   product: { by: 'article', onMissing: 'freeform' }
 })
 
-const lookup = (article, mapping) => findProduct({ name: 'зонд', article, price: 1, quantity: 1 }, mapping, call)
+let IBLOCKS = { offer: null, product: null }
+const lookup = (article, mapping) => findProduct({ name: 'зонд', article, price: 1, quantity: 1 }, mapping, call, IBLOCKS)
 
 const results = []
 /** Утверждение с человеческой формулировкой: печатается и зелёное, и красное. */
@@ -110,13 +116,14 @@ try {
   const { iblockId, propertyId } = await catalogContext()
   console.log(`инфоблок товаров ${iblockId}, свойство артикула PROPERTY_${propertyId}\n`)
 
-  // Убираем хвосты прошлого прогона ДО посева: иначе `crm.product.add` заведёт второй товар с тем
+  // Убираем хвосты прошлого прогона ДО посева: иначе `catalog.product.add` заведёт второй товар с тем
   // же внешним кодом, и `minId` вернёт прошлый — проверка стала бы измерять историю.
-  const stale = await removeProbes()
+  const stale = await removeProbes(iblockId)
   if (stale) console.log(`· убраны ${stale} зонда(ов) прошлого прогона\n`)
 
   // Уборка идёт по внешнему коду, а не по этому списку, поэтому наружу его выносить незачем.
-  const made = await createProbes(propertyId)
+  IBLOCKS = { offer: null, product: iblockId }
+  const made = await createProbes(iblockId, propertyId)
   const byKey = Object.fromEntries(made.map(p => [p.key, p]))
   console.log(`заведено зондов: ${made.length}\n`)
 
@@ -199,6 +206,15 @@ try {
     'комментарий в findProductByXmlId обещал точное совпадение — исправлено по факту'
   )
 
+  // 5б. Два товара, различающиеся ТОЛЬКО регистром внешнего кода. Раньше `minId` молча брал
+  //     меньший id: документ с кодом в нижнем регистре получал в сделку товар с верхним — не «не
+  //     нашли», а «нашли не тот». Теперь такой случай честно считается неподобранным.
+  check(
+    'внешний код неоднозначен по регистру (ZQ-CASE-DUP и zq-case-dup) → «не подобрано», а не произвольный',
+    (await lookup('zq-case-dup', noProp)) === null,
+    `в каталоге оба: ${byKey.caseUp.id} и ${byKey.caseLow.id}`
+  )
+
   // 6. Ничего не совпало → null, а не произвольный товар. Ровно этим кончается «портал молча
   //    игнорирует неизвестный фильтр и отдаёт весь каталог».
   check('несуществующий артикул → подбора нет', (await lookup('ZQ-НЕТ-ТАКОГО-АРТИКУЛА', strMap)) === null)
@@ -211,7 +227,7 @@ try {
   if (keep) {
     console.log('\n· зонды оставлены на портале (--keep); убрать: повторный прогон без флага')
   } else {
-    const n = await removeProbes()
+    const n = await removeProbes(IBLOCKS.product ?? (await catalogContext()).iblockId)
     console.log(`\n· убрано зондов: ${n}`)
   }
 }

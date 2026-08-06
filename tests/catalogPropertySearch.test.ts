@@ -1,6 +1,6 @@
+import { resolveIblocks } from '../server/utils/catalogLookup'
 import { describe, expect, it } from 'vitest'
 import {
-  resolveIblocks,
   normalizeProperties,
   filterProperties,
   searchCatalogProperties
