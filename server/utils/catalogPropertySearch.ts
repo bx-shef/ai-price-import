@@ -23,7 +23,28 @@ export interface PropertyOption {
   label: string
   code?: string
   id?: number
+  /** Инфоблок, которому свойство принадлежит: предложения или товары. */
+  scope: 'offer' | 'product'
+  /** Подпись группы для списка («Торговые предложения (SKU)» / «Товары»). */
+  group: string
 }
+
+/** Подписи групп в списке. Предложения идут первыми — их артикул сильнее. */
+export const SCOPE_GROUP: Record<'offer' | 'product', string> = {
+  offer: 'Торговые предложения (SKU)',
+  product: 'Товары'
+}
+
+/**
+ * Типы свойств, годные под артикул: только СТРОКА и ТЕКСТ/HTML (`propertyType: 'S'`).
+ *
+ * ⚠ Список закрытый и узкий намеренно. Прежде пикер показывал ВСЕ свойства каталога, включая
+ * картинку (`F`), привязку к элементу (`E`), список (`L`) и число (`N`). Выбрать картинку под
+ * артикул можно было в один клик, а последствие — подбор, который не находит ничего и молчит об
+ * этом: строка каталога просто не содержит того, что мы ищем. Число (`N`) тоже отвергается —
+ * артикул это код, а не количество, и ведущие нули в числовом поле не переживают хранение.
+ */
+export const ARTICLE_PROPERTY_TYPES = new Set(['S'])
 
 /** A page of property options plus whether more pages exist (single page here). */
 export interface PropertySearchPage {
@@ -32,18 +53,30 @@ export interface PropertySearchPage {
 }
 
 /**
- * Resolve the MAIN product catalog's iblockId. Offers catalogs reference their parent
- * via `productIblockId`; the main catalog has `productIblockId == null`. Returns null
- * when no catalog is found (empty portal / missing scope).
+ * Инфоблоки каталога: предложения и товары.
+ *
+ * ⚠ Прежде читался ТОЛЬКО основной каталог товаров, и свойства торговых предложений в пикер не
+ * попадали вовсе — то есть админ портала с SKU физически не мог выбрать своё свойство артикула.
+ * Свойство при этом живёт ровно в одном инфоблоке, и подбор обязан знать, в каком именно.
  */
-export async function resolveMainIblockId(call: RestCall): Promise<number | null> {
+export async function resolveIblocks(call: RestCall): Promise<{ offer: number | null, product: number | null }> {
   // The transport's `.call` (makeSdkRestCall) returns the UNWRAPPED `result`, so read
   // `catalogs` directly — NOT `result.catalogs` (that double-unwrap yields undefined in prod).
   const resp = await call('catalog.catalog.list', {}) as { catalogs?: Array<Record<string, unknown>> }
   const catalogs = resp?.catalogs ?? []
+  const num = (v: unknown) => {
+    const n = Number(v)
+    return Number.isInteger(n) && n > 0 ? n : null
+  }
+  // Каталог предложений — тот, что УКАЗЫВАЕТ на родительский инфоблок товаров.
+  const offers = catalogs.find(c => num(c.productIblockId))
   const main = catalogs.find(c => c.productIblockId == null) ?? catalogs[0]
-  const id = main ? Number(main.iblockId) : NaN
-  return Number.isInteger(id) && id > 0 ? id : null
+  return {
+    offer: offers ? num(offers.iblockId ?? offers.id) : null,
+    // Родитель берётся у каталога предложений, если он есть: так связка «ТП → товар» точнее, чем
+    // «первый каталог без productIblockId», когда каталогов несколько.
+    product: (offers ? num(offers.productIblockId) : null) ?? (main ? num(main.iblockId ?? main.id) : null)
+  }
 }
 
 /**
@@ -51,7 +84,7 @@ export async function resolveMainIblockId(call: RestCall): Promise<number | null
  * properties with a stable reference (a code, else PROPERTY_<id>); label prefers the
  * human name. A property with neither code nor a positive id is dropped (unreferenceable).
  */
-export function normalizeProperties(resp: unknown): PropertyOption[] {
+export function normalizeProperties(resp: unknown, scope: 'offer' | 'product' = 'product'): PropertyOption[] {
   // RestCall returns the UNWRAPPED result → read `productProperties` directly.
   const rows = (resp as { productProperties?: Array<Record<string, unknown>> })?.productProperties
   if (!Array.isArray(rows)) return []
@@ -62,8 +95,10 @@ export function normalizeProperties(resp: unknown): PropertyOption[] {
     const code = typeof p.code === 'string' ? p.code.trim() : ''
     const value = code || (id ? `PROPERTY_${id}` : '')
     if (!value) continue
+    // Только строковые/текстовые свойства — см. `ARTICLE_PROPERTY_TYPES`.
+    if (!ARTICLE_PROPERTY_TYPES.has(String(p.propertyType ?? ''))) continue
     const label = String(p.name ?? '').trim() || code || (id ? `#${id}` : value)
-    out.push({ value, label, code: code || undefined, id })
+    out.push({ value, label, code: code || undefined, id, scope, group: SCOPE_GROUP[scope] })
   }
   return out
 }
@@ -83,10 +118,17 @@ export function filterProperties(props: PropertyOption[], q: string): PropertyOp
  * (never throws for that — the route maps transport failures to 502).
  */
 export async function searchCatalogProperties(t: SdkTransport, q: string): Promise<PropertySearchPage> {
-  const iblockId = await resolveMainIblockId(t.call)
-  if (!iblockId) return { items: [], hasMore: false }
-  // catalog.productProperty.list groups rows under `productProperties` and keys on `id`
-  // (lowercase) — the SDK needs both to page a >50-property catalog correctly.
-  const rows = await t.list('catalog.productProperty.list', { filter: { iblockId } }, { idKey: 'id', listKey: 'productProperties' })
-  return { items: filterProperties(normalizeProperties({ productProperties: rows }), q), hasMore: false }
+  const iblocks = await resolveIblocks(t.call)
+  const items: PropertyOption[] = []
+  // ⚠ Порядок групп: сначала предложения. Их артикул — более сильный признак (напечатанный код
+  // чаще всего именно внешний код предложения), и в списке он должен попадаться первым.
+  for (const scope of ['offer', 'product'] as const) {
+    const iblockId = iblocks[scope]
+    if (!iblockId) continue
+    // catalog.productProperty.list groups rows under `productProperties` and keys on `id`
+    // (lowercase) — the SDK needs both to page a >50-property catalog correctly.
+    const rows = await t.list('catalog.productProperty.list', { filter: { iblockId } }, { idKey: 'id', listKey: 'productProperties' })
+    items.push(...normalizeProperties({ productProperties: rows }, scope))
+  }
+  return { items: filterProperties(items, q), hasMore: false }
 }

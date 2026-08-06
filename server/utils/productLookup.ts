@@ -2,11 +2,10 @@ import type { RestCall } from './b24Rest'
 import type { PortalMapping, ArticleFieldConfig } from '~/types/mapping'
 import type { DocumentItem } from '~/types/document'
 import { articleMatches, parseSupplierArticles } from '~/utils/supplierArticles'
-import { findOfferForItem } from './offerLookup'
+import { findOfferByProperty, findOfferByXmlId } from './offerLookup'
 
 // Deterministic product lookup for crm-sync (find_product tool body). DI over RestCall.
-// Strategies (mapping.product.by):
-//   • 'name'    → exact product NAME via crm.product.list (verified live: {ID, NAME}).
+// Strategies (единственная — по артикулу; `mapping.product.by` больше не читается):
 //   • 'article' → the admin-configured catalog property (mapping.article.field) holding
 //     the supplier article(s) AND the product's external code (XML_ID / «внешний код»).
 //     Supports BOTH field variants (kind 'text' = one article per line / 'string' = delimiter-separated).
@@ -21,14 +20,6 @@ import { findOfferForItem } from './offerLookup'
 // live-verify on a catalog-enabled portal before relying on them (this dev webhook has no catalog REST).
 // SKU / trade-offer («торговое предложение») matching with priority over the base product is a
 // documented follow-up (needs catalog.product.offer.* + a subscription portal) — see docs.
-
-/** Find an ACTIVE catalog product id by exact name, or null (min id on duplicates). */
-export async function findProductByName(name: string, call: RestCall): Promise<number | null> {
-  const q = (name ?? '').trim()
-  if (!q) return null
-  const rows = await call('crm.product.list', { filter: { NAME: q, ACTIVE: 'Y' }, select: ['ID'] }) as Array<{ ID: string }> | undefined
-  return minId(rows)
-}
 
 /**
  * Find an ACTIVE catalog product by its external code (XML_ID / «внешний код»), or null. Distributors
@@ -75,28 +66,48 @@ export async function findProductByArticle(article: string, cfg: ArticleFieldCon
   return matched.length ? Math.min(...matched) : null
 }
 
-/** Resolve a document line to a catalog product/offer id per the portal mapping.
- *  - **Trade offers (SKU) have PRIORITY** when the portal has them (`offersIblockId` resolved once per
- *    job): a printed article is often the OFFER's XML_ID, and a deal row can carry the offer id directly
- *    (owner ask «приоритет SKU»). Fail-soft: no offers iblock / no match → fall through to products.
- *  - Article strategy then tries: the supplier-article property → the external code (XML_ID) — both
- *    ACTIVE-only — then an exact NAME match (never drops the line here). */
+/**
+ * Подобрать товар каталога по строке документа. ТОЛЬКО по артикулу.
+ *
+ * Порядок — от самого сильного признака к настраиваемому (решение владельца 2026-08-05):
+ *   1. **внешний код торгового предложения** (`xmlId`) — напечатанный артикул чаще всего именно он;
+ *   2. **внешний код базового товара** (`XML_ID`) — системное поле, настройки не требует;
+ *   3. **свойство с артикулом поставщика** — ОДИН раз, в том инфоблоке, которому оно принадлежит.
+ *
+ * ⚠ Почему свойство ищется один раз и строго по `article.scope`. Свойство живёт ровно в одном
+ * инфоблоке — предложений либо товаров. Портал при этом **молча игнорирует** фильтр по свойству,
+ * которого в инфоблоке нет, и возвращает ВЕСЬ список (живая проверка 2026-08-05). Значит «поискать
+ * на всякий случай в обоих» дало бы в одном из них весь каталог; спасает только сверка точного
+ * совпадения на клиенте, которая есть у обоих путей — но полагаться на неё как на единственную
+ * защиту не нужно, когда инфоблок известен из настройки.
+ *
+ * ⚠ Оба внешних кода идут ДО свойства намеренно: они не зависят от настройки, поэтому портал,
+ * где админ ничего не выбрал, всё равно подбирает товар. Прежде свойство стояло раньше, а внешний
+ * код базового товара вообще был заперт за настройкой свойства.
+ *
+ * По названию не ищем никогда — `tests/noNameLookup.test.ts`.
+ */
 export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall, offersIblockId: number | null = null): Promise<number | null> {
-  // 1) Offers (SKU / ТП) first — by article-as-xmlId, then by name. Only when the portal has an offers
-  //    iblock; otherwise this is a no-op (returns null) and we go straight to the base-product lookup.
+  const article = (item.article ?? '').trim()
+  if (!article) return null
+
+  // 1) Внешний код торгового предложения.
   if (offersIblockId) {
-    const offerId = await findOfferForItem(item.article, item.name, offersIblockId, call)
-    if (offerId) return offerId
+    const byOfferXml = await findOfferByXmlId(article, offersIblockId, call)
+    if (byOfferXml) return byOfferXml
   }
-  // 2) Base product by the configured article property, then by external code (XML_ID).
-  if (mapping.product.by === 'article' && mapping.article.field && item.article) {
-    const byArticle = await findProductByArticle(item.article, mapping.article, call)
-    if (byArticle) return byArticle
-    const byXmlId = await findProductByXmlId(item.article, call)
-    if (byXmlId) return byXmlId
+  // 2) Внешний код базового товара.
+  const byXmlId = await findProductByXmlId(article, call)
+  if (byXmlId) return byXmlId
+
+  // 3) Свойство — один раз, в своём инфоблоке.
+  if (mapping.article.field) {
+    if (mapping.article.scope === 'offer') {
+      return offersIblockId ? await findOfferByProperty(article, mapping.article, offersIblockId, call) : null
+    }
+    return await findProductByArticle(article, mapping.article, call)
   }
-  // 3) Fall back to an exact product name.
-  return findProductByName(item.name, call)
+  return null
 }
 
 /**

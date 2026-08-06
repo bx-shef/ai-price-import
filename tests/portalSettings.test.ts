@@ -15,8 +15,13 @@ describe('parsePortalSettings', () => {
       units: { dictionary: { ШТ: '796', bad: 'x' }, defaultCode: 166, autoCreate: true },
       saveFile: false
     })
-    expect(m.article).toEqual({ field: 'PROP', kind: 'string', delimiter: ';' })
-    expect(m.product).toEqual({ by: 'name', onMissing: 'freeform' })
+    // ⚠ `scope` дозаписывается дефолтом `'product'`: настройки, сохранённые до его появления,
+    // выбирались пикером, который показывал только свойства основного каталога товаров.
+    expect(m.article).toEqual({ field: 'PROP', kind: 'string', scope: 'product', delimiter: ';' })
+    // ⚠ Сохранённое `by: 'name'` КОЭРСИТСЯ в `'article'`: подбора по имени больше нет вовсе
+    // (решение владельца 2026-08-05), и портал со старым значением обязан просто работать по
+    // единственной оставшейся стратегии, а не оказаться «ненастроенным».
+    expect(m.product).toEqual({ by: 'article', onMissing: 'freeform' })
     expect(m.units.dictionary).toEqual({ шт: 796 }) // lower-cased, invalid dropped
     expect(m.units.defaultCode).toBe(166)
     expect(m.saveFile).toBe(false)
@@ -92,15 +97,17 @@ describe('isPortalConfigured', () => {
     // загоралось бы у нетронутого портала, а баннер «сначала настройте» не увидел бы никто.
     expect(cfg({ saveFile: true })).toBe(false)
     expect(cfg({ saveFile: false })).toBe(false)
+    // Признак настройки здесь — `onMissing: 'skip-warn'` (не дефолт); `by` больше ни на что не влияет.
     expect(cfg({ product: { by: 'name', onMissing: 'skip-warn' } })).toBe(true)
     // #373: «внести произвольной позицией» — теперь ДЕФОЛТ, значит признаком настройки быть не может
     // (иначе гейт «сначала настройте приложение» погас бы у каждого нетронутого портала).
     expect(cfg({ product: { by: 'article', onMissing: 'freeform' } })).toBe(false)
     // А «пропустить» стало осознанным выбором админа — вот оно и есть признак настройки.
     expect(cfg({ product: { by: 'article', onMissing: 'skip-warn' } })).toBe(true)
-    // Стратегия подбора — своя половина проверки: раньше её выбивало парное `onMissing`, и мутация
-    // «убрать сравнение product.by» не роняла ни одного теста.
-    expect(cfg({ product: { by: 'name', onMissing: 'freeform' } })).toBe(true)
+    // ⚠ Стратегия подбора признаком настройки БОЛЬШЕ НЕ ЯВЛЯЕТСЯ: выбирать нечего, подбор идёт по
+    // артикулу всегда (решение владельца 2026-08-05). Сохранённое `by: 'name'` коэрсится в
+    // `'article'`, то есть настройками портала не отличается от нетронутых.
+    expect(cfg({ product: { by: 'name', onMissing: 'freeform' } })).toBe(false)
     expect(cfg({ units: { defaultCode: 166 } })).toBe(true)
     expect(cfg({ units: { autoCreate: true } })).toBe(true)
     expect(cfg({ defaultTarget: { entityTypeId: 31 } })).toBe(true) // moved off the deal anchor

@@ -39,6 +39,8 @@ const props = withDefaults(defineProps<{
   /** The already-selected option, so its label shows on reload even before it
    *  appears in a fetched page (stored value → known label). */
   selectedOption?: Option
+  /** Ключ, по которому строки группируются заголовками. Пусто — плоский список. */
+  groupKey?: string
 }>(), {
   labelKey: 'label',
   valueKey: 'value',
@@ -46,7 +48,33 @@ const props = withDefaults(defineProps<{
   debounceMs: 250,
   placeholder: 'Начните вводить…',
   disabled: false,
-  selectedOption: undefined
+  selectedOption: undefined,
+  groupKey: ''
+})
+
+/**
+ * Строки для меню: плоский список либо МАССИВ МАССИВОВ с заголовком группы в начале каждого.
+ *
+ * ⚠ Именно массив массивов, а не один плоский с вкраплениями `{type:'label'}`: документация b24ui
+ * прямо оговаривает, что так заголовок отфильтровывается ВМЕСТЕ со своей группой при поиске. В
+ * плоском виде пустая группа оставила бы висеть свой заголовок — и человек читал бы «Товары» над
+ * строками предложений.
+ * ⚠ Порядок групп — порядок ПЕРВОГО появления, а не алфавит: его задаёт сервер (у свойств артикула
+ * предложения идут первыми, их код — более сильный признак), и переупорядочивать его на клиенте
+ * значило бы потерять это решение.
+ */
+const menuItems = computed(() => {
+  const key = props.groupKey
+  if (!key) return displayItems.value
+  const groups = new Map<string, Option[]>()
+  for (const it of displayItems.value) {
+    const g = String(it[key] ?? '')
+    if (!groups.has(g)) groups.set(g, [])
+    groups.get(g)!.push(it)
+  }
+  // Единственная безымянная группа — обычный плоский список, заголовок был бы шумом.
+  if (groups.size === 1 && groups.has('')) return displayItems.value
+  return [...groups.entries()].map(([label, rows]) => label ? [{ type: 'label', label }, ...rows] : rows)
 })
 
 /** Selected value (the `valueKey` of the chosen option), or undefined. */
@@ -107,7 +135,7 @@ defineExpose({ refresh })
     v-bind="$attrs"
     v-model="model"
     v-model:search-term="searchTerm"
-    :items="displayItems"
+    :items="menuItems"
     :loading="loading"
     ignore-filter
     :label-key="labelKey"
