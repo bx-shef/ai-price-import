@@ -40,24 +40,37 @@ describe('resolveIblocks', () => {
   it('различает инфоблок предложений и родительский инфоблок товаров', async () => {
     // ⚠ Прежде читался ТОЛЬКО основной каталог товаров, и свойства торговых предложений в пикер
     // не попадали вовсе: админ портала с SKU физически не мог выбрать своё свойство артикула.
-    expect(await resolveIblocks(fakeCall())).toEqual({ offer: 27, product: 25 })
+    expect(await resolveIblocks(fakeCall())).toEqual({ offer: [27], product: [25] })
   })
   it('портал без предложений: только товары', async () => {
     const call = fakeCall({ 'catalog.catalog.list': { catalogs: [{ iblockId: 25, productIblockId: null }] } })
-    expect(await resolveIblocks(call)).toEqual({ offer: null, product: 25 })
+    expect(await resolveIblocks(call)).toEqual({ offer: [], product: [25] })
   })
-  it('родитель берётся у каталога предложений, а не «первый без родителя»', async () => {
-    // ⚠ При нескольких каталогах «первый без productIblockId» может оказаться посторонним; связка
-    // «предложения → их родитель» точнее по построению.
+  it('несколько каталогов → ВСЕ, а не первый (и родитель предложений тоже в списке)', async () => {
+    // ⚠ Инвариант ИЗМЕНЁН осознанно (решение владельца 06.08.2026). Прежде функция выбирала ОДИН
+    // товарный инфоблок, и на портале с несколькими каталогами позиция из второго не находилась
+    // НИКОГДА — исход неотличим от «товара нет в каталоге»: строка уезжает свободной, сумма
+    // сходится, статус «Готово». Теперь возвращаются все, а подбор перебирает их до первого
+    // попадания.
+    // ⚠ Родитель каталога предложений (25) обязан попасть в список товаров, даже если отдельной
+    // строкой портал его не прислал: иначе базовый товар под SKU-каталогом был бы недостижим.
     const call = fakeCall({ 'catalog.catalog.list': { catalogs: [
       { iblockId: 40, productIblockId: null },
       { iblockId: 27, productIblockId: 25 }
     ] } })
-    expect(await resolveIblocks(call)).toEqual({ offer: 27, product: 25 })
+    expect(await resolveIblocks(call)).toEqual({ offer: [27], product: [40, 25] })
+  })
+
+  it('товарный инфоблок не задваивается, придя и сам, и как родитель предложений', async () => {
+    const call = fakeCall({ 'catalog.catalog.list': { catalogs: [
+      { iblockId: 25, productIblockId: null },
+      { iblockId: 27, productIblockId: 25 }
+    ] } })
+    expect(await resolveIblocks(call)).toEqual({ offer: [27], product: [25] })
   })
   it('каталогов нет → оба null', async () => {
     const call = fakeCall({ 'catalog.catalog.list': { catalogs: [] } })
-    expect(await resolveIblocks(call)).toEqual({ offer: null, product: null })
+    expect(await resolveIblocks(call)).toEqual({ offer: [], product: [] })
   })
 })
 

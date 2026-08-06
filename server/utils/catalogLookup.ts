@@ -29,28 +29,52 @@ export const PRODUCT_SOURCE: CatalogSource = { method: 'catalog.product.list', l
 export const OFFER_SOURCE: CatalogSource = { method: 'catalog.product.offer.list', listKey: 'offers' }
 
 /**
- * Инфоблоки каталога: предложения и товары.
+ * Инфоблоки каталога — ВСЕ, а не первый: списки предложений и товаров в порядке ответа портала.
  *
- * Живёт здесь, а не в модуле пикера настроек: инфоблок нужен КАЖДОМУ запросу подбора (методы
- * `catalog.*` требуют `iblockId` в фильтре), то есть это часть ядра подбора, а не подробность
- * интерфейса. Пикер импортирует отсюда.
+ * ⚠ Раньше отсюда возвращалась ОДНА пара, и это было тихим ограничением: на портале с несколькими
+ * товарными каталогами подбор ходил только в первый, а товар из второго не находился НИКОГДА —
+ * строка молча уезжала свободной позицией. Решение владельца 06.08.2026: перебирать каждый каталог
+ * до первого найденного.
+ *
+ * ⚠ Живёт здесь, а не в модуле пикера настроек: инфоблок нужен КАЖДОМУ запросу подбора (методы
+ * `catalog.*` требуют `iblockId` в фильтре), то есть это часть ядра подбора. Пикер импортирует отсюда.
  */
-export async function resolveIblocks(call: RestCall): Promise<{ offer: number | null, product: number | null }> {
+export async function resolveIblocks(call: RestCall): Promise<CatalogIblocks> {
   // The transport's `.call` (makeSdkRestCall) returns the UNWRAPPED `result`, so read
   // `catalogs` directly — NOT `result.catalogs` (that double-unwrap yields undefined in prod).
   // ⚠ Форм ответа ДВЕ: `{ catalogs: [...] }` и голый массив (наблюдалось на портале). Читать только
   // первую значило бы на таком портале не найти каталогов вовсе — и подбор молча выключился бы.
   const resp = await call('catalog.catalog.list', {}) as { catalogs?: Array<Record<string, unknown>> } | Array<Record<string, unknown>> | undefined
   const catalogs = (Array.isArray(resp) ? resp : resp?.catalogs) ?? []
-  // Каталог предложений — тот, что УКАЗЫВАЕТ на родительский инфоблок товаров.
-  const offers = catalogs.find(c => positiveInt(c.productIblockId))
-  const main = catalogs.find(c => c.productIblockId == null) ?? catalogs[0]
-  return {
-    offer: offers ? positiveInt(offers.iblockId ?? offers.id) : null,
-    // Родитель берётся у каталога предложений, если он есть: так связка «ТП → товар» точнее, чем
-    // «первый каталог без productIblockId», когда каталогов несколько.
-    product: (offers ? positiveInt(offers.productIblockId) : null) ?? (main ? positiveInt(main.iblockId ?? main.id) : null)
+  const offer: number[] = []
+  const product: number[] = []
+  for (const c of catalogs) {
+    const own = positiveInt(c.iblockId ?? c.id)
+    const parent = positiveInt(c.productIblockId)
+    // Каталог предложений — тот, что УКАЗЫВАЕТ на родительский инфоблок товаров. Его родитель это
+    // товарный инфоблок, и он попадает в список товаров ДАЖЕ если сам отдельной строкой не пришёл.
+    if (parent) {
+      if (own) push(offer, own)
+      push(product, parent)
+    } else if (own) {
+      push(product, own)
+    }
   }
+  return { offer, product }
+}
+
+/** Инфоблоки каталога по видам. Порядок — как ответил портал; перебор идёт по нему. */
+export interface CatalogIblocks {
+  offer: number[]
+  product: number[]
+}
+
+/** Пустой набор — портал без каталога (или каталог не прочитан). Подбора не будет, но и падения тоже. */
+export const NO_IBLOCKS: CatalogIblocks = { offer: [], product: [] }
+
+/** Добавить id, не задваивая: товарный инфоблок приходит и сам по себе, и как родитель предложений. */
+function push(list: number[], id: number): void {
+  if (!list.includes(id)) list.push(id)
 }
 
 /**

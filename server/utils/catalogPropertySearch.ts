@@ -100,12 +100,14 @@ export async function searchCatalogProperties(t: SdkTransport, q: string): Promi
   // ⚠ Порядок групп: сначала предложения. Их артикул — более сильный признак (напечатанный код
   // чаще всего именно внешний код предложения), и в списке он должен попадаться первым.
   for (const scope of ['offer', 'product'] as const) {
-    const iblockId = iblocks[scope]
-    if (!iblockId) continue
+    // ⚠ ВСЕ инфоблоки вида, а не первый: на портале с несколькими каталогами свойства второго
+    // раньше не попадали в список вовсе — админ физически не мог выбрать своё свойство артикула.
+    for (const iblockId of iblocks[scope]) {
     // catalog.productProperty.list groups rows under `productProperties` and keys on `id`
     // (lowercase) — the SDK needs both to page a >50-property catalog correctly.
-    const rows = await t.list('catalog.productProperty.list', { filter: { iblockId } }, { idKey: 'id', listKey: 'productProperties' })
-    items.push(...normalizeProperties({ productProperties: rows }, scope))
+      const rows = await t.list('catalog.productProperty.list', { filter: { iblockId } }, { idKey: 'id', listKey: 'productProperties' })
+      items.push(...normalizeProperties({ productProperties: rows }, scope))
+    }
   }
   return { items: filterProperties(items, q), hasMore: false }
 }

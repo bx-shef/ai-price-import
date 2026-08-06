@@ -19,9 +19,10 @@ import { findCatalogByProperty, findCatalogByXmlId, OFFER_SOURCE, resolveIblocks
 // разъезжаются: живая находка про молча игнорируемый фильтр по чужому свойству была записана
 // только в одной из них.
 
-/** Resolve the portal's offers iblock id, or null when it has no SKU catalog. */
+/** Первый инфоблок предложений портала, либо null. ⚠ Именно ПЕРВЫЙ — это узкий помощник для мест,
+ *  которым нужен один id; сам подбор перебирает ВСЕ каталоги (`productLookup.findProduct`). */
 export async function resolveOffersIblockId(call: RestCall): Promise<number | null> {
-  return (await resolveIblocks(call)).offer
+  return (await resolveIblocks(call)).offer[0] ?? null
 }
 
 /** Find an ACTIVE offer id by external code (xmlId), or null. */
