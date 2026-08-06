@@ -1,0 +1,196 @@
+// Витрина для решения по #328: создаёт на тест-портале ОДНУ сделку и кладёт в её таймлайн
+// ТРИ варианта подачи документа рядом, чтобы владелец сравнил их глазами. НИЧЕГО НЕ УБИРАЕТ.
+//
+//   а) как сейчас — конфигурируемое дело: наш вид, подвал с кнопками, файл ССЫЛКОЙ;
+//   б) вариант «б» — универсальное дело + `crm.activity.layout.blocks.set` (наши блоки) +
+//      `FILES` объектом `{id}` (форма из документации). Подвала с кнопками у этого типа НЕТ,
+//      поэтому «Открыть» и «Исходный файл» приходится делать блоками-ссылками;
+//   в) вариант «в» — конфигурируемое дело + ОТДЕЛЬНЫЙ комментарий таймлайна с настоящим вложением.
+//
+// ⚠ Уборки нет намеренно (решение владельца 06.08.2026): смысл в том, чтобы посмотреть. Убрать —
+// `pnpm probe:328:show --clean` (читает `probe-328-showcase.json`, который пишется рядом).
+//
+// ⚠ Только тест-портал (`assertTestPortal`), OAuth-контекст приложения — конфигурируемое дело и
+// доп. блоки вебхуком недоступны.
+//
+//   pnpm probe:328:show
+//   pnpm probe:328:show --clean
+import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { readEnvValue } from './lib/envFile.mjs'
+
+const DOMAIN = readEnvValue('.env.b24oauth', 'B24_OAUTH_DOMAIN')
+const TOKEN = readEnvValue('.env.b24oauth', 'B24_OAUTH_ACCESS_TOKEN')
+assertTestPortal(`https://${DOMAIN}/`)
+
+const STATE = 'probe-328-showcase.json'
+const clean = process.argv.slice(2).includes('--clean')
+
+const raw = async (method, params = {}) => {
+  const r = await fetch(`https://${DOMAIN}/rest/${method}.json`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...params, auth: TOKEN })
+  })
+  return await r.json()
+}
+const call = async (method, params = {}) => {
+  const j = await raw(method, params)
+  if (j.error) throw new Error(`${method}: ${j.error} ${j.error_description || ''}`)
+  return j.result
+}
+
+const ok = m => console.log(`\x1b[32m✓\x1b[0m ${m}`)
+const bad = m => console.log(`\x1b[31m✗\x1b[0m ${m}`)
+const head = m => console.log(`\n\x1b[1m${m}\x1b[0m`)
+
+// Правдоподобные данные одного импорта — чтобы сравнивать вид, а не «Lorem ipsum».
+const SUPPLIER = 'ООО «Белпромснаб»'
+const DOC = 'ТН-000451 от 05.08.2026'
+const TOTAL = '10 320,00 BYN'
+const LINES = 7
+const MATCHED = 5
+const PROBLEM = 'Не найдены в каталоге: 2 позиции (ZQ-114, ZQ-207)'
+
+const doClean = async () => {
+  if (!existsSync(STATE)) return bad(`нет ${STATE} — убирать нечего`)
+  const s = JSON.parse(readFileSync(STATE, 'utf8'))
+  head('Уборка витрины')
+  for (const id of s.activities ?? []) {
+    const j = await raw('crm.activity.delete', { id })
+    if (j.error) bad(`дело ${id}: ${j.error}`)
+    else ok(`дело ${id} удалено`)
+  }
+  if (s.deal) {
+    const j = await raw('crm.deal.delete', { id: s.deal })
+    if (j.error) bad(`сделка ${s.deal}: ${j.error}`)
+    else ok(`сделка ${s.deal} удалена`)
+  }
+  for (const id of s.diskFiles ?? []) {
+    const j = await raw('disk.file.delete', { id })
+    if (j.error) bad(`файл ${id}: ${j.error}`)
+    else ok(`файл ${id} удалён`)
+  }
+  rmSync(STATE)
+}
+
+const build = async () => {
+  const state = { deal: null, activities: [], diskFiles: [] }
+  head('Витрина #328 — три варианта в одной сделке')
+
+  // Файл-«исходник» на Диске: ровно так его кладёт импорт.
+  const storages = await call('disk.storage.getlist', {})
+  const common = (storages ?? []).find(s => s.ENTITY_TYPE === 'common') ?? storages?.[0]
+  const bytes = Buffer.from(
+    `${DOC}\nПоставщик: ${SUPPLIER}\nПозиций: ${LINES}\nВсего к оплате: ${TOTAL}\n`, 'utf8'
+  ).toString('base64')
+  const fileName = `Накладная ТН-000451__demo.txt`
+  const up = await call('disk.folder.uploadfile', {
+    id: common.ROOT_OBJECT_ID,
+    data: { NAME: fileName },
+    fileContent: [fileName, bytes]
+  })
+  const diskId = Number(up.ID)
+  state.diskFiles.push(diskId)
+  ok(`файл на Диске: id=${diskId}`)
+
+  const deal = Number(await call('crm.deal.add', {
+    fields: { TITLE: `[ВИТРИНА #328] ${SUPPLIER} · ${DOC}`, OPPORTUNITY: 10320, CURRENCY_ID: 'BYN' }
+  }))
+  state.deal = deal
+  ok(`сделка: id=${deal}`)
+
+  const counters = {
+    supplier: { type: 'withTitle', properties: { title: 'Поставщик', block: { type: 'text', properties: { value: SUPPLIER } } } },
+    doc: { type: 'withTitle', properties: { title: 'Документ', block: { type: 'text', properties: { value: DOC } } } },
+    sum: { type: 'withTitle', properties: { title: 'Сумма', block: { type: 'text', properties: { value: TOTAL, bold: true } } } },
+    lines: { type: 'withTitle', properties: { title: 'Позиции', block: { type: 'text', properties: { value: `${LINES} строк, подобрано ${MATCHED}` } } } },
+    problems: { type: 'withTitle', properties: { title: 'Проблемы (1)', block: { type: 'text', properties: { value: PROBLEM, multiline: true } } } }
+  }
+  const fileUrl = `/docs/file/${encodeURIComponent(fileName)}?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`
+
+  // --- (а) как сейчас: конфигурируемое дело с подвалом-кнопками ------------------------------
+  const a = await call('crm.activity.configurable.add', {
+    ownerTypeId: 2,
+    ownerId: deal,
+    fields: { typeId: 'CONFIGURABLE', completed: 'Y', responsibleId: 1 },
+    layout: {
+      icon: { code: 'sum' },
+      header: { title: `(а) КАК СЕЙЧАС · Импорт документа · ${TOTAL}` },
+      body: { logo: { code: 'document' }, blocks: counters },
+      footer: {
+        buttons: {
+          open: { title: 'Открыть', type: 'primary', action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } },
+          source: { title: 'Исходный файл', type: 'secondary', action: { type: 'redirect', uri: fileUrl } }
+        }
+      }
+    }
+  })
+  state.activities.push(Number(a.activity.id))
+  ok(`(а) конфигурируемое дело: id=${a.activity.id} — файл ССЫЛКОЙ в подвале`)
+
+  // --- (б) универсальное дело + наши блоки + FILES объектом {id} ------------------------------
+  const todo = await call('crm.activity.todo.add', {
+    ownerTypeId: 2,
+    ownerId: deal,
+    deadline: new Date(Date.now() + 864e5).toISOString(),
+    title: `(б) ВАРИАНТ Б · Импорт документа · ${TOTAL}`,
+    description: `${SUPPLIER} · ${DOC}`,
+    responsibleId: 1
+  })
+  const todoId = Number(todo.id)
+  state.activities.push(todoId)
+  const upd = await raw('crm.activity.update', { id: todoId, fields: { FILES: [{ id: diskId }] } })
+  const blocks = await raw('crm.activity.layout.blocks.set', {
+    entityTypeId: 2,
+    entityId: deal,
+    activityId: todoId,
+    layout: {
+      blocks: {
+        ...counters,
+        // Подвала с кнопками у этого типа НЕТ — «Открыть» приходится делать блоком-ссылкой.
+        open: { type: 'link', properties: { text: 'Открыть сделку', bold: true, action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } } },
+        source: { type: 'link', properties: { text: 'Исходный файл', action: { type: 'redirect', uri: fileUrl } } }
+      }
+    }
+  })
+  ok(`(б) универсальное дело: id=${todoId} · FILES=${JSON.stringify(upd.result ?? upd.error)} · блоки=${JSON.stringify(blocks.result ?? blocks.error)}`)
+
+  // --- (в) конфигурируемое дело + отдельный комментарий с ВЛОЖЕНИЕМ ---------------------------
+  const c = await call('crm.activity.configurable.add', {
+    ownerTypeId: 2,
+    ownerId: deal,
+    fields: { typeId: 'CONFIGURABLE', completed: 'Y', responsibleId: 1 },
+    layout: {
+      icon: { code: 'sum' },
+      header: { title: `(в) ВАРИАНТ В · Импорт документа · ${TOTAL}` },
+      body: { logo: { code: 'document' }, blocks: counters },
+      footer: { buttons: { open: { title: 'Открыть', type: 'primary', action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } } } }
+    }
+  })
+  state.activities.push(Number(c.activity.id))
+  const cmt = await call('crm.timeline.comment.add', {
+    fields: {
+      ENTITY_ID: deal,
+      ENTITY_TYPE: 'deal',
+      COMMENT: `(в) Исходный документ импорта: ${DOC}`,
+      // ⚠ Только пара [имя, base64]: голый id объекта Диска портал принимает БЕЗ ошибки и молча
+      // создаёт файл-мусор со случайным именем размером 2 байта (живая проверка 06.08.2026).
+      FILES: [[fileName, bytes]]
+    }
+  })
+  ok(`(в) конфигурируемое дело id=${c.activity.id} + комментарий id=${cmt} с настоящим вложением`)
+
+  writeFileSync(STATE, JSON.stringify(state, null, 2))
+  head('Смотреть здесь')
+  console.log(`  https://${DOMAIN}/crm/deal/details/${deal}/`)
+  console.log(`\n  Убрать потом: pnpm probe:328:show --clean`)
+}
+
+try {
+  if (clean) await doClean()
+  else await build()
+} catch (e) {
+  bad(String(e?.message ?? e))
+  process.exitCode = 1
+}
