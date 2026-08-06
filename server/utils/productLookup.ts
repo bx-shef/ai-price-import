@@ -29,11 +29,28 @@ import { findOfferByProperty, findOfferByXmlId } from './offerLookup'
  * commonly key their catalog by XML_ID, so it is tried as a second article-matching strategy after the
  * supplier-article property. Single-value match — XML_ID is not a multi-article field.
  *
- * ⚠ LIVE-VERIFIED 2026-08-06 (`pnpm verify:article`): the portal compares XML_ID
- * CASE-INSENSITIVELY — `zq-x` finds a product stored as `ZQ-X`. This comment previously claimed an
- * "exact match", which was wrong. Good for matching (suppliers print codes in any case), but it
- * means two products whose XML_ID differs ONLY by case are the SAME row to this filter and `minId`
- * picks an arbitrary one of them — the same silent-substitution hazard as duplicate names.
+ * ⚠ CASE SENSITIVITY IS NOT OURS AND NOT THE API'S — IT IS THE DATABASE COLLATION.
+ * Live-verified 2026-08-06 (`pnpm verify:article`): `zq-x` finds a product stored as `ZQ-X`. This
+ * comment used to claim an "exact match", which was wrong. Traced through the Bitrix core (owner,
+ * 2026-08-06): `crm.product.list` → `CCrmProduct::GetList` (passes the filter through untouched) →
+ * `CIBlockElement::GetList` → `CIBlock::FilterCreateEx`. `XML_ID` is parsed as filter type
+ * `string`, and for that type the MySQL branch emits a BARE `XML_ID LIKE 'val'` (no prefix) or
+ * `XML_ID = 'val'` (prefix `=`) — `UPPER()` appears only in the explicit Oracle branches, and
+ * `CIBlock::_Upper()` is the identity function on this build. So the comparison is handed to the
+ * DBMS, and the answer comes from the collation of `b_iblock_element.XML_ID`.
+ *
+ * Consequences, both real:
+ *  • Bitrix ships `utf8*_unicode_ci`/`_general_ci` (case-INsensitive), which is why cloud portals
+ *    behave this way. A self-hosted portal restored onto a `_bin`/`_cs` collation compares
+ *    case-SENSITIVELY, and the very same lookup stops matching. The behaviour is install-dependent;
+ *    no filter prefix forces either mode (`%` only switches to substring — still collation-driven).
+ *  • On a `_ci` portal two products whose XML_ID differs ONLY by case are ONE row to this filter,
+ *    and `minId` picks an arbitrary one of them — the same silent-substitution hazard as duplicate
+ *    names. On a `_bin` portal they are two distinct keys.
+ *
+ * ⚠ NOT normalised on our side, and that is a pending owner decision, not an oversight: forcing a
+ * strict `===` confirmation client-side would make every portal behave alike at zero extra requests
+ * — but would DROP matches that work on cloud today (supplier prints `zq-1`, catalog holds `ZQ-1`).
  */
 export async function findProductByXmlId(code: string, call: RestCall): Promise<number | null> {
   const q = (code ?? '').trim()
