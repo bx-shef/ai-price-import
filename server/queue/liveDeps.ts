@@ -25,7 +25,7 @@ import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
 import { fetchCrmMode, leadsEnabled } from '../utils/crmMode'
 import { findProduct } from '../utils/productLookup'
-import { resolveOffersIblockId } from '../utils/offerLookup'
+import { resolveIblocks } from '../utils/catalogLookup'
 import { fetchMeasureRows } from '../utils/measureList'
 import { createMeasureViaRest } from '../utils/measureCreateWrite'
 import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_MEASURES_PER_JOB, type MeasureIndex } from '~/utils/measureCreate'
@@ -502,20 +502,22 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
   }
   const ensureMeasureIndex = async (): Promise<MeasureIndex> =>
     (await loadMeasureIndex()) ?? { codes: [], byName: new Map() }
-  // Offers (SKU / ТП) iblock — resolved ONCE per job, then passed to every findProduct so offers get
-  // priority over the base product. Fail-soft: no offers catalog / no catalog subscription → null →
-  // findProduct just does the base-product lookup (the pre-offer behaviour). Memoized (undefined = not
-  // yet resolved) so a portal without offers doesn't re-query catalog.catalog.list on every line.
-  let offersIblockId: number | null | undefined
-  const ensureOffersIblock = async (): Promise<number | null> => {
-    if (offersIblockId === undefined) {
+  // Инфоблоки каталога — резолвятся ОДИН раз на задание и передаются в каждый findProduct.
+  // ⚠ Нужны ОБА, а не только предложения: методы `catalog.*` (пришли на смену deprecated
+  // `crm.product.*`) требуют `iblockId` в фильтре, поэтому без инфоблока товаров базовый подбор
+  // не может сделать ни одного запроса. Fail-soft: нечитаемый каталог / нет подписки → оба `null`
+  // → подбора не будет, но импорт пройдёт свободными строками, а не упадёт. Мемо (undefined = ещё
+  // не резолвили), иначе `catalog.catalog.list` дёргался бы на каждую позицию.
+  let iblocks: { offer: number | null, product: number | null } | undefined
+  const ensureIblocks = async (): Promise<{ offer: number | null, product: number | null }> => {
+    if (iblocks === undefined) {
       try {
-        offersIblockId = await resolveOffersIblockId((await need()).call)
+        iblocks = await resolveIblocks((await need()).call)
       } catch {
-        offersIblockId = null
+        iblocks = { offer: null, product: null }
       }
     }
-    return offersIblockId
+    return iblocks
   }
   // Portal CRM mode — resolved ONCE per job. In the SIMPLE CRM (no leads) a lead target is redirected to
   // a deal (crmSyncCore). Fail-open: an unreadable mode keeps leads enabled.
@@ -541,7 +543,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     findExisting: async (entityTypeId, filter) => findExistingItemId(entityTypeId, filter, (await need()).call),
     originatorPrefix: process.env.IMPORT_ORIGINATOR_ID,
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
-    findProduct: async item => findProduct(item, mapping, (await need()).call, await ensureOffersIblock()),
+    findProduct: async item => findProduct(item, mapping, (await need()).call, await ensureIblocks()),
     // Auto-create measure (opt-in): wired only when enabled so crm-sync's presence check gates it.
     // Find-before-create against the portal index (reuse → {created:false}); otherwise allocate +
     // create (→ {created:true}), pushing the new code into the index so repeats/later units reuse it.

@@ -21,24 +21,43 @@ import { defaultMapping } from '../app/utils/portalSettings'
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
 const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-/** Модули подбора: сюда и вернулся бы поиск по названию. */
-const LOOKUP_SOURCES = ['../server/utils/productLookup.ts', '../server/utils/offerLookup.ts']
+/** Объекты-фильтры каталога в исходнике: под ключом `filter:` либо помеченные `active: 'Y'`. */
+const filterLiterals = (code: string): string[] => [
+  ...(code.match(/filter:\s*\{[^}]*\}/g) ?? []),
+  ...(code.match(/\{[^{}]*\bactive:\s*'Y'[^{}]*\}/g) ?? [])
+]
+
+// ⚠ Список включает ОБЩЕЕ ЯДРО (`catalogLookup.ts`): после перевода на `catalog.*` сами фильтры
+// живут там, а `productLookup`/`offerLookup` остались порядком стратегий. Оставь гард на прежних
+// двух файлах — и он бы позеленел на пустом месте, потому что фильтров в них больше нет вовсе;
+// поэтому ниже стоит отдельная проверка «фильтры вообще найдены», а не молчаливый ноль.
+const LOOKUP_SOURCES = [
+  '../server/utils/catalogLookup.ts',
+  '../server/utils/productLookup.ts',
+  '../server/utils/offerLookup.ts'
+]
 
 describe('подбор товара: НИКОГДА по названию', () => {
   it('в фильтрах каталога нет поля названия — ни у товара, ни у торгового предложения', () => {
     // ⚠ Комментарии вырезаются перед поиском: гард, краснеющий на пояснении «по имени не ищем»,
     // подталкивает удалить пояснение, а не дефект.
-    // ⚠ Ищется НЕ подстрока `name` (она есть в `productName`, `NAME:` каталога при чтении, именах
-    // переменных), а именно ФИЛЬТР — форма `NAME:` / `name:` внутри объекта `filter`.
+    // ⚠ Ищется НЕ подстрока `name` (она есть в `productName`, в названиях переменных), а именно
+    // ФИЛЬТР. Форм записи ДВЕ, и вторая появилась вместе с переходом на `catalog.*`: фильтр может
+    // стоять под ключом `filter:` (как раньше) ЛИБО быть объектом-аргументом общего запроса
+    // (`listRows(src, { iblockId, xmlId, active: 'Y' }, …)`). Признак второй формы — `active: 'Y'`:
+    // его несёт КАЖДЫЙ фильтр подбора и не несёт ничто другое. Оставь гард на прежней форме — и он
+    // позеленел бы на пустом месте, не найдя ни одного фильтра.
+    let seen = 0
     for (const src of LOOKUP_SOURCES) {
       const code = stripComments(read(src))
-      const filters = code.match(/filter:\s*\{[^}]*\}/g) ?? []
-      expect(filters.length, `${src}: фильтров не найдено — гард ослеп, проверь регулярку`).toBeGreaterThan(0)
+      const filters = filterLiterals(code)
+      seen += filters.length
       for (const f of filters) {
         expect(/\bNAME\s*:/.test(f), `${src}: в фильтре каталога появилось NAME → ${f}`).toBe(false)
         expect(/[^a-zA-Z]name\s*:/.test(f), `${src}: в фильтре каталога появилось name → ${f}`).toBe(false)
       }
     }
+    expect(seen, 'фильтров не найдено ни в одном модуле подбора — гард ослеп, проверь регулярку').toBeGreaterThan(0)
   })
 
   it('название может ехать в подбор — но ТОЛЬКО в текст, никогда в фильтр', () => {
@@ -52,13 +71,15 @@ describe('подбор товара: НИКОГДА по названию', () =
     // нему искать. Появится сообщение — параметр вернётся законно, и этот тест не должен этому
     // мешать. Он лишь фиксирует, что сегодня его нет, и объясняет, при каком условии он допустим.
     const code = stripComments(read('../server/utils/offerLookup.ts'))
+    const core = stripComments(read('../server/utils/catalogLookup.ts'))
     const signature = code.match(/export async function findOfferForItem\(([^)]*)\)/)?.[1] ?? ''
     if (/name/i.test(signature)) {
       // Название в сигнатуре допустимо ровно тогда, когда оно попадает в текст, а не в запрос.
       expect(code, 'название принято параметром, но нигде не используется — значит оно тут зря').toMatch(/(throw|Error|message|причина|не найден)/i)
     }
     // Несущее утверждение — оно же единственное безусловное: название не доходит до фильтра.
-    for (const f of (code.match(/filter:\s*\{[^}]*\}/g) ?? [])) {
+    // Фильтры предложений строит общее ядро, поэтому смотрим оба файла.
+    for (const f of [...filterLiterals(code), ...filterLiterals(core)]) {
       expect(/[^a-zA-Z]name\s*:/.test(f), `в фильтре предложений появилось name → ${f}`).toBe(false)
     }
   })
@@ -69,11 +90,11 @@ describe('подбор товара: НИКОГДА по названию', () =
     // название — и «нашлось» означало бы ровно его возврат.
     const m = defaultMapping()
     m.article.field = '130'
-    const anyMatch = vi.fn(async () => [{ ID: '7', NAME: 'Гвоздь' }])
-    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyMatch)).toBeNull()
+    const anyMatch = vi.fn(async () => ({ products: [{ id: 7, name: 'Гвоздь' }] }))
+    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyMatch, { offer: null, product: 25 })).toBeNull()
 
     const anyOffer = vi.fn(async () => ({ offers: [{ id: 9 }] }))
-    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyOffer, 27)).toBeNull()
+    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyOffer, { offer: 27, product: 25 })).toBeNull()
   })
 
   it('ПОВЕДЕНИЕ: артикул есть, но не совпал ничем → подбора нет, как бы ни звался товар', async () => {
@@ -81,8 +102,8 @@ describe('подбор товара: НИКОГДА по названию', () =
     // артикульных запроса — и никакого третьего пути не остаётся.
     const m = defaultMapping()
     m.article.field = '130'
-    const call = vi.fn(async () => [])
-    expect(await findProduct({ name: 'Гвоздь', article: 'НЕТ-ТАКОГО', price: 1, quantity: 1 }, m, call)).toBeNull()
+    const call = vi.fn(async () => ({ products: [] }))
+    expect(await findProduct({ name: 'Гвоздь', article: 'НЕТ-ТАКОГО', price: 1, quantity: 1 }, m, call, { offer: null, product: 25 })).toBeNull()
     for (const [, params] of call.mock.calls) {
       expect(JSON.stringify(params).toUpperCase()).not.toContain('ГВОЗДЬ')
     }

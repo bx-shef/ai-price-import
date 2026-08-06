@@ -152,8 +152,11 @@ async function extractWithAi(text) {
  * `findProduct` молча падал на подбор по имени, строки уезжали как ненайденные (с названием из
  * документа), а прогон печатал зелёное. То есть ПРИОРИТЕТНАЯ ветка подбора не проверялась ни разу,
  * и это не было видно: расхождение проявляется только в том, чего в выводе НЕТ.
- * ⚠ Ищем по коду `ARTICLE` — его заводит `pnpm seed:b24`. Нет свойства ⇒ `null`, и подбор честно
- * идёт по имени с явной строкой в выводе, а не притворяется, что артикул проверен.
+ * ⚠ Ищем по коду `ARTICLE` — его заводит `pnpm seed:b24`. Нет свойства ⇒ `null`, и подбор идёт
+ * только по внешнему коду, с явной строкой в выводе: молчать нельзя, иначе прогон притворится,
+ * что ветка свойства проверена.
+ * ⚠ Заодно отдаёт ИНФОБЛОКИ: методы `catalog.*` (пришли на смену deprecated `crm.product.*`)
+ * требуют `iblockId` в фильтре, поэтому без них подбор не сделает ни одного запроса.
  */
 async function articleFieldOnPortal() {
   let catalogs
@@ -168,22 +171,26 @@ async function articleFieldOnPortal() {
     // проверен. Отказ портала обязан быть отличим от отсутствия свойства.
     throw new Error(`не удалось прочитать каталог портала: ${e instanceof Error ? e.message : 'ошибка'}`, { cause: e })
   }
-  const iblockId = (catalogs ?? []).find(c => c.productIblockId)?.productIblockId ?? (catalogs ?? [])[0]?.iblockId
+  const list = catalogs ?? []
+  const offersCatalog = list.find(c => c.productIblockId)
+  const iblockId = offersCatalog?.productIblockId ?? list[0]?.iblockId
+  const iblocks = { offer: offersCatalog ? Number(offersCatalog.iblockId ?? offersCatalog.id) : null, product: iblockId ? Number(iblockId) : null }
   if (!iblockId) {
-    console.log('  ⚠ каталога на портале нет — подбор пойдёт по имени')
-    return null
+    console.log('  ⚠ каталога на портале нет — подбора не будет вовсе')
+    return { iblocks, propertyId: null }
   }
   const { productProperties } = await call('catalog.productProperty.list', { filter: { iblockId }, select: ['id', 'code'] })
   const found = (productProperties ?? []).find(p => p.code === 'ARTICLE')
   if (!found) {
-    console.log('  ⚠ свойства артикула на портале нет — подбор пойдёт по имени (`pnpm seed:b24` его заводит)')
-    return null
+    console.log('  ⚠ свойства артикула на портале нет — останется только внешний код (`pnpm seed:b24` его заводит)')
+    return { iblocks, propertyId: null }
   }
-  return `PROPERTY_${found.id}`
+  return { iblocks, propertyId: Number(found.id) }
 }
 
-const ARTICLE_FIELD = await articleFieldOnPortal()
-console.log(`подбор товара: ${ARTICLE_FIELD ? `по артикулу (${ARTICLE_FIELD})` : 'по имени — свойства артикула на портале нет'}`)
+const { iblocks: IBLOCKS, propertyId: ARTICLE_PROPERTY_ID } = await articleFieldOnPortal()
+const ARTICLE_FIELD = ARTICLE_PROPERTY_ID ? `PROPERTY_${ARTICLE_PROPERTY_ID}` : null
+console.log(`подбор товара: ${ARTICLE_FIELD ? `по артикулу (${ARTICLE_FIELD})` : 'только по внешнему коду — свойства артикула на портале нет'}`)
 
 const mapping = {
   article: { field: ARTICLE_FIELD ?? '', kind: 'text' },
@@ -218,7 +225,7 @@ let created = null
 const deps = {
   findExisting: (etid, filter) => findExistingItemId(etid, filter, call),
   findCompanyByTaxId: t => findCompanyByTaxId(t, call),
-  findProduct: it => findProduct(it, mapping, call),
+  findProduct: it => findProduct(it, mapping, call, IBLOCKS),
   portalVatRates: () => fetchVatRates(listCall),
   portalCurrencies: () => fetchCurrencies(call),
   createTarget: async (t, f) => {
@@ -360,10 +367,11 @@ try {
           // Тем же отбором, каким ходит прод (`findProductByArticle`): ACTIVE + порядок по ID.
           // ⚠ Своё имя переменной: снаружи `rows` — это СТРОКИ СОЗДАННОЙ ЗАПИСИ, и затенение их
           // каталожной выборкой сравнивало бы каталог сам с собой.
-          const catalogRows = await call('crm.product.list', {
-            filter: { ACTIVE: 'Y', [`%${ARTICLE_FIELD}`]: p.article }, select: ['ID', 'NAME'], order: { ID: 'ASC' }
+          const { products: catalogRows } = await call('catalog.product.list', {
+            filter: { iblockId: IBLOCKS.product, active: 'Y', [`%property${ARTICLE_PROPERTY_ID}`]: p.article },
+            select: ['id', 'iblockId', 'name'], order: { id: 'asc' }
           })
-          const inCatalog = (catalogRows ?? []).find(r => r.NAME === expected)
+          const inCatalog = (catalogRows ?? []).find(r => r.name === expected)
           if (!inCatalog) {
             console.log(`  ⚠ товара с артикулом ${p.article} в каталоге нет — проверять не на чем (\`pnpm seed:b24\`)`)
             continue
