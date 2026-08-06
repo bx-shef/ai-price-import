@@ -1,41 +1,38 @@
-// Витрина для решения по #328: создаёт на тест-портале ОДНУ сделку и кладёт в её таймлайн
-// ТРИ варианта подачи документа рядом, чтобы владелец сравнил их глазами. НИЧЕГО НЕ УБИРАЕТ.
+// Витрина для решения по #328 — раскладывает варианты подачи документа в ОДНОЙ сделке, чтобы
+// владелец сравнил их глазами. НИЧЕГО НЕ УБИРАЕТ (уборка — `--clean`).
 //
-//   а) как сейчас — конфигурируемое дело: наш вид, подвал с кнопками, файл ССЫЛКОЙ;
-//   б) вариант «б» — универсальное дело + `crm.activity.layout.blocks.set` (наши блоки).
-//      ⚠ Прикрепление файла кладётся ШЕСТЬЮ формами сразу, по делу на форму, с формой в
-//      заголовке: `[{id}]`, `[[имя,base64]]`, `["n<id>"]`, `[<id>]`, и то же через
-//      `WEBDAV_ELEMENTS`. Прочитать результат по REST нельзя (поле не возвращается ни одним
-//      чтением), портал принимает любую форму без ошибки — значит единственный наблюдатель
-//      человек, и формы надо положить рядом и подписать. Подвала с кнопками у этого типа НЕТ,
-//      поэтому «Открыть» становится блоком-ссылкой;
-//   в) вариант «в» — конфигурируемое дело + ОТДЕЛЬНЫЙ комментарий таймлайна с настоящим вложением.
+// ═══ ЧТО УЖЕ ВЫЯСНЕНО ЖИВЬЁМ (06.08.2026, портал b24-hrbvzq) ═════════════════════════════════
 //
-// ⚠ Уборки нет намеренно (решение владельца 06.08.2026): смысл в том, чтобы посмотреть. Убрать —
-// `pnpm probe:328:show --clean` (читает `probe-328-showcase.json`, который пишется рядом).
+// 1. ✅ **`crm.activity.get` ВОЗВРАЩАЕТ `FILES`** — но только когда файл реально прикреплён; у
+//    дела без вложения ключа просто нет. Прежний мой вывод «поле не читается ничем» был НЕВЕРЕН
+//    и родился из того, что я читал дела, к которым ничего не прикрепилось. Это меняет способ
+//    работы: формы прикрепления проверяются программно, звать человека не нужно.
 //
-// ⚠ Только тест-портал (`assertTestPortal`), OAuth-контекст приложения — конфигурируемое дело и
-// доп. блоки вебхуком недоступны.
+// 2. ✅ Прикрепить файл к делу МОЖНО, и форма ровно одна:
+//    **`FILES: [{ fileData: [имя, base64] }]`** — из примера на странице `crm.activity.add`.
 //
-// ═══ ОТВЕТ ПОЛУЧЕН (владелец посмотрел карточку 06.08.2026) ══════════════════════════════════
-//
-// ✅ Файл прикрепляется — форма ровно одна: **`FILES: [{ fileData: [имя, base64] }]`**, та, что
-//    показана в примере на странице метода `crm.activity.add`. Шесть форм из статьи про файловые
-//    поля (`[{id}]`, `["n<id>"]`, `[<id>]`, `WEBDAV_ELEMENTS`) не дали НИЧЕГО — и, что важнее,
-//    ни одна из них не вернула ошибки. Портал отвечал `true` на все семь.
-//
-// ⚠ ЦЕНА, которую видно только на Диске: `fileData` — это base64, то есть портал заводит СВОЮ
-//    КОПИЮ файла. Проверено чтением: у нашей архивной копии id=299 (общий Диск), а у вложений —
-//    303 и 305 в служебной папке CRM плюс 307 в хранилище пользователя от комментария. Один
-//    документ клиента = несколько копий на портале, и живут они по разным правилам.
-//    ⇒ Передать УЖЕ лежащий на Диске файл по id невозможно: байты придётся докачивать
-//    (`server/utils/diskDownload.ts`) и слать заново.
-//
-// ⚠ И второе, что видно на карточке: у `todo` своя обвязка — «Сделать до завтра», кнопка
-//    «Выполнено», «Изменить файлы». Это НЕ отчёт об импорте, это поручение сотруднику; подвала
-//    с кнопками нет, «Открыть сделку» стало блоком-ссылкой.
+// 3. ❌ Прикрепить файл, УЖЕ ЛЕЖАЩИЙ НА ДИСКЕ, по его идентификатору — не вышло ни одной из
+//    ПЯТНАДЦАТИ проверенных форм: `[{id}]`, `["n<id>"]`, `[<id>]`, `[{fileId}]`, `[{ID}]`,
+//    `[{id,name}]`, `WEBDAV_ELEMENTS` в тех же видах, `STORAGE_ELEMENT_IDS+STORAGE_TYPE_ID`,
+//    и то же самое при СОЗДАНИИ дела, а не в `update`. Пробовались и файл из корня Диска, и файл
+//    из служебной папки «Файлы приложений». ⚠ Все они ответили успехом и не прикрепили ничего:
+//    `crm.activity.get` после каждой не показывает `FILES`. Сработала только `fileData` (base64).
+//    ⇒ Следствие: байты придётся слать заново (`server/utils/diskDownload.ts`), и портал заведёт
+//    СВОЮ копию файла в папке «Файлы приложений» — подтверждено чтением Диска.
 //
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Что раскладывается в витрине:
+//   (а) как сейчас — конфигурируемое дело: подвал с кнопками, файл ссылкой;
+//   (б) `todo` + наши блоки + вложение `fileData` — с «Проблемами» И в описании, И блоком;
+//   (в) конфигурируемое дело + отдельный комментарий с вложением;
+//   (и) ИКОНКИ — шесть конфигурируемых дел с разными `icon`/`logo` (коды взяты С ПОРТАЛА:
+//       `crm.timeline.icon.list` / `crm.timeline.logo.list`), чтобы выбрать вид;
+//   (ц) ЦВЕТ И ЗАВЕРШЁННОСТЬ — у конфигурируемого дела это теги шапки (`success`/`warning`/
+//       `failure`/`secondary`) + `completed`, у `todo` — `colorId` 1–7 + `completed`. Это РАЗНЫЕ
+//       механизмы, поэтому показаны оба: выбор носителя определяет и способ покраски.
+//
+// ⚠ Только тест-портал (`assertTestPortal`), OAuth-контекст приложения.
 //
 //   pnpm probe:328:show
 //   pnpm probe:328:show --clean
@@ -69,13 +66,11 @@ const ok = m => console.log(`\x1b[32m✓\x1b[0m ${m}`)
 const bad = m => console.log(`\x1b[31m✗\x1b[0m ${m}`)
 const head = m => console.log(`\n\x1b[1m${m}\x1b[0m`)
 
-// Правдоподобные данные одного импорта — чтобы сравнивать вид, а не «Lorem ipsum».
+// Правдоподобные данные одного импорта — сравнивать надо вид, а не «Lorem ipsum».
 const SUPPLIER = 'ООО «Белпромснаб»'
 const DOC = 'ТН-000451 от 05.08.2026'
 const TOTAL = '10 320,00 BYN'
-const LINES = 7
-const MATCHED = 5
-const PROBLEM = 'Не найдены в каталоге: 2 позиции (ZQ-114, ZQ-207)'
+const PROBLEMS = ['Не найдены в каталоге: ZQ-114, ZQ-207', 'Единица «упак.» сопоставлена как «шт»']
 
 const doClean = async () => {
   if (!existsSync(STATE)) return bad(`нет ${STATE} — убирать нечего`)
@@ -101,25 +96,23 @@ const doClean = async () => {
 
 const build = async () => {
   const state = { deal: null, activities: [], diskFiles: [] }
-  head('Витрина #328 — три варианта в одной сделке')
+  head('Витрина #328')
 
-  // Файл-«исходник» на Диске: ровно так его кладёт импорт.
+  const stamp = Date.now()
+  const bytes = Buffer.from(`${DOC}\nПоставщик: ${SUPPLIER}\nВсего к оплате: ${TOTAL}\n`, 'utf8').toString('base64')
+  // ⚠ Имя уникально на прогон: Диск отвергает повтор (`DISK_OBJ_22000`), и вторая витрина
+  // падала бы на первом же шаге, когда первая ещё висит на портале.
+  const fileName = `Накладная ТН-000451__${stamp}.txt`
+
   const storages = await call('disk.storage.getlist', {})
   const common = (storages ?? []).find(s => s.ENTITY_TYPE === 'common') ?? storages?.[0]
-  const bytes = Buffer.from(
-    `${DOC}\nПоставщик: ${SUPPLIER}\nПозиций: ${LINES}\nВсего к оплате: ${TOTAL}\n`, 'utf8'
-  ).toString('base64')
-  // ⚠ Имя уникально на прогон: Диск отвергает повтор (`DISK_OBJ_22000`), и вторая витрина
-  // падала бы на первом же шаге — а прошлая при этом уже висит на портале.
-  const fileName = `Накладная ТН-000451__demo-${Date.now()}.txt`
   const up = await call('disk.folder.uploadfile', {
     id: common.ROOT_OBJECT_ID,
     data: { NAME: fileName },
     fileContent: [fileName, bytes]
   })
-  const diskId = Number(up.ID)
-  state.diskFiles.push(diskId)
-  ok(`файл на Диске: id=${diskId}`)
+  state.diskFiles.push(Number(up.ID))
+  ok(`архивная копия на Диске: id=${up.ID}`)
 
   const deal = Number(await call('crm.deal.add', {
     fields: { TITLE: `[ВИТРИНА #328] ${SUPPLIER} · ${DOC}`, OPPORTUNITY: 10320, CURRENCY_ID: 'BYN' }
@@ -127,139 +120,116 @@ const build = async () => {
   state.deal = deal
   ok(`сделка: id=${deal}`)
 
-  const counters = {
+  const fileUrl = `/docs/file/${encodeURIComponent(fileName)}?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`
+  const problemsText = PROBLEMS.map((p, i) => `${i + 1}. ${p}`).join('\n')
+  const bodyBlocks = () => ({
     supplier: { type: 'withTitle', properties: { title: 'Поставщик', block: { type: 'text', properties: { value: SUPPLIER } } } },
     doc: { type: 'withTitle', properties: { title: 'Документ', block: { type: 'text', properties: { value: DOC } } } },
     sum: { type: 'withTitle', properties: { title: 'Сумма', block: { type: 'text', properties: { value: TOTAL, bold: true } } } },
-    lines: { type: 'withTitle', properties: { title: 'Позиции', block: { type: 'text', properties: { value: `${LINES} строк, подобрано ${MATCHED}` } } } },
-    problems: { type: 'withTitle', properties: { title: 'Проблемы (1)', block: { type: 'text', properties: { value: PROBLEM, multiline: true } } } }
-  }
-  const fileUrl = `/docs/file/${encodeURIComponent(fileName)}?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`
-
-  // --- (а) как сейчас: конфигурируемое дело с подвалом-кнопками ------------------------------
-  const a = await call('crm.activity.configurable.add', {
-    ownerTypeId: 2,
-    ownerId: deal,
-    fields: { typeId: 'CONFIGURABLE', completed: 'Y', responsibleId: 1 },
-    layout: {
-      icon: { code: 'sum' },
-      header: { title: `(а) КАК СЕЙЧАС · Импорт документа · ${TOTAL}` },
-      body: { logo: { code: 'document' }, blocks: counters },
-      footer: {
-        buttons: {
-          open: { title: 'Открыть', type: 'primary', action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } },
-          source: { title: 'Исходный файл', type: 'secondary', action: { type: 'redirect', uri: fileUrl } }
-        }
-      }
-    }
+    lines: { type: 'withTitle', properties: { title: 'Позиции', block: { type: 'text', properties: { value: '7 строк, подобрано 5' } } } },
+    problems: { type: 'withTitle', properties: { title: `Проблемы (${PROBLEMS.length})`, block: { type: 'text', properties: { value: problemsText, multiline: true } } } }
   })
-  state.activities.push(Number(a.activity.id))
-  ok(`(а) конфигурируемое дело: id=${a.activity.id} — файл ССЫЛКОЙ в подвале`)
 
-  // --- (б) универсальное дело + наши блоки + ПЕРЕБОР ФОРМ ПРИКРЕПЛЕНИЯ -----------------------
-  //
-  // ⚠ Почему перебор, а не одна «правильная» форма: прочитать `FILES` обратно НЕЛЬЗЯ — ни `get`,
-  // ни `list` с явным `select` его не отдают (проверено под OAuth). Портал принимает ЛЮБУЮ форму
-  // без ошибки, поэтому «вызов прошёл» ничего не доказывает. Единственный доступный наблюдатель —
-  // человек, открывший карточку. Значит, кладём все формы РЯДОМ и подписываем каждую в заголовке.
-  const forms = [
-    ['FILES = [{ id }]', { FILES: [{ id: diskId }] }],
-    ['FILES = [[имя, base64]]', { FILES: [[fileName, bytes]] }],
-    ['FILES = ["n<id>"]', { FILES: [`n${diskId}`] }],
-    ['FILES = [<id> числом]', { FILES: [diskId] }],
-    ['WEBDAV_ELEMENTS = [{ id }]', { WEBDAV_ELEMENTS: [{ id: diskId }] }],
-    ['WEBDAV_ELEMENTS = ["n<id>"]', { WEBDAV_ELEMENTS: [`n${diskId}`] }],
-    // ⚠ Седьмая форма — из примера на странице САМОГО метода `crm.activity.add`:
-    // `FILES:[{"fileData":["example.jpg","base64…"]}]`. Первые шесть перебирали формы из статьи
-    // про файловые поля, а страница метода показывает свою — и именно её я до сих пор не пробовал.
-    ['FILES = [{ fileData: [имя, base64] }]', { FILES: [{ fileData: [fileName, bytes] }] }]
-  ]
-  for (const [label, fields] of forms) {
-    const todo = await call('crm.activity.todo.add', {
+  /** Конфигурируемое дело — наш нынешний носитель. Цвет здесь это ТЕГ шапки, не `colorId`. */
+  const conf = async (label, { icon, logo, tag, completed = 'Y', footer = true }) => {
+    const r = await call('crm.activity.configurable.add', {
+      ownerTypeId: 2,
+      ownerId: deal,
+      fields: { typeId: 'CONFIGURABLE', completed, responsibleId: 1 },
+      layout: {
+        icon: { code: icon },
+        header: { title: label, ...(tag ? { tags: { state: { title: tag.title, type: tag.type } } } : {}) },
+        body: { logo: { code: logo }, blocks: bodyBlocks() },
+        ...(footer
+          ? {
+              footer: {
+                buttons: {
+                  open: { title: 'Открыть', type: 'primary', action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } },
+                  source: { title: 'Исходный файл', type: 'secondary', action: { type: 'redirect', uri: fileUrl } }
+                }
+              }
+            }
+          : {})
+      }
+    })
+    const id = Number(r.activity.id)
+    state.activities.push(id)
+    return id
+  }
+
+  /** Универсальное дело — `colorId` красит полосу, завершение отдельным `update`. */
+  const todo = async (title, { colorId, withFile = false, completed = false } = {}) => {
+    const t = await call('crm.activity.todo.add', {
       ownerTypeId: 2,
       ownerId: deal,
       deadline: new Date(Date.now() + 864e5).toISOString(),
-      title: `(б) ${label}`,
-      description: `${SUPPLIER} · ${DOC} · файл на Диске id=${diskId}`,
-      responsibleId: 1
+      title,
+      // ⚠ Проблемы ИМЕННО в описании (просьба владельца): в блоках их видно, только если
+      // раскрыть текст, а описание читается сразу под заголовком.
+      description: `${SUPPLIER} · ${DOC} · ${TOTAL}\n\nПроблемы (${PROBLEMS.length}):\n${problemsText}`,
+      responsibleId: 1,
+      ...(colorId ? { colorId: String(colorId) } : {})
     })
-    const todoId = Number(todo.id)
-    state.activities.push(todoId)
-    const upd = await raw('crm.activity.update', { id: todoId, fields })
-    const blocks = await raw('crm.activity.layout.blocks.set', {
+    const id = Number(t.id)
+    state.activities.push(id)
+    if (withFile) {
+      // ⚠ ЕДИНСТВЕННАЯ работающая форма — base64: пятнадцать форм «по id файла на Диске» портал
+      // принимает без ошибки и не прикрепляет ничего.
+      await raw('crm.activity.update', { id, fields: { FILES: [{ fileData: [fileName, bytes] }] } })
+    }
+    await raw('crm.activity.layout.blocks.set', {
       entityTypeId: 2,
       entityId: deal,
-      activityId: todoId,
+      activityId: id,
       layout: {
         blocks: {
-          ...counters,
-          // Подвала с кнопками у этого типа НЕТ — «Открыть» становится блоком-ссылкой.
+          ...bodyBlocks(),
           open: { type: 'link', properties: { text: 'Открыть сделку', bold: true, action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } } }
         }
       }
     })
-    ok(`(б) ${label} → дело ${todoId} · update=${JSON.stringify(upd.result ?? upd.error)} · блоки=${JSON.stringify(blocks.result ?? blocks.error)}`)
+    if (completed) await raw('crm.activity.update', { id, fields: { COMPLETED: 'Y' } })
+    // Вложение проверяем ЧТЕНИЕМ, а не по ответу `update`: он успешен и когда ничего не приложилось.
+    const back = await raw('crm.activity.get', { id })
+    return { id, files: back.result?.FILES ?? null }
   }
 
-  // --- (г) СИСТЕМНОЕ дело `crm.activity.add` — метод, в примере которого и показан `fileData` ---
-  //
-  // ⚠ Метод DEPRECATED и в продукт не пойдёт. Он здесь ровно затем, чтобы отделить два вопроса:
-  // «форма значения неверна» и «у дела этого ТИПА вложение не рисуется вовсе». Если скрепка
-  // появится тут и не появится у `todo` — дело в типе, и вариант «б» отпадает по построению.
-  for (const [label, FILES] of [
-    ['fileData', [{ fileData: [fileName, bytes] }]],
-    ['{ id }', [{ id: diskId }]]
-  ]) {
-    const sys = await raw('crm.activity.add', {
-      fields: {
-        OWNER_TYPE_ID: 2,
-        OWNER_ID: deal,
-        TYPE_ID: 4,
-        SUBJECT: `(г) СИСТЕМНОЕ дело · FILES = ${label}`,
-        DESCRIPTION: `${SUPPLIER} · ${DOC}`,
-        COMPLETED: 'Y',
-        RESPONSIBLE_ID: 1,
-        COMMUNICATIONS: [{ TYPE: 'EMAIL', VALUE: 'probe@example.com' }],
-        FILES
-      }
-    })
-    if (sys.result) {
-      state.activities.push(Number(sys.result))
-      ok(`(г) системное дело FILES=${label} → id=${sys.result}`)
-    } else {
-      bad(`(г) системное дело FILES=${label} → ${sys.error}: ${sys.error_description || ''}`)
-    }
-  }
-
-  // --- (в) конфигурируемое дело + отдельный комментарий с ВЛОЖЕНИЕМ ---------------------------
-  const c = await call('crm.activity.configurable.add', {
-    ownerTypeId: 2,
-    ownerId: deal,
-    fields: { typeId: 'CONFIGURABLE', completed: 'Y', responsibleId: 1 },
-    layout: {
-      icon: { code: 'sum' },
-      header: { title: `(в) ВАРИАНТ В · Импорт документа · ${TOTAL}` },
-      body: { logo: { code: 'document' }, blocks: counters },
-      footer: { buttons: { open: { title: 'Открыть', type: 'primary', action: { type: 'redirect', uri: `/crm/deal/details/${deal}/` } } } }
-    }
-  })
-  state.activities.push(Number(c.activity.id))
+  head('Три варианта подачи')
+  ok(`(а) как сейчас → ${await conf(`(а) КАК СЕЙЧАС · ${TOTAL}`, { icon: 'sum', logo: 'document' })}`)
+  const b = await todo(`(б) TODO + вложение + проблемы в описании · ${TOTAL}`, { withFile: true })
+  ok(`(б) todo с вложением → ${b.id} · FILES=${b.files ? 'ПРИКРЕПЛЁН' : 'НЕТ'}`)
+  const cId = await conf(`(в) КОНФИГ + комментарий с вложением · ${TOTAL}`, { icon: 'sum', logo: 'document' })
   const cmt = await call('crm.timeline.comment.add', {
-    fields: {
-      ENTITY_ID: deal,
-      ENTITY_TYPE: 'deal',
-      COMMENT: `(в) Исходный документ импорта: ${DOC}`,
-      // ⚠ Только пара [имя, base64]: голый id объекта Диска портал принимает БЕЗ ошибки и молча
-      // создаёт файл-мусор со случайным именем размером 2 байта (живая проверка 06.08.2026).
-      FILES: [[fileName, bytes]]
-    }
+    fields: { ENTITY_ID: deal, ENTITY_TYPE: 'deal', COMMENT: `Исходный документ импорта: ${DOC}`, FILES: [[fileName, bytes]] }
   })
-  ok(`(в) конфигурируемое дело id=${c.activity.id} + комментарий id=${cmt} с настоящим вложением`)
+  ok(`(в) дело ${cId} + комментарий ${cmt} с вложением`)
+
+  head('Иконки и логотипы — коды прочитаны с портала')
+  for (const [icon, logo, note] of [
+    ['store', 'shop', 'склад/товары'],
+    ['document', 'document', 'документ'],
+    ['wallet', 'bank-card', 'деньги'],
+    ['pipeline', 'list-check', 'конвейер/список'],
+    ['ai-process', 'ai-copilot', 'ИИ-обработка'],
+    ['complete', 'list-check', 'готово']
+  ]) {
+    ok(`(и) icon=${icon} logo=${logo} — ${note} → ${await conf(`(и) icon=${icon} · logo=${logo} — ${note}`, { icon, logo })}`)
+  }
+
+  head('Цвет и завершённость — механизмы у двух носителей РАЗНЫЕ')
+  for (const [type, title] of [['success', 'ЗЕЛЁНЫЙ'], ['warning', 'ЖЁЛТЫЙ'], ['failure', 'КРАСНЫЙ'], ['secondary', 'СЕРЫЙ']]) {
+    ok(`(ц) конфиг, тег ${type} → ${await conf(`(ц) КОНФИГ · тег ${type}`, { icon: 'sum', logo: 'document', tag: { title, type } })}`)
+  }
+  ok(`(ц) конфиг НЕ завершено → ${await conf('(ц) КОНФИГ · НЕ завершено (completed=N)', { icon: 'attention', logo: 'document', completed: 'N', tag: { title: 'ЕСТЬ ПРОБЛЕМЫ', type: 'warning' } })}`)
+  for (const colorId of [1, 2, 3, 5, 7]) {
+    ok(`(ц) todo colorId=${colorId} → ${(await todo(`(ц) TODO · colorId=${colorId}`, { colorId })).id}`)
+  }
+  ok(`(ц) todo завершено → ${(await todo('(ц) TODO · завершено (completed=Y)', { colorId: 2, completed: true })).id}`)
 
   writeFileSync(STATE, JSON.stringify(state, null, 2))
   head('Смотреть здесь')
   console.log(`  https://${DOMAIN}/crm/deal/details/${deal}/`)
-  console.log(`\n  Убрать потом: pnpm probe:328:show --clean`)
+  console.log('\n  Убрать потом: pnpm probe:328:show --clean')
 }
 
 try {
