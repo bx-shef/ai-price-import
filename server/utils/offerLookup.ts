@@ -25,9 +25,13 @@ export async function resolveOffersIblockId(call: RestCall): Promise<number | nu
   return (await resolveIblocks(call)).offer[0] ?? null
 }
 
-/** Find an ACTIVE offer id by external code (xmlId), or null. */
+/** Find an ACTIVE offer id by external code (xmlId), or null.
+ *  ⚠ «Не нашли» и «отказались выбирать из нескольких написаний» здесь схлопываются в `null`: этой
+ *  обёртке различие не нужно. Различает его САМ подбор (`productLookup.firstXmlIdMatch`) — там оно
+ *  несущее, потому что отказ обязан прекратить перебор каталогов, а не пропустить его дальше. */
 export async function findOfferByXmlId(xmlId: string, iblockId: number, call: RestCall): Promise<number | null> {
-  return await findCatalogByXmlId(OFFER_SOURCE, xmlId, iblockId, call)
+  const hit = await findCatalogByXmlId(OFFER_SOURCE, xmlId, iblockId, call)
+  return hit.kind === 'found' ? hit.id : null
 }
 
 /** Найти торговое предложение по СВОЙСТВУ, хранящему артикул поставщика. */

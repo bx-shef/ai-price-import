@@ -1,7 +1,7 @@
 import type { RestCall } from './b24Rest'
 import type { PortalMapping, ArticleFieldConfig } from '~/types/mapping'
 import type { DocumentItem } from '~/types/document'
-import { findCatalogByProperty, findCatalogByXmlId, NO_IBLOCKS, OFFER_SOURCE, PRODUCT_SOURCE, type CatalogIblocks } from './catalogLookup'
+import { findCatalogByProperty, findCatalogByXmlId, NO_IBLOCKS, OFFER_SOURCE, PRODUCT_SOURCE, type CatalogIblocks, type CatalogSource } from './catalogLookup'
 
 export type { CatalogIblocks }
 
@@ -27,7 +27,9 @@ export type { CatalogIblocks }
 
 /** Найти активный товар базового каталога по внешнему коду (`xmlId`), либо null. */
 export async function findProductByXmlId(code: string, iblockId: number | null, call: RestCall): Promise<number | null> {
-  return iblockId ? await findCatalogByXmlId(PRODUCT_SOURCE, code, iblockId, call) : null
+  if (!iblockId) return null
+  const hit = await findCatalogByXmlId(PRODUCT_SOURCE, code, iblockId, call)
+  return hit.kind === 'found' ? hit.id : null
 }
 
 /** Найти активный товар базового каталога по свойству с артикулом поставщика, либо null. */
@@ -36,18 +38,33 @@ export async function findProductByArticle(article: string, cfg: ArticleFieldCon
 }
 
 /**
- * Перебрать инфоблоки ОДНОГО вида до первого попадания.
+ * Перебрать инфоблоки ОДНОГО вида по ВНЕШНЕМУ КОДУ — до первого попадания либо до отказа.
  *
- * ⚠ Решение владельца 06.08.2026. Прежде брался ПЕРВЫЙ каталог, и на портале с несколькими
- * товарными каталогами позиция из второго не находилась никогда — исход неотличим от «товара нет»:
- * строка уезжает свободной, сумма сходится, статус «Готово».
- * ⚠ Плата честная и небольшая: у портала с N каталогами на ненайденную позицию уходит до N
- * запросов вместо одного. У подавляющего большинства порталов каталог один, и число запросов не
- * меняется вовсе; перебор идёт ТОЛЬКО пока не нашли.
+ * ⚠ Решение владельца 06.08.2026: перебирать каждый каталог. Прежде брался ПЕРВЫЙ, и на портале с
+ * несколькими товарными каталогами позиция из второго не находилась никогда — исход неотличим от
+ * «товара нет»: строка уезжает свободной, сумма сходится, статус «Готово».
+ *
+ * ⚠ НЕОДНОЗНАЧНОСТЬ ПРЕКРАЩАЕТ ПОДБОР ЦЕЛИКОМ, а не только текущую итерацию. Разбор поймал этот
+ * дефект в первой редакции: отказ по неоднозначности был неотличим от «не нашли», и перебор шёл
+ * дальше — каталог A с парой `ZQ-1`/`zq-1` давал отказ, а каталог B подсовывал ПОСТОРОННИЙ товар.
+ * То есть гард против подмены товара сам приводил к подмене, только из другого каталога.
+ *
+ * ⚠ Плата за перебор невелика: до N запросов на НЕнайденную позицию при N каталогах, а у
+ * подавляющего большинства порталов каталог один. Перебор идёт только пока не нашли.
  */
-async function firstMatch(iblockIds: number[], find: (iblockId: number) => Promise<number | null>): Promise<number | null> {
+async function firstXmlIdMatch(src: CatalogSource, article: string, iblockIds: readonly number[], call: RestCall): Promise<number | null | 'stop'> {
   for (const iblockId of iblockIds) {
-    const hit = await find(iblockId)
+    const hit = await findCatalogByXmlId(src, article, iblockId, call)
+    if (hit.kind === 'found') return hit.id
+    if (hit.kind === 'ambiguous') return 'stop'
+  }
+  return null
+}
+
+/** Перебрать инфоблоки одного вида по СВОЙСТВУ артикула — до первого попадания. */
+async function firstPropertyMatch(src: CatalogSource, article: string, cfg: ArticleFieldConfig, iblockIds: readonly number[], call: RestCall): Promise<number | null> {
+  for (const iblockId of iblockIds) {
+    const hit = await findCatalogByProperty(src, article, cfg, iblockId, call)
     if (hit) return hit
   }
   return null
@@ -79,11 +96,13 @@ export async function findProduct(item: DocumentItem, mapping: PortalMapping, ca
   if (!article) return null
 
   // 1) Внешний код торгового предложения — во всех каталогах предложений.
-  const byOfferXml = await firstMatch(iblocks.offer, id => findCatalogByXmlId(OFFER_SOURCE, article, id, call))
+  const byOfferXml = await firstXmlIdMatch(OFFER_SOURCE, article, iblocks.offer, call)
+  if (byOfferXml === 'stop') return null
   if (byOfferXml) return byOfferXml
 
   // 2) Внешний код базового товара — во всех товарных каталогах.
-  const byXmlId = await firstMatch(iblocks.product, id => findCatalogByXmlId(PRODUCT_SOURCE, article, id, call))
+  const byXmlId = await firstXmlIdMatch(PRODUCT_SOURCE, article, iblocks.product, call)
+  if (byXmlId === 'stop') return null
   if (byXmlId) return byXmlId
 
   // 3) Свойство — в инфоблоках ТОГО вида, который выбран настройкой.
@@ -94,7 +113,7 @@ export async function findProduct(item: DocumentItem, mapping: PortalMapping, ca
   if (mapping.article.field) {
     const scope = mapping.article.scope === 'offer' ? 'offer' : 'product'
     const src = scope === 'offer' ? OFFER_SOURCE : PRODUCT_SOURCE
-    return await firstMatch(iblocks[scope], id => findCatalogByProperty(src, article, mapping.article, id, call))
+    return await firstPropertyMatch(src, article, mapping.article, iblocks[scope], call)
   }
   return null
 }

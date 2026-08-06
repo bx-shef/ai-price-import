@@ -42,14 +42,16 @@ export const OFFER_SOURCE: CatalogSource = { method: 'catalog.product.offer.list
 export async function resolveIblocks(call: RestCall): Promise<CatalogIblocks> {
   // The transport's `.call` (makeSdkRestCall) returns the UNWRAPPED `result`, so read
   // `catalogs` directly — NOT `result.catalogs` (that double-unwrap yields undefined in prod).
-  // ⚠ Форм ответа ДВЕ: `{ catalogs: [...] }` и голый массив (наблюдалось на портале). Читать только
-  // первую значило бы на таком портале не найти каталогов вовсе — и подбор молча выключился бы.
+  // ⚠ Форм ответа обрабатываем ДВЕ: `{ catalogs: [...] }` и голый массив. На портале наблюдалась
+  // только первая; вторая — страховка транспорта, покрытая тестом, а не живое наблюдение.
   const resp = await call('catalog.catalog.list', {}) as { catalogs?: Array<Record<string, unknown>> } | Array<Record<string, unknown>> | undefined
   const catalogs = (Array.isArray(resp) ? resp : resp?.catalogs) ?? []
   const offer: number[] = []
   const product: number[] = []
   for (const c of catalogs) {
-    const own = positiveInt(c.iblockId ?? c.id)
+    // ⚠ `positiveInt` на каждом по отдельности, а не `??` над сырыми: `iblockId: 0` или пустая
+    // строка — не `null`, и фолбэк на `id` не сработал бы.
+    const own = positiveInt(c.iblockId) ?? positiveInt(c.id)
     const parent = positiveInt(c.productIblockId)
     // Каталог предложений — тот, что УКАЗЫВАЕТ на родительский инфоблок товаров. Его родитель это
     // товарный инфоблок, и он попадает в список товаров ДАЖЕ если сам отдельной строкой не пришёл.
@@ -63,14 +65,24 @@ export async function resolveIblocks(call: RestCall): Promise<CatalogIblocks> {
   return { offer, product }
 }
 
-/** Инфоблоки каталога по видам. Порядок — как ответил портал; перебор идёт по нему. */
+/** Инфоблоки каталога по видам. Порядок — как ответил портал; перебор идёт по нему.
+ *  ⚠ Списки `readonly`: их только читают, а пустой набор `NO_IBLOCKS` — общий замороженный
+ *  синглгон, и мутируемый тип позволил бы дописать в него id «на месте». */
 export interface CatalogIblocks {
-  offer: number[]
-  product: number[]
+  offer: readonly number[]
+  product: readonly number[]
 }
 
-/** Пустой набор — портал без каталога (или каталог не прочитан). Подбора не будет, но и падения тоже. */
-export const NO_IBLOCKS: CatalogIblocks = { offer: [], product: [] }
+/**
+ * Пустой набор — портал без каталога (или каталог не прочитан). Подбора не будет, но и падения тоже.
+ *
+ * ⚠ ЗАМОРОЖЕН: это экспортируемый синглтон, стоящий значением параметра по умолчанию. Незамороженные
+ * массивы однажды протекли бы между заданиями — достаточно правки, которая допишет в них id.
+ */
+export const NO_IBLOCKS: CatalogIblocks = Object.freeze({ offer: Object.freeze([] as number[]), product: Object.freeze([] as number[]) })
+
+/** Исход подбора по внешнему коду. `ambiguous` — НЕ синоним «не нашли»: см. `findCatalogByXmlId`. */
+export type XmlIdMatch = { kind: 'found', id: number } | { kind: 'none' } | { kind: 'ambiguous' }
 
 /** Добавить id, не задваивая: товарный инфоблок приходит и сам по себе, и как родитель предложений. */
 function push(list: number[], id: number): void {
@@ -84,8 +96,8 @@ function push(list: number[], id: number): void {
  * ядра (владелец): `xmlId` разбирается как фильтр типа `string`, и MySQL-ветка `CIBlock::FilterCreateEx`
  * строит голое `LIKE 'значение'` без `UPPER()` — сравнение целиком отдано СУБД, то есть коллации
  * колонки. Битрикс ставится с регистронезависимой коллацией, поэтому облако находит `zq-x` по
- * `ZQ-X`; коробка на двоичной коллации сравнивала бы с учётом регистра. Ни один префикс фильтра
- * режим не переключает (`=` тоже — живая проба вернула обе строки).
+ * `ZQ-X`; коробка на двоичной коллации сравнивала бы с учётом регистра. Префикс `=` режим НЕ
+ * переключает (живая проба вернула обе строки); прочие префиксы не проверялись.
  *
  * ⚠ Отсюда — ЯВНАЯ отбраковка неоднозначности, а не `minId` по всему ответу. Живая проба: два
  * товара, `AIPI_CASE_PROBE` и `aipi_case_probe`, и КАЖДЫЙ из четырёх запросов (верхний, нижний,
@@ -110,15 +122,27 @@ function push(list: number[], id: number): void {
  * ⚠ Случай к тому же редкий: Битрикс ставится с регистронезависимой коллацией, двоичная возникает
  * лишь при нестандартном восстановлении базы.
  */
-export async function findCatalogByXmlId(src: CatalogSource, xmlId: string, iblockId: number, call: RestCall): Promise<number | null> {
+export async function findCatalogByXmlId(src: CatalogSource, xmlId: string, iblockId: number, call: RestCall): Promise<XmlIdMatch> {
   const q = (xmlId ?? '').trim()
-  if (!q || !iblockId) return null
+  if (!q || !iblockId) return { kind: 'none' }
   const rows = await listRows(src, { iblockId, xmlId: q, active: 'Y' }, ['id', 'iblockId', 'xmlId'], call)
-  if (!rows.length) return null
-  // Разные написания одного кода ⇒ выбор был бы произвольным. Не выбираем.
-  const spellings = new Set(rows.map(r => String(r.xmlId ?? '')).filter(Boolean))
-  if (spellings.size > 1) return null
-  return minId(rows)
+  // ⚠ СВЕРКА НА КЛИЕНТЕ ОБЯЗАТЕЛЬНА и здесь, а не только у свойства. Две причины, обе живые:
+  // (1) портал уже был замечен на том, что МОЛЧА игнорирует непонятный ему фильтр и возвращает
+  //     весь список (05.08.2026, свойства). Полное доверие фильтру однажды подставит клиенту
+  //     первую строку каталога — а строки без `xmlId` вообще выпадали из проверки написаний;
+  // (2) значение уходит в `LIKE`, где `%` и `_` — джокеры. Артикул «ZQ_1» совпал бы расширенно,
+  //     причём написание в ответе одно ⇒ проверка неоднозначности молчала бы.
+  // Сравниваем регистронезависимо — ровно та терпимость, которую оставил владелец.
+  const fold = (v: unknown) => String(v ?? '').trim().toLowerCase()
+  const target = fold(q)
+  const exact = rows.filter(r => fold(r.xmlId) === target)
+  if (!exact.length) return { kind: 'none' }
+  // Разные написания одного кода ⇒ выбор был бы произвольным. Не выбираем — и отвечаем ОТДЕЛЬНЫМ
+  // исходом: «не нашли» и «отказались выбирать» это разные вещи, и вызывающий обязан их различать.
+  const spellings = new Set(exact.map(r => String(r.xmlId ?? '')))
+  if (spellings.size > 1) return { kind: 'ambiguous' }
+  const id = minId(exact)
+  return id ? { kind: 'found', id } : { kind: 'none' }
 }
 
 /**
