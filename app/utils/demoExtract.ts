@@ -21,6 +21,10 @@ export interface DemoItem {
   unit?: string
   price?: number
   sum?: number
+  /** ⚠ ВРЕМЕННОЕ поле разбора: значение неоднозначной колонки «Стоимость» (GH #76). К концу
+   *  разбора `resolveAmountRole` раскладывает его в `price` либо в `sum` и СНИМАЕТ. Наружу
+   *  никогда не уходит — иначе интерфейс показывал бы третью денежную колонку без подписи. */
+  amount?: number
 }
 
 export interface DemoResult {
@@ -94,11 +98,15 @@ const COL = {
   qty: /кол[-\s]?во|колич|колькас|сан|мөлшер/i,
   unit: /^ед\.?$|адзін|^адз\.?$|бірл/i,
   price: /цена|цана|кошт|баға|бага/i,
-  // NB: «Стоимость» is intentionally NOT a column keyword — it is ambiguous (unit cost in
-  // «…|Стоимость|…|Сумма», line total elsewhere), so mapping it either way misaligns a
-  // realistic two-money-column table. A second table whose ONLY money column is «Стоимость»
-  // stays a known demo limitation (GH #76) rather than risk that regression.
-  sum: /сумма|сума|сомас|құн/i
+  sum: /сумма|сума|сомас|құн/i,
+  // ⚠ «Стоимость» — ОТДЕЛЬНАЯ, НЕОДНОЗНАЧНАЯ роль, а не синоним цены или суммы (GH #76).
+  // В одном документе она значит цену за единицу («…|Стоимость|…|Сумма»), в другом — итог по
+  // строке. Прежде слово не разбиралось вовсе, и таблица, где это ЕДИНСТВЕННАЯ денежная
+  // колонка, теряла все деньги; отнести его наугад к цене или к сумме — хуже: числа встали бы
+  // не в ту колонку и «итого» разошлось бы молча.
+  // Решение — не угадывать, а СПРОСИТЬ У ДОКУМЕНТА: колонка разбирается отдельно, а после
+  // разбора `resolveAmountRole` сверяет обе гипотезы с печатным итогом (см. функцию).
+  amount: /стоимост|вартасц|кошты/i
 }
 
 const LANG_HINTS: Array<{ lang: DemoLang, re: RegExp }> = [
@@ -163,9 +171,13 @@ function mapHeader(cells: string[]): Partial<Record<keyof typeof COL, number>> |
       if (roles[key] === undefined && COL[key].test(c)) roles[key] = i
     }
   })
+  // ⚠ Неоднозначная «Стоимость» нужна ТОЛЬКО когда в шапке нет ни цены, ни суммы. Если обе
+  // однозначные колонки есть, эта — третья денежная, и трогать её нельзя: именно так выглядит
+  // раскладка «Цена | Стоимость | Сумма», где угадывание сместило бы разбор.
+  if (roles.price !== undefined && roles.sum !== undefined) delete roles.amount
   // A real goods table has at least a name + one numeric column.
   if (roles.name === undefined) return null
-  if (roles.qty === undefined && roles.price === undefined && roles.sum === undefined) return null
+  if (roles.qty === undefined && roles.price === undefined && roles.sum === undefined && roles.amount === undefined) return null
   return roles
 }
 
@@ -266,16 +278,19 @@ export function extractDemo(input: string): DemoResult {
       const quantity = parseNum(pick(cells, roles.qty))
       const price = parseNum(pick(cells, roles.price))
       const sum = parseNum(pick(cells, roles.sum))
+      // Неоднозначная «Стоимость»: кладём КАК ЕСТЬ, роль решается после разбора всей таблицы —
+      // по одной строке отличить цену от итога нельзя.
+      const amount = parseNum(pick(cells, roles.amount))
       // A footer/signature label with no figures in the qty/price/sum columns (even if it
       // carries a stray date/number elsewhere, e.g. «Ответственный … 01.07.2026») is noise.
       // Match the name cell, or the whole row when the label sits outside the name column.
-      if (quantity === undefined && price === undefined && sum === undefined
+      if (quantity === undefined && price === undefined && sum === undefined && amount === undefined
         && NOISE_ROW.test((name || joined).trim())) continue
       // A blank name cell on an otherwise numeric row = real data we must not silently
       // drop (wrapped/continuation line). Keep it with a placeholder + one warning.
       // A blank row with no numbers is just noise → skip.
       if (!name) {
-        if (quantity === undefined && price === undefined && sum === undefined) continue
+        if (quantity === undefined && price === undefined && sum === undefined && amount === undefined) continue
         if (!warnings.includes('Есть строки без наименования')) warnings.push('Есть строки без наименования')
       }
       if (items.length >= MAX_DEMO_ITEMS) {
@@ -288,9 +303,11 @@ export function extractDemo(input: string): DemoResult {
         quantity,
         unit: pick(cells, roles.unit) || undefined,
         price,
-        sum
+        sum,
+        amount
       })
     }
+    if (roles?.amount !== undefined) resolveAmountRole(items, totals, warnings)
     if (!roles) warnings.push('Таблица товаров не распознана')
   } else {
     warnings.push('Таблица товаров не распознана')
@@ -364,6 +381,53 @@ const DESCRIPTIVE_ROW = new RegExp(
 const COMPANY_AT_TOP = /(?:^|\s)((?:ООО|ОАО|ЗАО|ОДО|ПАО|АО|УП|ЧУП|ЧТУП|СООО|ИП|ТОО|АТ|ТДА|ТАА|Общество\s+с\s+ограниченной\s+ответственностью|Открытое\s+акционерное\s+общество|Закрытое\s+акционерное\s+общество|Индивидуальный\s+предприниматель)\s+(?:«[^»]+»|"[^"]+"|“[^”]+”|[A-ZА-ЯЁ][^,\n(]{0,60}?))(?=\s*(?:,|\(|УНП|ИНН|БИН|БСН|р\/с|р\/сч|$))/u
 // Lines naming the buyer/payer, so COMPANY_AT_TOP doesn't grab them as the supplier.
 const BUYER_LABEL = /(?:покупател|плательщик|заказчик|заказчык|грузополучател|атрымальн|пакупн|сатып\s*алушы)/iu
+
+/**
+ * Разложить неоднозначную колонку «Стоимость» в цену или в сумму строки (GH #76).
+ *
+ * ⚠ Слово значит и то и другое, и по одной строке различить нельзя. Поэтому не гадаем, а
+ * СПРАШИВАЕМ У ДОКУМЕНТА: у него есть печатный итог, и он различает гипотезы арифметически.
+ *   • Σ стоимость ≈ итог  ⇒ это ИТОГ ПО СТРОКЕ  → `sum`;
+ *   • Σ (кол-во × стоимость) ≈ итог ⇒ это ЦЕНА ЗА ЕДИНИЦУ → `price`.
+ * Когда обе суммы совпали (все количества равны 1) — разницы нет, кладём в `sum`.
+ *
+ * ⚠ Итога нет или не сошлось ни то ни другое ⇒ кладём в `sum` и ГОВОРИМ ОБ ЭТОМ. Молчаливый
+ * выбор здесь хуже отсутствия разбора: человек увидит числа в колонке «Сумма» и не узнает, что
+ * их туда положили по догадке. Предупреждение — единственное честное поведение.
+ *
+ * ⚠ Допуск в один процент, а не точное равенство: печатный итог включает округления по строкам,
+ * а иногда и скидку. Требовать копейка в копейку значило бы почти всегда уходить в догадку.
+ */
+export function resolveAmountRole(items: DemoItem[], totals: DemoResult['totals'], warnings: string[]): void {
+  const withAmount = items.filter(i => i.amount !== undefined)
+  if (!withAmount.length) return
+  const asSum = withAmount.reduce((acc, i) => acc + (i.amount ?? 0), 0)
+  const asPrice = withAmount.reduce((acc, i) => acc + (i.amount ?? 0) * (i.quantity ?? 1), 0)
+  // Печатный итог: сперва «всего к оплате», затем «итого» — первый ближе к сумме строк.
+  const printed = totals.total ?? totals.sum
+  const close = (a: number, b: number) => Math.abs(a - b) <= Math.max(Math.abs(b) * 0.01, 0.01)
+
+  let role: 'sum' | 'price' = 'sum'
+  let guessed = true
+  if (printed !== undefined) {
+    const sumFits = close(asSum, printed)
+    const priceFits = close(asPrice, printed)
+    // Обе сошлись ⇒ количества единичные, разницы нет. Сошлась ровно одна ⇒ она и есть ответ.
+    if (sumFits) {
+      role = 'sum'
+      guessed = false
+    } else if (priceFits) {
+      role = 'price'
+      guessed = false
+    }
+  }
+  for (const i of withAmount) {
+    if (role === 'sum') i.sum ??= i.amount
+    else i.price ??= i.amount
+  }
+  for (const i of items) delete i.amount
+  if (guessed) warnings.push('Колонка «Стоимость» прочитана как сумма строки — в документе нет итога, чтобы проверить')
+}
 
 function classifyTotal(s: string): 'vat' | 'total' | 'sum' | null {
   // «Всего к оплате» / «Барлығы төлеуге» is the grand total — check it before the
