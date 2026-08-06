@@ -102,7 +102,7 @@ const mappingFor = (propertyId, kind, delimiter) => ({
   product: { by: 'article', onMissing: 'freeform' }
 })
 
-let IBLOCKS = { offer: null, product: null }
+let IBLOCKS = { offer: [], product: [] }
 const lookup = (article, mapping) => findProduct({ name: 'зонд', article, price: 1, quantity: 1 }, mapping, call, IBLOCKS)
 
 const results = []
@@ -122,7 +122,7 @@ try {
   if (stale) console.log(`· убраны ${stale} зонда(ов) прошлого прогона\n`)
 
   // Уборка идёт по внешнему коду, а не по этому списку, поэтому наружу его выносить незачем.
-  IBLOCKS = { offer: null, product: iblockId }
+  IBLOCKS = { offer: [], product: [iblockId] }
   const made = await createProbes(iblockId, propertyId)
   const byKey = Object.fromEntries(made.map(p => [p.key, p]))
   console.log(`заведено зондов: ${made.length}\n`)
@@ -227,7 +227,7 @@ try {
   if (keep) {
     console.log('\n· зонды оставлены на портале (--keep); убрать: повторный прогон без флага')
   } else {
-    const n = await removeProbes(IBLOCKS.product ?? (await catalogContext()).iblockId)
+    const n = await removeProbes(IBLOCKS.product[0] ?? (await catalogContext()).iblockId)
     console.log(`\n· убрано зондов: ${n}`)
   }
 }

@@ -174,7 +174,12 @@ async function articleFieldOnPortal() {
   const list = catalogs ?? []
   const offersCatalog = list.find(c => c.productIblockId)
   const iblockId = offersCatalog?.productIblockId ?? list[0]?.iblockId
-  const iblocks = { offer: offersCatalog ? Number(offersCatalog.iblockId ?? offersCatalog.id) : null, product: iblockId ? Number(iblockId) : null }
+  // Форма — как у прода (`resolveIblocks`): СПИСКИ инфоблоков, а не по одному. Скрипт обязан
+  // передавать ту же структуру, иначе он проверяет не тот код, который работает у клиента.
+  const iblocks = {
+    offer: offersCatalog?.iblockId ?? offersCatalog?.id ? [Number(offersCatalog.iblockId ?? offersCatalog.id)] : [],
+    product: iblockId ? [Number(iblockId)] : []
+  }
   if (!iblockId) {
     console.log('  ⚠ каталога на портале нет — подбора не будет вовсе')
     return { iblocks, propertyId: null }
@@ -368,7 +373,7 @@ try {
           // ⚠ Своё имя переменной: снаружи `rows` — это СТРОКИ СОЗДАННОЙ ЗАПИСИ, и затенение их
           // каталожной выборкой сравнивало бы каталог сам с собой.
           const { products: catalogRows } = await call('catalog.product.list', {
-            filter: { iblockId: IBLOCKS.product, active: 'Y', [`%property${ARTICLE_PROPERTY_ID}`]: p.article },
+            filter: { iblockId: IBLOCKS.product[0], active: 'Y', [`%property${ARTICLE_PROPERTY_ID}`]: p.article },
             select: ['id', 'iblockId', 'name'], order: { id: 'asc' }
           })
           const inCatalog = (catalogRows ?? []).find(r => r.name === expected)

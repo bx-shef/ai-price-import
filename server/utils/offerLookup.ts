@@ -19,14 +19,19 @@ import { findCatalogByProperty, findCatalogByXmlId, OFFER_SOURCE, resolveIblocks
 // разъезжаются: живая находка про молча игнорируемый фильтр по чужому свойству была записана
 // только в одной из них.
 
-/** Resolve the portal's offers iblock id, or null when it has no SKU catalog. */
+/** Первый инфоблок предложений портала, либо null. ⚠ Именно ПЕРВЫЙ — это узкий помощник для мест,
+ *  которым нужен один id; сам подбор перебирает ВСЕ каталоги (`productLookup.findProduct`). */
 export async function resolveOffersIblockId(call: RestCall): Promise<number | null> {
-  return (await resolveIblocks(call)).offer
+  return (await resolveIblocks(call)).offer[0] ?? null
 }
 
-/** Find an ACTIVE offer id by external code (xmlId), or null. */
+/** Find an ACTIVE offer id by external code (xmlId), or null.
+ *  ⚠ «Не нашли» и «отказались выбирать из нескольких написаний» здесь схлопываются в `null`: этой
+ *  обёртке различие не нужно. Различает его САМ подбор (`productLookup.firstXmlIdMatch`) — там оно
+ *  несущее, потому что отказ обязан прекратить перебор каталогов, а не пропустить его дальше. */
 export async function findOfferByXmlId(xmlId: string, iblockId: number, call: RestCall): Promise<number | null> {
-  return await findCatalogByXmlId(OFFER_SOURCE, xmlId, iblockId, call)
+  const hit = await findCatalogByXmlId(OFFER_SOURCE, xmlId, iblockId, call)
+  return hit.kind === 'found' ? hit.id : null
 }
 
 /** Найти торговое предложение по СВОЙСТВУ, хранящему артикул поставщика. */

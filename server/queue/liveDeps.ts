@@ -25,7 +25,7 @@ import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
 import { fetchCrmMode, leadsEnabled } from '../utils/crmMode'
 import { findProduct } from '../utils/productLookup'
-import { resolveIblocks } from '../utils/catalogLookup'
+import { NO_IBLOCKS, resolveIblocks, type CatalogIblocks } from '../utils/catalogLookup'
 import { fetchMeasureRows } from '../utils/measureList'
 import { createMeasureViaRest } from '../utils/measureCreateWrite'
 import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_MEASURES_PER_JOB, type MeasureIndex } from '~/utils/measureCreate'
@@ -508,13 +508,13 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
   // не может сделать ни одного запроса. Fail-soft: нечитаемый каталог / нет подписки → оба `null`
   // → подбора не будет, но импорт пройдёт свободными строками, а не упадёт. Мемо (undefined = ещё
   // не резолвили), иначе `catalog.catalog.list` дёргался бы на каждую позицию.
-  let iblocks: { offer: number | null, product: number | null } | undefined
-  const ensureIblocks = async (): Promise<{ offer: number | null, product: number | null }> => {
+  let iblocks: CatalogIblocks | undefined
+  const ensureIblocks = async (): Promise<CatalogIblocks> => {
     if (iblocks === undefined) {
       try {
         iblocks = await resolveIblocks((await need()).call)
       } catch {
-        iblocks = { offer: null, product: null }
+        iblocks = NO_IBLOCKS
       }
     }
     return iblocks

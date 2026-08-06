@@ -6,6 +6,7 @@ import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { navigateTo } from '#app'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
+import { ON_MISSING_LABEL } from '~/config/onMissing'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
@@ -91,6 +92,9 @@ const launch = ref<AppLaunchMode | undefined>()
 // списки»). `stagingBusy` comes from ImportStaging's one-by-one loop; `uploading` is a single POST in
 // flight. Either → busy.
 const stagingBusy = ref(false)
+// Закрытие предупреждения о настройке «пропустить ненайденные» — на время открытой страницы.
+// Персистентного намеренно нет: см. комментарий у самого предупреждения.
+const skipWarnNoticeHidden = ref(false)
 const busy = computed(() => stagingBusy.value || uploading.value)
 // Detect the Bitrix24 MOBILE APP via b24ui's own mechanism (useDevice → platform «bitrix-mobile», set by
 // the b24ui platform plugin from the BitrixMobile UA — NOT the JS SDK). In the mobile app we hide
@@ -396,6 +400,43 @@ watch(jobs, (list) => {
             <!-- PRIMARY ACTION: stage files → ONE target for the batch → «Импортировать» uploads the batch
              and WAITS for every result, holding the page locked (owner rework, round 2). `upload`/`jobDone`
              come from THIS page's single useImport() so the run and the list below share one poll. -->
+            <!-- Предупреждение о выбранной настройке «Пропустить строку и предупредить» (решение
+             владельца 06.08.2026: поведение оставляем как есть, но человека предупреждаем ЗАРАНЕЕ).
+             Что происходит без него: если ни одна позиция документа не подобралась по артикулу, при
+             этой настройке пропускаются ВСЕ строки, и импорт отвечает жёсткой ошибкой — запись не
+             создаётся вовсе. Для документа без колонки артикула (в РБ/РФ обычная первичка) это
+             штатный исход, а выглядит как поломка, потому что узнаёт о нём человек уже ПОСЛЕ
+             загрузки, из текста отказа.
+             ⚠ Показываем ТОЛЬКО при явно выбранном `skip-warn`: на дефолте (`freeform`) строки
+             вносятся как есть, отказа нет, и предупреждать не о чем — баннер на каждом портале
+             читался бы как шум и перестал бы работать там, где нужен.
+             ⚠ Это `B24Alert`, а НЕ `B24Banner`, и разница не косметическая. Первая редакция стояла
+             на `B24Banner`, а он по документации b24ui — верхняя полоса страницы фиксированной
+             высоты (`h-12`), и заголовок в нём `truncate`: наше предупреждение схлопывалось в ОДНУ
+             строку с многоточием, и главное — «запись в CRM не создастся» — не читалось вовсе.
+             `description` у `B24Banner` нет, обойти можно было только борьбой с компонентом.
+             `B24Alert` разносит короткий заголовок и объяснение и переносит текст; им же сделаны
+             все прочие контекстные предупреждения в проекте.
+             ⚠ `role="status"`, а не `alert`: сообщение показывается по СОСТОЯНИЮ настройки, а не в
+             ответ на действие, поэтому перебивать чтение не должно. Своей роли у компонента нет —
+             без явной программа чтения не объявит его вовсе.
+             ⚠ Закрытие — на время открытой страницы, БЕЗ запоминания. Прежняя редакция полагалась
+             на встроенное «запомнить навсегда» через localStorage, и это было неверно трижды:
+             хранилище общее для всех порталов (админ двух порталов закрыл бы на одном и не увидел
+             на другом), отметка не снимается при возврате настройки в `skip-warn` — то есть молчала
+             бы ровно тогда, когда предупреждение снова нужно, — и само поведение мы не сверяли. -->
+            <B24Alert
+              v-if="mapping.product.onMissing === 'skip-warn' && !skipWarnNoticeHidden"
+              class="mb-4"
+              role="status"
+              color="air-primary-warning"
+              :icon="WarningAlarmIcon"
+              title="Документы без артикулов будут отклонены целиком"
+              :description="`Выбрана настройка «${ON_MISSING_LABEL['skip-warn']}». Если ни одна позиция документа не найдётся в каталоге по артикулу, запись в CRM не создастся — импорт ответит ошибкой. Так и задумано; проверьте, что в ваших документах есть колонка с артикулами.`"
+              close
+              @update:open="skipWarnNoticeHidden = true"
+            />
+
             <ImportStaging
               :upload="upload"
               :job-done="jobDone"

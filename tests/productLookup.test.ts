@@ -6,7 +6,7 @@ import type { DocumentItem } from '../app/types/document'
 // ⚠ Формы запросов — `catalog.product.list` (методы `crm.product.*` DEPRECATED): `iblockId`
 // обязателен и в фильтре, и в `select`; поля в lowerCamel; строки приходят под ключом `products`.
 const PRODUCT_IBLOCK = 25
-const IB = { offer: null, product: PRODUCT_IBLOCK }
+const IB = { offer: [], product: [PRODUCT_IBLOCK] }
 const rows = (...products: Array<Record<string, unknown>>) => ({ products })
 
 const item = (over: Partial<DocumentItem> = {}): DocumentItem => ({ name: 'Гвоздь', price: 1, quantity: 1, ...over })
@@ -178,7 +178,7 @@ describe('findProduct (strategy routing)', () => {
     const call = vi.fn(async (method: string) =>
       method === 'catalog.product.offer.list' ? { offers: [{ id: 3, iblockId: 27, xmlId: '1030162' }] } : rows())
     // Инфоблок предложений задан → они пробуются ПЕРВЫМИ; попадание ⇒ базовый товар не запрашивается.
-    expect(await findProduct(item({ article: '1030162' }), m, call, { offer: 27, product: PRODUCT_IBLOCK })).toBe(3)
+    expect(await findProduct(item({ article: '1030162' }), m, call, { offer: [27], product: [PRODUCT_IBLOCK] })).toBe(3)
     expect(call).toHaveBeenCalledTimes(1)
     expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { filter: { iblockId: 27, xmlId: '1030162', active: 'Y' }, select: ['id', 'iblockId', 'xmlId'] })
   })
@@ -192,8 +192,60 @@ describe('findProduct (strategy routing)', () => {
       const filter = params.filter as Record<string, unknown>
       return 'xmlId' in filter ? rows() : rows({ id: 77, property130: 'A-1' })
     })
-    expect(await findProduct(item({ article: 'A-1' }), m, call, { offer: 27, product: PRODUCT_IBLOCK })).toBe(77)
+    expect(await findProduct(item({ article: 'A-1' }), m, call, { offer: [27], product: [PRODUCT_IBLOCK] })).toBe(77)
     expect(call).toHaveBeenCalledWith('catalog.product.list', { filter: { 'iblockId': PRODUCT_IBLOCK, '%property130': 'A-1', 'active': 'Y' }, select: ['id', 'iblockId', 'property130'], order: { id: 'asc' } })
+  })
+
+  it('НЕСКОЛЬКО товарных каталогов: перебираем до первого попадания', async () => {
+    // ⚠ Решение владельца 06.08.2026. Прежде брался ПЕРВЫЙ каталог, и товар из второго не
+    // находился НИКОГДА, причём молча: строка уезжала свободной позицией, сумма сходилась, статус
+    // «Готово» — исход неотличим от «такого товара в каталоге нет».
+    const m = defaultMapping()
+    m.article.field = ''
+    const call = vi.fn(async (_m: string, params: Record<string, unknown>) => {
+      const filter = params.filter as Record<string, unknown>
+      return filter.iblockId === 31 ? rows({ id: 55, xmlId: 'EXT-9' }) : rows()
+    })
+    expect(await findProduct(item({ article: 'EXT-9' }), m, call, { offer: [], product: [25, 31] })).toBe(55)
+    expect(call, 'первый каталог промахнулся ⇒ обязан быть второй запрос').toHaveBeenCalledTimes(2)
+  })
+
+  it('НЕОДНОЗНАЧНОСТЬ прекращает подбор целиком, а не только текущий каталог', async () => {
+    // ⚠ Дефект, найденный разбором в первой редакции перебора: `findCatalogByXmlId` отвечал `null`
+    // и на «не нашли», и на «отказался выбирать из двух написаний», а перебор шёл дальше. Тогда
+    // каталог A с парой `ZQ-1`/`zq-1` давал отказ, а каталог B подсовывал ПОСТОРОННИЙ товар —
+    // то есть гард против подмены товара сам приводил к подмене, только из другого каталога.
+    const m = defaultMapping()
+    m.article.field = '130'
+    const call = vi.fn(async (_m: string, params: Record<string, unknown>) => {
+      const filter = params.filter as Record<string, unknown>
+      return filter.iblockId === 25
+        ? rows({ id: 5, xmlId: 'ZQ-1' }, { id: 6, xmlId: 'zq-1' }) // неоднозначно
+        : rows({ id: 99, xmlId: 'ZQ-1' }) // чужой каталог, «нашлось бы»
+    })
+    expect(await findProduct(item({ article: 'zq-1' }), m, call, { offer: [], product: [25, 31] })).toBeNull()
+    expect(call, 'после отказа по неоднозначности во второй каталог ходить нельзя').toHaveBeenCalledTimes(1)
+  })
+
+  it('портал вернул НЕ ТО: строки, чей внешний код не равен запрошенному → подбора нет', async () => {
+    // ⚠ Сверка на клиенте нужна и здесь, а не только у свойства: портал уже был замечен на том,
+    // что молча игнорирует непонятный фильтр и отдаёт весь список. Плюс значение уходит в `LIKE`,
+    // где `%`/`_` — джокеры: артикул «ZQ_1» совпал бы расширенно, и проверка неоднозначности
+    // молчала бы (написание в ответе одно).
+    const m = defaultMapping()
+    m.article.field = ''
+    const call = vi.fn(async () => rows({ id: 7, xmlId: 'СОВСЕМ-ДРУГОЕ' }, { id: 8 }))
+    expect(await findProduct(item({ article: 'ZQ_1' }), m, call, IB)).toBeNull()
+  })
+
+  it('нашли в первом каталоге → во второй не ходим', async () => {
+    // Обратная половина: перебор идёт ТОЛЬКО пока не нашли, иначе портал с N каталогами платил бы
+    // N запросов за каждую УСПЕШНО подобранную позицию.
+    const m = defaultMapping()
+    m.article.field = ''
+    const call = vi.fn(async () => rows({ id: 55, xmlId: 'EXT-9' }))
+    expect(await findProduct(item({ article: 'EXT-9' }), m, call, { offer: [], product: [25, 31] })).toBe(55)
+    expect(call).toHaveBeenCalledTimes(1)
   })
 
   it('offersIblockId null (no SKU catalog) → offers skipped entirely (pre-offer behaviour)', async () => {

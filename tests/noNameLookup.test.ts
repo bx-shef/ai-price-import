@@ -91,10 +91,10 @@ describe('подбор товара: НИКОГДА по названию', () =
     const m = defaultMapping()
     m.article.field = '130'
     const anyMatch = vi.fn(async () => ({ products: [{ id: 7, name: 'Гвоздь' }] }))
-    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyMatch, { offer: null, product: 25 })).toBeNull()
+    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyMatch, { offer: [], product: [25] })).toBeNull()
 
     const anyOffer = vi.fn(async () => ({ offers: [{ id: 9 }] }))
-    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyOffer, { offer: 27, product: 25 })).toBeNull()
+    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, m, anyOffer, { offer: [27], product: [25] })).toBeNull()
   })
 
   it('ПОВЕДЕНИЕ: артикул есть, но не совпал ничем → подбора нет, как бы ни звался товар', async () => {
@@ -103,7 +103,7 @@ describe('подбор товара: НИКОГДА по названию', () =
     const m = defaultMapping()
     m.article.field = '130'
     const call = vi.fn(async () => ({ products: [] }))
-    expect(await findProduct({ name: 'Гвоздь', article: 'НЕТ-ТАКОГО', price: 1, quantity: 1 }, m, call, { offer: null, product: 25 })).toBeNull()
+    expect(await findProduct({ name: 'Гвоздь', article: 'НЕТ-ТАКОГО', price: 1, quantity: 1 }, m, call, { offer: [], product: [25] })).toBeNull()
     for (const [, params] of call.mock.calls) {
       expect(JSON.stringify(params).toUpperCase()).not.toContain('ГВОЗДЬ')
     }

@@ -24,7 +24,11 @@ describe('resolveOffersIblockId', () => {
 
 describe('findOfferByXmlId', () => {
   it('filters by iblockId + xmlId + active (iblockId in select too) → min id', async () => {
-    const call = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27 }, { id: 5, iblockId: 27 }] }))
+    // ⚠ У строк ответа `xmlId` теперь ОБЯЗАТЕЛЕН: подбор сверяет его на клиенте и отбрасывает всё,
+    // что не равно запрошенному коду. Прежняя фикстура без `xmlId` проходила — то есть проверка
+    // принимала бы любые строки, которые вернул портал, включая ответ на молча проигнорированный
+    // фильтр. Это и есть смысл сверки, а не придирка к данным теста.
+    const call = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27, xmlId: '1030162' }, { id: 5, iblockId: 27, xmlId: '1030162' }] }))
     expect(await findOfferByXmlId('1030162', 27, call)).toBe(3)
     expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { filter: { iblockId: 27, xmlId: '1030162', active: 'Y' }, select: ['id', 'iblockId', 'xmlId'] })
   })
