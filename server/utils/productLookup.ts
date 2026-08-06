@@ -16,15 +16,24 @@ import { findOfferByProperty, findOfferByXmlId } from './offerLookup'
 // (e.g. "STP-5" ⊂ "STP-50"). Unmatched → mapping.product.onMissing.
 //
 // ACTIVE-only (owner ask): every lookup filters `ACTIVE: 'Y'` so an inactive/archived product is never
-// matched. ⚠ the `ACTIVE`/`XML_ID` filters on crm.product.list are per the classic product contract —
-// live-verify on a catalog-enabled portal before relying on them (this dev webhook has no catalog REST).
-// SKU / trade-offer («торговое предложение») matching with priority over the base product is a
-// documented follow-up (needs catalog.product.offer.* + a subscription portal) — see docs.
+// matched. LIVE-VERIFIED 2026-08-06 by `pnpm verify:article` (#383) on a catalog-enabled portal — the
+// whole edge-case matrix runs THIS function, not a hand-rewritten query: inactive product with a
+// matching article is not returned; `ZQ-5` does not match `ZQ-50` (server-side %LIKE returns it, our
+// exact confirmation rejects it); both field kinds parse (comma-delimited string, CRLF multiline
+// text); XML_ID matches without any configured property; a property id that does not exist yields
+// null rather than the first product of the catalog. The two known limits below were verified as
+// limits, not fixed: homoglyphs and the single 50-row page.
 
 /**
  * Find an ACTIVE catalog product by its external code (XML_ID / «внешний код»), or null. Distributors
  * commonly key their catalog by XML_ID, so it is tried as a second article-matching strategy after the
- * supplier-article property. Exact match (XML_ID is a single value, not a multi-article field).
+ * supplier-article property. Single-value match — XML_ID is not a multi-article field.
+ *
+ * ⚠ LIVE-VERIFIED 2026-08-06 (`pnpm verify:article`): the portal compares XML_ID
+ * CASE-INSENSITIVELY — `zq-x` finds a product stored as `ZQ-X`. This comment previously claimed an
+ * "exact match", which was wrong. Good for matching (suppliers print codes in any case), but it
+ * means two products whose XML_ID differs ONLY by case are the SAME row to this filter and `minId`
+ * picks an arbitrary one of them — the same silent-substitution hazard as duplicate names.
  */
 export async function findProductByXmlId(code: string, call: RestCall): Promise<number | null> {
   const q = (code ?? '').trim()
