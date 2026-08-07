@@ -651,13 +651,6 @@ const ARTICLE_KIND_ITEMS = [
                   :b24ui="{ root: 'rounded-none border-t-0 sm:rounded-b-3xl' }"
                 >
                   <div class="space-y-6">
-                    <!-- Сохранение файла -->
-                    <B24Switch
-                      v-model="mapping.saveFile"
-                      label="Сохранять исходный файл"
-                      description="Копия каждого загруженного документа сохранится на Диск портала, в папку приложения с разбивкой по месяцам."
-                    />
-
                     <!-- Чат уведомлений об успешном импорте -->
                     <B24FormField label="Чат уведомлений">
                       <AsyncSearchSelect

@@ -12,7 +12,11 @@
  *  posting into a shared chat and failure notices arrive from the employee to himself. A portal
  *  that does not grant it (installed earlier, or free plan where bots are unavailable) keeps
  *  working — the send falls back to the old method. */
-export const B24_REQUIRED_SCOPES = ['crm', 'catalog', 'disk', 'im', 'imbot', 'pull'] as const
+// ⚠ `disk` УБРАН (#458): архивной копии документа на Диске портала больше нет — документ
+// вкладывается прямо в дело таймлайна. Право, которое ничего не открывает, всё равно
+// запрашивается у клиента при установке и попадает в опросник его службы ИБ, поэтому оно должно
+// исчезнуть вместе с функцией, а не остаться «на всякий случай».
+export const B24_REQUIRED_SCOPES = ['crm', 'catalog', 'im', 'imbot', 'pull'] as const
 
 /** Backend endpoint that receives outgoing B24 events. */
 export const B24_EVENT_HANDLER_PATH = '/api/b24/events'

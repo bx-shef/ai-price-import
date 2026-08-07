@@ -12,8 +12,7 @@ describe('parsePortalSettings', () => {
     const m = parsePortalSettings({
       article: { field: 'PROP', kind: 'string', delimiter: ';' },
       product: { by: 'name', onMissing: 'freeform' },
-      units: { dictionary: { ШТ: '796', bad: 'x' }, defaultCode: 166, autoCreate: true },
-      saveFile: false
+      units: { dictionary: { ШТ: '796', bad: 'x' }, defaultCode: 166, autoCreate: true }
     })
     // ⚠ `scope` дозаписывается дефолтом `'product'`: настройки, сохранённые до его появления,
     // выбирались пикером, который показывал только свойства основного каталога товаров.
@@ -24,7 +23,6 @@ describe('parsePortalSettings', () => {
     expect(m.product).toEqual({ by: 'article', onMissing: 'freeform' })
     expect(m.units.dictionary).toEqual({ шт: 796 }) // lower-cased, invalid dropped
     expect(m.units.defaultCode).toBe(166)
-    expect(m.saveFile).toBe(false)
   })
 
   it('legacy onMissing:"create" (removed) coerces to freeform, not skip-warn', () => {
@@ -93,7 +91,7 @@ describe('isPortalConfigured', () => {
     expect(cfg({ errorChatId: 'chat7' })).toBe(true)
     expect(cfg({ routingRules: [{ match: { type: 'накладная' }, target: { entityTypeId: 2 } }] })).toBe(true)
     expect(cfg({ units: { dictionary: { шт: 796 } } })).toBe(true)
-    // #328: `saveFile` больше НЕ признак настройки — он включён по умолчанию, и «настроено»
+    // #458: поля `saveFile` больше нет вовсе — сохранённое значение игнорируется и признаком
     // загоралось бы у нетронутого портала, а баннер «сначала настройте» не увидел бы никто.
     expect(cfg({ saveFile: true })).toBe(false)
     expect(cfg({ saveFile: false })).toBe(false)

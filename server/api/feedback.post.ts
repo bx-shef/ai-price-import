@@ -8,11 +8,9 @@ import { portalHash } from '../utils/telemetryAttributes'
 import { parseJobResult } from '~/utils/jobStatus'
 import { query } from '../db/client'
 import { METRICS, bumpCounter } from '../utils/metricsStore'
-import { getDiskFileId, getJob } from '../utils/jobStore'
+import { getJob } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
 import { resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
-import { makeBareTokenSdkCall } from '../utils/b24Sdk'
-import { downloadDiskFile, type BinaryFetchFn } from '../utils/diskDownload'
 import { checkFeedbackRate, feedbackRateMessage } from '../utils/uploadRateLimit'
 import { ATTACH_MISSING_NOTICE, checkAttachBudget } from '../utils/feedbackRepoBudget'
 import { feedbackIntakeGate, parseClientFile } from '../utils/feedbackIntake'
@@ -118,32 +116,13 @@ export default defineEventHandler(async (event) => {
               // being flipped to public later, and real invoices become public. Cached, three-state —
               // "could not verify" blocks the upload just like "public" does, but is retried sooner.
               if (await feedbackUploadAllowed(config, fetchImpl)) {
-                // The page's own copy first (#349). Falling back to the portal Disk archive still
-                // helps when the page no longer holds the file (reload, another tab) AND the portal
-                // has `saveFile` on — but that archive does not exist for «документ не распознан»,
-                // which is exactly why the page sends its bytes.
-                let name = clientFile?.name || (typeof c.fileName === 'string' && c.fileName ? c.fileName : `${jobId}.bin`)
-                let base64 = clientFile?.base64
-                if (!base64) {
-                  // The page didn't send bytes (reload / другая вкладка) → fall back to the Disk
-                  // archive if the portal keeps one. Carries the real stored name, so prefer it.
-                  const diskId = await getDiskFileId(member.memberId, jobId, jobRedis)
-                  if (diskId) {
-                    const call = makeBareTokenSdkCall(auth.domain, auth.accessToken)
-                    // redirect:'manual' — never follow a portal's redirect off-host (SSRF on the shared
-                    // multitenant backend); AbortSignal.timeout — a slow/huge Disk body must not stall
-                    // the 👍/👎 request. Body streamed + capped in downloadDiskFile.
-                    const binFetch: BinaryFetchFn = async (url) => {
-                      const r = await (globalThis.fetch as typeof fetch)(url, { redirect: 'manual', signal: AbortSignal.timeout(15_000) })
-                      return { ok: r.ok, status: r.status, body: r.body as AsyncIterable<Uint8Array> | null }
-                    }
-                    const dl = await downloadDiskFile(diskId, auth.domain, call, binFetch)
-                    if (dl) {
-                      name = dl.name
-                      base64 = dl.base64
-                    }
-                  }
-                }
+                // Байты присылает САМА СТРАНИЦА (#349) — своей копии документа у нас нет.
+                // ⚠ Запасного пути через архив на Диске БОЛЬШЕ НЕТ (#458): архива не существует,
+                // документ вкладывается прямо в дело таймлайна. Значит вкладка, перезагруженная до
+                // отправки отзыва, файла не даст — и виджет обязан честно предложить выбрать его
+                // вручную, а не отправлять отзыв «пустым», выдавая это за успех.
+                const name = clientFile?.name || (typeof c.fileName === 'string' && c.fileName ? c.fileName : `${jobId}.bin`)
+                const base64 = clientFile?.base64
                 if (base64) {
                   // Global hourly ceiling on the RECEIVER (#354) — checked HERE, immediately before
                   // the commit, and not earlier. Earlier it metered intent instead of cost: a review

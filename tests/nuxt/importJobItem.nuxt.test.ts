@@ -97,31 +97,6 @@ describe('ImportJobItem', () => {
     expect(w.text()).toContain('не распознан формат')
   })
 
-  it('archived-to-Disk file (diskUrl) IN a frame → the file name becomes a link (opens the Disk)', async () => {
-    framed.value = true
-    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":[],"errors":[]}', { diskUrl: '/docs/file/9/' }) } })
-    // The file name renders as a clickable <a> (its title names the source-file action). The absolute
-    // href needs the portal domain (absent in this mock, like the entity-link test); the click opens
-    // the Disk via the slider regardless.
-    const fileLink = w.findAll('a').find(a => a.text().includes('накладная.pdf'))
-    expect(fileLink).toBeTruthy()
-    expect(fileLink!.attributes('title')).toContain('исходный файл')
-    framed.value = false
-  })
-
-  it('clicking the Disk file-name link opens the DISK path via the slider (not the entity path)', async () => {
-    framed.value = true
-    sliderCalls.length = 0
-    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityTypeId":2,"entityId":5,"warnings":[],"errors":[]}', { diskUrl: '/docs/file/9/' }) } })
-    const fileLink = w.findAll('a').find(a => a.text().includes('накладная.pdf'))!
-    await fileLink.trigger('click')
-    await new Promise(r => setTimeout(r))
-    // Opened the Disk url, NOT the CRM entity detail path (guards against a copy-paste of entityPath).
-    expect(sliderCalls).toContain('URL:/docs/file/9/')
-    expect(sliderCalls.some(u => u.includes('/crm/'))).toBe(false)
-    framed.value = false
-  })
-
   it('no diskUrl → the file name is plain text, not a link', async () => {
     framed.value = true
     const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":[],"errors":[]}') } })

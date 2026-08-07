@@ -45,7 +45,11 @@ export async function liveOauth() {
       const r = await fetch(`https://${domain}/rest/profile.json?auth=${t}`)
       const text = await r.text()
       let j
-      try { j = JSON.parse(text) } catch { return 'unknown' }
+      try {
+        j = JSON.parse(text)
+      } catch {
+        return 'unknown'
+      }
       if (j.error === 'expired_token' || j.error === 'invalid_token') return 'expired'
       return j.result ? 'alive' : 'unknown'
     } catch { return 'unknown' }

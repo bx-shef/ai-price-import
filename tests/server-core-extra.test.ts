@@ -1,12 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { isAuthRejection } from '../server/utils/b24Rest'
 import { BARE_TOKEN_REJECTED, makeBareTokenSdkCall } from '../server/utils/b24Sdk'
-import { ensureSubfolder, uploadFile } from '../server/utils/disk'
 import { buildProductRow, createTargetItem } from '../server/utils/crmWrite'
 import { decryptSecret, encryptSecret } from '../server/utils/secretCrypto'
 import { isAccessTokenExpired, needsProactiveRefresh } from '../server/utils/accessToken'
 import { parseTokenResponse } from '../server/utils/b24Oauth'
-import { buildConfigurableActivity, entityOpenPath, safeRelativePath } from '../server/utils/configurableActivity'
+import { buildActivityBody, entityOpenPath, safeRelativePath } from '../server/utils/todoActivity'
 import { parsePortalSettings } from '../app/utils/portalSettings'
 
 describe('makeBareTokenSdkCall (SDK bare-token transport)', () => {
@@ -23,30 +22,6 @@ describe('makeBareTokenSdkCall (SDK bare-token transport)', () => {
     // A bare token cannot refresh — the custom refresh hook throws BARE_TOKEN_REJECTED, which
     // isAuthRejection must recognise so a forged frame/install token yields 401/403.
     expect(isAuthRejection(new Error(BARE_TOKEN_REJECTED))).toBe(true)
-  })
-})
-
-describe('disk async (fake RestCall)', () => {
-  it('ensureSubfolder returns existing (idempotent, no create)', async () => {
-    const call = vi.fn().mockResolvedValue([{ ID: '8', NAME: '2026-07', TYPE: 'folder' }])
-    expect(await ensureSubfolder(3, '2026-07', call)).toBe(8)
-    expect(call).toHaveBeenCalledTimes(1) // getchildren only
-  })
-  it('ensureSubfolder ignores same-name FILE, creates folder', async () => {
-    const call = vi.fn()
-      .mockResolvedValueOnce([{ ID: '9', NAME: '2026-07', TYPE: 'file' }])
-      .mockResolvedValueOnce({ ID: '12' })
-    expect(await ensureSubfolder(3, '2026-07', call)).toBe(12)
-    expect(call).toHaveBeenLastCalledWith('disk.folder.addsubfolder', { id: 3, data: { NAME: '2026-07' } })
-  })
-  it('ensureSubfolder null children guard', async () => {
-    const call = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ ID: '1' })
-    expect(await ensureSubfolder(3, 'x', call)).toBe(1)
-  })
-  it('uploadFile passes fileContent tuple', async () => {
-    const call = vi.fn().mockResolvedValue({ ID: '77' })
-    expect(await uploadFile(3, 'inv.pdf', 'BASE64', call)).toEqual({ id: 77, detailUrl: '' })
-    expect(call).toHaveBeenCalledWith('disk.folder.uploadfile', { id: 3, data: { NAME: 'inv.pdf' }, fileContent: ['inv.pdf', 'BASE64'] })
   })
 })
 
@@ -142,7 +117,7 @@ describe('token/lifetime boundaries', () => {
   })
 })
 
-describe('configurableActivity deeper', () => {
+describe('todoActivity deeper', () => {
   it('safeRelativePath blocks scheme/protocol-relative', () => {
     expect(safeRelativePath('/crm/deal/details/5/')).toBe('/crm/deal/details/5/')
     expect(safeRelativePath('https://evil.com')).toBe('/crm/')
@@ -152,26 +127,40 @@ describe('configurableActivity deeper', () => {
   it('entityOpenPath quote branch', () => {
     expect(entityOpenPath(7, 3)).toBe('/crm/quote/show/3/')
   })
-  it('builds body blocks from lines (capped) + footer button', () => {
-    const a = buildConfigurableActivity({ ownerTypeId: 2, ownerId: 5, title: 'T', lines: Array.from({ length: 15 }, (_, i) => `l${i}`), openPath: '/crm/deal/details/5/', showOpenButton: true })
-    const blocks = (a.layout as { body: { blocks: Record<string, unknown> } }).body.blocks
-    expect(Object.keys(blocks)).toHaveLength(10)
-    const btn = (a.layout as { footer: { buttons: { open: { action: { uri: string } } } } }).footer.buttons.open
-    expect(btn.action.uri).toBe('/crm/deal/details/5/')
-  })
-  it('BB-neutralises the uploader-controlled title + lines (no [url=…]/mention injection into the timeline)', () => {
-    const a = buildConfigurableActivity({
-      ownerTypeId: 2, ownerId: 5,
-      title: 'Импорт: [url=http://evil]ООО[/url]',
-      lines: ['Поставщик: [b]X[/b]', 'Позиций: 3'],
-      openPath: '/crm/deal/details/5/', showOpenButton: true
+  it('поставщик — ссылка на карточку компании, когда она найдена', () => {
+    const body = buildActivityBody({
+      supplierName: 'ООО Ромашка', companyId: 42, rowCount: 3, matchedCount: 2,
+      amountLabel: '10 320,00 BYN', warnings: [], entityPath: '/crm/deal/details/5/'
     })
-    const title = (a.layout as { header: { title: string } }).header.title
-    const blocks = (a.layout as { body: { blocks: Record<string, { properties: { value: string } }> } }).body.blocks
-    expect(title).not.toMatch(/\[|\]/) // brackets folded to fullwidth ［ ］
-    expect(title).toContain('［url=http://evil］')
-    expect(blocks.line0!.properties.value).not.toMatch(/\[|\]/)
-    expect(blocks.line0!.properties.value).toContain('［b］X［/b］')
+    expect(body).toContain('[B]Поставщик:[/B] [URL=/crm/company/details/42/]ООО Ромашка[/URL]')
+    expect(body).toContain('[B]Позиций:[/B] 3 · сопоставлено с каталогом: 2')
+    expect(body).toContain('[B]Сумма:[/B] 10 320,00 BYN')
+    expect(body).toContain('[B]Сделка:[/B] [URL=/crm/deal/details/5/]')
+  })
+  it('компании нет → имя поставщика остаётся текстом, а не битой ссылкой', () => {
+    const body = buildActivityBody({ supplierName: 'ООО Ромашка', rowCount: 1, warnings: [], entityPath: '/crm/deal/details/5/' })
+    expect(body).toContain('[B]Поставщик:[/B] ООО Ромашка')
+    expect(body).not.toContain('company/details')
+  })
+  it('BB-нейтрализация внешнего текста — разметка из документа НЕ становится ссылкой', () => {
+    // У универсального дела описание РАЗБИРАЕТ BB, поэтому цена промаха выше, чем была у
+    // текстовых блоков конфигурируемого: `[URL=…]` из накладной стал бы настоящей ссылкой в
+    // карточке клиента.
+    const body = buildActivityBody({
+      supplierName: '[url=http://evil]ООО[/url]',
+      rowCount: 1,
+      warnings: ['[b]жирная[/b] проблема'],
+      advice: '[url=http://evil]совет[/url]',
+      entityPath: '/crm/deal/details/5/'
+    })
+    expect(body).toContain('［url=http://evil］')
+    expect(body).toContain('［b］жирная［/b］')
+    expect(body).not.toMatch(/\[url=http:\/\/evil\]/)
+  })
+  it('путь сущности проходит тот же SSRF-гард, что и остальные ссылки', () => {
+    const body = buildActivityBody({ rowCount: 1, warnings: [], entityPath: '//evil.com' })
+    expect(body).toContain('[URL=/crm/]')
+    expect(body).not.toContain('evil.com')
   })
 })
 
@@ -189,14 +178,14 @@ describe('portalSettings coercion nuances', () => {
     expect(parsePortalSettings({ defaultTarget: { entityTypeId: 2, categoryId: -1 } }).defaultTarget).toEqual({ entityTypeId: 2 })
     expect(m.routingRules[0]!.target).toEqual({ entityTypeId: 2, categoryId: 0 }) // fallback default (deal/0)
   })
-  it('chat ids pass-through only when string; saveFile default ON (#328); dictionary non-object → {}', () => {
+  it('chat ids pass-through only when string; dictionary non-object → {}', () => {
     expect(parsePortalSettings({ notifyChatId: 'chat1', errorChatId: 5 }).notifyChatId).toBe('chat1')
     expect(parsePortalSettings({ errorChatId: 5 }).errorChatId).toBeUndefined()
-    // #328 (решение владельца): включено по умолчанию — исходник на Диске нужен, чтобы привязать
-    // его к делу таймлайна. Выключить можно только явным `false`.
-    expect(parsePortalSettings({}).saveFile).toBe(true)
-    expect(parsePortalSettings({ saveFile: false }).saveFile).toBe(false)
-    expect(parsePortalSettings({ saveFile: true }).saveFile).toBe(true) // explicit true enables
+    // #458: поля `saveFile` больше нет — архивной копии на Диске не существует, документ
+    // вкладывается в дело. Сохранённое у портала значение ИГНОРИРУЕТСЯ, а не отвергается: разбор
+    // старого блоба обязан пройти, иначе портал молча стал бы «ненастроенным».
+    expect(parsePortalSettings({ saveFile: false })).not.toHaveProperty('saveFile')
+    expect(() => parsePortalSettings({ saveFile: 'мусор' })).not.toThrow()
     expect(parsePortalSettings({ units: { dictionary: 'nope' } }).units.dictionary).toEqual({})
   })
 })

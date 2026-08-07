@@ -322,13 +322,18 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     expect(r.warnings.some(w => /сообщение в чат отправить не удалось/.test(w))).toBe(true)
   })
 
-  it('writeActivity records a configurable дело on the created entity', async () => {
+  it('writeActivity records a дело on the created entity (с суммой и числом сопоставленных строк)', async () => {
     const writeActivity = vi.fn(async () => {})
     await runCrmSync('job1', doc, mapping(), {}, baseDeps({ writeActivity }))
     // У общей заготовки `doc` НДС в строках и НЕТ печатного итога, поэтому с #337 она честно
     // несёт предупреждение «подтвердить флаг нечем» — раньше этот случай уходил молча.
     expect(writeActivity).toHaveBeenCalledWith({
       entityTypeId: 2, entityId: 555, companyId: 42, supplierName: 'ООО Ромашка', rowCount: 1,
+      // #328: сумма и «сопоставлено с каталогом» — отдельные блоки тела дела. Сумма приходит
+      // ГОТОВОЙ подписью из того же расчёта, что и сумма записи: отдельное форматирование в
+      // проводке разошлось бы с карточкой, и дело сообщало бы не то число.
+      matchedCount: 0,
+      amountLabel: expect.stringMatching(/^\d/),
       // ⚠ Второе предупреждение — «ни одна позиция не связана с каталогом»: в этой фикстуре
       // свойство артикула не задано, значит подбор не мог сработать, и молчать об этом нельзя.
       warnings: [

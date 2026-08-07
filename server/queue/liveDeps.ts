@@ -36,9 +36,7 @@ import { DESCRIPTION_TYPE_BB, buildActivityInput, buildFileAttachment, buildTodo
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
-import { readFile } from 'node:fs/promises'
 import { uploadPath } from '../utils/fileStore'
-import { makeSaveSourceFile } from '../utils/disk'
 import { portalHash } from '../utils/telemetryAttributes'
 import { runChatExtract, type ChatFn } from '../agent/chatExtract'
 import { buildExtractionPrompt } from '../../prompts/extract'
@@ -403,7 +401,7 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
       await setJobStatus(m, j, 'error', reason, jobRedis)
       await notifyImportFailure(infra, m, j, reason, { rest: sharedRest })
     },
-    markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', jobRedis),
+    markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', jobRedis)
     // ⚠ Архивной копии на Диске БОЛЬШЕ НЕТ (#458, решение владельца): документ вкладывается в
     // само дело таймлайна, поэтому вторая копия по второму адресу — лишнее хранилище чужих
     // документов, которым мы не управляем. Вместе с ней ушли настройка «сохранять исходный файл»
