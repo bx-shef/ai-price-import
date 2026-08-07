@@ -35,8 +35,30 @@ export async function liveOauth() {
   const domain = readEnvValue(FILE, 'B24_OAUTH_DOMAIN')
   let token = readEnvValue(FILE, 'B24_OAUTH_ACCESS_TOKEN')
 
-  const alive = async t => (await (await fetch(`https://${domain}/rest/profile.json?auth=${t}`)).json()).error !== 'expired_token'
-  if (await alive(token)) return { domain, token }
+  // ⚠ Ответ разбирается ЗАЩИЩЁННО и с повтором. Прежняя строка звала `.json()` напрямую, поэтому
+  // любой сбой на пути (прокси отдаёт «upstream connect error», шлюз — HTML) валил скрипт с
+  // `Unexpected token 'u'` — то есть авария сети читалась как «токен протух». Хуже тихий случай:
+  // разберись такой ответ во что-нибудь без `error`, мы сочли бы мёртвый токен живым.
+  // Различаем ТРИ исхода, а не два: жив / протух / не смогли определить.
+  const probe = async (t) => {
+    try {
+      const r = await fetch(`https://${domain}/rest/profile.json?auth=${t}`)
+      const text = await r.text()
+      let j
+      try { j = JSON.parse(text) } catch { return 'unknown' }
+      if (j.error === 'expired_token' || j.error === 'invalid_token') return 'expired'
+      return j.result ? 'alive' : 'unknown'
+    } catch { return 'unknown' }
+  }
+
+  let verdict = await probe(token)
+  if (verdict === 'unknown') {
+    await new Promise(r => setTimeout(r, 1500))
+    verdict = await probe(token)
+  }
+  // ⚠ Не смогли определить и со второй попытки — НЕ рефрешим: ротация сожгла бы годный
+  // refresh_token из-за чужой аварии. Пусть вызов упадёт своей настоящей ошибкой.
+  if (verdict !== 'expired') return { domain, token }
 
   const refresh = readEnvValue(FILE, 'B24_OAUTH_REFRESH_TOKEN')
   const clientId = readEnvValue(FILE, 'B24_CLIENT_ID')
