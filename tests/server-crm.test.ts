@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildProductRow, buildProductRows, computeOpportunity, createTargetItem, ownerTypeCode, setProductRows, supportsOpportunity } from '../server/utils/crmWrite'
 import { findCompanyByTaxId } from '../server/utils/companyLookup'
-import { TODO_COLOR_CLEAN, TODO_COLOR_ISSUES, buildActivityInput, buildTodoActivity, entityOpenPath } from '../server/utils/todoActivity'
+import { DESCRIPTION_TYPE_BB, TODO_COLOR_CLEAN, TODO_COLOR_ISSUES, activityMarkerFilter, buildActivityInput, buildActivityMarkerFields, buildTodoActivity, entityOpenPath } from '../server/utils/todoActivity'
 
 describe('computeOpportunity', () => {
   // Контракт: сюда приходят строки от buildProductRow, где `price` УЖЕ валовая (#302).
@@ -228,6 +228,19 @@ describe('disk + activity', () => {
     // подставит владельца токена — хуже, но не «ничего».
     const a = buildTodoActivity(buildActivityInput({ entityTypeId: 2, entityId: 5, rowCount: 1, warnings: [], nowMs: 0 }))
     expect(a).not.toHaveProperty('responsibleId')
+  })
+
+  it('маркер приложения едет ОДНИМ вызовом с разметкой', () => {
+    // Два отдельных `update` стоили бы лишнего обращения к порталу на каждый импорт.
+    const f = buildActivityMarkerFields('ai-price-import', 'job-1')
+    expect(f).toEqual({ DESCRIPTION_TYPE: DESCRIPTION_TYPE_BB, ORIGINATOR_ID: 'ai-price-import', ORIGIN_ID: 'job-1' })
+  })
+
+  it('фильтр журнала ищет ТОЛЬКО свои дела, а по заданию — конкретное', () => {
+    // Без `ORIGINATOR_ID` выборка забрала бы чужие дела портала; с `ORIGIN_ID` тот же фильтр
+    // служит защитой от второго дела при повторной доставке задания.
+    expect(activityMarkerFilter('ai-price-import')).toEqual({ ORIGINATOR_ID: 'ai-price-import' })
+    expect(activityMarkerFilter('ai-price-import', 'job-1')).toEqual({ ORIGINATOR_ID: 'ai-price-import', ORIGIN_ID: 'job-1' })
   })
 
   it('контрагент найден → владелец дела КОМПАНИЯ, а не созданная сущность', () => {

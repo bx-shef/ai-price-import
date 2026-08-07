@@ -125,6 +125,33 @@ export function buildActivityBody(input: ActivityBodyInput): string {
   return blocks.join('\n')
 }
 
+/**
+ * Поля, дописываемые к делу ОДНИМ вызовом `crm.activity.update` сразу после создания:
+ * разметка описания и МАРКЕР приложения.
+ *
+ * ⚠ Маркер — `ORIGINATOR_ID` («Внешний источник») + `ORIGIN_ID` («Внешний код», у нас id задания).
+ * Это штатные поля дела под внешние системы, и главное — **`crm.activity.list` фильтруется по
+ * `ORIGINATOR_ID` БЕЗ указания владельца** (live-verified 06.08.2026: `total=1` на портале с
+ * чужими делами). Именно это делает исполнимым экран «журнал импортов» — иначе свои дела пришлось
+ * бы искать перебором карточек, то есть никак.
+ * ⚠ У `crm.activity.todo.add` этих параметров НЕТ — только через `update`. Поэтому вызов один и
+ * общий с разметкой: два отдельных стоили бы лишнего обращения к порталу на каждый импорт.
+ * ⚠ `ORIGIN_ID` — id задания, тот же, что у маркера созданной сущности. Это даёт делу
+ * идемпотентность: повторная доставка задания находит своё дело, а не заводит второе.
+ */
+export function buildActivityMarkerFields(originatorCode: string, jobId: string): Record<string, unknown> {
+  return {
+    DESCRIPTION_TYPE: DESCRIPTION_TYPE_BB,
+    ORIGINATOR_ID: originatorCode,
+    ORIGIN_ID: jobId
+  }
+}
+
+/** Фильтр для поиска НАШИХ дел (экран журнала + защита от дубля). */
+export function activityMarkerFilter(originatorCode: string, jobId?: string): Record<string, string> {
+  return { ORIGINATOR_ID: originatorCode, ...(jobId ? { ORIGIN_ID: jobId } : {}) }
+}
+
 export interface TodoActivityInput {
   /** Владелец дела — карточка, где оно физически живёт (компания либо созданная сущность). */
   ownerTypeId: number

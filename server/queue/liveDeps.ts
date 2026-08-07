@@ -32,7 +32,8 @@ import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_ME
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { DESCRIPTION_TYPE_BB, buildActivityInput, buildFileAttachment, buildTodoActivity } from '../utils/todoActivity'
+import { buildActivityInput, buildActivityMarkerFields, buildFileAttachment, buildTodoActivity } from '../utils/todoActivity'
+import { originatorCode } from '../utils/originMarker'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
@@ -641,10 +642,16 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // дефолт `2` (HTML) показал бы BB-код исходником — человек читал бы «[B]Поставщик:[/B]»
       // буквально в КАЖДОМ деле. Отдельный вызов best-effort: без него дело всё равно ценнее,
       // чем его отсутствие.
+      // Тем же вызовом ставится МАРКЕР приложения (`ORIGINATOR_ID`/`ORIGIN_ID`) — по нему экран
+      // журнала находит свои дела, а повторная доставка задания находит СВОЁ дело вместо того,
+      // чтобы завести второе. Оба поля у `todo.add` отсутствуют, только `update`.
       try {
-        await call('crm.activity.update', { id: activityId, fields: { DESCRIPTION_TYPE: DESCRIPTION_TYPE_BB } })
+        await call('crm.activity.update', {
+          id: activityId,
+          fields: buildActivityMarkerFields(originatorCode(process.env.IMPORT_ORIGINATOR_ID), jobId)
+        })
       } catch (e) {
-        console.warn('[crm-sync] описание дела осталось без BB-разметки; job', jobId, '-', (e as { message?: string })?.message ?? e)
+        console.warn('[crm-sync] дело осталось без разметки и маркера; job', jobId, '-', (e as { message?: string })?.message ?? e)
       }
 
       // Исходный документ ВЛОЖЕНИЕМ. Байты берём из загрузки задания — они живут до конца crm-sync
