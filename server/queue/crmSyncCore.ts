@@ -77,6 +77,12 @@ export interface CrmSyncDeps {
     companyId?: number | null
     supplierName?: string
     rowCount: number
+    /** Сколько строк связано с каталогом — блок «Позиций: N · сопоставлено: M» в деле. */
+    matchedCount?: number | null
+    /** Готовая подпись суммы для дела («10 320,00 BYN»). Собирается ЗДЕСЬ, а не в проводке, чтобы
+     *  число в деле приходило из того же расчёта, что и сумма записи: два независимых
+     *  форматирования разъехались бы, и дело сообщало бы сумму, отличную от карточки. */
+    amountLabel?: string
     /** Import problems (товар не найден / единица / НДС уточнён / итог не сошёлся …) to record on the
      *  timeline дело so the operator sees what needed attention — not just the success counts. */
     warnings: string[]
@@ -395,6 +401,14 @@ export async function runCrmSync(
     warnings.push(noLinesMatchedWarning(Boolean(mapping.article.field)))
   }
 
+  // Подпись суммы для дела таймлайна. Считается ОДИН раз и здесь же, где считается сумма записи:
+  // отдельный расчёт в проводке рано или поздно разошёлся бы с карточкой, и дело сообщало бы
+  // человеку не то число, которое стоит в CRM.
+  // ⚠ Валюты может не быть — тогда печатаем голое число, а не выдуманный код.
+  const activityAmountLabel = Number.isFinite(pricing.grossTotal)
+    ? `${pricing.grossTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${doc.currency ? ` ${doc.currency}` : ''}`
+    : ''
+
   const entityTypeId = target.entityTypeId
   let entityId: number
   let created: boolean
@@ -484,7 +498,7 @@ export async function runCrmSync(
   // no-op only on the dev webhook path, never in prod.
   if (deps.writeActivity && finalize) {
     try {
-      await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings, advice })
+      await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, matchedCount: matchedLines, amountLabel: activityAmountLabel, warnings, advice })
     } catch {
       warnings.push('Документ внесён, но запись в таймлайне создать не удалось. На сам импорт это не влияет — товары в CRM записаны.')
     }

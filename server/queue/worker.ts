@@ -154,12 +154,15 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
     }, async () => {
       // Handled failures set 'error' and return {ok:false}; only an infra throw propagates (→ retry).
       const res = await handleFileExtractJob(data, fileExtract)
-      // Drop the uploaded bytes as soon as the text is out — data minimisation, owner's decision
-      // (#349): the client's document must not sit on our disk for a day just so a 👎 can attach it.
-      // #200 had kept them for the job's whole TTL for exactly that reason; the feedback widget now
-      // sends the bytes it still holds in PAGE MEMORY instead, so nothing is retained server-side and
-      // the «документ не распознан» case still has a file to reproduce from while the tab is open.
-      await cleanupUpload(data)
+      // ⚠ Байты живут ДО КОНЦА crm-sync, а не до конца этой стадии (#458, решение владельца
+      // 06.08.2026). Раньше они удалялись прямо здесь, и это было верно, пока документ уезжал
+      // отдельной копией на Диск портала: дело несло лишь ссылку. Теперь документ ВЛОЖЕН в дело,
+      // а дело создаётся на стадии crm-sync — при прежнем сроке вкладывать было бы уже нечего.
+      // Срок вырос с «секунды» до «секунды-минуты»; это по-прежнему время обработки, а не окно
+      // хранения, и записано в Политике, а не подразумевается.
+      // ⚠ Здесь удаляем ТОЛЬКО на разобранном отказе: дальше стадий не будет, и файл иначе
+      // дожил бы до подметальщика сирот, то есть до шести часов вместо минут.
+      if (!res.ok) await cleanupUpload(data)
       return res
     }, res => ({ 'job.ok': res.ok }))
   }, { connection, concurrency: cc.extract })
@@ -170,7 +173,13 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
     await withSpan('agent-run', {
       'job.queue': 'agent-run',
       'portal.hash': portalHash(data.memberId)
-    }, () => handleAgentRunJob(data, agentRun), res => ({ 'job.ok': res.ok }))
+    }, async () => {
+      const res = await handleAgentRunJob(data, agentRun)
+      // Разобранный отказ распознавания терминален — дальше crm-sync не будет, и без этой строки
+      // документ дожил бы до подметальщика сирот (шесть часов) вместо минут.
+      if (!res.ok) await cleanupUpload(data)
+      return res
+    }, res => ({ 'job.ok': res.ok }))
   }, { connection, concurrency: cc.agent })
 
   const crm = new Worker(QUEUES.crmSync, async (job) => {
@@ -180,7 +189,16 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
     await withSpan('crm-sync', {
       'job.queue': 'crm-sync',
       'portal.hash': portalHash(data.memberId)
-    }, () => handleCrmSyncJob(data, crmSync), result => result
+    }, async () => {
+      const result = await handleCrmSyncJob(data, crmSync)
+      // Терминальная стадия конвейера: дело записано (или отказ разобран) — документ больше не
+      // нужен никому, удаляем.
+      // ⚠ Удаление стоит ПОСЛЕ обработчика и НЕ в `finally`: бросок означает ретрай всей джобы, а
+      // ретраю нужны те же байты. Сгоревшие попытки подметает `onExhausted` ниже — то есть файл
+      // исчезает на каждом терминальном исходе, но ни на одном промежуточном.
+      await cleanupUpload(data)
+      return result
+    }, result => result
       ? {
           'proc.created': result.created,
           'proc.lines': result.rowCount,
@@ -200,8 +218,8 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
   // wording presumes the document reached the portal. A failure in extract/agent (OCR, LLM, storage)
   // never got there, so naming a target — let alone advising to change it — would be a wrong lead.
   onExhausted(extract, infra, cleanupUpload)
-  onExhausted(agent, infra)
-  onExhausted(crm, infra, undefined, true)
+  onExhausted(agent, infra, cleanupUpload)
+  onExhausted(crm, infra, cleanupUpload, true)
 
   return [extract, agent, crm]
 }

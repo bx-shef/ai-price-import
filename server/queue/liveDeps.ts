@@ -10,7 +10,7 @@ import { createPortalSdkResolver, makePortalSdkCall, sdkPortalDeps, sdkRefreshTr
 import { buildBotUnregister, createBotIdCache, errorCode, forgetPortalBot, pushBotProfile, resolveBotId } from '../utils/chatBot'
 import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
-import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getDiskFileUrl, getJob, getManualOverride, getUploaderId, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../utils/jobStore'
+import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getJob, getManualOverride, getUploaderId, setJobStatus } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
@@ -32,7 +32,7 @@ import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_ME
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { buildActivityInput, buildConfigurableActivity } from '../utils/configurableActivity'
+import { DESCRIPTION_TYPE_BB, buildActivityInput, buildFileAttachment, buildTodoActivity } from '../utils/todoActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
@@ -404,26 +404,10 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
       await notifyImportFailure(infra, m, j, reason, { rest: sharedRest })
     },
     markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', jobRedis),
-    // Archive the source file to the portal's common Disk when `saveFile` is on. One transport
-    // is resolved and shared by the mapping read and the Disk upload (no double token-load); the
-    // raw bytes come from the upload dir (this is the last stage where they exist). A Disk hiccup
-    // is swallowed by the handler — the import proceeds.
-    saveSourceFile: makeSaveSourceFile({
-      resolveCall: sharedRest,
-      // Настройки не прочитались ⇒ архивирование НЕ делаем (#373, ревью): `saveFile` включён по
-      // умолчанию, поэтому обычный фолбэк на дефолты скопировал бы документ клиента на Диск портала
-      // как раз тогда, когда мы не знаем, не выключил ли админ это сам. Архив best-effort — его
-      // пропуск не роняет импорт, а лишняя копия чужого документа необратима.
-      loadMapping: call => readMapping(call).catch(() => ({ ...defaultMapping(), saveFile: false })),
-      readBytes: (m, j) => readFile(uploadPath(m, j)),
-      // Serialize the Disk write per portal so concurrent scale-out workers don't duplicate the
-      // shared app/month folders (B24 Disk has no atomic create-if-absent). Same primitive as the
-      // token-refresh path (#35); the lock ignores the injected QueryFn (no DB work in the archive).
-      serialize: (key, fn) => withAdvisoryLock(key, () => fn()),
-      // Persist the archived file ref so crm-sync can link it on the timeline дело (#129 follow-up).
-      recordDiskFile: (m, j, ref) => setDiskFile(m, j, ref, jobRedis),
-      now: infra.now
-    })
+    // ⚠ Архивной копии на Диске БОЛЬШЕ НЕТ (#458, решение владельца): документ вкладывается в
+    // само дело таймлайна, поэтому вторая копия по второму адресу — лишнее хранилище чужих
+    // документов, которым мы не управляем. Вместе с ней ушли настройка «сохранять исходный файл»
+    // и право `disk` в скоупе приложения.
   }
 }
 
@@ -615,73 +599,107 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       const domain = (await getToken(memberId, infra.query))?.domain
       await sendChatMessage(mapping.notifyChatId, buildSuccessMessage(summary, domain), t.call, await botId(), console.warn)
     },
-    // Configurable timeline activity (crm.activity.configurable.add, OAuth app context — verified live).
-    // OWNER MODEL (owner ask, live-verified): a дело has ONE owner (ownerTypeId/ownerId — where it
-    // physically lives); every other entity is an ADDITIONAL binding via crm.activity.binding.add.
-    //   • company matched → owner = COMPANY, +binding to the created entity (deal/lead/invoice/СПА);
-    //   • no company      → owner = the created entity (nothing else to bind).
-    // So exactly ONE activity is written (was two) and it shows in BOTH timelines via the binding.
-    // Best-effort; runCrmSync swallows failures.
-    writeActivity: async ({ entityTypeId, entityId, companyId, supplierName, rowCount, warnings, advice }) => {
-      // Link the archived source file on the дело when it was saved to the Disk (#129 follow-up).
-      // Best-effort — a lookup failure just omits the button, never fails the import.
-      // A read failure here used to be fully silent (`.catch(() => null)`), so a missing «Исходный
-      // файл» button left no trace anywhere — it had to be caught by hand (#263). Still best-effort,
-      // but now loud in the log. `null` without a throw is normal (saveFile off / not archived yet).
-      const sourceFileUrl = await getDiskFileUrl(memberId, jobId, jobRedis).catch((e: unknown) => {
-        console.warn('[crm-sync] source file link unavailable for job', jobId, '-', e instanceof Error ? e.message : String(e))
-        return null
-      })
-      // Archiving is ON but no link: the дело is about to be written without the «Исходный файл»
-      // button, and until now that vanished without a trace anywhere (#263). Decision is a pure,
-      // tested predicate — see shouldWarnMissingArchive for why the wording names no cause.
-      if (shouldWarnMissingArchive(mapping.saveFile, sourceFileUrl)) {
-        console.warn('[crm-sync] saveFile is on but no archive link — дело written without the «Исходный файл» button; job', jobId, 'portal', portalHash(memberId))
-      }
-      // Record import PROBLEMS on the timeline дело (owner ask) so the operator sees what needed
-      // attention — товар не найден / единица / НДС уточнён / итог не сошёлся. Capped so the body
-      // stays within B24's block limit (buildConfigurableActivity slices to 10 total).
-      // Сборка тела дела — чистая функция (`buildActivityLines`): здесь она была невидима для
-      // тестов, и мутация «убрать совет» или «вернуть его внутрь обрезаемого списка» проходила
-      // при всех зелёных проверках.
+    // Дело таймлайна — УНИВЕРСАЛЬНОЕ (`crm.activity.todo.add`, #328). Конфигурируемое ушло вместе
+    // с Диском: оно не носит файлов, поэтому документ жил отдельной копией на Диске, а дело —
+    // ссылкой на неё. Теперь документ ВЛОЖЕН в само дело, и копия ровно одна.
+    //
+    // МОДЕЛЬ ВЛАДЕЛЬЦА (не изменилась, проверена живьём и на новом носителе): у дела ОДИН владелец
+    // (`ownerTypeId`/`ownerId` — карточка, где оно физически лежит), всё остальное — привязки через
+    // `crm.activity.binding.add`.
+    //   • контрагент найден → владелец КОМПАНИЯ, + привязка к созданной сущности;
+    //   • не найден         → владелец сама сущность (привязывать нечего).
+    // Пишется РОВНО ОДНО дело и видно оно в обоих таймлайнах. Best-effort: runCrmSync глотает сбои.
+    writeActivity: async ({ entityTypeId, entityId, companyId, supplierName, rowCount, matchedCount, amountLabel, warnings, advice }) => {
       const call = (await need()).call
-      // Компания найдена → она владелец дела, а созданная сущность привязывается вторым шагом.
       const hasCompany = !!companyId && companyId > 0
       // Вход дела собирает ЧИСТАЯ функция (`buildActivityInput`): здесь её было не достать тестом,
       // и подмена признака «чистый импорт» дублирующим ключом проходила при зелёных проверках.
-      // ONE дело. Owner = the client company when matched (its card is the natural home), else the
-      // created entity. «Открыть» jumps to the created entity from the company timeline; with no company
-      // the owner IS the entity → no button (nothing else to open).
-      const res = await call('crm.activity.configurable.add', buildConfigurableActivity(buildActivityInput({
+      const input = buildActivityInput({
         entityTypeId,
         entityId,
         companyId,
         supplierName,
         rowCount,
+        matchedCount,
+        amountLabel,
         warnings,
         advice,
-        sourceFileUrl,
-        // Имя файла — подпись ссылки в деле (#328). Берём из задания; нет — билдер подставит
-        // нейтральное «Открыть файл».
-        ...(sourceFileUrl ? { sourceFileName: (await getJob(memberId, jobId, jobRedis))?.fileName ?? '' } : {})
-      }))) as { activity?: { id?: number } } | undefined
-      // Additional binding to the created entity so the SAME дело shows on both the company AND the
-      // entity timeline (crm.activity.binding.add — live-verified with a configurable activity). Best-
-      // effort: the дело is already on the company timeline; a binding failure (or already-bound) is fine.
-      const activityId = res?.activity?.id
-      if (hasCompany && activityId) {
+        nowMs: Date.now()
+      })
+      const res = await call('crm.activity.todo.add', buildTodoActivity(input)) as { id?: number } | number | undefined
+      const activityId = Number((res as { id?: number })?.id ?? res)
+      if (!Number.isFinite(activityId) || activityId <= 0) return
+
+      // ⚠ Разметка включается ОТДЕЛЬНЫМ вызовом: у `todo.add` параметра под тип описания нет, а
+      // дефолт `2` (HTML) показал бы BB-код исходником — человек читал бы «[B]Поставщик:[/B]»
+      // буквально в КАЖДОМ деле. Отдельный вызов best-effort: без него дело всё равно ценнее,
+      // чем его отсутствие.
+      try {
+        await call('crm.activity.update', { id: activityId, fields: { DESCRIPTION_TYPE: DESCRIPTION_TYPE_BB } })
+      } catch (e) {
+        console.warn('[crm-sync] описание дела осталось без BB-разметки; job', jobId, '-', (e as { message?: string })?.message ?? e)
+      }
+
+      // Исходный документ ВЛОЖЕНИЕМ. Байты берём из загрузки задания — они живут до конца crm-sync
+      // (#458, решение владельца): раньше файл удалялся сразу после извлечения текста, и на этой
+      // стадии вкладывать было уже нечего. Единственная принимаемая порталом форма — `fileData`
+      // (#328); привязать по id файл, лежащий на Диске, по REST нельзя нигде.
+      // Best-effort: дело без вложения полезнее отсутствующего дела.
+      try {
+        const bytes = await readUploadBytes(memberId, jobId)
+        if (bytes) {
+          const fileName = (await getJob(memberId, jobId, jobRedis))?.fileName || 'документ'
+          await call('crm.activity.update', {
+            id: activityId,
+            fields: buildFileAttachment(fileName, Buffer.from(bytes).toString('base64'))
+          })
+        } else {
+          // Не молчим: без файла дело выглядит нормальным, и пропажу вложения иначе пришлось бы
+          // ловить руками — ровно тот дефект, что чинили в #263 у ссылки на архив.
+          console.warn('[crm-sync] исходный файл недоступен — дело записано без вложения; job', jobId, 'portal', portalHash(memberId))
+        }
+      } catch (e) {
+        console.warn('[crm-sync] вложить файл в дело не удалось; job', jobId, '-', (e as { message?: string })?.message ?? e)
+      }
+
+      // Чистый импорт — дело ЗАКРЫВАЕМ. Отдельным вызовом, потому что `todo.add` создаёт дело
+      // только открытым: параметра «создать завершённым» у метода нет.
+      if (input.clean) {
+        try {
+          await call('crm.activity.update', { id: activityId, fields: { COMPLETED: 'Y' } })
+        } catch (e) {
+          console.warn('[crm-sync] дело не закрылось; job', jobId, '-', (e as { message?: string })?.message ?? e)
+        }
+      }
+
+      // Привязка к созданной сущности, чтобы ОДНО дело было видно и в таймлайне компании, и в
+      // таймлайне сущности (`crm.activity.binding.add` — проверено живьём и на универсальном деле).
+      if (hasCompany) {
         try {
           await call('crm.activity.binding.add', { activityId, entityTypeId, entityId })
         } catch (e) {
-          // Best-effort: the дело is on the company timeline regardless. But log it (not silent) — a
-          // binding failure means the дело WON'T show on the entity (deal/…) timeline, where the manager
-          // usually looks. The withDependencySpan wrapper records the REST error separately; this warn
-          // makes it visible in plain logs too.
+          // Best-effort: дело уже в таймлайне компании. Но пишем в лог — без привязки его НЕ будет
+          // видно в карточке сделки, куда менеджер и смотрит.
           console.warn(`[crm-sync] activity binding failed (activity ${activityId} → entity ${entityTypeId}:${entityId}):`, (e as { message?: string })?.message ?? e)
         }
       }
     }
   }
+}
+
+/**
+ * Байты загруженного документа для вложения в дело (#458).
+ *
+ * ⚠ Файл теперь живёт до КОНЦА crm-sync, а не до конца извлечения текста: дело создаётся именно
+ * здесь, и при прежнем сроке вкладывать было бы уже нечего. Срок вырос с «секунды» до
+ * «секунды-минуты» — это записано в Политике, а не подразумевается.
+ * ⚠ Отсутствие файла — НЕ ошибка: задание могло прийти повторной доставкой уже после уборки.
+ * Возвращаем `null`, а зовущий пишет об этом в журнал.
+ */
+async function readUploadBytes(memberId: string, jobId: string): Promise<Uint8Array | null> {
+  const { readFile } = await import('node:fs/promises')
+  const { uploadPath } = await import('../utils/fileStore')
+  return await readFile(uploadPath(memberId, jobId)).catch(() => null)
 }
 
 /** crm-sync handler deps: mapping + stored doc + per-job crm deps + status + cleanup. */
