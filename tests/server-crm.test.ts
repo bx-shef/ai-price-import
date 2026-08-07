@@ -232,15 +232,15 @@ describe('disk + activity', () => {
 
   it('маркер приложения едет ОДНИМ вызовом с разметкой', () => {
     // Два отдельных `update` стоили бы лишнего обращения к порталу на каждый импорт.
-    const f = buildActivityMarkerFields('ai-price-import', 'job-1')
-    expect(f).toEqual({ DESCRIPTION_TYPE: DESCRIPTION_TYPE_BB, ORIGINATOR_ID: 'ai-price-import', ORIGIN_ID: 'job-1' })
+    const f = buildActivityMarkerFields('SH_APP_IMPORT_PRICE_AI', 'job-1')
+    expect(f).toEqual({ DESCRIPTION_TYPE: DESCRIPTION_TYPE_BB, ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI', ORIGIN_ID: 'job-1' })
   })
 
   it('фильтр журнала ищет ТОЛЬКО свои дела, а по заданию — конкретное', () => {
     // Без `ORIGINATOR_ID` выборка забрала бы чужие дела портала; с `ORIGIN_ID` тот же фильтр
     // служит защитой от второго дела при повторной доставке задания.
-    expect(activityMarkerFilter('ai-price-import')).toEqual({ ORIGINATOR_ID: 'ai-price-import' })
-    expect(activityMarkerFilter('ai-price-import', 'job-1')).toEqual({ ORIGINATOR_ID: 'ai-price-import', ORIGIN_ID: 'job-1' })
+    expect(activityMarkerFilter('SH_APP_IMPORT_PRICE_AI')).toEqual({ ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI' })
+    expect(activityMarkerFilter('SH_APP_IMPORT_PRICE_AI', 'job-1')).toEqual({ ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI', ORIGIN_ID: 'job-1' })
   })
 
   it('контрагент найден → владелец дела КОМПАНИЯ, а не созданная сущность', () => {

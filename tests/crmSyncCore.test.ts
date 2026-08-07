@@ -47,7 +47,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
       // Deal (2) carries the origin marker (originId=jobId + originatorId) for idempotency.
       expect.objectContaining({
         companyId: 42, currencyId: 'BYN', opportunity: 200, isManualOpportunity: 'Y',
-        originId: 'job1', originatorId: 'ai-price-import'
+        originId: 'job1', originatorId: 'SH_APP_IMPORT_PRICE_AI'
       })
     )
     expect(deps.setRows).toHaveBeenCalledWith(2, 555, expect.arrayContaining([
@@ -243,7 +243,7 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
   it('searches B24 for the job marker BEFORE creating (deal → filter on originId+originatorId)', async () => {
     const deps = baseDeps()
     await runCrmSync('job1', doc, mapping(), {}, deps)
-    expect(deps.findExisting).toHaveBeenCalledWith(2, { '=originId': 'job1', '=originatorId': 'ai-price-import' })
+    expect(deps.findExisting).toHaveBeenCalledWith(2, { '=originId': 'job1', '=originatorId': 'SH_APP_IMPORT_PRICE_AI' })
   })
 
   it('smart-invoice target → xmlId marker + xmlId search filter', async () => {
@@ -251,10 +251,10 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     m.defaultTarget = { entityTypeId: 31 }
     const deps = baseDeps()
     await runCrmSync('job1', doc, m, {}, deps)
-    expect(deps.findExisting).toHaveBeenCalledWith(31, { '=xmlId': 'ai-price-import:job1' })
+    expect(deps.findExisting).toHaveBeenCalledWith(31, { '=xmlId': 'SH_APP_IMPORT_PRICE_AI:job1' })
     expect(deps.createTarget).toHaveBeenCalledWith(
       expect.objectContaining({ entityTypeId: 31 }),
-      expect.objectContaining({ xmlId: 'ai-price-import:job1' })
+      expect.objectContaining({ xmlId: 'SH_APP_IMPORT_PRICE_AI:job1' })
     )
   })
 
@@ -466,12 +466,12 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
         companyId: 42,
         // lead is money-bearing (#135) → explicit total, like a deal
         opportunity: 200, isManualOpportunity: 'Y', currencyId: 'BYN',
-        originId: 'job1', originatorId: 'ai-price-import'
+        originId: 'job1', originatorId: 'SH_APP_IMPORT_PRICE_AI'
       })
     )
     expect(deps.createTarget).toHaveBeenCalledWith(expect.any(Object), expect.not.objectContaining({ companyTitle: expect.anything() }))
     // marker search runs on the lead type (entityTypeId 1 → origin strategy)
-    expect(deps.findExisting).toHaveBeenCalledWith(1, { '=originId': 'job1', '=originatorId': 'ai-price-import' })
+    expect(deps.findExisting).toHaveBeenCalledWith(1, { '=originId': 'job1', '=originatorId': 'SH_APP_IMPORT_PRICE_AI' })
     // product rows written with the lead ownerType (entityTypeId 1 → 'L' resolved in setRows)
     expect(deps.setRows).toHaveBeenCalledWith(1, 555, expect.any(Array))
   })
