@@ -612,6 +612,14 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       const hasCompany = !!companyId && companyId > 0
       // Вход дела собирает ЧИСТАЯ функция (`buildActivityInput`): здесь её было не достать тестом,
       // и подмена признака «чистый импорт» дублирующим ключом проходила при зелёных проверках.
+      // ⚠ Ответственный — ТОТ, КТО ЗАГРУЗИЛ документ (решение владельца 06.08.2026), а не владелец
+      // токена. Без этого дело доставалось администратору, чьим OAuth-токеном работает
+      // приложение: у него в списке дел копились чужие импорты, а человек, загрузивший накладную,
+      // своего дела не видел вовсе — то есть напоминание о замечаниях приходило не тому.
+      // ⚠ Id сотрудника не узнали (задание пришло повторной доставкой, запись истекла) ⇒ поле НЕ
+      // ставим: портал подставит владельца токена, и это по-прежнему лучше, чем несуществующий id,
+      // на котором вызов отвергается целиком и дела не будет вовсе.
+      const uploader = Number(await getUploaderId(memberId, jobId, jobRedis))
       const input = buildActivityInput({
         entityTypeId,
         entityId,
@@ -622,7 +630,8 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         amountLabel,
         warnings,
         advice,
-        nowMs: Date.now()
+        nowMs: Date.now(),
+        ...(Number.isInteger(uploader) && uploader > 0 ? { responsibleId: uploader } : {})
       })
       const res = await call('crm.activity.todo.add', buildTodoActivity(input)) as { id?: number } | number | undefined
       const activityId = Number((res as { id?: number })?.id ?? res)

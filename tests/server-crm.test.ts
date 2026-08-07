@@ -214,6 +214,22 @@ describe('disk + activity', () => {
     expect(input.description).toContain('Проблемы (1)')
   })
 
+  it('ответственный — загрузивший документ, а не владелец токена', () => {
+    // Без этого дело доставалось администратору, чьим OAuth-токеном работает приложение: у него
+    // копились чужие импорты, а человек, загрузивший накладную, своего дела не видел вовсе.
+    const a = buildTodoActivity(buildActivityInput({
+      entityTypeId: 2, entityId: 5, rowCount: 1, warnings: [], nowMs: 0, responsibleId: 17
+    }))
+    expect(a.responsibleId).toBe(17)
+  })
+
+  it('загрузивший неизвестен → поле НЕ ставим, а не шлём мусор', () => {
+    // Несуществующий id отвергается порталом целиком, и дела не будет вовсе; без поля портал
+    // подставит владельца токена — хуже, но не «ничего».
+    const a = buildTodoActivity(buildActivityInput({ entityTypeId: 2, entityId: 5, rowCount: 1, warnings: [], nowMs: 0 }))
+    expect(a).not.toHaveProperty('responsibleId')
+  })
+
   it('контрагент найден → владелец дела КОМПАНИЯ, а не созданная сущность', () => {
     const input = buildActivityInput({ entityTypeId: 2, entityId: 5, companyId: 42, rowCount: 1, warnings: [], nowMs: 0 })
     expect(input.ownerTypeId).toBe(4)
