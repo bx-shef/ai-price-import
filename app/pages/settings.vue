@@ -93,7 +93,7 @@ async function closeAfter(): Promise<void> {
 const SECTIONS = [
   { id: 'routing', label: 'Куда импортировать', description: 'Целевая сущность по умолчанию и правила: какие документы куда вносить.' },
   { id: 'products', label: 'Товары и единицы', description: 'По какому полю искать товар в каталоге, что делать с ненайденными и как читать единицы измерения.' },
-  { id: 'notify', label: 'Файл и уведомления', description: 'Копия исходного файла на Диске и чаты, куда приходят сообщения об импорте.' },
+  { id: 'notify', label: 'Уведомления', description: 'Чаты, куда приходят сообщения об импорте и об ошибках.' },
   { id: 'savings', label: 'Экономия', description: 'Ставка часа для плитки «Сэкономлено денег» на главном экране.' }
 ] as const
 const sectionNav = computed(() => SECTIONS.map(x => ({ label: x.label, to: `#${x.id}` })))
@@ -433,6 +433,9 @@ const ARTICLE_KIND_ITEMS = [
                   <div class="space-y-6">
                     <!-- Целевая сущность по умолчанию — тот же TargetPicker, что и на импорте (без «Авто»). -->
                     <B24FormField label="Куда вносить документы по умолчанию">
+                      <p class="mb-2 text-xs text-(--ui-color-base-3)">
+                        Сюда попадут документы, для которых не сработало ни одно правило ниже — <b>и те, которые не удалось разобрать</b>. Приложение создаёт запись на каждую загрузку, даже неудачную: иначе такая загрузка не оставила бы в CRM никакого следа, и о ней узнали бы только случайно.
+                      </p>
                       <TargetPicker
                         v-model:target="defaultTargetModel"
                         :include-auto="false"
