@@ -38,7 +38,8 @@
     "verify:legal": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-legal-notice.mjs",
     "verify:llm": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-llm-failure.mjs",
     "verify:fail": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-fail-notify.mjs",
-    "ab:prompt": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/ab-prompt.mjs"
+    "ab:prompt": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/ab-prompt.mjs",
+    "probe:todo": "node --experimental-strip-types scripts/probe-todo-carrier.mjs"
   },
   "dependencies": {
     "@bitrix24/b24icons-vue": "^2.0.8",

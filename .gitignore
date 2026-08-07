@@ -52,3 +52,4 @@ appendonlydir/
 # Гард индекса — tests/noLocalArtifacts.test.ts.
 ab-prompt*.json
 probe-328-showcase.json
+probe-todo-carrier.json
