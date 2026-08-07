@@ -41,6 +41,15 @@ const props = withDefaults(defineProps<{
   selectedOption?: Option
   /** Ключ, по которому строки группируются заголовками. Пусто — плоский список. */
   groupKey?: string
+  /**
+   * Показывать кнопку «Очистить» рядом с полем (решение владельца 06.08.2026).
+   *
+   * ⚠ Нужна потому, что у выпадающего списка НЕТ пункта «ничего»: выбрав чат или свойство один раз,
+   * админ не мог вернуться к «не выбрано» — только сбросить все настройки целиком. А «не выбрано»
+   * здесь осмысленный вариант: пустой чат значит «уведомления не нужны», пустое свойство артикула —
+   * «искать только по внешним кодам».
+   */
+  clearable?: boolean
 }>(), {
   labelKey: 'label',
   valueKey: 'value',
@@ -49,7 +58,8 @@ const props = withDefaults(defineProps<{
   placeholder: 'Начните вводить…',
   disabled: false,
   selectedOption: undefined,
-  groupKey: ''
+  groupKey: '',
+  clearable: false
 })
 
 /**
@@ -78,13 +88,29 @@ const menuItems = computed(() => {
 })
 
 /** Selected value (the `valueKey` of the chosen option), or undefined. */
+const emit = defineEmits<{ 'update:selectedOption': [Option | undefined] }>()
+
 const model = defineModel<string | undefined>()
+
+/** Есть ли что очищать. Пустая строка — тоже «не выбрано»: именно её кладут пикеры при сбросе. */
+const hasValue = computed(() => model.value !== undefined && model.value !== '')
+
+/**
+ * Сброс выбора.
+ *
+ * ⚠ Кладём `undefined`, а не пустую строку: потребители держат в модели либо код, либо
+ * «не выбрано», и пустая строка в сохранённых настройках выглядела бы как выбранное пустое
+ * значение. Заодно гасим подпись выбранной строки — иначе поле показывало бы прежнее имя
+ * при пустом значении.
+ */
+function clear(): void {
+  model.value = undefined
+  emit('update:selectedOption', undefined)
+}
 
 // Surface the chosen OPTION (not just its value) so a parent can persist its label
 // — the model only carries the valueKey, so a stored value alone can't show a name
 // on reload. Emitted when the selection resolves to a known row.
-const emit = defineEmits<{ 'update:selectedOption': [Option | undefined] }>()
-
 const { searchTerm, items, loading, error, tooShort, hasMore, loadMore, refresh } = useRemoteSearch<Option>({
   fetcher: props.fetcher,
   keyOf: item => String(item[props.valueKey]),
@@ -131,71 +157,87 @@ defineExpose({ refresh })
 </script>
 
 <template>
-  <B24SelectMenu
-    v-bind="$attrs"
-    v-model="model"
-    v-model:search-term="searchTerm"
-    :items="menuItems"
-    :loading="loading"
-    ignore-filter
-    :label-key="labelKey"
-    :value-key="valueKey"
-    :placeholder="placeholder"
-    :disabled="disabled"
-    class="w-full"
-    @update:open="onOpenChange"
-  >
-    <!-- Forward SelectMenu item slots so consumers can render avatars/subtitles. -->
-    <template
-      v-for="name in ['item', 'item-leading', 'item-trailing']"
-      #[name]="slotProps"
-      :key="name"
+  <!-- ⚠ Обёртка нужна только когда кнопка есть: у голого поля лишний flex-контейнер ломал бы
+       ширину в местах, где компонент лежит в своей сетке. -->
+  <div :class="clearable ? 'flex items-start gap-2' : undefined">
+    <B24SelectMenu
+      v-bind="$attrs"
+      v-model="model"
+      v-model:search-term="searchTerm"
+      :items="menuItems"
+      :loading="loading"
+      ignore-filter
+      :label-key="labelKey"
+      :value-key="valueKey"
+      :placeholder="placeholder"
+      :disabled="disabled"
+      class="w-full"
+      @update:open="onOpenChange"
     >
-      <slot
-        :name="name"
-        v-bind="slotProps"
-      />
-    </template>
+      <!-- Forward SelectMenu item slots so consumers can render avatars/subtitles. -->
+      <template
+        v-for="name in ['item', 'item-leading', 'item-trailing']"
+        #[name]="slotProps"
+        :key="name"
+      >
+        <slot
+          :name="name"
+          v-bind="slotProps"
+        />
+      </template>
 
-    <!-- Footer: search state + explicit load-more. -->
-    <template #content-bottom>
-      <div class="px-2 py-1.5 text-xs text-(--ui-color-base-3)">
-        <p
-          v-if="tooShort"
-          data-testid="too-short"
-        >
-          {{ hint }}
-        </p>
-        <div
-          v-else-if="error"
-          class="flex items-center justify-between gap-2"
-          data-testid="search-error"
-        >
-          <span class="text-(--ui-color-accent-main-alert)">{{ error }}</span>
+      <!-- Footer: search state + explicit load-more. -->
+      <template #content-bottom>
+        <div class="px-2 py-1.5 text-xs text-(--ui-color-base-3)">
+          <p
+            v-if="tooShort"
+            data-testid="too-short"
+          >
+            {{ hint }}
+          </p>
+          <div
+            v-else-if="error"
+            class="flex items-center justify-between gap-2"
+            data-testid="search-error"
+          >
+            <span class="text-(--ui-color-accent-main-alert)">{{ error }}</span>
+            <B24Button
+              size="xs"
+              color="air-secondary-no-accent"
+              label="Повторить"
+              @click="refresh()"
+            />
+          </div>
+          <p
+            v-else-if="!loading && items.length === 0"
+            data-testid="empty"
+          >
+            Ничего не найдено
+          </p>
           <B24Button
+            v-else-if="hasMore"
+            block
             size="xs"
             color="air-secondary-no-accent"
-            label="Повторить"
-            @click="refresh()"
+            :loading="loading"
+            label="Показать ещё"
+            data-testid="load-more"
+            @click="loadMore()"
           />
         </div>
-        <p
-          v-else-if="!loading && items.length === 0"
-          data-testid="empty"
-        >
-          Ничего не найдено
-        </p>
-        <B24Button
-          v-else-if="hasMore"
-          block
-          size="xs"
-          color="air-secondary-no-accent"
-          :loading="loading"
-          label="Показать ещё"
-          data-testid="load-more"
-          @click="loadMore()"
-        />
-      </div>
-    </template>
-  </B24SelectMenu>
+      </template>
+    </B24SelectMenu>
+
+    <!-- ⚠ Кнопка НЕ скрывается, когда поле пусто, а становится неактивной: исчезающий элемент
+         управления двигает соседние поля при каждом выборе, и человек промахивается мимо них. -->
+    <B24Button
+      v-if="clearable"
+      color="air-tertiary-no-accent"
+      size="md"
+      label="Очистить"
+      :disabled="disabled || !hasValue"
+      :aria-label="'Очистить выбранное значение'"
+      @click="clear"
+    />
+  </div>
 </template>

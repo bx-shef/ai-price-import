@@ -523,6 +523,7 @@ const ARTICLE_KIND_ITEMS = [
                         :fetcher="articleFetcher"
                         :selected-option="selectedArticle"
                         :min-chars="0"
+                        clearable
                         placeholder="Нажмите и выберите свойство каталога…"
                         group-key="group"
                         @update:selected-option="onArticlePicked"
@@ -661,6 +662,7 @@ const ARTICLE_KIND_ITEMS = [
                         :fetcher="chatFetcher"
                         :selected-option="selectedNotifyChat"
                         :min-chars="3"
+                        clearable
                         placeholder="Нажмите и выберите чат…"
                         @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedNotifyChat = o }"
                       />
@@ -676,6 +678,7 @@ const ARTICLE_KIND_ITEMS = [
                         :fetcher="chatFetcher"
                         :selected-option="selectedErrorChat"
                         :min-chars="3"
+                        clearable
                         placeholder="Нажмите и выберите чат…"
                         @update:selected-option="(o: Record<string, unknown> | undefined) => { selectedErrorChat = o }"
                       />
