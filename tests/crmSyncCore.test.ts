@@ -61,9 +61,12 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const deps = baseDeps()
     const d: ExtractedDocument = { ...doc, priceIncludesVat: false, items: [{ name: 'x', price: 1, quantity: 1, unit: 'шт', vatRate: -5 }] }
     const r = await runCrmSync('j', d, mapping(), {}, deps)
-    expect(r.created).toBe(false)
-    expect(deps.createTarget).not.toHaveBeenCalled()
+    // #459: запись создаётся даже на отказе — иначе загрузка не оставит следа в портале. Но
+    // отказ остаётся отказом: ошибка в результате и в чате, позиций нет.
     expect(r.errors.some(e => /отрицательная ставка НДС/i.test(e))).toBe(true)
+    expect(deps.createTarget).toHaveBeenCalled()
+    expect(r.rowCount).toBe(0)
+    expect(deps.setRows).not.toHaveBeenCalled()
   })
 
   it('vatRate 0 → «Без НДС» (taxRate null), NOT a lookup for a 0% portal rate', async () => {
@@ -435,8 +438,10 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     const bad: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт', vatRate: 25 }] }
     const deps = baseDeps({ claimFinalize })
     const r = await runCrmSync('job1', bad, mapping(), {}, deps)
-    expect(r.created).toBe(false)
-    expect(claimFinalize).not.toHaveBeenCalled() // nothing was created → nothing to finalize
+    // Карточка-след создана (#459), но ФИНАЛИЗАЦИЯ не происходит: успешного импорта не было, и
+    // сообщение «Готово» в чат по нему уходить не должно.
+    expect(r.errors.length).toBeGreaterThan(0)
+    expect(claimFinalize).not.toHaveBeenCalled()
   })
 
   it('claims AFTER setRows: a throwing setRows propagates and does NOT consume the claim (#164)', async () => {
@@ -600,11 +605,12 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     const deps = baseDeps()
     const bad: ExtractedDocument = { ...doc, items: [{ name: 'x', price: 10, quantity: 1, unit: 'шт', vatRate: 25 }] }
     const r = await runCrmSync('j', bad, mapping(), {}, deps)
-    expect(r.created).toBe(false)
     expect(r.errors.some(e => /25%/.test(e))).toBe(true)
     // reportErrors receives the supplier name (BB-safe chat context) …
     expect(deps.reportErrors).toHaveBeenCalledWith(expect.any(Array), 'ООО Ромашка')
-    expect(deps.createTarget).not.toHaveBeenCalled()
+    // #459: след в CRM есть, позиций в нём нет.
+    expect(deps.createTarget).toHaveBeenCalled()
+    expect(deps.setRows).not.toHaveBeenCalled()
   })
 
   it('hard error → notifySuccess is NOT called (no false success chat)', async () => {
@@ -633,9 +639,10 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
     const { priceIncludesVat, ...rest } = doc // omit the inclusion flag
     void priceIncludesVat
     const r = await runCrmSync('j', rest as ExtractedDocument, mapping(), {}, deps)
-    expect(r.created).toBe(false)
     expect(r.errors.some(e => /не понять, включён НДС/.test(e))).toBe(true)
-    expect(deps.createTarget).not.toHaveBeenCalled()
+    // #459: запись-след создаётся, но позиций в ней нет — импорт всё равно отказ.
+    expect(r.rowCount).toBe(0)
+    expect(deps.setRows).not.toHaveBeenCalled()
   })
 
   it('no VAT anywhere + priceIncludesVat undefined → OK (flag irrelevant)', async () => {
@@ -649,8 +656,8 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
   it('currency not in portal → error, NOT created', async () => {
     const deps = baseDeps({ portalCurrencies: vi.fn(async () => ['BYN']) })
     const r = await runCrmSync('j', { ...doc, currency: 'USD' }, mapping(), {}, deps)
-    expect(r.created).toBe(false)
     expect(r.errors.some(e => /USD/.test(e))).toBe(true)
+    expect(r.rowCount).toBe(0)
   })
 
   it('mixed items with one bad-VAT → whole doc aborts (no line loss, NO orphan catalog writes)', async () => {
@@ -669,9 +676,11 @@ describe('runCrmSync — hard errors abort (no partial entity, no line loss)', (
       ]
     }
     const r = await runCrmSync('j', d, m, {}, deps)
-    expect(r.created).toBe(false)
-    expect(deps.createTarget).not.toHaveBeenCalled()
+    // Несущее утверждение теста НЕ изменилось: каталог не тронут ни одной записью. Изменилось
+    // только то, что след в CRM теперь остаётся (#459) — но без позиций.
     expect(createMeasure).not.toHaveBeenCalled() // no orphan measure from line 'a'
+    expect(deps.setRows).not.toHaveBeenCalled()
+    expect(r.rowCount).toBe(0)
   })
 })
 
@@ -710,10 +719,11 @@ describe('runCrmSync — products / units / routing', () => {
       m.product.onMissing = 'skip-warn'
       const deps = baseDeps() // findProduct → null для обеих позиций
       const r = await runCrmSync('j', twoItems, m, {}, deps)
-      expect(r.created).toBe(false)
-      expect(r.entityId).toBe(0)
+      // #459 изменил ИСХОД, но не оценку: запись-след создаётся, позиций в ней нет, и это
+      // по-прежнему ОШИБКА, а не успех.
       expect(r.rowCount).toBe(0)
-      expect(deps.createTarget).not.toHaveBeenCalled()
+      expect(r.errors.length).toBeGreaterThan(0)
+      expect(deps.createTarget).toHaveBeenCalled()
       expect(deps.setRows).not.toHaveBeenCalled()
     })
 
@@ -725,8 +735,7 @@ describe('runCrmSync — products / units / routing', () => {
       m.product.onMissing = 'skip-warn'
       const deps = baseDeps()
       const r = await runCrmSync('j', doc, m, {}, deps)
-      expect(r.created).toBe(false)
-      expect(deps.createTarget).not.toHaveBeenCalled()
+      expect(r.rowCount).toBe(0)
       expect(r.errors.length).toBeGreaterThan(0)
     })
 
@@ -797,12 +806,16 @@ describe('runCrmSync — products / units / routing', () => {
       )
     })
 
-    it('дело на таймлайне не пишется — сущности, к которой его привязать, нет', async () => {
+    it('дело на таймлайне ПИШЕТСЯ — сущность-след теперь есть (#459)', async () => {
+      // Прежде дела не было, потому что не было и сущности. Теперь она создаётся всегда, и дело
+      // обязано появиться: журнал импортов строится из дел, а этот случай — ровно тот, ради
+      // которого в журнал заходят.
       const m = mapping()
       m.product.onMissing = 'skip-warn'
       const writeActivity = vi.fn(async () => {})
       await runCrmSync('j', twoItems, m, {}, baseDeps({ writeActivity }))
-      expect(writeActivity).not.toHaveBeenCalled()
+      expect(writeActivity).toHaveBeenCalled()
+      expect(writeActivity.mock.calls[0]![0]).toMatchObject({ rowCount: 0 })
     })
 
     it('совет «что делать» звучит РОВНО ОДИН раз и стоит ПЕРВЫМ', async () => {
@@ -870,7 +883,7 @@ describe('runCrmSync — products / units / routing', () => {
       const m = mapping()
       m.product.onMissing = 'skip-warn'
       const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
-      expect(r.errors[0]).toContain('Внести строку как есть')
+      expect(r.errors.some(e => e.includes('Внести строку как есть'))).toBe(true)
       // ⚠ И НЕ вторым экземпляром рядом: совет уже внутри текста отказа. Мутация «дописать его в
       // errors отдельной строкой» проходила незамеченной, а в чате ошибок он печатался бы дважды —
       // вторая половина требования «ровно один раз на документ».

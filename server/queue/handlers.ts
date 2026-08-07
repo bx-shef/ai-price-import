@@ -100,14 +100,21 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
       ? { skipped: 1 }
       : {
           docs: 1,
-          created: result.created ? 1 : 0,
+          // ⚠ «Внесено» — это УСПЕШНО внесённые документы, а не созданные карточки (#459). С тех
+          // пор как запись создаётся и на отказе, `result.created` перестал означать успех:
+          // считая по нему, приложение отчитывалось бы перед клиентом за импорт, которого не было,
+          // и плитка «внесено» на главной росла бы от мусорных файлов.
+          created: result.created && !result.errors.length ? 1 : 0,
           lines: result.rowCount,
           unmatched: result.unmatched ? 1 : 0
         })
   }
   await deps.setJobStatus(
     job.memberId, job.jobId,
-    result.created || !result.errors.length ? 'done' : 'error',
+    // ⚠ Статус «Готово» — только когда ошибок НЕТ (#459). Прежнее `result.created || …` читалось
+    // как «карточка есть ⇒ всё хорошо», а карточка теперь создаётся и на отказе: неразобранный
+    // документ показался бы сотруднику успешно импортированным.
+    result.errors.length ? 'error' : 'done',
     // entityTypeId (#192 п.2 — feedback entity link) + supplier name + line count so the /app «разбор»
     // shows what was recognised, not just the id. Portal's own document data, read back only by the
     // same portal's frame token (member-scoped) and rendered auto-escaped — no cross-tenant exposure.

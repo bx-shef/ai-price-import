@@ -144,7 +144,9 @@ describe('handleCrmSyncJob', () => {
     const badDoc: ExtractedDocument = { ...doc, items: [{ name: 'a', price: 10, quantity: 1, unit: 'шт', vatRate: 20 }] }
     const d = deps({ getDocument: vi.fn(async () => ({ doc: badDoc, signals: {} })) })
     const r = await handleCrmSyncJob({ memberId: 'm', jobId: 'j' }, d)
-    expect(r?.created).toBe(false)
+    // #459: карточка-след создаётся и на отказе, поэтому «создана» больше не равно «получилось».
+    // Несущее утверждение теста — СТАТУС: сотрудник обязан увидеть «Ошибка», а не «Готово».
+    expect(r?.rowCount).toBe(0)
     expect(d.setJobStatus).toHaveBeenCalledWith('m', 'j', 'error', expect.stringContaining('errors'))
   })
 
