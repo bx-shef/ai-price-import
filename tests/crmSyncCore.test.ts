@@ -1161,3 +1161,35 @@ describe('«ни одна позиция не связана с каталого
     expect(res.warnings).toContain(noLinesMatchedWarning(true))
   })
 })
+
+describe('#459: документ не разобрался — след в CRM всё равно остаётся', () => {
+  it('создаётся запись и пишется дело, но позиций нет и это ОШИБКА', async () => {
+    // Ради этого случая журнал импортов и заводился: раньше он не оставлял в портале ничего.
+    const writeActivity = vi.fn(async () => {})
+    const deps = baseDeps({ writeActivity, documentFailure: 'Не удалось разобрать документ.' })
+    const r = await runCrmSync('j', { items: [] }, mapping(), {}, deps)
+    expect(deps.createTarget).toHaveBeenCalled()
+    expect(writeActivity).toHaveBeenCalled()
+    expect(deps.setRows).not.toHaveBeenCalled()
+    expect(r.rowCount).toBe(0)
+    expect(r.errors).toContain('Не удалось разобрать документ.')
+  })
+
+  it('сумма записи РОВНО 0 и заголовок говорит о неудаче', async () => {
+    // Любое другое число обещало бы деньги, которых в записи нет, и попало бы в отчёты клиента
+    // по обороту; заголовок — то, по чему такую карточку видно в списке, не открывая её.
+    const deps = baseDeps({ documentFailure: 'Не удалось разобрать документ.', sourceFileName: 'накладная.pdf' })
+    await runCrmSync('j', { items: [] }, mapping(), {}, deps)
+    const fields = deps.createTarget.mock.calls[0]![1] as { title: string, opportunity?: number }
+    expect(fields.title).toContain('Импорт не удался')
+    expect(fields.title).toContain('накладная.pdf')
+    expect(fields.opportunity ?? 0).toBe(0)
+  })
+
+  it('в чат НЕ уходит «Готово» по неразобранному документу', async () => {
+    // Худшая из возможных лжи: человек не пошёл бы разбираться.
+    const notifySuccess = vi.fn(async () => {})
+    await runCrmSync('j', { items: [] }, mapping(), {}, baseDeps({ notifySuccess, documentFailure: 'Не удалось разобрать документ.' }))
+    expect(notifySuccess).not.toHaveBeenCalled()
+  })
+})

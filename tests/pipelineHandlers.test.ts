@@ -136,14 +136,19 @@ describe('handleAgentRunJob', () => {
     expect(d.extractDocument).not.toHaveBeenCalled()
     expect(d.failJob).toHaveBeenCalledWith('m', 'j', expect.stringContaining('текст документа не найден'))
   })
-  it('extraction returns nothing → failJob with reason, no enqueue', async () => {
+  it('документ не разобрался → задание ЕДЕТ ДАЛЬШЕ, чтобы остался след в CRM (#459)', async () => {
+    // Раньше конвейер обрывался здесь, и самый интересный для человека случай не оставлял в
+    // портале ни карточки, ни дела, ни строки в журнале импортов. Теперь причина едет полем
+    // задания на стадию записи, а `failJob` тут НЕ зовётся — иначе об одном документе ушло бы
+    // два уведомления.
     const d = deps({ extractDocument: vi.fn(async () => ({ document: null, error: 'агент не извлёк табличную часть' })) })
     const r = await handleAgentRunJob({ memberId: 'm', jobId: 'j' }, d)
     expect(r.ok).toBe(false)
+    expect(d.failJob).not.toHaveBeenCalled()
+    expect(d.enqueueCrmSync).toHaveBeenCalledWith('m', 'j')
     // С #416 наружу уходит НАШ текст по классу отказа, а не строка провайдера: она ничего не
     // объясняет человеку и вправе процитировать присланный запрос. Подробнее — tests/llmFailure.
-    expect(d.failJob).toHaveBeenCalledWith('m', 'j', llmFailureMessage('unparsable'))
-    expect(d.enqueueCrmSync).not.toHaveBeenCalled()
+    expect(d.saveDocument).toHaveBeenCalledWith('m', 'j', expect.objectContaining({ failure: llmFailureMessage('unparsable') }))
   })
   it('cleanup (deleteText) failure never blocks enqueue', async () => {
     const d = deps({ deleteText: vi.fn(async () => {

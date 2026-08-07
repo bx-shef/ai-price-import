@@ -47,7 +47,7 @@ export interface HandlerDeps {
   /** Load the portal mapping (from app.option) for a portal. */
   getMapping: (memberId: string) => Promise<PortalMapping>
   /** Load the extracted document + routing signals for a job (stored by agent-run). */
-  getDocument: (memberId: string, jobId: string) => Promise<{ doc: ExtractedDocument, signals: RoutingSignals } | null>
+  getDocument: (memberId: string, jobId: string) => Promise<{ doc: ExtractedDocument, signals: RoutingSignals, failure?: string } | null>
   /** Build the crm-sync deps bound to this portal/job/mapping (in-process tool bodies over REST). */
   crmSyncDeps: (memberId: string, jobId: string, mapping: PortalMapping) => CrmSyncDeps
   /** Persist the job outcome. */
@@ -81,7 +81,13 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
   }
   const mapping = await deps.getMapping(job.memberId)
   const crmDeps = deps.crmSyncDeps(job.memberId, job.jobId, mapping)
-  const result = await runCrmSync(job.jobId, loaded.doc, mapping, loaded.signals, crmDeps)
+  // ⚠ Причина, по которой документ не разобрался, доезжает сюда полем задания и превращается в
+  // ЖЁСТКУЮ ОШИБКУ стадии записи (#459): текст уйдёт в чат ошибок и в статус, а карточка-след и
+  // дело всё равно будут созданы. Именно ради этого случая журнал импортов и заводился.
+  const result = await runCrmSync(job.jobId, loaded.doc, mapping, loaded.signals, {
+    ...crmDeps,
+    ...(loaded.failure ? { documentFailure: loaded.failure } : {})
+  })
   // ⚠ Счётчики поднимаются ДО перевода задания в терминальный статус (#444). Экран читает метрики
   // ровно в момент, когда последнее задание пачки становится `done`, — при обратном порядке между
   // этими двумя действиями лежал апсерт в Postgres, и чтение попадало в окно: человек видел числа
@@ -194,7 +200,7 @@ export interface AgentRunDeps {
   /** Run the extraction agent → validated document (null = nothing usable). */
   extractDocument: (documentText: string) => Promise<{ document: ExtractedDocument | null, error?: string, own?: true }>
   /** Persist the extracted structure + routing signals for crm-sync. */
-  saveDocument: (memberId: string, jobId: string, stored: { doc: ExtractedDocument, signals: RoutingSignals }) => Promise<void>
+  saveDocument: (memberId: string, jobId: string, stored: { doc: ExtractedDocument, signals: RoutingSignals, failure?: string }) => Promise<void>
   enqueueCrmSync: (memberId: string, jobId: string) => Promise<void>
   failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
   /** Optional: operator's manual target override chosen next to the file. */
@@ -212,6 +218,14 @@ export interface AgentRunDeps {
   logLlmFailure?: (kind: LlmFailureKind, signature: string) => void
 }
 
+/**
+ * Документ-заглушка для загрузки, которую не удалось разобрать (#459).
+ *
+ * ⚠ Позиций нет и быть не может: разбор не состоялся. Всё, что несёт это задание дальше, —
+ * причина отказа в поле `failure`, по которой стадия записи создаст карточку-след и дело.
+ */
+const EMPTY_DOCUMENT: ExtractedDocument = { items: [] }
+
 /** agent-run: text → extract structure → store {doc, signals} → enqueue crm-sync. */
 export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Promise<{ ok: boolean }> {
   const text = await deps.getDocumentText(job.memberId, job.jobId)
@@ -227,9 +241,16 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
     // клиента. Исходная строка остаётся только в журнале, и туда идёт просеянной.
     const { kind, message } = describeLlmFailure(error, own)
     deps.logLlmFailure?.(kind, llmErrorSignature(error))
-    await deps.failJob(job.memberId, job.jobId, message)
-    // Terminal extraction failure (re-extraction of the same text won't differ) →
-    // drop the raw client text now; don't retain unrecognised documents.
+    // ⚠ Задание НЕ завершается здесь (#459): оно едет дальше, на стадию записи, потому что
+    // сущность и дело создаются на КАЖДУЮ загрузку — включая ту, что не разобралась. Прежде
+    // конвейер обрывался ровно тут, и самый интересный для человека случай не оставлял в портале
+    // ни следа: ни карточки, ни дела, ни строки в журнале импортов.
+    // ⚠ Статус «Ошибка» и сообщение человеку ставит стадия записи — по тому же тексту. Звать
+    // `failJob` здесь значило бы отправить два уведомления об одном документе.
+    // ⚠ Текст документа удаляется, как и раньше: повторное извлечение того же текста ничего не
+    // изменит, а хранить неразобранные документы клиента незачем.
+    await deps.saveDocument(job.memberId, job.jobId, { doc: EMPTY_DOCUMENT, signals: { text: '' }, failure: message })
+    await deps.enqueueCrmSync(job.memberId, job.jobId)
     await dropText(deps.deleteText, job.memberId, job.jobId)
     return { ok: false }
   }

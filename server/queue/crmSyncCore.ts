@@ -32,6 +32,10 @@ export interface CrmSyncDeps {
   /** Имя загруженного файла — попадает в заголовок карточки НЕУДАЧНОЙ загрузки (#459): по нему
    *  человек понимает, о каком документе речь, не открывая карточку. */
   sourceFileName?: string
+  /** Готовый текст отказа, если документ не удалось РАЗОБРАТЬ (#459). Приходит со стадии
+   *  распознавания и трактуется как жёсткая ошибка: позиций нет, но карточка-след и дело
+   *  создаются — иначе неудача не оставит в портале следа и не попадёт в журнал импортов. */
+  documentFailure?: string
   findCompanyByTaxId: (taxId: string) => Promise<number | null>
   findProduct: (item: ExtractedDocument['items'][number]) => Promise<number | null>
   /** Optional: resolve an unmatched unit to a catalog measure (mapping.units.autoCreate, Q11) —
@@ -168,6 +172,10 @@ export async function runCrmSync(
   // input / routing rule / manual override) would create with NO marker → a retry can't find it and
   // silently duplicates. So we treat it as a HARD ERROR (→ error chat, no create) rather than create
   // a duplicate-prone entity. This is the code that ENFORCES «markerless types are not targets» (#135).
+  // ⚠ Отказ распознавания — ПЕРВЫЙ в списке ошибок: он объясняет всё остальное, а прочие проверки
+  // по пустому документу всё равно ничего не найдут.
+  if (deps.documentFailure) errors.push(deps.documentFailure)
+
   const markerFilter = originSearchFilter(target.entityTypeId, jobId, deps.originatorPrefix)
   if (!markerFilter) {
     errors.push(`Импорт остановлен: в этот тип CRM-сущности (${target.entityTypeId}) вносить нельзя — приложение не сможет защититься от повторной записи. Откройте настройки импорта и выберите сделку, смарт-счёт или смарт-процесс.`)
