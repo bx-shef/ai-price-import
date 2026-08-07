@@ -86,6 +86,13 @@ if (clean) {
     if (j.error) bad(`сделка ${state.deal}: ${j.error}`)
     else ok(`сделка ${state.deal} удалена`)
   }
+  // ⚠ Компанию убираем ТОЖЕ: её заводит витрина ради ссылки на поставщика, и забытая карточка
+  // «ООО „Ромашка“ (проба)» осталась бы в CRM тест-портала неотличимой от настоящей.
+  if (state.company) {
+    const j = await raw('crm.company.delete', { id: state.company })
+    if (j.error) bad(`компания ${state.company}: ${j.error}`)
+    else ok(`компания ${state.company} удалена`)
+  }
   rmSync(STATE)
   process.exit(0)
 }
@@ -101,7 +108,7 @@ const FILE_NAME = `накладная № 42 от 06.08.2026 (пример).txt`
 const FILE_B64 = Buffer.from('Пример исходного документа для проверки вложения.\n', 'utf8').toString('base64')
 
 /** Завести To-Do и вернуть его id. */
-const addTodo = async ({ title, description, colorId, minutes }) => {
+const addTodo = async ({ title, description, colorId, minutes, bb, ping }) => {
   const r = await call('crm.activity.todo.add', {
     ownerTypeId: 2,
     ownerId: created.deal,
@@ -109,10 +116,14 @@ const addTodo = async ({ title, description, colorId, minutes }) => {
     title,
     description,
     responsibleId: 1,
-    colorId
+    colorId,
+    ...(ping ? { pingOffsets: ping } : {})
   })
   const id = Number(r?.id ?? r)
   created.activities.push(id)
+  // ⚠ Разметка включается ОТДЕЛЬНЫМ вызовом: у `todo.add` параметра под тип описания нет, а
+  // дефолт `2` показал бы BB-код исходником.
+  if (bb) await call('crm.activity.update', { id, fields: { DESCRIPTION_TYPE: 3 } })
   return id
 }
 
@@ -177,6 +188,27 @@ const run = async () => {
   head('2b. Тело дела — три написания одного содержимого')
 
   const dealUrl = `https://${DOMAIN}/crm/deal/details/${created.deal}/`
+  // ⚠ ФИНАЛЬНЫЙ ВИД (решение владельца 06.08.2026): BB-код, три именованных блока — Поставщик
+  // (со ссылкой на карточку компании), Позиций, Сумма, — ниже список проблем, ссылка на созданную
+  // сущность и совет. HTML отвергнут: живьём он не отрисовался.
+  // ⚠ `DESCRIPTION_TYPE` обязан быть `3`. Дефолт у To-Do — `2`, и при нём BB-разметка показывается
+  // ИСХОДНИКОМ: человек увидит `[B]Поставщик:[/B]` буквально. Забыть это поле = испортить каждое дело.
+  const FINAL = ({ supplier, companyId, rows, matched, sum, problems, entityUrl, advice }) => [
+    `[B]Поставщик:[/B] ${companyId ? `[URL=/crm/company/details/${companyId}/]${supplier}[/URL]` : supplier}`,
+    `[B]Позиций:[/B] ${rows}${matched === null ? '' : ` · сопоставлено с каталогом: ${matched}`}`,
+    `[B]Сумма:[/B] ${sum}`,
+    ...(problems.length
+      ? ['', `[B]Проблемы (${problems.length}):[/B]`, '[LIST]', ...problems.map(p => `[*]${p}`), '[/LIST]']
+      : ['']),
+    // ⚠ Ссылка и совет — ТАКИЕ ЖЕ подписанные блоки, как счётчики выше. Голой строкой внизу совет
+    // не читался вовсе: владелец его просто не заметил на витрине. Подпись — это и есть то, что
+    // отличает блок от хвоста текста.
+    `[B]Сделка:[/B] [URL=${entityUrl}]Открыть карточку[/URL]`,
+    // ⚠ Совет печатается только когда он ЕСТЬ: пустой блок «Что сделать:» обещал бы указание и не
+    // давал его, а это хуже отсутствия блока.
+    ...(advice ? ['', `[B]Что сделать:[/B] ${advice}`] : [])
+  ].join('\n')
+
   const CONTENT = {
     plain: [
       'Поставщик: ООО «Ромашка»',
@@ -227,7 +259,57 @@ const run = async () => {
     const back = await call('crm.activity.get', { id })
     info(`${kind} → дело ${id}, DESCRIPTION_TYPE=${back.DESCRIPTION_TYPE}`)
   }
-  save({ deal: created.deal, activities: created.activities, okId, warnId })
+  // --- 2c. ФИНАЛЬНЫЙ ВИД обеих веток ----------------------------------------------------------
+  head('2c. Финальный вид: BB-код, блоки, ссылка на поставщика, напоминание')
+
+  // Компания нужна по-настоящему: ссылка на поставщика ведёт в её карточку, и проверить, что она
+  // открывается, можно только имея карточку.
+  const companyId = Number(await call('crm.company.add', { fields: { TITLE: 'ООО «Ромашка» (проба)' } }))
+  created.company = companyId
+
+  const finalOk = await addTodo({
+    title: 'Импорт: ООО «Ромашка»',
+    description: FINAL({
+      supplier: 'ООО «Ромашка»',
+      companyId,
+      rows: 7,
+      matched: 7,
+      sum: '10 320,00 BYN',
+      problems: [],
+      entityUrl: dealUrl
+    }),
+    colorId: GREEN,
+    minutes: 0,
+    bb: true
+  })
+  await attachFile(finalOk)
+  await call('crm.activity.update', { id: finalOk, fields: { COMPLETED: 'Y' } })
+  info(`ФИНАЛ успех → дело ${finalOk}`)
+
+  const finalWarn = await addTodo({
+    title: 'Импорт: ООО «Ромашка»',
+    description: FINAL({
+      supplier: 'ООО «Ромашка»',
+      companyId,
+      rows: 7,
+      matched: 5,
+      sum: '10 320,00 BYN',
+      problems: [
+        'Артикул «ZQ-51» в каталоге не найден — внесён произвольной позицией.',
+        'Единица измерения «уп.» неизвестна — записана штука.'
+      ],
+      entityUrl: dealUrl,
+      advice: 'Чтобы позиции подбирались, заполните артикулы в каталоге товаров портала.'
+    }),
+    colorId: PINK,
+    minutes: 15,
+    bb: true,
+    ping: [0]
+  })
+  await attachFile(finalWarn)
+  info(`ФИНАЛ замечания → дело ${finalWarn}`)
+
+  save({ deal: created.deal, company: companyId, activities: created.activities, okId, warnId, finalOk, finalWarn })
 
   // --- 3. Чтение обратно: утверждаем, а не печатаем --------------------------------------------
   head('3. Проверка результата чтением портала')
