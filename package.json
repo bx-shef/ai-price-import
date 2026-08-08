@@ -35,6 +35,7 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "icons": "node --experimental-strip-types scripts/make-icons.mjs",
     "verify:legal": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-legal-notice.mjs",
+    "verify:attach": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-attachment-live.mjs",
     "verify:llm": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-llm-failure.mjs",
     "verify:fail": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-fail-notify.mjs",
     "ab:prompt": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/ab-prompt.mjs",
