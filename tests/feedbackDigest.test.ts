@@ -144,6 +144,15 @@ describe('текст сводки', () => {
     expect(t).toContain('https://github.com/o/r/issues?q=is%3Aopen+label%3Auser-feedback')
   })
 
+  it('свод несёт ТОЛЬКО числа — текстовое поле в него не добавить незаметно', () => {
+    // Гард формы, а не содержимого: сегодняшний текст проверен полем за полем, но новое поле
+    // `DigestStats` со строкой из тела отзыва прошло бы все проверки выше и уехало в мессенджер.
+    const s = summarizeFeedbackIssues([issue()], NOW)
+    for (const [k, v] of Object.entries(s)) {
+      expect(v === null || typeof v === 'number', `поле ${k} обязано быть числом`).toBe(true)
+    }
+  })
+
   it('данных клиента в тексте нет ни при каких полях', () => {
     const t = buildDigestText(summarizeFeedbackIssues([
       issue({ title: 'ООО «Ромашка» накладная', body: 'jobId abc-123, файл scan.pdf, комментарий клиента' })
