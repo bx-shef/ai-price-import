@@ -42,7 +42,7 @@ describe('#458: журнал импортов — разбор ответа', ()
   it('строки портала (всё строками) превращаются в числа и флаги', () => {
     expect(mapJournalRows([row()])).toEqual([{
       activityId: 55, jobId: 'job-1', title: 'Импорт: ООО Ромашка', clean: true,
-      createdAt: '2026-08-08T10:00:00+03:00', entityTypeId: 2, entityId: 341
+      createdAt: '2026-08-08T10:00:00+03:00', ownerTypeId: 2, ownerId: 341
     }])
   })
 

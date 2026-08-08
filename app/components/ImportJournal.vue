@@ -13,10 +13,18 @@
 // иначе не смог бы добраться до второй страницы вовсе.
 import { onMounted, useTemplateRef } from 'vue'
 import { useInfiniteScroll } from '@vueuse/core'
-import { formatJournalDate, journalOutcomeLabel } from '~/utils/journalView'
+import { formatJournalDate, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
 
-const journal = useImportJournal()
-const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry } = journal
+const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, reload } = useImportJournal()
+
+/**
+ * Перечитать журнал с начала — зовёт страница после завершения импорта.
+ *
+ * ⚠ Без этого только что загруженный документ не появлялся бы в журнале до перезагрузки страницы:
+ * человек видит «Готово» в списке текущей пачки и пустоту (или вчерашние строки) в журнале прямо
+ * под ним — два блока об одном и том же противоречат друг другу на одном экране.
+ */
+defineExpose({ reload })
 
 const scroller = useTemplateRef<{ $el?: HTMLElement }>('scroller')
 
@@ -34,11 +42,16 @@ onMounted(() => {
   )
 })
 
-/** Открыть карточку CRM, куда попал документ. */
-async function openEntity(entityTypeId: number, entityId: number): Promise<void> {
-  const path = entityTypeId === 2
-    ? `/crm/deal/details/${entityId}/`
-    : entityTypeId === 1 ? `/crm/lead/details/${entityId}/` : `/crm/type/${entityTypeId}/details/${entityId}/`
+/**
+ * Открыть карточку, в которой лежит дело.
+ *
+ * ⚠ Это карточка-ВЛАДЕЛЕЦ: при найденном контрагенте — компания, а не созданная сделка. Путь
+ * строит чистая `ownerOpenPath`, знающая про тип 4; собирать его здесь значило бы завести вторую
+ * копию правила и однажды забыть про компанию.
+ */
+async function openOwner(ownerTypeId: number, ownerId: number): Promise<void> {
+  const path = ownerOpenPath(ownerTypeId, ownerId)
+  if (!path) return
   const { init, get } = useB24()
   await init()
   const frame = get()
@@ -119,11 +132,11 @@ async function openEntity(entityTypeId: number, entityId: number): Promise<void>
                 :label="journalOutcomeLabel(row.clean)"
               />
               <B24Button
-                v-if="row.entityId > 0"
+                v-if="ownerOpenPath(row.ownerTypeId, row.ownerId)"
                 size="xs"
                 color="air-tertiary-no-accent"
                 label="Открыть"
-                @click="openEntity(row.entityTypeId, row.entityId)"
+                @click="openOwner(row.ownerTypeId, row.ownerId)"
               />
             </div>
           </li>

@@ -11,8 +11,29 @@ export interface JournalRow {
   title: string
   clean: boolean
   createdAt: string
-  entityTypeId: number
-  entityId: number
+  /** Владелец дела: компания при найденном контрагенте, иначе созданная сущность. */
+  ownerTypeId: number
+  ownerId: number
+}
+
+/**
+ * Путь карточки-владельца дела для ссылки «Открыть».
+ *
+ * ⚠ Тип 4 — КОМПАНИЯ, и у неё свой путь. Без этой ветки успешный импорт с распознанным
+ * поставщиком (то есть самый частый случай) вёл бы на `/crm/type/4/details/…` — страницу,
+ * которой не существует. Ссылка выглядела бы рабочей и открывала пустоту.
+ * ⚠ Неизвестный/нулевой владелец даёт пустую строку: лучше не показать кнопку, чем показать
+ * кнопку в никуда.
+ */
+export function ownerOpenPath(ownerTypeId: number, ownerId: number): string {
+  if (!Number.isInteger(ownerId) || ownerId <= 0) return ''
+  if (ownerTypeId === 1) return `/crm/lead/details/${ownerId}/`
+  if (ownerTypeId === 2) return `/crm/deal/details/${ownerId}/`
+  if (ownerTypeId === 3) return `/crm/contact/details/${ownerId}/`
+  if (ownerTypeId === 4) return `/crm/company/details/${ownerId}/`
+  if (ownerTypeId === 7) return `/crm/quote/show/${ownerId}/`
+  if (!Number.isInteger(ownerTypeId) || ownerTypeId <= 0) return ''
+  return `/crm/type/${ownerTypeId}/details/${ownerId}/`
 }
 
 /**

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { appendPage, formatJournalDate, journalOutcomeLabel, nextStart, shouldLoadMore, type JournalRow } from '../app/utils/journalView'
+import { appendPage, formatJournalDate, journalOutcomeLabel, nextStart, ownerOpenPath, shouldLoadMore, type JournalRow } from '../app/utils/journalView'
 
 const row = (id: number): JournalRow => ({
   activityId: id, jobId: `job-${id}`, title: `Импорт ${id}`, clean: true,
-  createdAt: '2026-08-08T10:00:00+03:00', entityTypeId: 2, entityId: 100 + id
+  createdAt: '2026-08-08T10:00:00+03:00', ownerTypeId: 2, ownerId: 100 + id
 })
 
 describe('#458: подкачка журнала', () => {
@@ -72,5 +72,29 @@ describe('#458: подписи строки', () => {
     // Цвет один не читается программой чтения и не различается при дальтонизме.
     expect(journalOutcomeLabel(true)).toBe('Без замечаний')
     expect(journalOutcomeLabel(false)).toBe('С замечаниями')
+  })
+})
+
+describe('#458: ссылка «Открыть» ведёт в карточку-ВЛАДЕЛЕЦ', () => {
+  it('компания (тип 4) — свой путь, а не универсальный', () => {
+    // Самый частый случай: контрагент найден ⇒ владелец дела компания. Без этой ветки ссылка
+    // вела бы на `/crm/type/4/details/…` — страницу, которой не существует, — и выглядела бы
+    // рабочей.
+    expect(ownerOpenPath(4, 55)).toBe('/crm/company/details/55/')
+  })
+
+  it('остальные штатные типы', () => {
+    expect(ownerOpenPath(1, 7)).toBe('/crm/lead/details/7/')
+    expect(ownerOpenPath(2, 7)).toBe('/crm/deal/details/7/')
+    expect(ownerOpenPath(3, 7)).toBe('/crm/contact/details/7/')
+    expect(ownerOpenPath(7, 7)).toBe('/crm/quote/show/7/')
+    expect(ownerOpenPath(1030, 7)).toBe('/crm/type/1030/details/7/')
+  })
+
+  it('владельца нет или он мусорный → пути НЕТ, кнопку не показываем', () => {
+    // Лучше не показать кнопку, чем показать кнопку в никуда.
+    for (const [t, i] of [[2, 0], [2, -1], [0, 5], [-3, 5], [2, 1.5]] as Array<[number, number]>) {
+      expect(ownerOpenPath(t, i), `${t}/${i}`).toBe('')
+    }
   })
 })

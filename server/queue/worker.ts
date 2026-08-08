@@ -175,9 +175,12 @@ export function startThroughputWorkers(infra: LiveInfra = buildLiveInfra()): Wor
       'portal.hash': portalHash(data.memberId)
     }, async () => {
       const res = await handleAgentRunJob(data, agentRun)
-      // Разобранный отказ распознавания терминален — дальше crm-sync не будет, и без этой строки
-      // документ дожил бы до подметальщика сирот (шесть часов) вместо минут.
-      if (!res.ok) await cleanupUpload(data)
+      // ⚠ Условие — «задание НЕ поехало дальше», а НЕ «не получилось». Разница критична и стоила
+      // бы всей затеи: с #459 неудачное распознавание ТОЖЕ ставится в очередь записи, где
+      // документ вкладывается в карточку-след. Проверка по `res.ok` стирала бы байты прямо
+      // перед этим — детерминированно, на каждом таком документе, и молча: вложение просто не
+      // появлялось бы, а в журнал шло бы «исходный файл недоступен».
+      if (!res.handedOn) await cleanupUpload(data)
       return res
     }, res => ({ 'job.ok': res.ok }))
   }, { connection, concurrency: cc.agent })

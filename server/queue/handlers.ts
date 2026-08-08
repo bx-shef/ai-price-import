@@ -227,11 +227,24 @@ export interface AgentRunDeps {
 const EMPTY_DOCUMENT: ExtractedDocument = { items: [] }
 
 /** agent-run: text → extract structure → store {doc, signals} → enqueue crm-sync. */
-export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Promise<{ ok: boolean }> {
+/**
+ * Итог стадии распознавания.
+ *
+ * ⚠ `handedOn` — «задание поехало дальше, на стадию записи». Отдельно от `ok`, и это НЕ
+ * педантизм: с #459 неудачное распознавание тоже ставится в `crm-sync` (там создаётся
+ * карточка-след с вложенным документом), то есть `ok:false` перестал означать «конвейер
+ * закончился». Воркер по этому флагу решает, можно ли удалять загруженные байты, — спутав их,
+ * он стирает файл ровно перед тем, как стадия записи попытается его вложить.
+ */
+export interface AgentRunOutcome { ok: boolean, handedOn: boolean }
+
+export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Promise<AgentRunOutcome> {
   const text = await deps.getDocumentText(job.memberId, job.jobId)
   if (!text) {
     await deps.failJob(job.memberId, job.jobId, 'текст документа не найден')
-    return { ok: false }
+    // Единственный путь, который ДЕЙСТВИТЕЛЬНО терминален на этой стадии: текста нет, разбирать
+    // нечего, и в запись задание не поедет.
+    return { ok: false, handedOn: false }
   }
   await markProgress(deps.markProcessing, job.memberId, job.jobId)
   const { document, error, own } = await deps.extractDocument(text)
@@ -252,7 +265,10 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
     await deps.saveDocument(job.memberId, job.jobId, { doc: EMPTY_DOCUMENT, signals: { text: '' }, failure: message })
     await deps.enqueueCrmSync(job.memberId, job.jobId)
     await dropText(deps.deleteText, job.memberId, job.jobId)
-    return { ok: false }
+    // ⚠ `handedOn: true` — задание ПОЕХАЛО ДАЛЬШЕ. Байты обязаны дожить до стадии записи: там
+    // документ вкладывается в карточку-след, и именно у неразобранного документа вложение нужнее
+    // всего — разбирать нечего, человек открывает оригинал.
+    return { ok: false, handedOn: true }
   }
   const manualOverride = deps.getManualOverride ? await deps.getManualOverride(job.memberId, job.jobId) : undefined
   const signals: RoutingSignals = {
@@ -266,7 +282,7 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
   await deps.enqueueCrmSync(job.memberId, job.jobId)
   // Raw text now lives (bounded) in the doc payload → drop the standalone copy.
   await dropText(deps.deleteText, job.memberId, job.jobId)
-  return { ok: true }
+  return { ok: true, handedOn: true }
 }
 
 /** Best-effort progress marker — a failed status write must never fail the job. */

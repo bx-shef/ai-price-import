@@ -64,9 +64,17 @@ export interface JournalRow {
   /** Импорт прошёл без замечаний (дело закрыто). */
   clean: boolean
   createdAt: string
-  /** Куда вёл импорт — чтобы открыть карточку прямо из журнала. */
-  entityTypeId: number
-  entityId: number
+  /**
+   * ВЛАДЕЛЕЦ дела — карточка, в которой оно физически лежит.
+   *
+   * ⚠ Это НЕ всегда созданная импортом сущность. По модели владельца (`todoActivity`) при
+   * найденном контрагенте владельцем становится КОМПАНИЯ (тип 4), а сделка привязывается вторым
+   * шагом. Поля названы честно (`ownerTypeId`/`ownerId`), потому что прежнее имя
+   * `entityTypeId` читалось как «сделка» и строило бы ссылку на несуществующий путь
+   * `/crm/type/4/details/…` у каждого успешного импорта с распознанным поставщиком.
+   */
+  ownerTypeId: number
+  ownerId: number
 }
 
 /** Строка `crm.activity.list`, из которой мы читаем. Поля портала приходят строками. */
@@ -108,8 +116,8 @@ export function mapJournalRows(rows: unknown): JournalRow[] {
       title: String(raw?.SUBJECT ?? '').slice(0, 255),
       clean: raw?.COMPLETED === 'Y',
       createdAt: String(raw?.CREATED ?? ''),
-      entityTypeId: num(raw?.OWNER_TYPE_ID),
-      entityId: num(raw?.OWNER_ID)
+      ownerTypeId: num(raw?.OWNER_TYPE_ID),
+      ownerId: num(raw?.OWNER_ID)
     })
   }
   return out
