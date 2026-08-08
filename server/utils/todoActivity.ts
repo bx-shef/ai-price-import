@@ -152,6 +152,25 @@ export function activityMarkerFilter(originatorCode: string, jobId?: string): Re
   return { ORIGINATOR_ID: originatorCode, ...(jobId ? { ORIGIN_ID: jobId } : {}) }
 }
 
+/**
+ * Фильтр для поиска дела, принадлежащего КОНКРЕТНОМУ сотруднику (решение владельца 08.08.2026).
+ *
+ * ⚠ Нужен там, где идентификатор задания приходит ОТ КЛИЕНТА — прежде всего в отзыве. Маркер
+ * скоуплен порталом, а не человеком: без этой сверки сотрудник мог бы назвать чужой `jobId` и
+ * вытащить чужой документ (например, отправив его в репозиторий отзывов издателя). Внутри одного
+ * портала это не кросс-тенантная утечка, но документы отдела кадров и документы склада — разные
+ * документы.
+ * ⚠ `responsibleId` берётся из ПРОВЕРЕННОГО фрейм-токена, а не из тела запроса: значение из тела
+ * подделывается тривиально, и проверка стала бы декоративной.
+ * ⚠ Пустой/нечисловой id — НЕ повод отдать дело без сверки: возвращаем фильтр, который заведомо
+ * ничего не найдёт. Fail-closed здесь дешевле: цена ошибки — чужой документ наружу.
+ */
+export function ownActivityFilter(originatorCode: string, jobId: string, responsibleId: unknown): Record<string, string> {
+  const uid = Number(responsibleId)
+  const safeUid = Number.isInteger(uid) && uid > 0 ? String(uid) : '0'
+  return { ...activityMarkerFilter(originatorCode, jobId), RESPONSIBLE_ID: safeUid }
+}
+
 export interface TodoActivityInput {
   /** Владелец дела — карточка, где оно физически живёт (компания либо созданная сущность). */
   ownerTypeId: number

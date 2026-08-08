@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { buildProductRow, buildProductRows, computeOpportunity, createTargetItem, ownerTypeCode, setProductRows, supportsOpportunity } from '../server/utils/crmWrite'
 import { findCompanyByTaxId } from '../server/utils/companyLookup'
 import { originMarkerFields, originatorCode } from '../server/utils/originMarker'
-import { DESCRIPTION_TYPE_BB, TODO_COLOR_CLEAN, TODO_COLOR_ISSUES, activityMarkerFilter, buildActivityInput, buildActivityMarkerFields, buildTodoActivity, entityOpenPath } from '../server/utils/todoActivity'
+import { DESCRIPTION_TYPE_BB, ownActivityFilter, TODO_COLOR_CLEAN, TODO_COLOR_ISSUES, activityMarkerFilter, buildActivityInput, buildActivityMarkerFields, buildTodoActivity, entityOpenPath } from '../server/utils/todoActivity'
 
 describe('computeOpportunity', () => {
   // Контракт: сюда приходят строки от buildProductRow, где `price` УЖЕ валовая (#302).
@@ -281,5 +281,23 @@ describe('#458: маркер дела — то, на чём держится ж�
     const fields = buildActivityMarkerFields(originatorCode(undefined), 'job-1')
     expect(fields.ORIGINATOR_ID).toBe('SH_APP_IMPORT_PRICE_AI')
     expect(originMarkerFields(2, 'job-1').originatorId).toBe(fields.ORIGINATOR_ID)
+  })
+})
+
+describe('#458: чужое дело по чужому jobId не достать', () => {
+  it('фильтр отзыва сверяет ответственного, а не только маркер', () => {
+    // `jobId` приходит от клиента, а маркер скоуплен ПОРТАЛОМ: без сверки сотрудник назвал бы
+    // чужой идентификатор и получил чужой документ в репозиторий отзывов издателя.
+    expect(ownActivityFilter('SH_APP_IMPORT_PRICE_AI', 'job-1', 17)).toEqual({
+      ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI', ORIGIN_ID: 'job-1', RESPONSIBLE_ID: '17'
+    })
+  })
+
+  it('id сотрудника неизвестен или мусорный → фильтр заведомо пуст, а не «без сверки»', () => {
+    // Fail-closed: цена ошибки — чужой документ наружу, поэтому «не знаем, кто это» обязано
+    // означать «ничего не отдаём», а не «отдаём всё подряд».
+    for (const bad of [undefined, null, '', 'abc', 0, -5, 1.5]) {
+      expect(ownActivityFilter('SH_APP_IMPORT_PRICE_AI', 'job-1', bad).RESPONSIBLE_ID).toBe('0')
+    }
   })
 })
