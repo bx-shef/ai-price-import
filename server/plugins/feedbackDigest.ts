@@ -1,7 +1,7 @@
 import { resolveFeedbackConfig } from '../utils/feedbackConfig'
 import { listOpenFeedbackIssues } from '../utils/feedbackGithubAdmin'
 import { feedbackIssuesUrl } from '../utils/feedbackDigest'
-import { createDigestRunner } from '../utils/feedbackDigestRun'
+import { DIGEST_COUNTER_TTL_SEC, createDigestRunner } from '../utils/feedbackDigestRun'
 import { resolveTelegramConfig, sendTelegramAlert } from '../utils/telegramAlert'
 import { queueRuntimeConfig } from '../queue/runtime'
 import { connectionOptions } from '../queue/connection'
@@ -58,7 +58,7 @@ export default defineNitroPlugin(() => {
       if (!r.ok) console.warn(`[feedback-digest] сводка не доставлена: status=${r.status}`)
       return r.ok
     },
-    claimAttempt: key => counter ? counter.incrWithTtl(key, 8 * 24 * 3600).catch(() => null) : Promise.resolve(null),
+    claimAttempt: key => counter ? counter.incrWithTtl(key, DIGEST_COUNTER_TTL_SEC).catch(() => null) : Promise.resolve(null),
     issuesUrl: feedbackIssuesUrl(config.repo),
     now: () => Date.now(),
     log: m => console.warn(`[feedback-digest] ${m}`)

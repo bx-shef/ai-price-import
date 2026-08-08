@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { STALE_DAYS, buildDigestText, feedbackIssuesUrl, isoWeekKey, summarizeFeedbackIssues } from '../server/utils/feedbackDigest'
-import { MAX_ATTEMPTS_PER_WEEK, createDigestRunner } from '../server/utils/feedbackDigestRun'
+import { DIGEST_COUNTER_TTL_SEC, MAX_ATTEMPTS_PER_WEEK, createDigestRunner } from '../server/utils/feedbackDigestRun'
+import { readFileSync } from 'node:fs'
 import { listOpenFeedbackIssues } from '../server/utils/feedbackGithubAdmin'
 import { resolveTelegramConfig } from '../server/utils/telegramAlert'
 import type { FeedbackIssueRef } from '../server/utils/feedbackRetention'
@@ -310,5 +311,72 @@ describe('ключ недели', () => {
 
   it('на стыке годов номер недели не сбрасывается посреди недели', () => {
     expect(isoWeekKey(new Date('2026-12-31T00:00:00Z'))).toBe(isoWeekKey(new Date('2027-01-01T00:00:00Z')))
+  })
+})
+
+describe('закрытие недели переживает перезапуск (общий счётчик)', () => {
+  // ⚠ Самый важный тест этой ветки, и его не было: мутация «удалить цикл, выбирающий остаток
+  // бюджета после успеха» не роняла НИ ОДНОГО теста, потому что соседний экземпляр подменялся
+  // моком «уже исчерпан». Здесь счётчик честный и общий, как Redis у двух процессов.
+  const sharedCounter = () => {
+    const store = new Map<string, number>()
+    return async (key: string) => {
+      const n = (store.get(key) ?? 0) + 1
+      store.set(key, n)
+      return n
+    }
+  }
+  const runner = (claimAttempt: (k: string) => Promise<number>, sent: string[], ok = true) =>
+    createDigestRunner({
+      listIssues: async () => ({ issues: [issue()], truncated: false }),
+      send: async (t) => {
+        if (ok) sent.push(t)
+        return ok
+      },
+      claimAttempt,
+      now: () => NOW
+    })
+
+  it('успешно отправивший экземпляр закрывает неделю для СВЕЖЕГО процесса', async () => {
+    const claim = sharedCounter()
+    const a: string[] = []
+    await runner(claim, a)()
+    const b: string[] = []
+    await runner(claim, b)()
+    expect(a).toHaveLength(1)
+    expect(b, 'второй процесс не должен слать повтор за ту же неделю').toHaveLength(0)
+  })
+
+  it('после неудачи бюджет НЕ закрыт — свежий процесс досылает', async () => {
+    const claim = sharedCounter()
+    await runner(claim, [], false)()
+    const b: string[] = []
+    await runner(claim, b)()
+    expect(b).toHaveLength(1)
+  })
+
+  it('срок счётчика переживает свою неделю и не задерживается дольше следующей', () => {
+    expect(DIGEST_COUNTER_TTL_SEC).toBeGreaterThan(7 * 24 * 3600)
+    expect(DIGEST_COUNTER_TTL_SEC).toBeLessThan(14 * 24 * 3600)
+  })
+})
+
+describe('плагин: гейты, которые снимаются одной строкой', () => {
+  // Проводка тонкая и интеграционным тестом не покрывается, но два ранних выхода несущие:
+  // без гейта крона каждая реплика воркера пришлёт свою копию сводки, а без fail-closed на
+  // канале сводка ушла бы в чат тревог или в никуда.
+  const src = readFileSync(new URL('../server/plugins/feedbackDigest.ts', import.meta.url), 'utf8')
+    .split('\n').filter(l => !l.trimStart().startsWith('//')).join('\n')
+
+  it('только крон-экземпляр', () => {
+    expect(src).toMatch(/if \(!queueRuntimeConfig\(\)\.cron\) return/)
+  })
+
+  it('канал сводки не настроен → выходим, а не шлём в чат тревог', () => {
+    expect(src).toMatch(/TELEGRAM_DIGEST_BOT_TOKEN/)
+    expect(src).toMatch(/TELEGRAM_DIGEST_CHAT_ID/)
+    expect(src).not.toMatch(/TELEGRAM_ALERT_/)
+    expect(src.indexOf('if (!telegram)')).toBeGreaterThan(0)
+    expect(src.indexOf('if (!telegram)')).toBeLessThan(src.indexOf('createDigestRunner('))
   })
 })
