@@ -11,8 +11,12 @@
 //   ✗ НЕ доказывается суточный проход рассылки и отметки в базе: они идут по OAuth-токену
 //     установленного портала, а здесь вебхук. Их проверять на живой установке.
 //
-// ⚠ Объявление здесь СИНТЕТИЧЕСКОЕ: реестр в приложении пуст (механизм заведён до первого
-// изменения документов), и брать оттуда нечего. Сообщение шлётся в [TEST]-чат и удаляется.
+// ⚠ Объявление берётся ИЗ РЕЕСТРА, если он не пуст, и достраивается синтетически только когда
+// объявлять нечего. Первая редакция скрипта всегда строила синтетику — и это ровно тот класс
+// дефекта, за которым в этом проекте охотятся: в день настоящей публикации проверка прогоняла бы
+// НЕ ТО объявление (чужой документ, чужой срок, чужой перечень изменений) и уверенно печатала
+// зелёные галочки. Проверять надо то, что уедет клиентам. Сообщение шлётся в [TEST]-чат и
+// удаляется.
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
 import { cleanupOnSignals, deleteMessages, findOrCreateTestChat, makeCall, readHook } from './lib/testPortal.mjs'
 import { NOTICE_DAYS, buildLegalNotice, buildLegalNoticeChat, effectiveDate, formatRuDate, noticeProblems } from '../app/utils/legalNotice.ts'
@@ -42,7 +46,16 @@ if (!eula) throw new Error('в реестре нет документа eula')
 const current = eula.editions.find(isCurrentEdition)
 if (!current) throw new Error('в реестре eula нет действующей редакции')
 
-const edition = {
+const { PENDING_LEGAL_EDITIONS } = await import('../app/config/legalNotice.ts')
+/** Настоящее объявление, если оно есть: проверяем ровно то, что уйдёт лицензиатам. */
+const announced = PENDING_LEGAL_EDITIONS[0]
+if (announced) {
+  console.log(`объявление ИЗ РЕЕСТРА: ${announced.slug} от ${announced.date}`)
+} else {
+  console.log('реестр объявлений пуст — прогоняем синтетическое объявление')
+}
+
+const synthetic = {
   slug: 'eula',
   title: eula.title,
   date: current.date,
@@ -56,6 +69,12 @@ const edition = {
   // вовсе, и проверка «обе ссылки на месте» проходила бы, ничего не проверяя.
   previousDate: eula.editions.find(e => !isCurrentEdition(e))?.date ?? null
 }
+
+const edition = announced ?? synthetic
+// Ссылка строится по дате редакции ЭТОГО документа, поэтому у настоящего объявления проверяем его
+// собственный архив, а не архив лицензии.
+const editionDoc = findArchiveDoc(edition.slug)
+if (!editionDoc) throw new Error(`в реестре архива нет документа ${edition.slug}`)
 
 ok('объявление проходит проверку перед публикацией', noticeProblems(edition).length === 0,
   noticeProblems(edition).join('; '))
@@ -74,7 +93,11 @@ ok('названо право удалить приложение без пос�
 const days = Math.round(
   (Date.parse(`${effectiveDate(edition)}T00:00:00Z`) - Date.parse(`${edition.publishedAt}T00:00:00Z`)) / 86_400_000
 )
-ok('срок — 30 дней (изменение существенное)', days === NOTICE_DAYS.material, `${days} дн.`)
+// ⚠ Ожидаемый срок берётся ИЗ ПРИЗНАКА существенности этого объявления, а не зашит числом:
+// синтетика была существенной, настоящая правка может быть любой, и зашитые 30 дней объявляли бы
+// исправное объявление сломанным (или наоборот — молчали бы о сроке короче обещанного).
+const wantDays = edition.material ? NOTICE_DAYS.material : NOTICE_DAYS.minor
+ok(`срок — ${wantDays} дн. (изменение ${edition.material ? 'существенное' : 'обычное'})`, days === wantDays, `${days} дн.`)
 
 // Ссылка обязана вести на живую страницу: опечатка в дате даёт 404 в сообщении, УЖЕ разосланном по
 // чужим чатам, откуда его не отозвать.

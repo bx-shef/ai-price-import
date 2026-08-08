@@ -251,3 +251,51 @@ export async function redactFeedbackIssue(config: FeedbackConfig, issue: Feedbac
   }
   return res.status === 200
 }
+
+/**
+ * Все ОТКРЫТЫЕ (неразобранные) отзывы приёмника — для еженедельной сводки (#466).
+ *
+ * ⚠ Отдельная функция, а не параметр к `listOldestFeedbackIssues`: та существует ради чистки и
+ * берёт РОВНО ОДНУ страницу самых старых, потому что кап прогона всё равно меньше страницы.
+ * Сводке нужен полный счёт, и обрезка на пятидесяти превратила бы «накопилось 300» в спокойное
+ * «50» — то есть ровно в ту тишину, от которой сводка заводится.
+ *
+ * ⚠ Кап страниц есть, и его срабатывание видно вызывающему (`truncated`): молча посчитать
+ * половину значит соврать числом, а число здесь и есть всё сообщение.
+ */
+export async function listOpenFeedbackIssues(
+  config: FeedbackConfig,
+  fetchFn: FetchFn,
+  maxPages = 10
+): Promise<{ issues: FeedbackIssueRef[], truncated: boolean } | null> {
+  const PER_PAGE = 100
+  const issues: FeedbackIssueRef[] = []
+  for (let page = 1; page <= maxPages; page++) {
+    let res: Awaited<ReturnType<FetchFn>>
+    try {
+      res = await fetchFn(`${API}/repos/${config.repo}/issues?state=open&sort=created&direction=asc&labels=user-feedback&per_page=${PER_PAGE}&page=${page}`, {
+        method: 'GET',
+        headers: headers(config)
+      })
+    } catch {
+      return null
+    }
+    if (res.status !== 200) return null
+    const body = await res.json().catch(() => null)
+    if (!Array.isArray(body)) return null
+    for (const raw of body) {
+      const r = raw as Record<string, unknown>
+      if (r.pull_request) continue
+      const number = Number(r.number)
+      const nodeId = String(r.node_id ?? '')
+      const createdAt = String(r.created_at ?? '')
+      if (!Number.isInteger(number) || number <= 0 || !nodeId || !createdAt) continue
+      const labels = Array.isArray(r.labels)
+        ? r.labels.map(l => String((l as { name?: unknown })?.name ?? l ?? '')).filter(Boolean)
+        : []
+      issues.push({ number, nodeId, createdAt, title: String(r.title ?? ''), body: String(r.body ?? ''), labels })
+    }
+    if (body.length < PER_PAGE) return { issues, truncated: false }
+  }
+  return { issues, truncated: true }
+}

@@ -31,10 +31,18 @@ const CHAT_RE = /^(-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/
  * Fail-closed and SILENT about why beyond a shape verdict: an unset channel is a normal deployment
  * (dev, a portal-less build), not an error. Both parts are required — a token with no chat id has
  * nowhere to send, and half-configured would otherwise look enabled and drop every alert.
+ *
+ * ⚠ Имена переменных — ПАРАМЕТР, а не литерал внутри (#466): каналов теперь два — тревоги и
+ * еженедельная сводка по отзывам, — и жить им положено в РАЗНЫХ чатах (решение владельца
+ * 08.08.2026). Проверки формы при этом общие: скопировать их значило бы однажды получить две
+ * разошедшиеся редакции, из которых одна молча пропускает обрезанный токен.
  */
-export function resolveTelegramConfig(env: Record<string, string | undefined> = process.env): TelegramConfig | null {
-  const token = (env.TELEGRAM_ALERT_BOT_TOKEN ?? '').trim()
-  const chatId = (env.TELEGRAM_ALERT_CHAT_ID ?? '').trim()
+export function resolveTelegramConfig(
+  env: Record<string, string | undefined> = process.env,
+  names: { token: string, chatId: string } = { token: 'TELEGRAM_ALERT_BOT_TOKEN', chatId: 'TELEGRAM_ALERT_CHAT_ID' }
+): TelegramConfig | null {
+  const token = (env[names.token] ?? '').trim()
+  const chatId = (env[names.chatId] ?? '').trim()
   if (!TOKEN_RE.test(token) || !CHAT_RE.test(chatId)) return null
   return { token, chatId }
 }
