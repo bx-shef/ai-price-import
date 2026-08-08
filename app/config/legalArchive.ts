@@ -66,27 +66,27 @@ export const LEGAL_ARCHIVE: LegalArchiveDoc[] = [
     noRetroactivity: true,
     title: 'Лицензионное соглашение',
     sourceFile: 'eula',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '763831fbec0a4d111ff97aa76a0c197d8f28921e18d758cc9937d25f27b9753c' }]
+    editions: [{ date: '2026-08-08', effective: '18.08.2026', supersededAt: null, sha256: '2ff8e263686bb0c333f6b4adb004d88add803856cdb53c3695d68d206c026cf2' }]
   },
   {
     slug: 'privacy',
     noRetroactivity: true,
     title: 'Политика конфиденциальности приложения',
     sourceFile: 'privacy-policy',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '1f68411591c3954ef20e55e64b4bb90d88f376831b33b99ff201f4676ad06aa8' }]
+    editions: [{ date: '2026-08-08', effective: '18.08.2026', supersededAt: null, sha256: '55951da1bfc8c7df31d6f4ec7659b3429a2ca6c034d2fc66ebefab1d3569b036' }]
   },
   {
     slug: 'site-terms',
     noRetroactivity: false,
     title: 'Условия использования сайта',
     sourceFile: 'site-terms',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: 'e417f2a2e0b57f24adf2b4429741211fd948fc683e7a08b12072dbafa6f25b44' }]
+    editions: [{ date: '2026-08-08', effective: '18.08.2026', supersededAt: null, sha256: '1a7aa1d1976692e4c5d6f74c30c488db8d4e434d4ac2d128c5f2e3e5f8bb5242' }]
   },
   {
     slug: 'site-privacy',
     noRetroactivity: false,
     title: 'Политика конфиденциальности сайта',
     sourceFile: 'site-privacy',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '5c224ac270b1d85ad2cff0a14838703bfe37f0adf1d53fff4eec285fffd0f11a' }]
+    editions: [{ date: '2026-08-08', effective: '18.08.2026', supersededAt: null, sha256: 'e9c856fa71f4858bbb5321a6cc930bcafb703b5c06fc83a9401393a31aace7ce' }]
   }
 ]
