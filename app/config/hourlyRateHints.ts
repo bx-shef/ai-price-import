@@ -20,7 +20,15 @@
 /** Date the figures were collected, as shown to the admin. Bump together with the rates. */
 export const HOURLY_RATE_AS_OF = '01.08.2026'
 
-/** ISO 4217 code → reference rate per hour, in that currency. */
+/**
+ * ISO 4217 code → reference rate per hour, in that currency.
+ *
+ * ⚠ `KZT` остаётся, хотя подписку из Казахстана оформить нельзя (#389), и это НЕ противоречие:
+ * подсказка выбирается по **базовой валюте портала**, а не по стране подписки. Портал с подпиской
+ * в России или Беларуси вправе вести учёт в тенге, и тогда рублёвая подсказка под полем была бы
+ * просто неверным числом. Удалять строку «раз мы там не продаём» — значит спутать валюту с
+ * регионом.
+ */
 export const HOURLY_RATE_HINTS: Readonly<Record<string, number>> = {
   RUB: 445,
   BYN: 9.9,
