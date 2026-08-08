@@ -66,7 +66,7 @@ export const LEGAL_ARCHIVE: LegalArchiveDoc[] = [
     noRetroactivity: true,
     title: 'Лицензионное соглашение',
     sourceFile: 'eula',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '6dae481e1cd264f32b1a18d56e556fd9b7295b4602262d542fac4785fc333d04' }]
+    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '3a7d874dcb6d27b7823570b2a565407291795b8b1c2e4a651a2e77c6cfe91ae4' }]
   },
   {
     slug: 'privacy',
