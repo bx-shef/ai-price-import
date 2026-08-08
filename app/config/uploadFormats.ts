@@ -49,19 +49,23 @@ export function buildAccept(): string {
  *  a new format can't be added without deciding how it is named to the user. */
 export const FORMATS_HUMAN = 'PDF, фото, Excel, Word, CSV'
 
+/** Max size of a document the portal import accepts. Re-exported from `~/utils/importUpload`. */
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
 /**
- * Cap on the file a 👍/👎 may carry (#349 review). ONE number for both ends: the widget refuses to
- * promise an attachment it cannot send, and the route refuses to store one it did not expect. Two
- * independent constants would drift silently — and the failure is invisible, because an oversized
- * attachment is simply dropped and the feedback still files «successfully».
+ * Cap on the document a 👍/👎 may carry.
  *
- * Deliberately far below MAX_UPLOAD_BYTES (20 MB): an attachment exists to REPRODUCE a run, not to
- * archive it, and it rides inside a JSON body (base64 is ~4/3 of the bytes).
+ * Равен `MAX_UPLOAD_BYTES` (#461, решение владельца): вложение к отзыву — это ТОТ ЖЕ документ,
+ * который приложение приняло на импорт, и меньший предел означал бы, что про самые тяжёлые
+ * загрузки — сканы на много страниц, то есть ровно те, где разбор чаще всего и подводит, —
+ * пожаловаться с документом нельзя.
  *
- * ⚠ Владелец решил поднять его до 20 МБ (#458), но НЕ СЕЙЧАС — и это выяснилось попыткой: пока
- * байты везёт браузер внутри JSON-тела, 20 МБ превращаются в ~27 МБ и не проходят кап тела роута
- * (8 МБ), то есть отзыв перестал бы отправляться ВООБЩЕ. Поднимать надо ВМЕСТЕ с переходом на
- * чтение файла из вложения дела: тогда тело перестаёт нести байты, и ограничение снимается
- * естественно. Связка удержана тестом `feedbackIntake`, который эту правку и завернул.
+ * ⚠ Поднять его РАНЬШЕ было нельзя, и попытка это доказала: пока байты вёз браузер внутри
+ * JSON-тела, 20 МБ превращались в ~27 МБ и не проходили кап тела роута (8 МБ) — отзыв перестал бы
+ * отправляться ВООБЩЕ. Ограничение снялось само, когда сервер стал читать документ из вложения
+ * дела таймлайна: тело запроса байт больше не несёт.
+ * ⚠ Число по-прежнему ОДНО на оба конца — предупреждение в виджете и проверка на сервере: два
+ * независимых разъехались бы молча, ведь превышение не ломает отправку, вложение просто исчезает,
+ * а отзыв уходит «успешно».
  */
-export const MAX_FEEDBACK_FILE_BYTES = 5 * 1024 * 1024
+export const MAX_FEEDBACK_FILE_BYTES = MAX_UPLOAD_BYTES

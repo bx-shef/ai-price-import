@@ -13,9 +13,31 @@ import { jobRedis } from '../utils/jobStoreRedis'
 import { resolveFeedbackEntity, resolveFeedbackOutcome } from '../utils/feedbackEntity'
 import { checkFeedbackRate, feedbackRateMessage } from '../utils/uploadRateLimit'
 import { ATTACH_MISSING_NOTICE, checkAttachBudget } from '../utils/feedbackRepoBudget'
-import { feedbackIntakeGate, parseClientFile } from '../utils/feedbackIntake'
+import { feedbackIntakeGate } from '../utils/feedbackIntake'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
+import { fetchActivityFile, downloadAttachment } from '../utils/activityFileFetch'
+import { originatorCode } from '../utils/originMarker'
+import { sdkPortalDeps, makePortalSdkCall } from '../utils/b24Sdk'
+import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
 import type { FetchFn } from '../utils/b24Rest'
+
+/**
+ * Portal REST bound to the installed portal's own OAuth token.
+ *
+ * ⚠ Именно токеном ПОРТАЛА, а не фрейм-токеном сотрудника — по той же причине, что и в журнале
+ * (#458): фрейм-токен несёт права своего пользователя, и дело в недоступной ему карточке просто не
+ * вернулось бы, то есть вложение терялось бы у одних людей и находилось у других. Сужение до
+ * «своих» делает НАШ фильтр по `RESPONSIBLE_ID`, и оно явное.
+ */
+function feedbackPortalCall(memberId: string) {
+  return makePortalSdkCall(memberId, sdkPortalDeps({
+    query,
+    clientId: process.env.B24_CLIENT_ID ?? '',
+    clientSecret: process.env.B24_CLIENT_SECRET ?? '',
+    encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
+    now: () => Date.now()
+  })).then(t => (t ? (method: string, params: Record<string, unknown>) => t.call(method, params) : null))
+}
 
 /** jobId shape accepted for the DB lookup (matches the builder's context validation). */
 const JOB_ID_RE = /^[A-Za-z0-9-]{1,64}$/
@@ -59,7 +81,7 @@ export default defineEventHandler(async (event) => {
       }
 
       const raw = await readBody(event).catch(() => null) as
-        { kind?: unknown, comment?: unknown, attachFile?: unknown, file?: unknown, context?: Record<string, unknown> } | null
+        { kind?: unknown, comment?: unknown, attachFile?: unknown, context?: Record<string, unknown> } | null
       const kind = normalizeKind(raw?.kind)
       if (!kind) {
         span.outcome = 'bad_request'
@@ -75,11 +97,9 @@ export default defineEventHandler(async (event) => {
       // a missing/expired job simply yields no extra context. jobId is client-supplied → validate first.
       const jobId = typeof c.jobId === 'string' && JOB_ID_RE.test(c.jobId) ? c.jobId : ''
       const attachFile = raw?.attachFile === true
-      // The bytes now come FROM THE PAGE (#349): the extract worker deletes the upload as soon as the
-      // text is out, so there is nothing on our disk to read back — and «документ не распознан» has no
-      // Disk archive either. The browser still holds the File it sent, so it sends it again, once, and
-      // only when the employee explicitly answered «с файлом».
-      const clientFile = parseClientFile(raw?.file)
+      // ⚠ Тело запроса БАЙТ БОЛЬШЕ НЕ НЕСЁТ (#461): документ читается из дела таймлайна ниже.
+      // Отсюда и снятый кап вложения — он держался ровно на том, что base64 ехал внутри JSON и
+      // упирался в предел тела роута.
       const fetchImpl = globalThis.fetch as unknown as FetchFn
       // Duplicate suppression lives in the widget's page state (no persisted client store any more —
       // localStorage dropped, owner rework): it won't offer feedback twice
@@ -106,48 +126,62 @@ export default defineEventHandler(async (event) => {
             const view = parseJobResult(job.result)
             entity = resolveFeedbackEntity(view, auth.domain)
             outcome = resolveFeedbackOutcome(view, job.status)
-            if (attachFile) {
-              // Attach the source document itself, so the publisher can reproduce the run — a
-              // portal-Disk link is useless to them. Best-effort throughout: any miss just files the
-              // issue without a file.
+          }
+        } catch { /* best-effort: less context rather than a failed submission */ }
+      }
+      // ВЛОЖЕНИЕ — отдельной веткой, НЕ внутри «нашлось ли задание» (#461). Задание живёт 48 часов,
+      // а дело с документом — сколько его держит портал; вложенная ветка теряла бы файл ровно у
+      // старого импорта, про который отзыв особенно ценен.
+      if (jobId && attachFile) {
+        try {
+          // Attach the source document itself, so the publisher can reproduce the run.
+          //
+          // Ask GitHub whether the receiver is actually private BEFORE reading any bytes (#200).
+          // The slug comes from an env var and nothing else verifies it: one typo, or the repo
+          // being flipped to public later, and real invoices become public. Cached, three-state —
+          // "could not verify" blocks the upload just like "public" does, but is retried sooner.
+          const call = await feedbackPortalCall(member.memberId)
+          if (call && await feedbackUploadAllowed(config, fetchImpl)) {
+            // Байты берутся ИЗ ДЕЛА ТАЙМЛАЙНА (#461), а не из памяти страницы. Своей копии
+            // документа у нас нет (воркер удаляет её сразу, #349), архива на Диске больше не
+            // существует (#458) — зато у КАЖДОГО импорта, включая неразобранный, есть дело с
+            // вложенным документом. Прежний путь через страницу оставлял дыру: перезагрузил
+            // вкладку до отправки отзыва — и отзыв уходил без того, по чему прогон только и
+            // можно воспроизвести.
+            // ⚠ Сужение по сотруднику из ПРОВЕРЕННОГО фрейм-токена живёт внутри `fetchActivityFile`:
+            // `jobId` присылает клиент, и без него чужой идентификатор задания вытянул бы чужой
+            // документ.
+            const got = await fetchActivityFile(jobId, member.userId, {
+              call,
+              download: downloadAttachment,
+              originatorCode: originatorCode(process.env.IMPORT_ORIGINATOR_ID),
+              maxBytes: MAX_FEEDBACK_FILE_BYTES
+            })
+            // В журнал идёт только КЛАСС промаха: имя файла и адрес вложения — данные клиента.
+            if (!got.ok) console.warn(`[feedback] attachment miss: ${got.miss}`)
+            if (got.ok) {
+              // Global hourly ceiling on the RECEIVER (#354) — checked HERE, immediately before
+              // the commit, and not earlier. Earlier it metered intent instead of cost: a review
+              // whose bytes never materialised still spent the ceiling, so 60 tiny bodies with
+              // `attachFile:true` could turn attachments off for every tenant at zero cost to
+              // whoever sent them. A ceiling worth exhausting must cost the sender what it protects.
               //
-              // Ask GitHub whether the receiver is actually private BEFORE reading any bytes (#200).
-              // The slug comes from an env var and nothing else verifies it: one typo, or the repo
-              // being flipped to public later, and real invoices become public. Cached, three-state —
-              // "could not verify" blocks the upload just like "public" does, but is retried sooner.
-              if (await feedbackUploadAllowed(config, fetchImpl)) {
-                // Байты присылает САМА СТРАНИЦА (#349) — своей копии документа у нас нет.
-                // ⚠ Запасного пути через архив на Диске БОЛЬШЕ НЕТ (#458): архива не существует,
-                // документ вкладывается прямо в дело таймлайна. Значит вкладка, перезагруженная до
-                // отправки отзыва, файла не даст — и виджет обязан честно предложить выбрать его
-                // вручную, а не отправлять отзыв «пустым», выдавая это за успех.
-                const name = clientFile?.name || (typeof c.fileName === 'string' && c.fileName ? c.fileName : `${jobId}.bin`)
-                const base64 = clientFile?.base64
-                if (base64) {
-                  // Global hourly ceiling on the RECEIVER (#354) — checked HERE, immediately before
-                  // the commit, and not earlier. Earlier it metered intent instead of cost: a review
-                  // whose bytes never materialised (page sent none, no Disk archive, privacy probe
-                  // said no) still spent the ceiling, so 60 tiny bodies with `attachFile:true` could
-                  // turn attachments off for every tenant at zero cost to whoever sent them. A
-                  // ceiling worth exhausting must cost the sender what it protects.
-                  //
-                  // Over the ceiling the review is still filed — only without its file, and the
-                  // employee is told so: the text of a review is worth more than the file, and a
-                  // silent drop would leave them believing the document went out.
-                  const budget = await checkAttachBudget(member.memberId, Date.now())
-                  if (!budget.allowed) {
-                    attachNotice = budget.notice
-                  } else {
-                    const commit = await commitFeedbackFile(
-                      config, feedbackFilePath(portalTag, jobId, name), base64, `feedback file for job ${jobId}`, fetchImpl
-                    )
-                    if (commit.ok && commit.htmlUrl) fileUrl = commit.htmlUrl
-                  }
-                }
+              // Over the ceiling the review is still filed — only without its file, and the
+              // employee is told so: the text of a review is worth more than the file, and a
+              // silent drop would leave them believing the document went out.
+              const budget = await checkAttachBudget(member.memberId, Date.now())
+              if (!budget.allowed) {
+                attachNotice = budget.notice
+              } else {
+                const commit = await commitFeedbackFile(
+                  config, feedbackFilePath(portalTag, jobId, got.file.name), got.file.base64,
+                  `feedback file for job ${jobId}`, fetchImpl
+                )
+                if (commit.ok && commit.htmlUrl) fileUrl = commit.htmlUrl
               }
             }
           }
-        } catch { /* best-effort: less context rather than a failed submission */ }
+        } catch { /* best-effort: отзыв важнее вложения и уходит в любом случае */ }
       }
       // Просили приложить файл, а ссылки на него нет — значит он не ушёл: задание истекло, страница
       // байт не прислала, архива на Диске нет или приёмник не подтверждён приватным. Причины разные,

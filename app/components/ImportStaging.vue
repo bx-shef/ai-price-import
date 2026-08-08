@@ -40,8 +40,6 @@ interface StagedFile {
 
 const props = defineProps<{
   upload: (file: File, target?: TargetRef | null, jobId?: string) => Promise<UploadOutcome>
-  /** Park the picked File in page memory so a later 👍/👎 can attach it (#349). */
-  rememberFile?: (jobId: string, file: File) => void
   /** Portal domain — the remembered target is scoped to it (#349). */
   portalDomain?: string
   /** Terminal status of a job accepted by the server, or null while it is still being processed. */
@@ -229,7 +227,6 @@ async function startImport(): Promise<void> {
         // then «разбирается», then the outcome. Keeping the row here too showed the same document
         // twice in two different states, and the reader had to work out which one was current.
         // The row leaves at the moment of hand-over, not when the job finishes.
-        props.rememberFile?.(s.key, s.file) // bytes stay in PAGE memory for a later 👍/👎 (#349)
         staged.value = staged.value.filter(x => x !== s)
       } else {
         s.status = 'error'

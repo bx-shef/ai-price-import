@@ -77,7 +77,7 @@ describe('FeedbackWidget', () => {
     await w.find('textarea').setValue('всё верно')
     await sendWith(w, false)
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', 'всё верно', { jobId: 'job-7', fileName: 'счёт.xlsx' }, false, null)
+    expect(h.submit).toHaveBeenCalledWith('up', 'всё верно', { jobId: 'job-7', fileName: 'счёт.xlsx' }, false)
     expect(w.text()).toContain('Спасибо')
   })
 
@@ -85,12 +85,12 @@ describe('FeedbackWidget', () => {
     // Файл берётся ИЗ ПАМЯТИ СТРАНИЦЫ (#349) — сервер копию не хранит, поэтому без него кнопка
     // «Отправить с файлом» недоступна (проверено отдельным тестом ниже).
     const w = await mountSuspended(FeedbackWidget, {
-      props: { jobId: 'job-8', file: new File([new Uint8Array([1, 2, 3])], 'счёт.pdf') }
+      props: { jobId: 'job-8' }
     })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await sendWith(w, true)
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-8', fileName: undefined }, true, { name: 'счёт.pdf', base64: 'AQID' })
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, { jobId: 'job-8', fileName: undefined }, true)
   })
 
   it('оценку можно передумать: 👍 → 👎 → «Отправить» уходит как отрицательная', async () => {
@@ -104,7 +104,7 @@ describe('FeedbackWidget', () => {
     await sendWith(w, false)
     await tick()
     // Текст не потерян при смене оценки.
-    expect(h.submit).toHaveBeenCalledWith('down', 'передумал', expect.any(Object), false, null)
+    expect(h.submit).toHaveBeenCalledWith('down', 'передумал', expect.any(Object), false)
   })
 
   it('👎 opens the comment box; the «Отправить» button sends with the comment', async () => {
@@ -115,18 +115,18 @@ describe('FeedbackWidget', () => {
     await sendWith(w, false)
     await tick()
     // Файл уходит только по явному ответу — «без файла» значит именно без файла.
-    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object), false, null)
+    expect(h.submit).toHaveBeenCalledWith('down', 'НДС не тот', expect.any(Object), false)
     expect(w.text()).toContain('Спасибо')
   })
 
   it('👎 с ответом «с файлом» шлёт attachFile=true (#192 п.3)', async () => {
     const w = await mountSuspended(FeedbackWidget, {
-      props: { jobId: 'job-9', file: new File([new Uint8Array([4, 5])], 'накладная.pdf') }
+      props: { jobId: 'job-9' }
     })
     await w.find('button[aria-label="Плохо"]').trigger('click')
     await sendWith(w, true)
     await tick()
-    expect(h.submit).toHaveBeenCalledWith('down', undefined, { jobId: 'job-9', fileName: undefined }, true, { name: 'накладная.pdf', base64: 'BAU=' })
+    expect(h.submit).toHaveBeenCalledWith('down', undefined, { jobId: 'job-9', fileName: undefined }, true)
     expect(w.text()).toContain('Спасибо')
   })
 
@@ -163,55 +163,23 @@ describe('FeedbackWidget', () => {
     expect(w.find('button[aria-label="Хорошо"]').exists()).toBe(false)
   })
 
-  // #349: сервер больше НЕ хранит загруженный файл (владелец не готов держать документы клиента
-  // сутки). Единственная копия — в памяти страницы. Значит, кнопка «Отправить с файлом» не имеет
-  // права быть активной, когда копии нет: она бы молча отправила отзыв без того, ради чего его и
-  // отправляют. Вместо этого предлагается выбрать файл вручную.
-  it('без файла в памяти страницы «Отправить с файлом» недоступна и предлагается выбрать вручную', async () => {
+  // #461: файл больше НЕ едет со страницы — сервер читает его из вложения дела таймлайна. Значит
+  // вопрос про файл выглядит одинаково всегда: два равноправных ответа и ни выбора файла вручную,
+  // ни предупреждения о размере (страница о документе после отправки не знает ничего и обещать за
+  // сервер не может). Три прежних теста этой ветки (нет копии / есть копия / копия велика) сняты
+  // вместе с самой памятью страницы.
+  it('вопрос про файл не зависит от памяти страницы: оба ответа доступны всегда', async () => {
     const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-nofile' } })
     await w.find('button[aria-label="Хорошо"]').trigger('click')
     await tick()
     await clickText(w, 'Отправить')
     await tick()
-    expect(w.text()).toContain('выберите его вручную')
+    expect(w.text()).toContain('берётся из дела')
     const withFile = w.findAll('button').find(b => b.text().includes('Отправить с файлом'))
-    expect(withFile?.attributes('disabled')).toBeDefined()
-    expect(h.submit).not.toHaveBeenCalled()
-  })
-
-  it('когда копия есть — говорим, что уйдёт именно она, и что на сервере файл не хранится', async () => {
-    const w = await mountSuspended(FeedbackWidget, {
-      props: { jobId: 'job-has', file: new File([new Uint8Array([9])], 'счёт-7.pdf') }
-    })
-    await w.find('button[aria-label="Плохо"]').trigger('click')
+    expect(withFile?.attributes('disabled'), 'обещать нечего — сервер найдёт документ сам').toBeUndefined()
+    await clickText(w, 'Отправить с файлом')
     await tick()
-    await clickText(w, 'Отправить')
-    await tick()
-    expect(w.text()).toContain('счёт-7.pdf')
-    expect(w.text()).toContain('на сервере он не хранится')
-  })
-
-  // Ветка «файл есть, но слишком большой» — её отметил тестировщик как непокрытую, хотя соседние
-  // (файла нет / файл есть) закрыты. Импорт принимает 20 МБ, вложение к отзыву — 5 МБ, поэтому
-  // случай реальный: без гарда виджет обещал бы отправить скан, сервер молча выбросил бы вложение,
-  // а на 19+ МБ запрос не прошёл бы кап тела и терялась бы ВСЯ оценка.
-  it('файл больше капа: честный текст, вложение не уходит, но отзыв отправить можно', async () => {
-    const w = await mountSuspended(FeedbackWidget, {
-      props: { jobId: 'job-big', file: new File([new Uint8Array(6 * 1024 * 1024)], 'скан.pdf') }
-    })
-    await w.find('button[aria-label="Плохо"]').trigger('click')
-    await tick()
-    await clickText(w, 'Отправить')
-    await tick()
-    expect(w.text()).toContain('слишком большой')
-    expect(w.text()).toContain('скан.pdf')
-    // «С файлом» недоступна — обещать отправку того, что не уйдёт, нельзя.
-    const withFile = w.findAll('button').find(b => b.text().includes('Отправить с файлом'))
-    expect(withFile?.attributes('disabled')).toBeDefined()
-    // …а сам отзыв отправить можно — потеря вложения не должна лишать нас оценки.
-    await clickText(w, 'Отправить без файла')
-    await tick()
-    expect(h.submit).toHaveBeenCalledWith('down', undefined, expect.any(Object), false, null)
+    expect(h.submit).toHaveBeenCalledWith('up', undefined, expect.any(Object), true)
   })
 
   it('файл выброшен общим пределом приёмника → человеку говорят об этом (#354)', async () => {

@@ -29,7 +29,7 @@ definePageMeta({ layout: 'clear' })
 // a blocked page is never fetched, so its noindex is never read (see server/utils/seoFiles.ts).
 useHead({ title: APP_NAME, meta: [{ name: 'robots', content: 'noindex' }] })
 
-const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob, rememberFile, fileFor } = useImport()
+const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob } = useImport()
 // Two-step clear (no window.confirm), same pattern as the metrics reset.
 const confirmClear = ref(false)
 function doClearList(): void {
@@ -451,7 +451,6 @@ watch(jobs, (list) => {
               :job-done="jobDone"
               :refresh-now="refreshNow"
               :list-error="listError"
-              :remember-file="rememberFile"
               :portal-domain="portalDomain"
               @update:busy="v => stagingBusy = v"
             />
@@ -549,7 +548,6 @@ watch(jobs, (list) => {
                   v-for="job in jobs"
                   :key="job.jobId"
                   :job="job"
-                  :file="fileFor(job.jobId)"
                   @remove="removeJob"
                 />
                 <!-- Сервер ответил, но не по всем заданиям (#260): не ошибка — предупреждение, поэтому

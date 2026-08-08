@@ -42,16 +42,16 @@ export function useFeedback() {
    * Send a rating (+ optional comment + import context + file-attach consent). Throws on failure;
    * returns false outside a portal. Context (jobId/file) traces the issue back to a run — permitted
    * because the receiving repo is private (see feedback.ts). `attachFile` is the employee's explicit
-   * consent (#192 п.3) to include the source file. Since #349 the BYTES travel with the request —
-   * the server keeps no copy — with the portal Disk archive as a fallback when the page no longer
-   * holds them. Empty/undefined fields are dropped by the server builder.
+   * consent (#192 п.3) to include the source document.
+   *
+   * ⚠ БАЙТЫ БОЛЬШЕ НЕ ЕДУТ ОТСЮДА (#461): по согласию их читает сервер из вложения дела таймлайна.
+   * Прежде их слала страница из памяти, и перезагруженная вкладка молча лишала отзыв документа.
    */
   async function submit(
     kind: 'up' | 'down',
     comment?: string,
     context?: FeedbackSubmitContext,
-    attachFile?: boolean,
-    file?: { name: string, base64: string } | null
+    attachFile?: boolean
   ): Promise<{ ok: boolean, notice?: string }> {
     await init()
     const headers = buildFrameHeaders(await ensureAuth())
@@ -59,9 +59,8 @@ export function useFeedback() {
     const r = await $fetch<{ ok?: boolean, notice?: string }>('/api/feedback', {
       method: 'POST',
       headers,
-      // The bytes ride WITH the rating (#349): nothing is retained server-side, so the page is the
-      // only place the document still exists. Sent only when the employee answered «с файлом».
-      body: { kind, comment, context, attachFile: attachFile === true, ...(attachFile && file ? { file } : {}) }
+      // Уходит только СОГЛАСИЕ; документ по нему найдёт и приложит сервер (#461).
+      body: { kind, comment, context, attachFile: attachFile === true }
     })
     // `notice` — отзыв принят, но файл приложить не вышло (общий предел приёмника, #354). Молча
     // выбросить вложение нельзя: человек будет уверен, что документ ушёл.

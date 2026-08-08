@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { MAX_FEEDBACK_BODY_BYTES, feedbackIntakeGate, parseClientFile } from '../server/utils/feedbackIntake'
+import { MAX_FEEDBACK_BODY_BYTES, feedbackIntakeGate } from '../server/utils/feedbackIntake'
 import { MAX_FEEDBACK_FILE_BYTES } from '../app/config/uploadFormats'
 
 const ok = { allowed: true, retryAfterMs: 0 }
@@ -41,44 +41,13 @@ describe('гейт приёма отзыва', () => {
     expect(feedbackIntakeGate({ rate: ok, declaredLength: Number.NaN, rateMessage: msg })).toBeNull()
   })
 
-  it('кап тела с запасом покрывает вложение в base64 (×4/3) плюс сам отзыв', () => {
-    expect(MAX_FEEDBACK_BODY_BYTES).toBeGreaterThan(Math.ceil((MAX_FEEDBACK_FILE_BYTES * 4) / 3))
-  })
-})
-
-describe('parseClientFile — единственная серверная проверка присланных байт', () => {
-  const b64 = (bytes: number) => 'A'.repeat(Math.floor((bytes * 4) / 3 / 4) * 4)
-
-  it('принимает нормальное вложение и имя', () => {
-    expect(parseClientFile({ name: 'счёт.pdf', base64: 'AQID' })).toEqual({ name: 'счёт.pdf', base64: 'AQID' })
-  })
-
-  it('без имени принимает файл, но имя пустое — путь достроит feedbackFilePath', () => {
-    expect(parseClientFile({ base64: 'AQID' })?.name).toBe('')
-    expect(parseClientFile({ name: 42, base64: 'AQID' })?.name).toBe('')
-  })
-
-  it('не-base64 отвергается целиком, а не сохраняется мусором', () => {
-    for (const bad of ['не base64', 'AQ ID', 'AQ<ID>', 'АQID', 'AQID===']) {
-      expect(parseClientFile({ base64: bad }), bad).toBeNull()
-    }
-  })
-
-  it('превышение капа файла → null (отзыв уходит без вложения, а не падает)', () => {
-    expect(parseClientFile({ base64: b64(MAX_FEEDBACK_FILE_BYTES + 1024) })).toBeNull()
-    expect(parseClientFile({ base64: b64(MAX_FEEDBACK_FILE_BYTES - 1024) })).not.toBeNull()
-  })
-
-  it('мусорная форма не роняет разбор', () => {
-    for (const junk of [null, undefined, 'строка', 42, [], {}, { base64: '' }, { base64: 123 }]) {
-      expect(parseClientFile(junk)).toBeNull()
-    }
-  })
-
-  it('регулярка base64 не даёт катастрофического отката (длинная строка + плохой хвост)', () => {
-    const started = performance.now()
-    expect(parseClientFile({ base64: `${'A'.repeat(1_000_000)}!` })).toBeNull()
-    expect(performance.now() - started).toBeLessThan(1000)
+  it('кап тела БОЛЬШЕ НЕ связан с размером документа — тело байт не несёт', () => {
+    // ⚠ Прежде здесь стояло обратное требование: тело обязано вмещать вложение в base64 (×4/3),
+    // и именно оно держало предел документа на 5 МБ — поднять его до 20 МБ значило бы получить
+    // ~27 МБ тела против капа 8 МБ, то есть отзыв перестал бы отправляться ВООБЩЕ. С #461 документ
+    // читает сервер из вложения дела, связь разорвана, и предел документа поднят до размера
+    // импорта. Проверка перевёрнута сознательно: она фиксирует, что связи БОЛЬШЕ НЕТ.
+    expect(MAX_FEEDBACK_FILE_BYTES).toBeGreaterThan(MAX_FEEDBACK_BODY_BYTES)
   })
 })
 
@@ -91,6 +60,21 @@ describe('роут действительно спрашивает гейт', ()
   it('гейт вызывается до чтения тела', () => {
     expect(route).toContain('feedbackIntakeGate(')
     expect(route.indexOf('feedbackIntakeGate(')).toBeLessThan(route.indexOf('readBody(event)'))
+  })
+
+  it('документ ищется по сотруднику из ПРОВЕРЕННОГО токена, а не по телу запроса (#461)', () => {
+    // Несущая проверка приватности на шве роута: `jobId` присылает клиент, и сужение по сотруднику
+    // — единственное, что мешает назвать чужое задание своим. Поведение сужения покрыто в
+    // `activityFileFetch`, а здесь сторожится сам факт, что роут передаёт туда именно проверенного
+    // сотрудника: подмена `member.userId` на что-то из тела не уронила бы ни одного теста.
+    expect(route).toContain('fetchActivityFile(jobId, member.userId')
+  })
+
+  it('тело запроса байт документа НЕ принимает (#461)', () => {
+    // Возврат приёма байт из тела — это возврат прежней дыры: страница снова становится источником
+    // документа, а перезагруженная вкладка снова лишает отзыв вложения.
+    expect(route).not.toContain('parseClientFile')
+    expect(route).not.toContain('raw?.file')
   })
 
   it('вердикт гейта применяется: статус, заголовок и текст', () => {
