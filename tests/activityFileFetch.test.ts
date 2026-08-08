@@ -119,7 +119,17 @@ describe('#461: файл к отзыву берётся из дела', () => {
     expect(empty).toEqual({ ok: false, miss: 'download-failed' })
   })
 
-  it('безымянное вложение получает имя от задания, а не пустое', async () => {
+  it('имени в ответе портала НЕТ — берём имя из задания', async () => {
+    // ⚠ Живая находка 08.08.2026: в `FILES` приезжают только `id` и `url`. Без запасного имени
+    // документ уходил бы в отзыв как `job-9.bin`, и разобрать, что именно прислали, невозможно.
+    const r = await fetchActivityFile('job-9', 17, deps({
+      call: async (m: string) => m === 'crm.activity.list' ? [{ ID: '7' }] : { FILES: [{ url: OK_URL }] },
+      fallbackName: 'накладная №5.pdf'
+    }))
+    expect(r).toEqual({ ok: true, file: { name: 'накладная №5.pdf', base64: Buffer.from(BYTES).toString('base64') } })
+  })
+
+  it('имени нет нигде → имя от задания, а не пустое', async () => {
     const r = await fetchActivityFile('job-9', 17, deps({
       call: async (m: string) => m === 'crm.activity.list' ? [{ ID: '7' }] : { FILES: [{ url: OK_URL, name: '  ' }] }
     }))

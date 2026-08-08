@@ -27,6 +27,8 @@ export interface AttachmentDeps {
   download: ActivityFileDeps['download']
   originatorCode: string
   maxBytes: number
+  /** Имя документа из задания — портал своего в `FILES` не отдаёт (живая находка). */
+  fallbackName?: string
   /** Текст «отзыв принят, но документ не приложен» — общий для всех причин промаха. */
   missingNotice: string
   /** Куда сообщить КЛАСС промаха (без имени файла и адреса — это данные клиента). */
@@ -64,7 +66,8 @@ export async function resolveFeedbackAttachment(
       call,
       download: deps.download,
       originatorCode: deps.originatorCode,
-      maxBytes: deps.maxBytes
+      maxBytes: deps.maxBytes,
+      fallbackName: deps.fallbackName
     })
     if (!got.ok) {
       deps.logMiss?.(got.miss)

@@ -18,7 +18,6 @@
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
 import { liveOauth } from './lib/oauthToken.mjs'
 
-
 const { fetchActivityFile, downloadAttachment } = await import('../server/utils/activityFileFetch.ts')
 
 const { domain: DOMAIN, token: TOKEN } = await liveOauth()
@@ -47,7 +46,7 @@ const fail = (m) => {
   process.exitCode = 1
 }
 
-const deps = extra => ({ call, download: url => downloadAttachment(url, MAX), originatorCode: ORIGINATOR, maxBytes: MAX, ...extra })
+const deps = extra => ({ call, download: url => downloadAttachment(url, MAX), originatorCode: ORIGINATOR, maxBytes: MAX, fallbackName: `${JOB_ID}.pdf`, ...extra })
 
 let companyId = 0
 let activityId = 0
@@ -60,24 +59,30 @@ try {
   // отвергает вызов. Заводим свою и уносим её в `finally`.
   companyId = Number(await call('crm.company.add', { fields: { TITLE: `[TEST] #461 ${JOB_ID}` } }))
 
-  // ⚠ `todo.add` отдаёт ОБЪЕКТ `{id}`, а не число (живая находка прогона): `Number(result)` давал
-  // `NaN`, дело заводилось, а последующий `update` уходил в никуда — маркера не было, и путь
-  // «документ не найден» выглядел бы как дефект чтения, а не как ошибка самой проверки.
+  // ⚠ `todo.add` отдаёт ОБЪЕКТ `{id}`, а не число (живая находка): `Number(result)` давал `NaN`,
+  // дело заводилось, а последующий `update` уходил в никуда.
+  // ⚠ `deadline` у `todo.add` ОБЯЗАТЕЛЕН — без него «Could not find value for parameter {deadline}».
   const added = await call('crm.activity.todo.add', {
     ownerTypeId: 4,
     ownerId: companyId,
     title: `[TEST] проверка вложения ${JOB_ID}`,
     responsibleId: userId,
-    // ⚠ `deadline` ОБЯЗАТЕЛЕН у `todo.add` — без него портал отвечает «Could not find value for
-    // parameter {deadline}» (живая находка этого прогона).
-    deadline: new Date(Date.now() + 15 * 60_000).toISOString(),
-    fields: { FILES: [{ fileData: [`${JOB_ID}.pdf`, BYTES.toString('base64')] }] }
+    deadline: new Date(Date.now() + 15 * 60_000).toISOString()
   })
   activityId = Number(added?.id ?? added)
-  // Маркер ставится отдельным `update` — у `todo.add` таких параметров нет (см. CLAUDE.md).
+
+  // ⚠ ПОСЛЕДОВАТЕЛЬНОСТЬ ТА ЖЕ, ЧТО В БОЮ, и это НЕ мелочь: вложение ставится ОТДЕЛЬНЫМ
+  // `crm.activity.update`, а не полем внутри `todo.add`. Первая редакция этой проверки клала
+  // `FILES` прямо в `todo.add` — портал принял вызов БЕЗ ошибки и файл молча не прикрепил, чтение
+  // вернуло пусто, и я едва не записал это как «портал не отдаёт FILES», то есть обвинил портал в
+  // своей ошибке. Проверка обязана повторять боевой путь дословно, иначе она проверяет не его.
   await call('crm.activity.update', {
     id: activityId,
     fields: { ORIGINATOR_ID: ORIGINATOR, ORIGIN_ID: JOB_ID }
+  })
+  await call('crm.activity.update', {
+    id: activityId,
+    fields: { FILES: [{ fileData: [`${JOB_ID}.pdf`, BYTES.toString('base64')] }] }
   })
   ok(`дело ${activityId} заведено с вложением, ответственный ${userId}`)
 

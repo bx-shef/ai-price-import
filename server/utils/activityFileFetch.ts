@@ -31,6 +31,14 @@ export interface ActivityFileDeps {
   originatorCode: string
   /** Предел размера вложения к отзыву. */
   maxBytes: number
+  /**
+   * Имя документа, если портал своего не отдал.
+   *
+   * ⚠ Живая находка 08.08.2026: в `FILES` приезжают только `id` и `url` — **имени там нет**, и без
+   * запасного документ уходил бы в отзыв как `<задание>.bin`. Разбирать по нему, что за файл
+   * прислали, невозможно, а имя мы знаем из самого задания.
+   */
+  fallbackName?: string
 }
 
 /** Почему файл не доехал — для журнала, наружу человеку уходит один общий текст. */
@@ -115,7 +123,9 @@ export async function fetchActivityFile(
   if (body.status !== 200 || body.bytes.length === 0) return { ok: false, miss: 'download-failed' }
   if (body.bytes.length > deps.maxBytes) return { ok: false, miss: 'too-big' }
 
-  const name = typeof file?.name === 'string' && file.name.trim() ? file.name.trim() : `${jobId}.bin`
+  const name = typeof file?.name === 'string' && file.name.trim()
+    ? file.name.trim()
+    : (deps.fallbackName?.trim() || `${jobId}.bin`)
   return { ok: true, file: { name, base64: Buffer.from(body.bytes).toString('base64') } }
 }
 

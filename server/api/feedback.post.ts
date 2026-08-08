@@ -157,6 +157,9 @@ export default defineEventHandler(async (event) => {
           download: url => downloadAttachment(url, MAX_FEEDBACK_FILE_BYTES),
           originatorCode: originatorCode(process.env.IMPORT_ORIGINATOR_ID),
           maxBytes: MAX_FEEDBACK_FILE_BYTES,
+          // Портал в `FILES` имени не отдаёт (живая находка): без этого документ уехал бы как
+          // `<задание>.bin`, и разобрать, что именно прислали, стало бы невозможно.
+          fallbackName: typeof c.fileName === 'string' ? c.fileName : undefined,
           missingNotice: ATTACH_MISSING_NOTICE,
           // В журнал идёт только КЛАСС промаха: имя файла и адрес вложения — данные клиента.
           logMiss: miss => console.warn(`[feedback] attachment miss: ${miss}`)
