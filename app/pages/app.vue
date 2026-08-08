@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import WarningAlarmIcon from '@bitrix24/b24icons-vue/main/WarningAlarmIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
@@ -92,6 +92,15 @@ const launch = ref<AppLaunchMode | undefined>()
 // списки»). `stagingBusy` comes from ImportStaging's one-by-one loop; `uploading` is a single POST in
 // flight. Either → busy.
 const stagingBusy = ref(false)
+// Журнал импортов перечитывается, когда пачка ДОШЛА ДО КОНЦА (`busy` сменился с true на false):
+// только что загруженный документ иначе не появился бы в нём до перезагрузки страницы, и два
+// блока об одном и том же противоречили бы друг другу на одном экране — «Готово» сверху и пусто
+// снизу. Перечитываем именно на спаде: во время пачки строки ещё не записаны, и запрос был бы
+// зря потраченным обращением к порталу.
+const journalRef = useTemplateRef<{ reload: () => Promise<void> }>('journalRef')
+watch(stagingBusy, (now, was) => {
+  if (was && !now) void journalRef.value?.reload()
+})
 // Закрытие предупреждения о настройке «пропустить ненайденные» — на время открытой страницы.
 // Персистентного намеренно нет: см. комментарий у самого предупреждения.
 const skipWarnNoticeHidden = ref(false)
@@ -562,6 +571,14 @@ watch(jobs, (list) => {
                 </li>
               </ul>
             </B24Card>
+
+            <!-- Журнал импортов (#458): история живёт в делах CRM, а не у нас. Стоит ПОД списком
+                 текущей пачки и НАД экономией: сначала «что происходит сейчас», потом «что было»,
+                 и только потом сводные числа. -->
+            <ImportJournal
+              ref="journalRef"
+              class="mt-4"
+            />
 
             <!-- Экономия (по макету docs/ui-spec.md §2.7): две крупные цифры в строку, справа — ссылка на
              подробные метрики и сброс; счётчики отдельной тихой строкой ПОД карточкой. -->

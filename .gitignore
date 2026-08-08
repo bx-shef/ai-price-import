@@ -51,3 +51,5 @@ appendonlydir/
 # документов, а репозиторий публичный. Дефолтный --out кладёт его прямо в корень.
 # Гард индекса — tests/noLocalArtifacts.test.ts.
 ab-prompt*.json
+probe-328-showcase.json
+probe-todo-carrier.json

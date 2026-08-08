@@ -22,7 +22,6 @@ export interface ImportJobView {
   status: JobStatus
   fileName: string
   result: string
-  diskUrl?: string
   /** CRM type the employee chose for this file, when they chose one manually (#269). */
   targetEntityTypeId?: number
   /** When this page started tracking the job — grace window for the expired-detection below. */

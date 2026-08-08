@@ -62,7 +62,6 @@ export default defineEventHandler(async (event) => {
           status: j.status,
           fileName: j.fileName,
           result: j.result,
-          ...(j.diskUrl ? { diskUrl: j.diskUrl } : {}),
           ...(j.targetEntityTypeId ? { targetEntityTypeId: j.targetEntityTypeId } : {})
         }))
       // The cap used to truncate SILENTLY: past it a job simply stopped updating, with no error and no

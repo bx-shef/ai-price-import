@@ -5,7 +5,7 @@ import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/
 import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
-import { buildImportTitle, supplierNameTrusted } from '~/utils/importTitle'
+import { buildFailedImportTitle, buildImportTitle, supplierNameTrusted } from '~/utils/importTitle'
 import { normalizeUnitKey } from '~/utils/measureCreate'
 import { allLinesSkippedError, lineSkippedWarning, noLinesMatchedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
@@ -29,6 +29,13 @@ export interface CrmSyncDeps {
   findExisting: (entityTypeId: number, filter: Record<string, unknown>) => Promise<number | null>
   /** Originator code stamped into the marker (env; defaults to the repo code). */
   originatorPrefix?: string
+  /** Имя загруженного файла — попадает в заголовок карточки НЕУДАЧНОЙ загрузки (#459): по нему
+   *  человек понимает, о каком документе речь, не открывая карточку. */
+  sourceFileName?: string
+  /** Готовый текст отказа, если документ не удалось РАЗОБРАТЬ (#459). Приходит со стадии
+   *  распознавания и трактуется как жёсткая ошибка: позиций нет, но карточка-след и дело
+   *  создаются — иначе неудача не оставит в портале следа и не попадёт в журнал импортов. */
+  documentFailure?: string
   findCompanyByTaxId: (taxId: string) => Promise<number | null>
   findProduct: (item: ExtractedDocument['items'][number]) => Promise<number | null>
   /** Optional: resolve an unmatched unit to a catalog measure (mapping.units.autoCreate, Q11) —
@@ -77,6 +84,12 @@ export interface CrmSyncDeps {
     companyId?: number | null
     supplierName?: string
     rowCount: number
+    /** Сколько строк связано с каталогом — блок «Позиций: N · сопоставлено: M» в деле. */
+    matchedCount?: number | null
+    /** Готовая подпись суммы для дела («10 320,00 BYN»). Собирается ЗДЕСЬ, а не в проводке, чтобы
+     *  число в деле приходило из того же расчёта, что и сумма записи: два независимых
+     *  форматирования разъехались бы, и дело сообщало бы сумму, отличную от карточки. */
+    amountLabel?: string
     /** Import problems (товар не найден / единица / НДС уточнён / итог не сошёлся …) to record on the
      *  timeline дело so the operator sees what needed attention — not just the success counts. */
     warnings: string[]
@@ -110,6 +123,16 @@ export interface CrmSyncResult {
   advice?: string
   errors: string[]
 }
+
+// ⚠ ПРАВИЛО ВЛАДЕЛЬЦА (#459): импорт создаёт сущность CRM ВСЕГДА — и когда файл не разобрался, и
+// когда ни одна позиция не найдена. Цель, воронка и стадия берутся из настроек; сумма таких
+// карточек РОВНО 0, заголовок начинается словами «Импорт не удался». Причина: журнал импортов на
+// главной строится из ДЕЛ, а дело не существует без карточки-владельца (`crm.activity.todo.add`
+// требует `ownerTypeId` и проверяет его на существование — live-verified). Загрузка без записи не
+// оставляла бы в портале НИ СЛЕДА, и журнал молчал бы ровно о тех случаях, ради которых в него
+// заходят. ⚠ Отказ при этом остаётся отказом: ошибки уходят в чат, статус задания «Ошибка».
+// ⚠ Плата принята владельцем: в воронку попадает карточка на каждый негодный файл. Отличают их
+// глазами по трём признакам разом — название, сумма 0 и первая стадия.
 
 /** Run the crm-sync step for one document. Idempotent: safe to retry. */
 export async function runCrmSync(
@@ -149,9 +172,20 @@ export async function runCrmSync(
   // input / routing rule / manual override) would create with NO marker → a retry can't find it and
   // silently duplicates. So we treat it as a HARD ERROR (→ error chat, no create) rather than create
   // a duplicate-prone entity. This is the code that ENFORCES «markerless types are not targets» (#135).
+  // ⚠ Отказ распознавания — ПЕРВЫЙ в списке ошибок: он объясняет всё остальное, а прочие проверки
+  // по пустому документу всё равно ничего не найдут.
+  if (deps.documentFailure) errors.push(deps.documentFailure)
+
   const markerFilter = originSearchFilter(target.entityTypeId, jobId, deps.originatorPrefix)
   if (!markerFilter) {
     errors.push(`Импорт остановлен: в этот тип CRM-сущности (${target.entityTypeId}) вносить нельзя — приложение не сможет защититься от повторной записи. Откройте настройки импорта и выберите сделку, смарт-счёт или смарт-процесс.`)
+    // ⚠ ЕДИНСТВЕННОЕ исключение из правила «запись создаётся всегда» (#459), и оно вынужденное:
+    // у типа без маркера повтор задания не сможет найти прежнюю запись, поэтому «создавать всегда»
+    // означало бы «дублировать при каждом ретрае». Молча плодить карточки хуже, чем не оставить
+    // следа: клиент получил бы не пропуск в журнале, а мусор в воронке, растущий сам по себе.
+    // Настройка при этом чинится в одно действие — текст ошибки прямо говорит, что выбрать.
+    await deps.reportErrors(errors, doc.supplier?.name)
+    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: false, warnings, errors }
   }
 
   // Currency must exist in the portal (hard error → do not create a wrong-currency entity).
@@ -248,17 +282,19 @@ export async function runCrmSync(
   }
   // Hard errors (VAT inclusion undefined and/or an unknown rate) → report and create NOTHING (no
   // catalog writes have happened yet). `unmatched` stays false — nothing was created.
-  if (errors.length) {
-    await deps.reportErrors(errors, doc.supplier?.name)
-    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: false, warnings, errors }
-  }
+  // ⚠ Раньше здесь стоял ВЫХОД без записи. Теперь запись создаётся всегда (#459): загрузка, не
+  // оставившая в портале следа, не попадает в журнал импортов — а он строится из дел, и дело не
+  // существует без карточки-владельца. Ошибки по-прежнему уходят в чат и в результат; цикл по
+  // строкам ниже пропускается целиком, поэтому каталог не трогается ни одной записью.
+  const documentUnusable = errors.length > 0
+  if (documentUnusable) await deps.reportErrors(errors, doc.supplier?.name)
 
   const rows: Array<Record<string, unknown>> = []
   const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
   let skippedLines = 0
   let matchedLines = 0
   let sort = 10
-  for (const item of doc.items) {
+  for (const item of documentUnusable ? [] : doc.items) {
     // Only a positive rate is matched (validated in the pre-pass); 0 / absent = «Без НДС» → taxRate
     // null (the B24 «Без НДС» flag), never a 0%-rate lookup.
     const vat = (item.vatRate ?? 0) > 0 ? matchVatRate(item.vatRate!, vatRates) : null
@@ -361,13 +397,16 @@ export async function runCrmSync(
   // ⚠ `doc.items.length > 0` — сегодня недостижимо (`validateExtractedDocument` отвергает документ
   // без позиций ещё в извлечении), но остаётся страховкой: без него текст «ни одна из 0 позиций»
   // и сам отказ появились бы у документа, который ничего не пропускал.
-  if (!existingId && doc.items.length > 0 && rows.length === 0) {
+  // ⚠ Тоже БЕЗ выхода (#459): отказ остаётся отказом — он уходит в чат и в результат, — но запись
+  // создаётся, иначе загрузка не оставит следа и в журнале её не будет. Плата принята владельцем:
+  // карточка с нулевой суммой на первой стадии.
+  const allSkippedReported = !existingId && !documentUnusable && doc.items.length > 0 && rows.length === 0
+  if (allSkippedReported) {
     errors.push(allLinesSkippedError(doc.items.length))
     await deps.reportErrors(errors, doc.supplier?.name)
     // `unmatched` — честное состояние поиска поставщика (он уже отработал выше), а не константа:
     // счётчик существует ровно чтобы показывать, как часто поставщик не находится, и обнулять его
     // на самом провальном классе документов значит занижать его именно там, где он важен.
-    return { entityTypeId: target.entityTypeId, entityId: 0, created: false, rowCount: 0, idempotent: false, unmatched: !companyId, warnings, errors }
   }
 
   // Совет «что делать с пропущенными» — РОВНО ОДИН раз на документ и только когда импорт всё-таки
@@ -384,7 +423,11 @@ export async function runCrmSync(
   // пропущено, то есть ровно там, где нужнее. Но место в списке проблем стоило дороже: счётчик
   // печатал «Проблемы (4)» на трёх пропущенных строках, а сама подсказка читалась как четвёртая
   // поломка документа. Отдельное поле снимает и обрезку, и счётчик разом.
-  const advice = skippedLines > 0 ? skippedLinesAdvice() : undefined
+  // ⚠ Условие — «отказ уже произнёс совет», а НЕ «строки записаны». Разница видна на повторе
+  // задания, чья первая попытка создала запись: маркер найден, отказ не печатается, строк ноль —
+  // и совет обязан прозвучать, иначе человек остаётся без единственного указания, что делать.
+  // Проверка `rows.length > 0` тут была бы неверной ровно на этом случае.
+  const advice = skippedLines > 0 && !allSkippedReported ? skippedLinesAdvice() : undefined
 
   // ⚠ «Ни одна строка не связалась с каталогом» — ОТДЕЛЬНОЕ предупреждение и самый тихий исход из
   // возможных: строки записаны все до единой, сумма верна, статус «Готово», а связи с номенклатурой
@@ -394,6 +437,14 @@ export async function runCrmSync(
   if (rows.length > 0 && matchedLines === 0 && mapping.product.onMissing === 'freeform') {
     warnings.push(noLinesMatchedWarning(Boolean(mapping.article.field)))
   }
+
+  // Подпись суммы для дела таймлайна. Считается ОДИН раз и здесь же, где считается сумма записи:
+  // отдельный расчёт в проводке рано или поздно разошёлся бы с карточкой, и дело сообщало бы
+  // человеку не то число, которое стоит в CRM.
+  // ⚠ Валюты может не быть — тогда печатаем голое число, а не выдуманный код.
+  const activityAmountLabel = Number.isFinite(pricing.grossTotal)
+    ? `${pricing.grossTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${doc.currency ? ` ${doc.currency}` : ''}`
+    : ''
 
   const entityTypeId = target.entityTypeId
   let entityId: number
@@ -408,7 +459,11 @@ export async function runCrmSync(
     // clamped ≥0 for B24) — so we must NOT re-sum the clamped rows here or a discount would be lost. Only
     // a PARTIAL write (skip-warn dropped a line) falls back to the sum of rows actually written.
     const allLinesWritten = rows.length === doc.items.length
-    const opportunityValue = allLinesWritten ? pricing.grossTotal : computeOpportunity(rows)
+    // ⚠ Неудачная загрузка (#459) — сумма РОВНО 0, а не печатный итог документа: позиций в карточке
+    // нет, и любое другое число обещало бы деньги, которых в записи не существует, и попало бы в
+    // отчёты клиента по обороту. Ноль и первая стадия — то, по чему такие карточки отличают глазами.
+    const failedImport = rows.length === 0
+    const opportunityValue = failedImport ? 0 : (allLinesWritten ? pricing.grossTotal : computeOpportunity(rows))
     // Partial write (skip-warn dropped a line): the deal amount is the sum of the WRITTEN rows, so it
     // will NOT equal the document's printed total. Warn explicitly — otherwise a bookkeeper sees a deal
     // whose sum is silently smaller than the paper (the per-line «строка пропущена» warnings don't say
@@ -421,7 +476,9 @@ export async function runCrmSync(
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
-      title: buildImportTitle(doc, opportunityValue),
+      // ⚠ Заголовок неудачной загрузки говорит об этом ПЕРВЫМ СЛОВОМ: такие карточки человек
+      // отличает в списке сущностей, не открывая их (#459).
+      title: failedImport ? buildFailedImportTitle(deps.sourceFileName) : buildImportTitle(doc, opportunityValue),
       // Counterparty (#135): supplier FOUND → link companyId (repeat lead / deal on a company).
       // Supplier NOT found on a LEAD target → fill the lead's own companyTitle from the document
       // (a "raw" lead a manager qualifies) — this removes the unmatched dead-end that other
@@ -458,7 +515,14 @@ export async function runCrmSync(
   // and BEFORE the side effects, so a crash between claim and post errs toward a missed notice
   // over a double post — the accepted trade (#164). Fallback to the `created` gate when no claim
   // dep is wired (unit tests, or a path without a tracked job row).
-  const finalize = deps.claimFinalize ? await deps.claimFinalize() : created
+  // ⚠ Успешным импорт считается ТОЛЬКО без жёстких ошибок (#459). Раньше это следовало из того,
+  // что при ошибке до создания дело не доходило; теперь запись-след создаётся всегда, и без
+  // явного условия в чат ушло бы «Готово» по документу, который не разобрался, — то есть худшая
+  // из возможных ложь: человек не пошёл бы разбираться.
+  // ⚠ Сама ЗАЯВКА на финализацию тоже не подаётся: она одноразовая, и потратить её на неудачный
+  // прогон значило бы лишить сообщения тот повтор задания, который в итоге сработает.
+  const importSucceeded = errors.length === 0
+  const finalize = importSucceeded && (deps.claimFinalize ? await deps.claimFinalize() : created)
 
   // Success chat notification (best-effort — never fail an import over a chat hiccup).
   if (deps.notifySuccess && finalize) {
@@ -482,9 +546,13 @@ export async function runCrmSync(
   // transport is the OAuth SDK (real app context), where crm.activity.configurable.add
   // works; a webhook context would return ERROR_WRONG_CONTEXT (verified) — so this is a
   // no-op only on the dev webhook path, never in prod.
-  if (deps.writeActivity && finalize) {
+  // ⚠ Дело пишется и на НЕУДАЧНОМ импорте (#459) — именно ради него и заводился журнал. Гейт
+  // одноразовости при этом сохраняется: на отказе финализация не заявлена, поэтому берём тот же
+  // однократный клейм, но по своему условию.
+  const writeActivityOnce = finalize || (!importSucceeded && created)
+  if (deps.writeActivity && writeActivityOnce) {
     try {
-      await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, warnings, advice })
+      await deps.writeActivity({ entityTypeId, entityId, companyId, supplierName: doc.supplier?.name, rowCount: rows.length, matchedCount: matchedLines, amountLabel: activityAmountLabel, warnings, advice })
     } catch {
       warnings.push('Документ внесён, но запись в таймлайне создать не удалось. На сам импорт это не влияет — товары в CRM записаны.')
     }

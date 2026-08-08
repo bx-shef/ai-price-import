@@ -88,8 +88,6 @@ export interface PortalMapping {
   article: ArticleFieldConfig
   product: ProductLookupConfig
   units: UnitsConfig
-  /** Whether to save the source file to Disk + attach to the activity. */
-  saveFile: boolean
   /** Notification / error chat dialog ids. */
   notifyChatId?: string
   errorChatId?: string

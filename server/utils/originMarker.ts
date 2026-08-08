@@ -14,8 +14,20 @@
 /** How this entity type stores an external-source marker. */
 export type OriginStrategy = 'origin' | 'xmlId' | 'none'
 
-/** Default originator code (the repo code) when IMPORT_ORIGINATOR_ID is unset. */
-export const DEFAULT_ORIGINATOR = 'ai-price-import'
+/**
+ * Код внешнего источника (`ORIGINATOR_ID`) — значение задано владельцем 06.08.2026.
+ *
+ * ⚠ Код ОДИН на созданные сущности и на дела таймлайна, и это осознанно: по нему экран журнала
+ * ищет свои дела (`crm.activity.list` фильтруется по `ORIGINATOR_ID` без указания владельца —
+ * live-verified), а сущности по нему же находят прежнюю запись задания. Два разных кода означали
+ * бы, что «наше» определяется по-разному в двух местах, и однажды они разъедутся.
+ * ⚠ НЕ ПЕРЕИМЕНОВЫВАТЬ на живых порталах: под этим значением лежат маркеры уже созданных сущностей
+ * и дел. Смена кода делает их чужими — защита от дубля перестаёт находить прежнюю запись (повтор
+ * задания создаст вторую сущность), а прежние дела исчезают из журнала. Тот же класс, что ключ
+ * настроек портала (см. `appIdentity.ts`).
+ * ⚠ Это ИДЕНТИФИКАТОР, а не заголовок: он не переводится и не следует за именем продукта.
+ */
+export const DEFAULT_ORIGINATOR = 'SH_APP_IMPORT_PRICE_AI'
 
 /** Dynamic smart-process entityTypeIds start here (SPA); they carry xmlId, not originId. */
 const DYNAMIC_TYPE_MIN = 1000

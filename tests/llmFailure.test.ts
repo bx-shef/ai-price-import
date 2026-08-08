@@ -98,11 +98,14 @@ describe('#416: строка провайдера не покидает серв
   it('обработчик отдаёт НАШ текст, а не то, что прислал провайдер', async () => {
     // Мутация «передать `error` в failJob как раньше» — ровно то, что этот тест ловит: она не
     // ломает ни один другой тест, потому что задание точно так же становится 'error'.
+    // ⚠ С #459 отказ едет НЕ через `failJob`, а полем `failure` до стадии записи: карточка-след и
+    // дело создаются и для неразобранного документа. Гарантия #416 от этого не меняется — наружу
+    // по-прежнему уходит НАШ текст, — но проверять её надо там, где текст теперь лежит.
     const failed: string[] = []
     await handleAgentRunJob({ memberId: 'm', jobId: 'j' } as never, {
       getDocumentText: async () => 'текст документа',
       extractDocument: async () => ({ document: null, error: '429 insufficient_quota for org-XYZ' }),
-      saveDocument: async () => {},
+      saveDocument: async (_m, _j, stored: { failure?: string }) => { if (stored.failure) failed.push(stored.failure) },
       enqueueCrmSync: async () => {},
       failJob: async (_m, _j, reason) => { failed.push(reason) }
     })
@@ -223,18 +226,24 @@ describe('#416: провайдер проверяется на старте', ()
 })
 
 describe('#416: отказ по-прежнему доезжает до чата', () => {
-  it('обработчик зовёт failJob, а тот и есть путь до чата ошибок', async () => {
-    // Сама доставка не менялась (`failJob` → `notifyImportFailure` → `planFailureNotify`), но
-    // без этой проверки правка «просто записать статус» тихо отключила бы обещание п. 8.4 EULA.
+  it('отказ доезжает до стадии записи, а оттуда — до чата ошибок', async () => {
+    // ⚠ С #459 путь изменился: `agent-run` больше НЕ зовёт `failJob`, иначе об одном документе
+    // ушло бы два уведомления. Причина едет полем задания на стадию записи, там становится
+    // жёсткой ошибкой и уходит в чат тем же текстом. Без этой проверки правка «просто записать
+    // статус» тихо отключила бы обещание п. 8.4 EULA.
     const failJob = vi.fn(async () => {})
+    const enqueueCrmSync = vi.fn(async () => {})
+    const saved: Array<{ failure?: string }> = []
     await handleAgentRunJob({ memberId: 'm', jobId: 'j' } as never, {
       getDocumentText: async () => 'текст',
       extractDocument: async () => ({ document: null, error: '503' }),
-      saveDocument: async () => {},
-      enqueueCrmSync: async () => {},
+      saveDocument: async (_m: string, _j: string, stored: { failure?: string }) => { saved.push(stored) },
+      enqueueCrmSync,
       failJob
     })
-    expect(failJob).toHaveBeenCalledOnce()
+    expect(failJob).not.toHaveBeenCalled()
+    expect(enqueueCrmSync).toHaveBeenCalledOnce()
+    expect(saved[0]?.failure).toBeTruthy()
     const wiring = read('../server/queue/liveDeps.ts')
     expect(wiring, 'failJob перестал уведомлять').toMatch(/failJob:[\s\S]{0,220}notifyImportFailure/)
   })

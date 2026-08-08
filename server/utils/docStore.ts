@@ -6,7 +6,16 @@ import type { RoutingSignals } from '~/utils/routing'
 // job (per-portal). This keeps full document text/data OUT of the queue payload
 // (docs/PROCESS.md §5). DI over QueryFn.
 
-export interface StoredDoc { doc: ExtractedDocument, signals: RoutingSignals }
+/**
+ * Сохранённый разбор документа.
+ *
+ * ⚠ `failure` — причина, по которой документ РАЗОБРАТЬ НЕ УДАЛОСЬ (#459). Такое задание всё равно
+ * доходит до стадии записи: сущность и дело создаются на каждую загрузку, иначе неудача не
+ * оставит в портале следа и не попадёт в журнал импортов. Поле, а не пустой `doc`: «разобрали и
+ * получилось пусто» и «разобрать не смогли» — разные исходы, и по пустому документу отличить их
+ * было бы нечем.
+ */
+export interface StoredDoc { doc: ExtractedDocument, signals: RoutingSignals, failure?: string }
 
 export async function saveDocument(memberId: string, jobId: string, payload: StoredDoc, query: QueryFn): Promise<void> {
   await query(

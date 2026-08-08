@@ -32,7 +32,6 @@ export function defaultMapping(): PortalMapping {
     // Opt-in (default OFF): archiving raw client documents onto the portal's common Disk is a
     // privacy choice on a multitenant OAuth app — a tenant that never configured it should not
     // have client files copied to its Disk. The admin turns it on in settings.
-    saveFile: true, // #328: по умолчанию ВКЛЮЧЕНО — файл привязывается к делу (решение владельца)
     routingRules: [],
     defaultTarget: { ...DEFAULT_TARGET },
     configured: false
@@ -110,10 +109,9 @@ export function parsePortalSettings(raw: unknown): PortalMapping {
       defaultCode: Number.isFinite(Number(units.defaultCode)) ? Number(units.defaultCode) : 796,
       autoCreate: units.autoCreate === true
     },
-    // #328: включено по умолчанию (решение владельца) — исходник на Диске портала нужен, чтобы
-    // привязать его к делу таймлайна. Явный `false` выключает; всё остальное (нет поля, мусор)
-    // читается как «включено», иначе портал со старыми настройками молча потерял бы файл в деле.
-    saveFile: o.saveFile !== false,
+    // ⚠ `saveFile` БОЛЬШЕ НЕ ЧИТАЕТСЯ (#458): архивной копии на Диске нет — документ вкладывается
+    // в само дело таймлайна. Сохранённое у порталов значение просто игнорируется, а НЕ отвергается:
+    // портал со старым блобом обязан работать, а не оказаться «ненастроенным».
     ...(typeof o.notifyChatId === 'string' ? { notifyChatId: o.notifyChatId } : {}),
     ...(typeof o.errorChatId === 'string' ? { errorChatId: o.errorChatId } : {}),
     routingRules: asRules(o.routingRules),
@@ -155,9 +153,6 @@ export function isPortalConfigured(m: PortalMapping): boolean {
   if (m.notifyChatId || m.errorChatId) return true
   if (m.routingRules.length > 0) return true
   if (Object.keys(m.units.dictionary).length > 0) return true
-  // `saveFile` НЕ считается признаком настройки (#328): с тех пор как хранение исходника включено
-  // по умолчанию, оно есть у нетронутого портала — и «настроено» загоралось бы у всех сразу,
-  // а баннер «сначала настройте приложение» не показался бы никому.
   // ⚠ Сверяемся с ДЕФОЛТОМ, а не с зашитым здесь литералом (#373): когда `onMissing` сменили на
   // `freeform`, литерал `'skip-warn'` тут же начал бы читаться как «админ что-то настроил» у КАЖДОГО
   // нетронутого портала — гейт настройки молча выключился бы для всех (ровно та же ловушка, что была
@@ -165,7 +160,8 @@ export function isPortalConfigured(m: PortalMapping): boolean {
   const d = defaultMapping()
   // ⚠ `product.by` здесь БОЛЬШЕ НЕ СВЕРЯЕТСЯ: стратегия подбора одна (по артикулу), выбирать нечего,
   // и сравнение всегда давало бы `false` — то есть было бы мёртвым кодом, который следующий читатель
-  // принял бы за работающую проверку.
+  // принял бы за работающую проверку. По той же причине здесь нет и `saveFile` — поля больше не
+  // существует (#458).
   if (m.product.onMissing !== d.product.onMissing) return true
   if (m.units.defaultCode !== d.units.defaultCode || m.units.autoCreate !== d.units.autoCreate) return true
   // Default target moved off the fallback anchor (deal / direction 0 / no stage)? categoryId 0 IS

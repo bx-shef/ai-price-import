@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { buildProductRow, buildProductRows, computeOpportunity, createTargetItem, ownerTypeCode, setProductRows, supportsOpportunity } from '../server/utils/crmWrite'
 import { findCompanyByTaxId } from '../server/utils/companyLookup'
-import { buildConfigurableActivity, entityOpenPath } from '../server/utils/configurableActivity'
-import { monthlySubfolderName, pickCommonStorage } from '../server/utils/disk'
+import { originMarkerFields, originatorCode } from '../server/utils/originMarker'
+import { DESCRIPTION_TYPE_BB, ownActivityFilter, TODO_COLOR_CLEAN, TODO_COLOR_ISSUES, activityMarkerFilter, buildActivityInput, buildActivityMarkerFields, buildTodoActivity, entityOpenPath } from '../server/utils/todoActivity'
 
 describe('computeOpportunity', () => {
   // Контракт: сюда приходят строки от buildProductRow, где `price` УЖЕ валовая (#302).
@@ -183,22 +184,71 @@ describe('companyLookup', () => {
 })
 
 describe('disk + activity', () => {
-  it('pickCommonStorage', () => {
-    expect(pickCommonStorage([{ ID: '1', ENTITY_TYPE: 'user', NAME: 'u' }, { ID: '3', ENTITY_TYPE: 'common', NAME: 'Общий' }])?.ID).toBe('3')
-  })
-  it('monthlySubfolderName', () => {
-    expect(monthlySubfolderName({ getFullYear: () => 2026, getMonth: () => 6 })).toBe('2026-07')
-  })
   it('entityOpenPath', () => {
     expect(entityOpenPath(1, 8)).toBe('/crm/lead/details/8/') // lead, #135
     expect(entityOpenPath(2, 5)).toBe('/crm/deal/details/5/')
     expect(entityOpenPath(1030, 9)).toBe('/crm/type/1030/details/9/')
   })
-  it('buildConfigurableActivity shape', () => {
-    const a = buildConfigurableActivity({ ownerTypeId: 2, ownerId: 5, title: 'Импорт', lines: ['1 позиция'], openPath: '/crm/deal/details/5/', showOpenButton: true })
+  it('чистый импорт: дело закрыто, зелёное, срок «сейчас», без напоминания', () => {
+    const input = buildActivityInput({ entityTypeId: 2, entityId: 5, rowCount: 1, warnings: [], nowMs: 1_000_000 })
+    const a = buildTodoActivity(input)
     expect(a.ownerTypeId).toBe(2)
-    expect((a.fields as { typeId: string }).typeId).toBe('CONFIGURABLE')
-    expect(a.layout).toBeDefined()
+    expect(a.colorId).toBe(TODO_COLOR_CLEAN)
+    expect(a.deadline).toBe(new Date(1_000_000).toISOString())
+    // Напоминать о том, что всё хорошо, значит обесценить уведомления вообще.
+    expect(a.pingOffsets).toBeUndefined()
+    expect(input.clean).toBe(true)
+  })
+
+  it('есть замечания: дело НЕ закрыто, розовое, срок +15 минут, с напоминанием', () => {
+    const input = buildActivityInput({ entityTypeId: 2, entityId: 5, rowCount: 1, warnings: ['товар не найден'], nowMs: 1_000_000 })
+    const a = buildTodoActivity(input)
+    expect(input.clean).toBe(false)
+    expect(a.colorId).toBe(TODO_COLOR_ISSUES)
+    expect(a.deadline).toBe(new Date(1_000_000 + 15 * 60_000).toISOString())
+    expect(a.pingOffsets).toEqual([0])
+  })
+
+  it('признак чистоты берётся из ТЕХ ЖЕ warnings, что печатаются в теле', () => {
+    // Два независимых источника разъехались бы, и дело закрывалось бы при видимом списке проблем.
+    const input = buildActivityInput({ entityTypeId: 2, entityId: 5, rowCount: 1, warnings: ['есть проблема'], nowMs: 0 })
+    expect(input.clean).toBe(false)
+    expect(input.description).toContain('Проблемы (1)')
+  })
+
+  it('ответственный — загрузивший документ, а не владелец токена', () => {
+    // Без этого дело доставалось администратору, чьим OAuth-токеном работает приложение: у него
+    // копились чужие импорты, а человек, загрузивший накладную, своего дела не видел вовсе.
+    const a = buildTodoActivity(buildActivityInput({
+      entityTypeId: 2, entityId: 5, rowCount: 1, warnings: [], nowMs: 0, responsibleId: 17
+    }))
+    expect(a.responsibleId).toBe(17)
+  })
+
+  it('загрузивший неизвестен → поле НЕ ставим, а не шлём мусор', () => {
+    // Несуществующий id отвергается порталом целиком, и дела не будет вовсе; без поля портал
+    // подставит владельца токена — хуже, но не «ничего».
+    const a = buildTodoActivity(buildActivityInput({ entityTypeId: 2, entityId: 5, rowCount: 1, warnings: [], nowMs: 0 }))
+    expect(a).not.toHaveProperty('responsibleId')
+  })
+
+  it('маркер приложения едет ОДНИМ вызовом с разметкой', () => {
+    // Два отдельных `update` стоили бы лишнего обращения к порталу на каждый импорт.
+    const f = buildActivityMarkerFields('SH_APP_IMPORT_PRICE_AI', 'job-1')
+    expect(f).toEqual({ DESCRIPTION_TYPE: DESCRIPTION_TYPE_BB, ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI', ORIGIN_ID: 'job-1' })
+  })
+
+  it('фильтр журнала ищет ТОЛЬКО свои дела, а по заданию — конкретное', () => {
+    // Без `ORIGINATOR_ID` выборка забрала бы чужие дела портала; с `ORIGIN_ID` тот же фильтр
+    // служит защитой от второго дела при повторной доставке задания.
+    expect(activityMarkerFilter('SH_APP_IMPORT_PRICE_AI')).toEqual({ ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI' })
+    expect(activityMarkerFilter('SH_APP_IMPORT_PRICE_AI', 'job-1')).toEqual({ ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI', ORIGIN_ID: 'job-1' })
+  })
+
+  it('контрагент найден → владелец дела КОМПАНИЯ, а не созданная сущность', () => {
+    const input = buildActivityInput({ entityTypeId: 2, entityId: 5, companyId: 42, rowCount: 1, warnings: [], nowMs: 0 })
+    expect(input.ownerTypeId).toBe(4)
+    expect(input.ownerId).toBe(42)
   })
 })
 
@@ -208,5 +258,46 @@ describe('ownerTypeCode — hex с буквами и регистр', () => {
     // форма из офдоки — тест ловит случайный .toUpperCase(), который мимо буквенно-чистых
     // пинов (0x460, 0x406) прошёл бы незамеченным.
     expect(ownerTypeCode(1054)).toBe('T41e')
+  })
+})
+
+describe('#458: маркер дела — то, на чём держится журнал импортов', () => {
+  it('проводка ставит маркер тем же вызовом, что и разметку', () => {
+    // ⚠ Гард по ИСХОДНИКУ проводки, а не по билдеру: билдер покрыт отдельно, но мутация «убрать
+    // вызов update из liveDeps» его тестов не роняла — дело писалось бы без маркера, экран
+    // журнала не находил бы НИ ОДНОГО своего дела, и обнаружилось бы это уже у клиента.
+    const src = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
+      .replace(/\/\/.*$/gm, '')
+    expect(src, 'маркер не ставится на дело').toMatch(/buildActivityMarkerFields\(/)
+    expect(src, 'маркер строится не из общего кода источника').toMatch(/originatorCode\(/)
+    // Аргументы стоят на следующей строке, поэтому смотрим с переносами: без этой проверки гард
+    // прошёл бы и при `buildActivityMarkerFields(code, '')`.
+    expect(src, 'id задания не попадает в маркер').toMatch(/buildActivityMarkerFields\([\s\S]{0,120}jobId/)
+  })
+
+  it('код источника — один и тот же у сущности и у дела', () => {
+    // Два разных значения означали бы, что «наше» определяется по-разному в двух местах: журнал
+    // нашёл бы дела, а защита от дубля не нашла бы прежнюю запись.
+    const fields = buildActivityMarkerFields(originatorCode(undefined), 'job-1')
+    expect(fields.ORIGINATOR_ID).toBe('SH_APP_IMPORT_PRICE_AI')
+    expect(originMarkerFields(2, 'job-1').originatorId).toBe(fields.ORIGINATOR_ID)
+  })
+})
+
+describe('#458: чужое дело по чужому jobId не достать', () => {
+  it('фильтр отзыва сверяет ответственного, а не только маркер', () => {
+    // `jobId` приходит от клиента, а маркер скоуплен ПОРТАЛОМ: без сверки сотрудник назвал бы
+    // чужой идентификатор и получил чужой документ в репозиторий отзывов издателя.
+    expect(ownActivityFilter('SH_APP_IMPORT_PRICE_AI', 'job-1', 17)).toEqual({
+      ORIGINATOR_ID: 'SH_APP_IMPORT_PRICE_AI', ORIGIN_ID: 'job-1', RESPONSIBLE_ID: '17'
+    })
+  })
+
+  it('id сотрудника неизвестен или мусорный → фильтр заведомо пуст, а не «без сверки»', () => {
+    // Fail-closed: цена ошибки — чужой документ наружу, поэтому «не знаем, кто это» обязано
+    // означать «ничего не отдаём», а не «отдаём всё подряд».
+    for (const bad of [undefined, null, '', 'abc', 0, -5, 1.5]) {
+      expect(ownActivityFilter('SH_APP_IMPORT_PRICE_AI', 'job-1', bad).RESPONSIBLE_ID).toBe('0')
+    }
   })
 })

@@ -1,4 +1,4 @@
-import { entityOpenPath } from './configurableActivity'
+import { entityOpenPath } from './todoActivity'
 import { jobStatusMeta } from '~/utils/jobStatus'
 import type { JobResultView } from '~/utils/jobStatus'
 

@@ -25,32 +25,19 @@ describe('handleFileExtractJob', () => {
     expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
     expect(d.failJob).not.toHaveBeenCalled()
   })
-  it('архивация ЗАВЕРШАЕТСЯ до постановки в очередь — иначе дело пишется без ссылки на файл (#263)', async () => {
-    const order: string[] = []
-    // Отметка ставится ПОСЛЕ паузы: важно не «архивация началась раньше», а «успела закончиться».
-    // С синхронным моком тест проходил бы и для незаваршённого вызова (`void save(...)`), а это
-    // ровно тот дефект, который чинится — плюс отсоединённый вызов гонялся бы ещё и с удалением
-    // самих байтов, которые воркер стирает сразу после возврата обработчика.
-    const saveSourceFile = vi.fn(async () => {
-      await new Promise(r => setTimeout(r, 5))
-      order.push('archive')
-    })
+  it('#458: стадия извлечения БОЛЬШЕ НЕ трогает Диск и не удаляет байты', async () => {
+    // Копии на Диске нет — документ вкладывается в дело таймлайна на стадии crm-sync. Значит и
+    // байты обязаны дожить до неё: прежде они удалялись прямо здесь, и вкладывать было бы нечего.
+    // Гард отрицательный: возврат архивирования — это ровно один лишний вызов портала.
+    const calls: string[] = []
     const d = deps({
-      saveSourceFile,
       enqueueAgentRun: vi.fn(async () => {
-        order.push('enqueue')
+        calls.push('enqueue')
       })
     })
+    expect(d).not.toHaveProperty('saveSourceFile')
     await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'накладная.pdf' }, d)
-    expect(saveSourceFile).toHaveBeenCalledWith('m', 'j', 'накладная.pdf')
-    expect(order).toEqual(['archive', 'enqueue'])
-  })
-  it('сбой архивации не мешает поставить задание в очередь — импорт важнее копии файла', async () => {
-    const saveSourceFile = vi.fn(() => Promise.reject(new Error('disk down')))
-    const d = deps({ saveSourceFile })
-    const r = await handleFileExtractJob({ memberId: 'm', jobId: 'j', fileId: 'f' }, d)
-    expect(r.ok).toBe(true)
-    expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
+    expect(calls).toEqual(['enqueue'])
   })
   it('oversized text → failJob, no save/enqueue (loud, not silent truncation)', async () => {
     const big = 'x'.repeat(MAX_DOCUMENT_TEXT + 1)
@@ -149,14 +136,19 @@ describe('handleAgentRunJob', () => {
     expect(d.extractDocument).not.toHaveBeenCalled()
     expect(d.failJob).toHaveBeenCalledWith('m', 'j', expect.stringContaining('текст документа не найден'))
   })
-  it('extraction returns nothing → failJob with reason, no enqueue', async () => {
+  it('документ не разобрался → задание ЕДЕТ ДАЛЬШЕ, чтобы остался след в CRM (#459)', async () => {
+    // Раньше конвейер обрывался здесь, и самый интересный для человека случай не оставлял в
+    // портале ни карточки, ни дела, ни строки в журнале импортов. Теперь причина едет полем
+    // задания на стадию записи, а `failJob` тут НЕ зовётся — иначе об одном документе ушло бы
+    // два уведомления.
     const d = deps({ extractDocument: vi.fn(async () => ({ document: null, error: 'агент не извлёк табличную часть' })) })
     const r = await handleAgentRunJob({ memberId: 'm', jobId: 'j' }, d)
     expect(r.ok).toBe(false)
+    expect(d.failJob).not.toHaveBeenCalled()
+    expect(d.enqueueCrmSync).toHaveBeenCalledWith('m', 'j')
     // С #416 наружу уходит НАШ текст по классу отказа, а не строка провайдера: она ничего не
     // объясняет человеку и вправе процитировать присланный запрос. Подробнее — tests/llmFailure.
-    expect(d.failJob).toHaveBeenCalledWith('m', 'j', llmFailureMessage('unparsable'))
-    expect(d.enqueueCrmSync).not.toHaveBeenCalled()
+    expect(d.saveDocument).toHaveBeenCalledWith('m', 'j', expect.objectContaining({ failure: llmFailureMessage('unparsable') }))
   })
   it('cleanup (deleteText) failure never blocks enqueue', async () => {
     const d = deps({ deleteText: vi.fn(async () => {

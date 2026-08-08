@@ -1,6 +1,4 @@
-import type { DiskFileRef } from './disk'
 import type { TargetRef } from '~/types/mapping'
-import { isRelativePath } from './configurableActivity'
 import { parseManualTarget } from '~/utils/manualTarget'
 
 // Per-portal import-job tracking over an injected JobRedis (testable without infra).
@@ -21,10 +19,6 @@ export interface ImportJob {
   status: JobStatus
   fileName: string
   result: string
-  /** Same-portal RELATIVE path to the archived source file on the Disk, if it was saved (opt-in
-   *  `saveFile`). Lets the UI turn the file name into a link to the original document. Absent when
-   *  the file wasn't archived. Always relative (never off-portal) — see detailUrlToRelative. */
-  diskUrl?: string
   /** CRM type the employee manually chose for this file, when they did (#269) — shown in the row so
    *  the target is visible next to the outcome. Absent when the routing rules decided. */
   targetEntityTypeId?: number
@@ -94,70 +88,6 @@ export async function getManualOverride(memberId: string, jobId: string, redis: 
   }
 }
 
-/** Persist the archived source-file ref (id + DETAIL_URL) for a job — best-effort (#129 follow-up:
- *  crm-sync links it on the timeline дело). Stored as JSON in the `diskFile` hash field. */
-export async function setDiskFile(memberId: string, jobId: string, ref: DiskFileRef, redis: JobRedis): Promise<void> {
-  await redis.put(jobKey(memberId, jobId), { diskFile: JSON.stringify({ id: ref.id, detailUrl: ref.detailUrl }) }, JOB_TTL_MS)
-}
-
-/** Normalize a stored Disk open-URL to a same-portal RELATIVE path. We now store a CONSTRUCTED relative
- *  URL (`/docs/file/<path>?IFRAME=Y&IFRAME_TYPE=SIDE_SLIDER`, see disk.commonDiskFileUrl) → the first
- *  branch returns it verbatim, KEEPING its query (the query is our own static IFRAME flags, no token).
- *  A legacy ABSOLUTE URL is reduced to its path (host+query discarded) — still SSRF-safe. Returns null
- *  for anything that can't be reduced to a clean leading-slash path. */
-/**
- * Should the operator be told that the timeline дело is going out without the «Исходный файл»
- * button? Only when the admin actually asked for the file to be kept — otherwise there is nothing
- * to miss (#263).
- *
- * Since the extract stage archives BEFORE handing the job on, a missing link here means something
- * genuinely went wrong. Deliberately says «нет ссылки на копию», NOT «загрузка не удалась»: the
- * link can also be absent when the upload succeeded but the reference didn't persist, when the job
- * store is unreachable, or when `saveFile` was switched on between the two stages. Naming a cause
- * we haven't established would send the operator looking in the wrong place.
- */
-export function shouldWarnMissingArchive(saveFile: boolean, sourceFileUrl: string | null | undefined): boolean {
-  return saveFile === true && !sourceFileUrl
-}
-
-export function detailUrlToRelative(url: unknown): string | null {
-  if (typeof url !== 'string' || !url) return null
-  if (isRelativePath(url)) return url // safe relative path (shared guard) — query preserved
-  try {
-    const u = new URL(url) // absolute → take the PATH only; host+query discarded, so the redirect
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null // stays on-portal
-    const path = u.pathname
-    return isRelativePath(path) ? path : null
-  } catch {
-    return null // protocol-relative («//host») / garbage → no button
-  }
-}
-
-/** Read the archived source file's DETAIL_URL for a job as a same-portal RELATIVE path, or null. */
-export async function getDiskFileUrl(memberId: string, jobId: string, redis: JobRedis): Promise<string | null> {
-  const h = await redis.getAll(jobKey(memberId, jobId))
-  const raw = h?.diskFile
-  if (!raw) return null
-  try {
-    return detailUrlToRelative((JSON.parse(raw) as { detailUrl?: unknown })?.detailUrl)
-  } catch {
-    return null
-  }
-}
-
-/** Read the archived source file's Disk file id for a job (for the #332 byte-upload download), or null. */
-export async function getDiskFileId(memberId: string, jobId: string, redis: JobRedis): Promise<number | null> {
-  const h = await redis.getAll(jobKey(memberId, jobId))
-  const raw = h?.diskFile
-  if (!raw) return null
-  try {
-    const id = Number((JSON.parse(raw) as { id?: unknown })?.id)
-    return Number.isInteger(id) && id > 0 ? id : null
-  } catch {
-    return null
-  }
-}
-
 export async function setJobStatus(memberId: string, jobId: string, status: JobStatus, result: string, redis: JobRedis): Promise<void> {
   await redis.put(jobKey(memberId, jobId), { status, result }, JOB_TTL_MS)
 }
@@ -205,12 +135,6 @@ export async function claimJobErrorChat(memberId: string, jobId: string, redis: 
 function mapJob(memberId: string, jobId: string, h: Record<string, string>): ImportJob {
   // Surface the archived Disk file as a same-portal RELATIVE path (never off-portal) so the UI can
   // link the file name to the original document. Bad/absent → omitted.
-  let diskUrl: string | null = null
-  if (h.diskFile) {
-    try {
-      diskUrl = detailUrlToRelative((JSON.parse(h.diskFile) as { detailUrl?: unknown })?.detailUrl)
-    } catch { /* malformed → no link */ }
-  }
   // The manually chosen target, so the row can show WHERE the file was sent (#269). By the time a
   // result (or an error) appears, the employee no longer remembers what they picked — especially in a
   // batch, where every file has its own target. Re-validated, same as getManualOverride.
@@ -226,7 +150,6 @@ function mapJob(memberId: string, jobId: string, h: Record<string, string>): Imp
     status: (h.status || 'queued') as JobStatus,
     fileName: h.fileName ?? '',
     result: h.result ?? '',
-    ...(diskUrl ? { diskUrl } : {}),
     ...(targetEntityTypeId ? { targetEntityTypeId } : {})
   }
 }

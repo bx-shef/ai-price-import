@@ -7,10 +7,11 @@ describe('readMapping', () => {
     const m = await readMapping(call)
     expect(call).toHaveBeenCalledWith('app.option.get', { option: SETTINGS_KEY })
     expect(m.defaultTarget).toEqual({ entityTypeId: 31 })
-    expect(m.saveFile).toBe(false)
   })
   it('handles object result and junk → safe defaults', async () => {
-    expect((await readMapping(vi.fn().mockResolvedValue({ saveFile: false }))).saveFile).toBe(false)
+    // ⚠ Старое `saveFile` в сохранённом блобе просто игнорируется (#458), а не отвергается:
+    // портал со старыми настройками обязан работать, а не оказаться «ненастроенным».
+    expect((await readMapping(vi.fn().mockResolvedValue({ saveFile: false }))).configured).toBe(false)
     expect((await readMapping(vi.fn().mockResolvedValue('not json'))).defaultTarget).toEqual({ entityTypeId: 2, categoryId: 0 })
   })
   it('unset option ("" / null) → defaults (first-run path)', async () => {

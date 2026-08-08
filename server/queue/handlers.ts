@@ -47,7 +47,7 @@ export interface HandlerDeps {
   /** Load the portal mapping (from app.option) for a portal. */
   getMapping: (memberId: string) => Promise<PortalMapping>
   /** Load the extracted document + routing signals for a job (stored by agent-run). */
-  getDocument: (memberId: string, jobId: string) => Promise<{ doc: ExtractedDocument, signals: RoutingSignals } | null>
+  getDocument: (memberId: string, jobId: string) => Promise<{ doc: ExtractedDocument, signals: RoutingSignals, failure?: string } | null>
   /** Build the crm-sync deps bound to this portal/job/mapping (in-process tool bodies over REST). */
   crmSyncDeps: (memberId: string, jobId: string, mapping: PortalMapping) => CrmSyncDeps
   /** Persist the job outcome. */
@@ -81,7 +81,13 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
   }
   const mapping = await deps.getMapping(job.memberId)
   const crmDeps = deps.crmSyncDeps(job.memberId, job.jobId, mapping)
-  const result = await runCrmSync(job.jobId, loaded.doc, mapping, loaded.signals, crmDeps)
+  // ⚠ Причина, по которой документ не разобрался, доезжает сюда полем задания и превращается в
+  // ЖЁСТКУЮ ОШИБКУ стадии записи (#459): текст уйдёт в чат ошибок и в статус, а карточка-след и
+  // дело всё равно будут созданы. Именно ради этого случая журнал импортов и заводился.
+  const result = await runCrmSync(job.jobId, loaded.doc, mapping, loaded.signals, {
+    ...crmDeps,
+    ...(loaded.failure ? { documentFailure: loaded.failure } : {})
+  })
   // ⚠ Счётчики поднимаются ДО перевода задания в терминальный статус (#444). Экран читает метрики
   // ровно в момент, когда последнее задание пачки становится `done`, — при обратном порядке между
   // этими двумя действиями лежал апсерт в Postgres, и чтение попадало в окно: человек видел числа
@@ -100,14 +106,21 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
       ? { skipped: 1 }
       : {
           docs: 1,
-          created: result.created ? 1 : 0,
+          // ⚠ «Внесено» — это УСПЕШНО внесённые документы, а не созданные карточки (#459). С тех
+          // пор как запись создаётся и на отказе, `result.created` перестал означать успех:
+          // считая по нему, приложение отчитывалось бы перед клиентом за импорт, которого не было,
+          // и плитка «внесено» на главной росла бы от мусорных файлов.
+          created: result.created && !result.errors.length ? 1 : 0,
           lines: result.rowCount,
           unmatched: result.unmatched ? 1 : 0
         })
   }
   await deps.setJobStatus(
     job.memberId, job.jobId,
-    result.created || !result.errors.length ? 'done' : 'error',
+    // ⚠ Статус «Готово» — только когда ошибок НЕТ (#459). Прежнее `result.created || …` читалось
+    // как «карточка есть ⇒ всё хорошо», а карточка теперь создаётся и на отказе: неразобранный
+    // документ показался бы сотруднику успешно импортированным.
+    result.errors.length ? 'error' : 'done',
     // entityTypeId (#192 п.2 — feedback entity link) + supplier name + line count so the /app «разбор»
     // shows what was recognised, not just the id. Portal's own document data, read back only by the
     // same portal's frame token (member-scoped) and rendered auto-escaped — no cross-tenant exposure.
@@ -150,12 +163,6 @@ export interface FileExtractDeps {
   failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
   /** Optional progress: mark the job 'extracting' at entry (UI stage indicator). */
   markExtracting?: (memberId: string, jobId: string) => Promise<void>
-  /** Optional best-effort: archive the SOURCE file to the portal's common Disk when the
-   *  portal's `saveFile` toggle is on (the impl reads the setting). Runs at this stage (the raw
-   *  file only exists here — the worker deletes it once the handler returns) and BEFORE the enqueue,
-   *  so the link is stored before anything downstream looks for it (#263). Never fails the job.
-   *  MUST stay awaited: detached, it would race the worker's cleanup of those very bytes. */
-  saveSourceFile?: (memberId: string, jobId: string, fileId: string) => Promise<void>
 }
 
 /** file-extract: file → text → enqueue agent-run. Empty/failed/oversized extraction fails the job. */
@@ -178,30 +185,9 @@ export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDep
     return { ok: false }
   }
   await deps.saveText(job.memberId, job.jobId, text)
-  // Archive the source file to the portal's Disk BEFORE handing the job on (#263). It used to run
-  // after `enqueueAgentRun`, to avoid re-uploading the document if a throw from the enqueue retried
-  // the whole job — but that upload has been idempotent for a while (find-by-name in the month
-  // folder + a per-portal advisory lock), so the retry finds the file instead of duplicating it.
-  //
-  // The old order was a RACE: agent-run started immediately, and on a small document the chain
-  // agent-run → crm-sync → writeActivity could reach the timeline дело before this upload finished.
-  // Then the «Исходный файл» link simply wasn't there yet, the button was silently omitted, and the
-  // same import showed the file in the operations list (read later) but not in CRM. Nothing failed —
-  // it just looked like the archive was off. Cost of the new order: the pipeline waits out the
-  // upload. The handler waited for it anyway before returning, so the extract job takes the same
-  // time; only the start of the next stage moves.
-  //
-  // One residual hole in that idempotency, pre-existing and left as is: the month folder is chosen
-  // at upload time, so a retry that crosses a month boundary looks in the NEW month, misses, and
-  // uploads a second copy. The retry backoff is seconds, so this needs a job retried across
-  // midnight of the 1st — narrow enough not to pay a REST call per import to close.
-  //
-  // Best-effort + gated on `saveFile` inside; a Disk failure must NOT fail the import.
-  if (deps.saveSourceFile) {
-    try {
-      await deps.saveSourceFile(job.memberId, job.jobId, job.fileId)
-    } catch { /* best-effort archive — the import proceeds without it */ }
-  }
+  // ⚠ Архивирования на Диск здесь БОЛЬШЕ НЕТ (#458): документ вкладывается в дело таймлайна на
+  // стадии crm-sync, поэтому вторая копия на Диске портала стала лишней. Байты остаются на месте
+  // до конца конвейера — их удаляет терминальная стадия, а не эта.
   await deps.enqueueAgentRun(job.memberId, job.jobId)
   return { ok: true }
 }
@@ -214,7 +200,7 @@ export interface AgentRunDeps {
   /** Run the extraction agent → validated document (null = nothing usable). */
   extractDocument: (documentText: string) => Promise<{ document: ExtractedDocument | null, error?: string, own?: true }>
   /** Persist the extracted structure + routing signals for crm-sync. */
-  saveDocument: (memberId: string, jobId: string, stored: { doc: ExtractedDocument, signals: RoutingSignals }) => Promise<void>
+  saveDocument: (memberId: string, jobId: string, stored: { doc: ExtractedDocument, signals: RoutingSignals, failure?: string }) => Promise<void>
   enqueueCrmSync: (memberId: string, jobId: string) => Promise<void>
   failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
   /** Optional: operator's manual target override chosen next to the file. */
@@ -232,12 +218,33 @@ export interface AgentRunDeps {
   logLlmFailure?: (kind: LlmFailureKind, signature: string) => void
 }
 
+/**
+ * Документ-заглушка для загрузки, которую не удалось разобрать (#459).
+ *
+ * ⚠ Позиций нет и быть не может: разбор не состоялся. Всё, что несёт это задание дальше, —
+ * причина отказа в поле `failure`, по которой стадия записи создаст карточку-след и дело.
+ */
+const EMPTY_DOCUMENT: ExtractedDocument = { items: [] }
+
 /** agent-run: text → extract structure → store {doc, signals} → enqueue crm-sync. */
-export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Promise<{ ok: boolean }> {
+/**
+ * Итог стадии распознавания.
+ *
+ * ⚠ `handedOn` — «задание поехало дальше, на стадию записи». Отдельно от `ok`, и это НЕ
+ * педантизм: с #459 неудачное распознавание тоже ставится в `crm-sync` (там создаётся
+ * карточка-след с вложенным документом), то есть `ok:false` перестал означать «конвейер
+ * закончился». Воркер по этому флагу решает, можно ли удалять загруженные байты, — спутав их,
+ * он стирает файл ровно перед тем, как стадия записи попытается его вложить.
+ */
+export interface AgentRunOutcome { ok: boolean, handedOn: boolean }
+
+export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Promise<AgentRunOutcome> {
   const text = await deps.getDocumentText(job.memberId, job.jobId)
   if (!text) {
     await deps.failJob(job.memberId, job.jobId, 'текст документа не найден')
-    return { ok: false }
+    // Единственный путь, который ДЕЙСТВИТЕЛЬНО терминален на этой стадии: текста нет, разбирать
+    // нечего, и в запись задание не поедет.
+    return { ok: false, handedOn: false }
   }
   await markProgress(deps.markProcessing, job.memberId, job.jobId)
   const { document, error, own } = await deps.extractDocument(text)
@@ -247,11 +254,21 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
     // клиента. Исходная строка остаётся только в журнале, и туда идёт просеянной.
     const { kind, message } = describeLlmFailure(error, own)
     deps.logLlmFailure?.(kind, llmErrorSignature(error))
-    await deps.failJob(job.memberId, job.jobId, message)
-    // Terminal extraction failure (re-extraction of the same text won't differ) →
-    // drop the raw client text now; don't retain unrecognised documents.
+    // ⚠ Задание НЕ завершается здесь (#459): оно едет дальше, на стадию записи, потому что
+    // сущность и дело создаются на КАЖДУЮ загрузку — включая ту, что не разобралась. Прежде
+    // конвейер обрывался ровно тут, и самый интересный для человека случай не оставлял в портале
+    // ни следа: ни карточки, ни дела, ни строки в журнале импортов.
+    // ⚠ Статус «Ошибка» и сообщение человеку ставит стадия записи — по тому же тексту. Звать
+    // `failJob` здесь значило бы отправить два уведомления об одном документе.
+    // ⚠ Текст документа удаляется, как и раньше: повторное извлечение того же текста ничего не
+    // изменит, а хранить неразобранные документы клиента незачем.
+    await deps.saveDocument(job.memberId, job.jobId, { doc: EMPTY_DOCUMENT, signals: { text: '' }, failure: message })
+    await deps.enqueueCrmSync(job.memberId, job.jobId)
     await dropText(deps.deleteText, job.memberId, job.jobId)
-    return { ok: false }
+    // ⚠ `handedOn: true` — задание ПОЕХАЛО ДАЛЬШЕ. Байты обязаны дожить до стадии записи: там
+    // документ вкладывается в карточку-след, и именно у неразобранного документа вложение нужнее
+    // всего — разбирать нечего, человек открывает оригинал.
+    return { ok: false, handedOn: true }
   }
   const manualOverride = deps.getManualOverride ? await deps.getManualOverride(job.memberId, job.jobId) : undefined
   const signals: RoutingSignals = {
@@ -265,7 +282,7 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
   await deps.enqueueCrmSync(job.memberId, job.jobId)
   // Raw text now lives (bounded) in the doc payload → drop the standalone copy.
   await dropText(deps.deleteText, job.memberId, job.jobId)
-  return { ok: true }
+  return { ok: true, handedOn: true }
 }
 
 /** Best-effort progress marker — a failed status write must never fail the job. */

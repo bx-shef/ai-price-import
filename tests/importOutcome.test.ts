@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ON_MISSING_ITEMS, ON_MISSING_LABEL } from '../app/config/onMissing'
 import { allLinesSkippedError, lineSkippedWarning, MAX_OUTCOME_TEXT, noLinesMatchedWarning, skippedLinesAdvice } from '../app/utils/importOutcome'
 import { MAX_CHAT_REASON, buildSuccessMessage } from '../server/utils/chatNotify'
-import { MAX_ACTIVITY_BLOCKS, buildActivityLines } from '../server/utils/configurableActivity'
+import { MAX_ACTIVITY_PROBLEMS, buildActivityBody } from '../server/utils/todoActivity'
 
 describe('#373: текст исхода «ни одна позиция не перенесена»', () => {
   it('доезжает до чата целиком — это контракт, а не стиль', () => {
@@ -131,47 +131,43 @@ describe('#388: совет — подсказка, а не проблема', ()
   })
 })
 
-describe('#388: бюджет строк в деле таймлайна', () => {
+describe('#388/#328: совет в теле дела', () => {
   const many = Array.from({ length: 20 }, (_, i) => lineSkippedWarning(`Товар ${i + 1}`))
+  const body = (warnings: string[], advice?: string) => buildActivityBody({
+    supplierName: 'ООО Ромашка', rowCount: 3, warnings, advice, entityPath: '/crm/deal/details/5/'
+  })
 
   it('совет доезжает до дела и стоит ПОСЛЕ проблем', () => {
-    // Мутация «убрать совет из строк дела» проходила при всех зелёных тестах: сборка жила в
-    // проводке, куда тесты не доставали.
-    const lines = buildActivityLines({ rowCount: 3, supplierName: 'ООО Ромашка', warnings: many, advice: skippedLinesAdvice() })
-    expect(lines).toContain(skippedLinesAdvice())
-    expect(lines.at(-1)).toBe(skippedLinesAdvice())
-    expect(lines.length).toBeLessThanOrEqual(MAX_ACTIVITY_BLOCKS)
+    // Мутация «убрать совет» проходила при всех зелёных тестах: сборка жила в проводке, куда
+    // тесты не доставали.
+    const text = body(many, skippedLinesAdvice())
+    expect(text).toContain(skippedLinesAdvice())
+    expect(text.indexOf(skippedLinesAdvice())).toBeGreaterThan(text.indexOf('Проблемы ('))
   })
 
-  it('совет НЕ внутри обрезаемого списка проблем — это состояние до #388', () => {
-    const lines = buildActivityLines({ rowCount: 3, warnings: many, advice: skippedLinesAdvice() })
-    const problemsHeader = lines.findIndex(l => l.startsWith('Проблемы ('))
-    expect(problemsHeader).toBeGreaterThanOrEqual(0)
-    // Счётчик считает ТОЛЬКО настоящие проблемы — совет в него не входит.
-    expect(lines[problemsHeader]).toBe(`Проблемы (${many.length}):`)
-    // И ни одна строка списка не является советом.
-    expect(lines.slice(problemsHeader + 1, -1).some(l => l.includes(skippedLinesAdvice()))).toBe(false)
+  it('совет — ПОДПИСАННЫЙ блок, а не голая строка в хвосте', () => {
+    // Ровно этого не хватало на витрине: без подписи совет никто не замечал (#328).
+    expect(body(many, skippedLinesAdvice())).toContain(`[B]Что сделать:[/B] ${skippedLinesAdvice()}`)
   })
 
-  it('без совета освободившееся место отдаётся предупреждениям', () => {
-    const withAdvice = buildActivityLines({ rowCount: 3, warnings: many, advice: skippedLinesAdvice() })
-    const without = buildActivityLines({ rowCount: 3, warnings: many })
-    expect(without.length).toBe(MAX_ACTIVITY_BLOCKS)
-    expect(without.length).toBe(withAdvice.length)
+  it('совета нет → блока «Что сделать» нет вовсе', () => {
+    // Пустой блок обещал бы указание и не давал его.
+    expect(body(many)).not.toContain('Что сделать')
   })
 
-  it('шапка + предупреждения + совет укладываются в предел блоков', () => {
-    // Совет стоит ПОСЛЕДНИМ, а тело дела режется по MAX_ACTIVITY_BLOCKS. С прежним «первые шесть
-    // предупреждений» сумма выходила ровно в предел, без запаса: одна новая строка шапки или кап
-    // «семь вместо шести» молча выбрасывали бы совет — то есть возвращали дефект #388 в том
-    // потребителе, ради которого его и заводили. Считаем худший случай числом.
-    for (const supplier of [true, false]) {
-      const header = 1 + (supplier ? 1 : 0)
-      const budget = Math.max(0, MAX_ACTIVITY_BLOCKS - (2 + (supplier ? 1 : 0)) - 1)
-      const total = header + 1 + budget + 1 // шапка + «Проблемы (N):» + предупреждения + совет
-      expect(total, `поставщик: ${supplier}`).toBeLessThanOrEqual(MAX_ACTIVITY_BLOCKS)
-      expect(budget, 'предупреждений не осталось вовсе').toBeGreaterThan(0)
-    }
+  it('совет НЕ внутри списка проблем и не считается проблемой', () => {
+    const text = body(many, skippedLinesAdvice())
+    expect(text).toContain(`[B]Проблемы (${many.length}):[/B]`)
+    const list = text.slice(text.indexOf('[LIST]'), text.indexOf('[/LIST]'))
+    expect(list.includes(skippedLinesAdvice())).toBe(false)
+  })
+
+  it('счётчик проблем — ПОЛНОЕ число, даже когда показаны не все', () => {
+    // Печатать длину среза значило бы сообщить, что проблем меньше, чем есть.
+    const text = body(many)
+    expect(text).toContain(`[B]Проблемы (${many.length}):[/B]`)
+    expect(text.split('[*]').length - 1).toBe(MAX_ACTIVITY_PROBLEMS)
+    expect(text).toContain(`Показаны первые ${MAX_ACTIVITY_PROBLEMS}`)
   })
 })
 

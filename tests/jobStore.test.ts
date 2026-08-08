@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getUploaderId, createJob, getDiskFileId, getDiskFileUrl, getJob, getManualOverride, setDiskFile, setJobStatus, shouldWarnMissingArchive } from '../server/utils/jobStore'
+import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getUploaderId, createJob, getJob, getManualOverride, setJobStatus } from '../server/utils/jobStore'
 import { createMemoryJobRedis } from '../server/utils/jobStoreRedis'
 
 // The store logic is exercised over the in-memory JobRedis (same interface as the live ioredis
@@ -37,31 +37,6 @@ describe('jobStore (Redis-backed)', () => {
     expect(await getManualOverride('m', 'j2', r)).toBeUndefined()
   })
 
-  it('disk file: setDiskFile then getDiskFileUrl normalizes an absolute DETAIL_URL to a relative path', async () => {
-    const r = createMemoryJobRedis()
-    await createJob('m', 'j1', 'f.pdf', r)
-    await setDiskFile('m', 'j1', { id: 5, detailUrl: 'https://bel.bitrix24.by/docs/file/5/' }, r)
-    expect(await getDiskFileUrl('m', 'j1', r)).toBe('/docs/file/5/')
-    // getJob surfaces the same relative path as `diskUrl` (for the UI file-name link).
-    expect((await getJob('m', 'j1', r))?.diskUrl).toBe('/docs/file/5/')
-    // absent → null / no diskUrl key
-    await createJob('m', 'j2', 'f.pdf', r)
-    expect(await getDiskFileUrl('m', 'j2', r)).toBeNull()
-    expect((await getJob('m', 'j2', r))?.diskUrl).toBeUndefined()
-  })
-
-  it('getDiskFileId: returns the stored id, null when absent/invalid', async () => {
-    const r = createMemoryJobRedis()
-    await createJob('m', 'j1', 'f.pdf', r)
-    await setDiskFile('m', 'j1', { id: 7, detailUrl: 'https://x/docs/file/7/' }, r)
-    expect(await getDiskFileId('m', 'j1', r)).toBe(7)
-    // no diskFile → null
-    await createJob('m', 'j2', 'f.pdf', r)
-    expect(await getDiskFileId('m', 'j2', r)).toBeNull()
-    // unknown member/job → null
-    expect(await getDiskFileId('m', 'nope', r)).toBeNull()
-  })
-
   it('claimJobNotify is once-only: first caller true, all later false', async () => {
     const r = createMemoryJobRedis()
     await createJob('m', 'j1', 'f.pdf', r)
@@ -81,19 +56,6 @@ describe('jobStore (Redis-backed)', () => {
 })
 
 // #263: пропажа кнопки «Исходный файл» была полностью немой — ни в журнале, ни где-либо ещё.
-describe('shouldWarnMissingArchive', () => {
-  it('архивация включена, ссылки нет — предупреждаем', () => {
-    expect(shouldWarnMissingArchive(true, null)).toBe(true)
-    expect(shouldWarnMissingArchive(true, undefined)).toBe(true)
-    expect(shouldWarnMissingArchive(true, '')).toBe(true)
-  })
-  it('архивация выключена — терять нечего, молчим', () => {
-    expect(shouldWarnMissingArchive(false, null)).toBe(false)
-  })
-  it('ссылка есть — молчим', () => {
-    expect(shouldWarnMissingArchive(true, '/docs/file/x')).toBe(false)
-  })
-})
 
 // Кому писать об отказе — записывается при загрузке из проверенного фрейм-токена.
 describe('getUploaderId', () => {
