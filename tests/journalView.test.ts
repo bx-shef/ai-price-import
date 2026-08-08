@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { appendPage, formatJournalDate, journalOutcomeLabel, nextStart, ownerOpenPath, shouldLoadMore, type JournalRow } from '../app/utils/journalView'
+import { appendPage, journalDateTile, journalOutcomeLabel, nextStart, ownerOpenPath, shouldLoadMore, type JournalRow } from '../app/utils/journalView'
 
 const row = (id: number): JournalRow => ({
   activityId: id, jobId: `job-${id}`, title: `Импорт ${id}`, clean: true,
@@ -56,15 +56,22 @@ describe('#458: когда подкачивать', () => {
 })
 
 describe('#458: подписи строки', () => {
-  it('время показывается КАК У ПОРТАЛА, без пересчёта в пояс браузера', () => {
+  it('плитка даты показывает время КАК У ПОРТАЛА, без пересчёта в пояс браузера', () => {
     // Иначе сотрудник в другом городе увидел бы у своего импорта не то время, что стоит рядом в
-    // карточке CRM.
-    expect(formatJournalDate('2026-08-08T10:00:00+03:00')).toBe('08.08.2026 10:00')
+    // карточке CRM. Разбор строкой, а не через `Date`, — ровно ради этого.
+    expect(journalDateTile('2026-08-08T10:00:00+03:00')).toEqual({ day: '8', month: 'августа', time: '10:00' })
   })
 
-  it('нераспознанная дата — пусто, а не «Invalid Date»', () => {
-    for (const bad of ['', 'вчера', '2026-08-08', null as unknown as string]) {
-      expect(formatJournalDate(bad)).toBe('')
+  it('месяц в родительном падеже, день без ведущего нуля — как в самом Битрикс24', () => {
+    expect(journalDateTile('2026-01-01T09:05:00+03:00')).toEqual({ day: '1', month: 'января', time: '09:05' })
+    expect(journalDateTile('2026-12-31T23:59:00+03:00')).toEqual({ day: '31', month: 'декабря', time: '23:59' })
+  })
+
+  it('нераспознанная или невозможная дата → плитки НЕТ, а не «7 undefined»', () => {
+    // Пустая рамка на месте даты читается как «дата есть, но мы её потеряли»; отсутствие плитки —
+    // просто отсутствие. Месяц `13` без проверки дал бы `undefined` прямо на экране.
+    for (const bad of ['', 'вчера', '2026-08-08', '2026-13-08T10:00', '2026-00-08T10:00', null as unknown as string]) {
+      expect(journalDateTile(bad), String(bad)).toBeNull()
     }
   })
 

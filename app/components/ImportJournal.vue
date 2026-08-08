@@ -11,9 +11,9 @@
 // ⚠ Кнопка «Показать ещё» остаётся ВСЕГДА, а не только как запасной путь: автоподкачка не
 // доступна с клавиатуры и не объявляется программами чтения — человек, не пользующийся мышью,
 // иначе не смог бы добраться до второй страницы вовсе.
-import { onMounted, useTemplateRef } from 'vue'
+import { computed, onMounted, useTemplateRef } from 'vue'
 import { useInfiniteScroll } from '@vueuse/core'
-import { formatJournalDate, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
+import { journalDateTile, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
 
 const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, reload } = useImportJournal()
 
@@ -25,6 +25,15 @@ const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, rel
  * под ним — два блока об одном и том же противоречат друг другу на одном экране.
  */
 defineExpose({ reload })
+
+/**
+ * Строки для показа: к данным добавлена разобранная дата.
+ *
+ * ⚠ Считается ОДИН раз на строку, а не по вызову в разметке: плитка показывает три части одной
+ * даты, и разбор в шаблоне выполнялся бы четырежды на каждую строку при каждой перерисовке —
+ * на списке в сотню строк это заметно, а на телефоне заметно вдвойне.
+ */
+const view = computed(() => rows.value.map(row => ({ row, tile: journalDateTile(row.createdAt) })))
 
 const scroller = useTemplateRef<{ $el?: HTMLElement }>('scroller')
 
@@ -110,34 +119,57 @@ async function openOwner(ownerTypeId: number, ownerId: number): Promise<void> {
         ref="scroller"
         class="max-h-[28rem]"
       >
-        <ul class="space-y-2">
+        <ul class="space-y-3">
+          <!-- ⚠ Строка списка сделана ПО МОТИВАМ дела в таймлайне Битрикс24 (решение владельца,
+               скриншот 08.08.2026): плитка-календарь слева, цветная метка исхода, поля подписанными
+               блоками, действие ссылкой внизу. Копия «один в один» не нужна и была бы вредна —
+               у нас нет ни чекбокса «выполнено», ни кнопок дела, и рисовать их значило бы обещать
+               действия, которых здесь нет. -->
           <li
-            v-for="row in rows"
+            v-for="{ row, tile } in view"
             :key="row.activityId"
-            class="flex items-center justify-between gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3"
+            class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
           >
-            <div class="min-w-0">
-              <p class="truncate text-sm font-medium">
-                {{ row.title }}
-              </p>
-              <p class="text-xs text-(--ui-color-base-3)">
-                {{ formatJournalDate(row.createdAt) }}
-              </p>
+            <!-- Плитка даты. ⚠ `aria-hidden`: то же время объявлено словами в подписи ниже, и без
+                 этого программа чтения произносила бы «7 августа 20:28» дважды подряд. -->
+            <div
+              v-if="tile"
+              class="flex w-14 shrink-0 flex-col items-center justify-center rounded-md bg-(--ui-color-base-7) py-1.5 text-center"
+              aria-hidden="true"
+            >
+              <span class="text-lg leading-none font-semibold">{{ tile.day }}</span>
+              <span class="mt-0.5 text-[10px] leading-tight text-(--ui-color-base-3)">{{ tile.month }}</span>
+              <span class="mt-0.5 text-[10px] leading-none text-(--ui-color-base-3)">{{ tile.time }}</span>
             </div>
-            <div class="flex shrink-0 items-center gap-2">
-              <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
-                   чтения и не различается при дальтонизме. -->
-              <B24Badge
-                :color="row.clean ? 'air-primary-success' : 'air-primary-alert'"
-                :label="journalOutcomeLabel(row.clean)"
-              />
-              <B24Button
+
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-2">
+                <p class="min-w-0 flex-1 truncate text-sm font-medium">
+                  {{ row.title }}
+                </p>
+                <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
+                     чтения и не различается при дальтонизме. Цвета те же, что у самого дела в
+                     портале, — человек видит на двух экранах одно и то же. -->
+                <B24Badge
+                  class="shrink-0"
+                  size="xs"
+                  :color="row.clean ? 'air-primary-success' : 'air-primary-alert'"
+                  :label="journalOutcomeLabel(row.clean)"
+                />
+              </div>
+              <p class="mt-0.5 text-xs text-(--ui-color-base-3)">
+                <span class="sr-only">Загружено </span>{{ tile ? `${tile.day} ${tile.month}, ${tile.time}` : 'дата неизвестна' }}
+              </p>
+              <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
+                   каждой строке спорила бы за внимание с «Показать ещё» внизу списка. -->
+              <button
                 v-if="ownerOpenPath(row.ownerTypeId, row.ownerId)"
-                size="xs"
-                color="air-tertiary-no-accent"
-                label="Открыть"
+                type="button"
+                class="mt-1.5 text-sm text-(--ui-color-accent-main-link) hover:underline"
                 @click="openOwner(row.ownerTypeId, row.ownerId)"
-              />
+              >
+                Открыть карточку
+              </button>
             </div>
           </li>
         </ul>
