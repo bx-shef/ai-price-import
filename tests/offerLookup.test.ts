@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { resolveOffersIblockId, findOfferByXmlId, findOfferByName, findOfferForItem } from '../server/utils/offerLookup'
+import { resolveOffersIblockId, findOfferByXmlId, findOfferForItem } from '../server/utils/offerLookup'
 
 describe('resolveOffersIblockId', () => {
   it('picks the catalog whose productIblockId is set (the offers iblock)', async () => {
@@ -24,9 +24,13 @@ describe('resolveOffersIblockId', () => {
 
 describe('findOfferByXmlId', () => {
   it('filters by iblockId + xmlId + active (iblockId in select too) → min id', async () => {
-    const call = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27 }, { id: 5, iblockId: 27 }] }))
+    // ⚠ У строк ответа `xmlId` теперь ОБЯЗАТЕЛЕН: подбор сверяет его на клиенте и отбрасывает всё,
+    // что не равно запрошенному коду. Прежняя фикстура без `xmlId` проходила — то есть проверка
+    // принимала бы любые строки, которые вернул портал, включая ответ на молча проигнорированный
+    // фильтр. Это и есть смысл сверки, а не придирка к данным теста.
+    const call = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27, xmlId: '1030162' }, { id: 5, iblockId: 27, xmlId: '1030162' }] }))
     expect(await findOfferByXmlId('1030162', 27, call)).toBe(3)
-    expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { select: ['id', 'iblockId'], filter: { iblockId: 27, xmlId: '1030162', active: 'Y' } })
+    expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { filter: { iblockId: 27, xmlId: '1030162', active: 'Y' }, select: ['id', 'iblockId', 'xmlId'] })
   })
   it('null on empty xmlId / missing iblock / no offers (no bad call)', async () => {
     const empty = vi.fn(async () => ({ offers: [] }))
@@ -37,35 +41,33 @@ describe('findOfferByXmlId', () => {
   })
 })
 
-describe('findOfferByName', () => {
-  it('filters by iblockId + name + active → min id', async () => {
-    const call = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27 }] }))
-    expect(await findOfferByName('Мешок', 27, call)).toBe(3)
-    expect(call).toHaveBeenCalledWith('catalog.product.offer.list', { select: ['id', 'iblockId'], filter: { iblockId: 27, name: 'Мешок', active: 'Y' } })
-  })
-})
-
 describe('findOfferForItem', () => {
-  it('article-as-xmlId first, then name', async () => {
-    // article hit → one call, no name lookup
-    const artHit = vi.fn(async () => ({ offers: [{ id: 3, iblockId: 27 }] }))
-    expect(await findOfferForItem('1030162', 'Мешок', 27, artHit)).toBe(3)
-    expect(artHit).toHaveBeenCalledTimes(1)
-    // article miss → falls to name
-    const call = vi.fn()
-      .mockResolvedValueOnce({ offers: [] }) // xmlId miss
-      .mockResolvedValueOnce({ offers: [{ id: 8, iblockId: 27 }] }) // name hit
-    expect(await findOfferForItem('NOPE', 'Мешок', 27, call)).toBe(8)
-    expect(call).toHaveBeenCalledTimes(2)
+  it('ПО ИМЕНИ НЕ ИЩЕМ: артикул не совпал → null после РОВНО одного запроса', async () => {
+    // ⚠ Зеркало решения по базовому товару: ошибочно подобранное торговое предложение так же пишет
+    // в карточку клиента чужую позицию. Второй вызов здесь — это и есть возврат подбора по имени.
+    const call = vi.fn(async () => ({ offers: [] }))
+    expect(await findOfferForItem('A-1', 27, call)).toBeNull()
+    expect(call).toHaveBeenCalledTimes(1)
+    // ⚠ По ВСЕМ вызовам: прежняя проверяла только первый (а он всегда фильтр по xmlId), то есть
+    // была истинна по построению и второй линией защиты не являлась.
+    // ⚠ Названия товара нет уже в СИГНАТУРЕ, поэтому подставить его в фильтр неоткуда: проверка
+    // держится не на строке, а на том, что функция названия не получает.
+    for (const [, params] of call.mock.calls) {
+      expect(JSON.stringify(params).toLowerCase(), 'в фильтре появилось имя').not.toContain('name')
+    }
   })
-  it('no offers iblock → null (fail-soft, no call)', async () => {
-    const call = vi.fn()
-    expect(await findOfferForItem('x', 'y', null, call)).toBeNull()
+
+  it('КАНАРЕЙКА: нет артикула, портал отвечает совпадением на ЛЮБОЙ запрос → всё равно null', async () => {
+    // ⚠ Утверждение о поведении, а не о числе вызовов: совпасть при отсутствии артикула может
+    // только имя. Переживает батчинг и кэш.
+    const call = vi.fn(async () => ({ offers: [{ id: 5 }] }))
+    expect(await findOfferForItem(undefined, 27, call)).toBeNull()
     expect(call).not.toHaveBeenCalled()
   })
-  it('both article-xmlId and name miss → null after exactly 2 calls', async () => {
-    const call = vi.fn(async () => ({ offers: [] }))
-    expect(await findOfferForItem('NOPE', 'Тоже нет', 27, call)).toBeNull()
-    expect(call).toHaveBeenCalledTimes(2)
+
+  it('no offers iblock → null (fail-soft, no call)', async () => {
+    const call = vi.fn()
+    expect(await findOfferForItem('x', null, call)).toBeNull()
+    expect(call).not.toHaveBeenCalled()
   })
 })

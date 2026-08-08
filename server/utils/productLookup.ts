@@ -1,136 +1,119 @@
 import type { RestCall } from './b24Rest'
 import type { PortalMapping, ArticleFieldConfig } from '~/types/mapping'
 import type { DocumentItem } from '~/types/document'
-import { articleMatches, parseSupplierArticles } from '~/utils/supplierArticles'
-import { findOfferForItem } from './offerLookup'
+import { findCatalogByProperty, findCatalogByXmlId, NO_IBLOCKS, OFFER_SOURCE, PRODUCT_SOURCE, type CatalogIblocks, type CatalogSource } from './catalogLookup'
 
-// Deterministic product lookup for crm-sync (find_product tool body). DI over RestCall.
-// Strategies (mapping.product.by):
-//   • 'name'    → exact product NAME via crm.product.list (verified live: {ID, NAME}).
-//   • 'article' → the admin-configured catalog property (mapping.article.field) holding
-//     the supplier article(s) AND the product's external code (XML_ID / «внешний код»).
-//     Supports BOTH field variants (kind 'text' = one article per line / 'string' = delimiter-separated).
-// Live-verified: an EXACT `PROPERTY_<code>` filter does NOT match a field that holds
-// several articles (value "A\nB" is not found by exact "A") — only a substring `%LIKE`
-// filter finds it. So we narrow with `%PROPERTY_<code>`, then confirm an EXACT article
-// membership client-side (parseSupplierArticles) to reject LIKE false positives
-// (e.g. "STP-5" ⊂ "STP-50"). Unmatched → mapping.product.onMissing.
+export type { CatalogIblocks }
+
+// Deterministic product lookup for crm-sync. DI over RestCall; the mechanics live in
+// `catalogLookup.ts` — this file is the ORDER of strategies and nothing else.
 //
-// ACTIVE-only (owner ask): every lookup filters `ACTIVE: 'Y'` so an inactive/archived product is never
-// matched. ⚠ the `ACTIVE`/`XML_ID` filters on crm.product.list are per the classic product contract —
-// live-verify on a catalog-enabled portal before relying on them (this dev webhook has no catalog REST).
-// SKU / trade-offer («торговое предложение») matching with priority over the base product is a
-// documented follow-up (needs catalog.product.offer.* + a subscription portal) — see docs.
+// ⚠ Читается ТОЛЬКО артикул. По названию не ищем никогда — `tests/noNameLookup.test.ts`.
+//
+// ⚠ Методы `crm.product.*` DEPRECATED (в справочнике так и написано) — весь путь переведён на
+// `catalog.product.list` / `catalog.product.offer.list`. Практическая разница не только в имени:
+// у `catalog.*` `iblockId` ОБЯЗАТЕЛЕН в фильтре, поэтому подбор больше не может работать «вообще
+// по каталогу» и получает инфоблоки явно. Резолв — один раз на задание (`liveDeps`).
+//
+// Только активные записи (`active: 'Y'`) — решение владельца: архивный товар не должен попадать в
+// документ клиента. LIVE-VERIFIED 06.08.2026 (`pnpm verify:article`, #383): вся матрица краевых
+// случаев гоняет ИМЕННО эту функцию, а не переписанный в скрипте запрос — неактивный товар с
+// подходящим артикулом не подбирается; `ZQ-5` не подбирает `ZQ-50`; обе формы поля разбираются;
+// внешний код работает без настроенного свойства; несуществующее свойство даёт «не найдено», а не
+// первый товар каталога. Два ограничения подтверждены КАК ограничения: артикул, отличающийся
+// омоглифом (кир. `С` против лат. `C`), не находится вовсе (сравнение на портале побайтовое, наша
+// свёртка помогает лишь среди уже возвращённых строк), и артикул-подстрока у >50 записей может не
+// найтись — читается одна страница ответа.
 
-/** Find an ACTIVE catalog product id by exact name, or null (min id on duplicates). */
-export async function findProductByName(name: string, call: RestCall): Promise<number | null> {
-  const q = (name ?? '').trim()
-  if (!q) return null
-  const rows = await call('crm.product.list', { filter: { NAME: q, ACTIVE: 'Y' }, select: ['ID'] }) as Array<{ ID: string }> | undefined
-  return minId(rows)
+/** Найти активный товар базового каталога по внешнему коду (`xmlId`), либо null. */
+export async function findProductByXmlId(code: string, iblockId: number | null, call: RestCall): Promise<number | null> {
+  if (!iblockId) return null
+  const hit = await findCatalogByXmlId(PRODUCT_SOURCE, code, iblockId, call)
+  return hit.kind === 'found' ? hit.id : null
+}
+
+/** Найти активный товар базового каталога по свойству с артикулом поставщика, либо null. */
+export async function findProductByArticle(article: string, cfg: ArticleFieldConfig, iblockId: number | null, call: RestCall): Promise<number | null> {
+  return iblockId ? await findCatalogByProperty(PRODUCT_SOURCE, article, cfg, iblockId, call) : null
 }
 
 /**
- * Find an ACTIVE catalog product by its external code (XML_ID / «внешний код»), or null. Distributors
- * commonly key their catalog by XML_ID, so it is tried as a second article-matching strategy after the
- * supplier-article property. Exact match (XML_ID is a single value, not a multi-article field).
+ * Перебрать инфоблоки ОДНОГО вида по ВНЕШНЕМУ КОДУ — до первого попадания либо до отказа.
+ *
+ * ⚠ Решение владельца 06.08.2026: перебирать каждый каталог. Прежде брался ПЕРВЫЙ, и на портале с
+ * несколькими товарными каталогами позиция из второго не находилась никогда — исход неотличим от
+ * «товара нет»: строка уезжает свободной, сумма сходится, статус «Готово».
+ *
+ * ⚠ НЕОДНОЗНАЧНОСТЬ ПРЕКРАЩАЕТ ПОДБОР ЦЕЛИКОМ, а не только текущую итерацию. Разбор поймал этот
+ * дефект в первой редакции: отказ по неоднозначности был неотличим от «не нашли», и перебор шёл
+ * дальше — каталог A с парой `ZQ-1`/`zq-1` давал отказ, а каталог B подсовывал ПОСТОРОННИЙ товар.
+ * То есть гард против подмены товара сам приводил к подмене, только из другого каталога.
+ *
+ * ⚠ Плата за перебор невелика: до N запросов на НЕнайденную позицию при N каталогах, а у
+ * подавляющего большинства порталов каталог один. Перебор идёт только пока не нашли.
  */
-export async function findProductByXmlId(code: string, call: RestCall): Promise<number | null> {
-  const q = (code ?? '').trim()
-  if (!q) return null
-  const rows = await call('crm.product.list', { filter: { XML_ID: q, ACTIVE: 'Y' }, select: ['ID'] }) as Array<{ ID: string }> | undefined
-  return minId(rows)
+async function firstXmlIdMatch(src: CatalogSource, article: string, iblockIds: readonly number[], call: RestCall): Promise<number | null | 'stop'> {
+  for (const iblockId of iblockIds) {
+    const hit = await findCatalogByXmlId(src, article, iblockId, call)
+    if (hit.kind === 'found') return hit.id
+    if (hit.kind === 'ambiguous') return 'stop'
+  }
+  return null
+}
+
+/** Перебрать инфоблоки одного вида по СВОЙСТВУ артикула — до первого попадания. */
+async function firstPropertyMatch(src: CatalogSource, article: string, cfg: ArticleFieldConfig, iblockIds: readonly number[], call: RestCall): Promise<number | null> {
+  for (const iblockId of iblockIds) {
+    const hit = await findCatalogByProperty(src, article, cfg, iblockId, call)
+    if (hit) return hit
+  }
+  return null
 }
 
 /**
- * Find a catalog product id by supplier article via the configured catalog property.
- * `cfg.field` is the property code (`PROPERTY_99`, `99`, or a symbolic code); `cfg.kind`
- * + `cfg.delimiter` say how multiple articles are packed in one value. Returns null when
- * no article / no field / nothing matched EXACTLY.
+ * Подобрать товар каталога по строке документа. ТОЛЬКО по артикулу.
+ *
+ * Порядок — от самого сильного признака к настраиваемому (решение владельца 2026-08-05):
+ *   1. **внешний код торгового предложения** (`xmlId`) — напечатанный артикул чаще всего именно он;
+ *   2. **внешний код базового товара** — системное поле, настройки не требует;
+ *   3. **свойство с артикулом поставщика** — в инфоблоках ТОГО ВИДА, который выбран настройкой.
+ *
+ * ⚠ Каждый шаг перебирает ВСЕ инфоблоки своего вида до первого попадания (решение владельца
+ * 06.08.2026): портал с несколькими товарными каталогами иначе искал бы только в первом.
+ *
+ * ⚠ Вид свойства (`article.scope`) при этом по-прежнему берётся ИЗ НАСТРОЙКИ, а не перебирается.
+ * Свойство живёт ровно в одном виде инфоблоков — предложений либо товаров, — а портал **молча
+ * игнорирует** фильтр по свойству, которого в инфоблоке нет, и возвращает ВЕСЬ список (живая
+ * проверка 2026-08-05). «Поискать на всякий случай в обоих видах» дало бы в одном из них весь
+ * каталог. Перебор ВНУТРИ вида безопасен по той же причине, по которой вообще работает подбор:
+ * точное совпадение артикула сверяется на клиенте, и чужой каталог отсеивается целиком.
+ *
+ * ⚠ Оба внешних кода идут ДО свойства намеренно: они не зависят от настройки, поэтому портал,
+ * где админ ничего не выбрал, всё равно подбирает товар.
  */
-export async function findProductByArticle(article: string, cfg: ArticleFieldConfig, call: RestCall): Promise<number | null> {
-  const q = (article ?? '').trim()
-  const key = normalizePropertyKey(cfg.field)
-  if (!q || !key) return null
-  // %LIKE narrows server-side (exact filter misses multi-article values). `order` ID ASC
-  // makes the (Bitrix-default 50-row) page deterministic and the min-id contract hold
-  // within it. NB two known limits: (1) the byte-based LIKE won't surface a stored
-  // article that differs only by a homoglyph (Cyrillic С vs Latin C) — the fold in
-  // articleMatches only helps among rows LIKE already returned; (2) an article that is a
-  // substring of >50 products could be missed if its exact holder sits past row 50.
-  // Both are acceptable for specific supplier codes; the field must be the numeric id.
-  const rows = await call('crm.product.list', {
-    filter: { [`%${key}`]: q, ACTIVE: 'Y' },
-    select: ['ID', key],
-    order: { ID: 'ASC' }
-  }) as Array<Record<string, unknown>> | undefined
-  if (!Array.isArray(rows) || !rows.length) return null
-  const matched: number[] = []
-  for (const r of rows) {
-    const id = Number(r.ID)
-    if (!Number.isFinite(id) || id <= 0) continue
-    // Confirm exact membership in the product's parsed article set (kills substring hits).
-    if (articleMatches(q, parseSupplierArticles(propValue(r[key]), cfg))) matched.push(id)
-  }
-  return matched.length ? Math.min(...matched) : null
-}
+export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall, iblocks: CatalogIblocks = NO_IBLOCKS): Promise<number | null> {
+  const article = (item.article ?? '').trim()
+  if (!article) return null
 
-/** Resolve a document line to a catalog product/offer id per the portal mapping.
- *  - **Trade offers (SKU) have PRIORITY** when the portal has them (`offersIblockId` resolved once per
- *    job): a printed article is often the OFFER's XML_ID, and a deal row can carry the offer id directly
- *    (owner ask «приоритет SKU»). Fail-soft: no offers iblock / no match → fall through to products.
- *  - Article strategy then tries: the supplier-article property → the external code (XML_ID) — both
- *    ACTIVE-only — then an exact NAME match (never drops the line here). */
-export async function findProduct(item: DocumentItem, mapping: PortalMapping, call: RestCall, offersIblockId: number | null = null): Promise<number | null> {
-  // 1) Offers (SKU / ТП) first — by article-as-xmlId, then by name. Only when the portal has an offers
-  //    iblock; otherwise this is a no-op (returns null) and we go straight to the base-product lookup.
-  if (offersIblockId) {
-    const offerId = await findOfferForItem(item.article, item.name, offersIblockId, call)
-    if (offerId) return offerId
-  }
-  // 2) Base product by the configured article property, then by external code (XML_ID).
-  if (mapping.product.by === 'article' && mapping.article.field && item.article) {
-    const byArticle = await findProductByArticle(item.article, mapping.article, call)
-    if (byArticle) return byArticle
-    const byXmlId = await findProductByXmlId(item.article, call)
-    if (byXmlId) return byXmlId
-  }
-  // 3) Fall back to an exact product name.
-  return findProductByName(item.name, call)
-}
+  // 1) Внешний код торгового предложения — во всех каталогах предложений.
+  const byOfferXml = await firstXmlIdMatch(OFFER_SOURCE, article, iblocks.offer, call)
+  if (byOfferXml === 'stop') return null
+  if (byOfferXml) return byOfferXml
 
-/**
- * Require a NUMERIC property id — `PROPERTY_130` or `130`. A symbolic code is REJECTED
- * (→ null): live-verified that `%PROPERTY_<CODE>` does NOT filter (Bitrix returns the
- * WHOLE catalog), which would fetch everything and then silently miss. The settings
- * property-picker supplies the numeric id.
- */
-export function normalizePropertyKey(field: string): string | null {
-  const f = (field ?? '').trim().replace(/^PROPERTY_/i, '')
-  return /^\d+$/.test(f) ? `PROPERTY_${f}` : null
-}
+  // 2) Внешний код базового товара — во всех товарных каталогах.
+  const byXmlId = await firstXmlIdMatch(PRODUCT_SOURCE, article, iblocks.product, call)
+  if (byXmlId === 'stop') return null
+  if (byXmlId) return byXmlId
 
-/**
- * Extract a crm.product property value to a string. Shapes seen: a bare string,
- * `{ value, valueId }`, and — if the property is configured multiple — an array or an
- * index-keyed object of those. Multi-value parts are joined with newlines so
- * `parseSupplierArticles` (text kind) still yields one article per part.
- */
-function propValue(v: unknown): string {
-  if (v == null) return ''
-  if (typeof v === 'string') return v
-  if (Array.isArray(v)) return v.map(propValue).filter(Boolean).join('\n')
-  if (typeof v === 'object') {
-    const o = v as Record<string, unknown>
-    if ('value' in o) return String(o.value ?? '')
-    return Object.values(o).map(propValue).filter(Boolean).join('\n')
+  // 3) Свойство — в инфоблоках ТОГО вида, который выбран настройкой.
+  // ⚠ Вид (`scope`) по-прежнему решает настройка: свойство живёт ровно в одном инфоблоке, а портал
+  // МОЛЧА игнорирует фильтр по чужому свойству и отдаёт весь список. Перебор внутри вида безопасен
+  // ровно потому, что точное совпадение артикула сверяется на клиенте — иначе первый же каталог без
+  // такого свойства вернул бы весь свой список и подсунул произвольную позицию.
+  if (mapping.article.field) {
+    const scope = mapping.article.scope === 'offer' ? 'offer' : 'product'
+    const src = scope === 'offer' ? OFFER_SOURCE : PRODUCT_SOURCE
+    return await firstPropertyMatch(src, article, mapping.article, iblocks[scope], call)
   }
-  return String(v)
-}
-
-/** Smallest positive id from a crm.product.list result, or null. */
-function minId(rows: Array<{ ID: string }> | undefined): number | null {
-  if (!Array.isArray(rows) || !rows.length) return null
-  const ids = rows.map(r => Number(r.ID)).filter(n => Number.isFinite(n) && n > 0)
-  return ids.length ? Math.min(...ids) : null
+  return null
 }

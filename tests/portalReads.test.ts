@@ -53,22 +53,15 @@ describe('fetchBaseCurrency', () => {
   })
 })
 
-describe('findProductByName', () => {
-  it('returns min ID on exact-name match, null when none', async () => {
-    const { findProductByName } = await import('../server/utils/productLookup')
-    expect(await findProductByName('Болт', vi.fn().mockResolvedValue([{ ID: '31' }, { ID: '12' }]))).toBe(12)
-    expect(await findProductByName('X', vi.fn().mockResolvedValue([]))).toBeNull()
-    expect(await findProductByName('  ', vi.fn())).toBeNull()
-  })
-})
-
-describe('findProduct (entry point)', () => {
-  it('resolves by item name (MVP: mapping ignored)', async () => {
+describe('findProduct — подбора по имени НЕТ', () => {
+  it('дефолтные настройки + строка без артикула → null, ни одного запроса', async () => {
+    // ⚠ Раньше здесь утверждалось обратное («resolves by item name»), и это было верно для той
+    // редакции. Решение владельца 2026-08-05: имя товара не идентификатор, подбор по нему убран —
+    // ошибочное совпадение писало бы в карточку клиента чужую позицию.
     const { findProduct } = await import('../server/utils/productLookup')
     const { defaultMapping } = await import('../app/utils/portalSettings')
     const call = vi.fn().mockResolvedValue([{ ID: '7' }])
-    const id = await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, defaultMapping(), call)
-    expect(id).toBe(7)
-    expect(call).toHaveBeenCalledWith('crm.product.list', expect.objectContaining({ filter: { NAME: 'Гвоздь', ACTIVE: 'Y' } }))
+    expect(await findProduct({ name: 'Гвоздь', price: 1, quantity: 1 }, defaultMapping(), call)).toBeNull()
+    expect(call).not.toHaveBeenCalled()
   })
 })

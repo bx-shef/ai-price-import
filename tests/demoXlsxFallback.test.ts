@@ -174,7 +174,12 @@ describe('xlsxToTextFallback — hardening (public endpoint, untrusted input)', 
     expect(ms).toBeLessThan(2000) // generous CI margin; real runtime is a few ms
   })
 
-  it('refuses a decompression bomb — inflate is capped, does not fill memory', () => {
+  // ⚠ Свой таймаут: тест выделяет 60 МБ и жмёт их, а в общем прогоне рядом работают ещё три
+  // воркера — на дефолтных 5 с он падал через раз, при этом в одиночку проходит за 2 с. Падение
+  // «через раз» хуже отсутствующего теста: его перестают читать, и вместе с ним перестают читать
+  // соседей. Размер образца НЕ уменьшен намеренно — он обязан заметно превышать кап в 40 МБ,
+  // иначе проверка перестаёт проверять то, ради чего написана.
+  it('refuses a decompression bomb — inflate is capped, does not fill memory', { timeout: 30_000 }, () => {
     // 60MB of one byte compresses to a few KB. The central-directory size is FORGED small
     // so it slips past zipUncompressedTotal — the inflate cap is the real guard.
     const huge = Buffer.alloc(60 * 1024 * 1024, 0x61)

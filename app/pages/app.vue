@@ -6,6 +6,7 @@ import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { navigateTo } from '#app'
 import { useImport } from '~/composables/useImport'
 import { useMetrics } from '~/composables/useMetrics'
+import { ON_MISSING_LABEL } from '~/config/onMissing'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
@@ -51,25 +52,13 @@ const { markShown: markLegalNoticeShown } = useLegalNotice()
 // раскладки — раньше здесь рисовался весь рабочий экран, который затем схлопывался в баннер.
 // Вне портала settingsLoaded так и останется false, поэтому ждём ЛЮБОГО исхода загрузки настроек.
 const settingsResolved = ref(false)
-// Одно правило на три состояния экрана — чистое и покрыто тестом (appScreenState).
-// Принятие EULA и Политики (#414) — гейт ПЕРЕД настройкой: условия принимают до того, как
-// администратор начнёт настраивать, куда вносить товары. Решение живёт на сервере, здесь показ.
-const {
-  accepted: consentAccepted,
-  admin: consentAdmin,
-  editions: consentEditions,
-  resolved: consentResolved,
-  saving: consentSaving,
-  error: consentError,
-  load: loadConsent,
-  accept: acceptConsent
-} = useConsent()
+// Одно правило на состояния экрана — чистое и покрыто тестом (appScreenState).
+// ⚠ Экрана согласия здесь больше нет (#438): принятие условий собирает Маркет ДО установки, а
+// п. 4.3.2 привязывает подтверждение к действию загрузки приложения. Подробнее — appScreenState.
 const screen = computed(() => appScreenState({
   launch: launch.value,
   settingsResolved: settingsResolved.value,
-  needsSetup: needsSetup.value,
-  consentResolved: consentResolved.value,
-  consentAccepted: consentAccepted.value
+  needsSetup: needsSetup.value
 }))
 
 // #360: у портала может не быть чат-бота (бесплатный тариф, предел ботов, права не выданы) — тогда
@@ -103,6 +92,9 @@ const launch = ref<AppLaunchMode | undefined>()
 // списки»). `stagingBusy` comes from ImportStaging's one-by-one loop; `uploading` is a single POST in
 // flight. Either → busy.
 const stagingBusy = ref(false)
+// Закрытие предупреждения о настройке «пропустить ненайденные» — на время открытой страницы.
+// Персистентного намеренно нет: см. комментарий у самого предупреждения.
+const skipWarnNoticeHidden = ref(false)
 const busy = computed(() => stagingBusy.value || uploading.value)
 // Detect the Bitrix24 MOBILE APP via b24ui's own mechanism (useDevice → platform «bitrix-mobile», set by
 // the b24ui platform plugin from the BitrixMobile UA — NOT the JS SDK). In the mobile app we hide
@@ -185,10 +177,6 @@ onMounted(async () => {
     // Слайдер не открылся — не оставляем человека на мёртвой странице, работаем как раньше.
     launch.value = 'work'
   }
-  // Согласие читаем ДО остальной загрузки и ждём его (#414): пока условия не приняты, рабочего
-  // экрана нет вовсе, а опрос статусов и метрики — его части. Настройки грузим следом, как раньше:
-  // администратор, только что нажавший галочку, должен сразу попасть на нужный экран, не перезагружая.
-  await loadConsent()
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
   loadMetrics()
   void loadChatBotStatus() // фоном: баннер не должен задерживать рабочий экран
@@ -245,6 +233,19 @@ const stats = computed(() => {
 // completion. The show/throttle/verification decision is server-side (portal_app_rating); the modal
 // delays ~10s after this flips so the result is seen first. See docs/PROJECT_MAP.md.
 const seenActive = new Set<string>()
+// Метрики после импорта (#444). Читались ОДИН РАЗ при открытии: человек загружал пять документов,
+// видел результаты в списке — а «Обработано документов» и «Сэкономлено» оставались прежними, до
+// перезагрузки страницы, которую в портале никто не делает.
+// ⚠ Момент обновления — СНЯТИЕ БЛОКИРОВКИ, а не завершение каждого задания: импорт идёт пачкой, и
+// на каждый файл это был бы лишний запрос. Пока `busy`, экран и так заблокирован; отпустили —
+// значит пачка отработала, и числа пора пересчитать один раз.
+// ⚠ Обновление МОЛЧАЛИВОЕ: индикатор не поднимается (иначе ради свежих чисел на секунду отнимаются
+// уже показанные), отказ не выводится (прежние числа верны, они лишь на импорт устарели, а ошибка
+// поверх успешного импорта сообщала бы о поломке, которой нет).
+watch(busy, (now, was) => {
+  if (was && !now) void loadMetrics({ silent: true })
+})
+
 const freshImportSuccess = ref(false)
 watch(jobs, (list) => {
   for (const j of list) {
@@ -274,7 +275,7 @@ watch(jobs, (list) => {
         <!-- Шапка страницы — навбар каркаса (#259) вместо самодельного flex-заголовка. В мобильном
              приложении Б24 нативная шапка УЖЕ показывает название, поэтому навбар там не рисуем. -->
         <B24DashboardNavbar
-          v-if="!isBitrixMobile && screen !== 'launcher' && screen !== 'consent'"
+          v-if="!isBitrixMobile && screen !== 'launcher'"
           :toggle="false"
           :title="APP_NAME"
         >
@@ -327,22 +328,21 @@ watch(jobs, (list) => {
             />
           </div>
 
-          <!-- Уведомление об изменении документов (#418, п. 9.3.3). Стоит ВЫШЕ экрана согласия и
-               баннера настройки и показывается независимо от них: это обязанность уведомить, а не
-               часть рабочего потока. Портал, застрявший на «ещё не настроено», обязан узнать о новой
-               редакции ровно так же, как работающий. Показ отмечается на сервере — п. 9.3.4 датирует
-               доставку по наиболее ранней из двух дат (баннер / сообщение в чат). -->
-          <LegalChangeBanner :on-shown="markLegalNoticeShown" />
-
-          <!-- Согласие с EULA и Политикой (#414). Стоит перед баннером настройки и, как и он,
-               скрывает весь рабочий контент: до подтверждения сервер не примет ни одного документа. -->
-          <ConsentScreen
-            v-if="screen === 'consent'"
-            :admin="consentAdmin"
-            :editions="consentEditions"
-            :saving="consentSaving"
-            :error="consentError"
-            @accept="() => { void acceptConsent() }"
+          <!-- Уведомление об изменении документов (#418, п. 9.3.3). Стоит ВЫШЕ баннера настройки и
+               показывается независимо от него: это обязанность уведомить, а не часть рабочего
+               потока. Портал, застрявший на «ещё не настроено», обязан узнать о новой редакции
+               ровно так же, как работающий. Показ отмечается на сервере — п. 9.3.4 датирует
+               доставку по наиболее ранней из двух дат (баннер / сообщение в чат).
+               ⚠ Но НЕ в `loading` и не на пусковой странице: там баннер лёг бы поверх скелетона
+               либо на экран, который человек не читает, а сервер записал бы отметку о доставке.
+               Отметка — доказательство против самого лицензиата, и ставить её за показ, которого
+               по существу не было, нельзя.
+               ⚠ Условие написано ЧЕРЕЗ ИСКЛЮЧЕНИЯ, а не перечислением подходящих состояний:
+               пятое состояние, если оно появится, обязано баннер ПОКАЗЫВАТЬ — обязанность
+               уведомить общая, и молча выпасть из показа она не должна. -->
+          <LegalChangeBanner
+            v-if="screen !== 'loading' && screen !== 'launcher'"
+            :on-shown="markLegalNoticeShown"
           />
 
           <!-- Setup nudge: shown until the admin configures the app (pristine defaults). Admin gets a
@@ -400,6 +400,43 @@ watch(jobs, (list) => {
             <!-- PRIMARY ACTION: stage files → ONE target for the batch → «Импортировать» uploads the batch
              and WAITS for every result, holding the page locked (owner rework, round 2). `upload`/`jobDone`
              come from THIS page's single useImport() so the run and the list below share one poll. -->
+            <!-- Предупреждение о выбранной настройке «Пропустить строку и предупредить» (решение
+             владельца 06.08.2026: поведение оставляем как есть, но человека предупреждаем ЗАРАНЕЕ).
+             Что происходит без него: если ни одна позиция документа не подобралась по артикулу, при
+             этой настройке пропускаются ВСЕ строки, и импорт отвечает жёсткой ошибкой — запись не
+             создаётся вовсе. Для документа без колонки артикула (в РБ/РФ обычная первичка) это
+             штатный исход, а выглядит как поломка, потому что узнаёт о нём человек уже ПОСЛЕ
+             загрузки, из текста отказа.
+             ⚠ Показываем ТОЛЬКО при явно выбранном `skip-warn`: на дефолте (`freeform`) строки
+             вносятся как есть, отказа нет, и предупреждать не о чем — баннер на каждом портале
+             читался бы как шум и перестал бы работать там, где нужен.
+             ⚠ Это `B24Alert`, а НЕ `B24Banner`, и разница не косметическая. Первая редакция стояла
+             на `B24Banner`, а он по документации b24ui — верхняя полоса страницы фиксированной
+             высоты (`h-12`), и заголовок в нём `truncate`: наше предупреждение схлопывалось в ОДНУ
+             строку с многоточием, и главное — «запись в CRM не создастся» — не читалось вовсе.
+             `description` у `B24Banner` нет, обойти можно было только борьбой с компонентом.
+             `B24Alert` разносит короткий заголовок и объяснение и переносит текст; им же сделаны
+             все прочие контекстные предупреждения в проекте.
+             ⚠ `role="status"`, а не `alert`: сообщение показывается по СОСТОЯНИЮ настройки, а не в
+             ответ на действие, поэтому перебивать чтение не должно. Своей роли у компонента нет —
+             без явной программа чтения не объявит его вовсе.
+             ⚠ Закрытие — на время открытой страницы, БЕЗ запоминания. Прежняя редакция полагалась
+             на встроенное «запомнить навсегда» через localStorage, и это было неверно трижды:
+             хранилище общее для всех порталов (админ двух порталов закрыл бы на одном и не увидел
+             на другом), отметка не снимается при возврате настройки в `skip-warn` — то есть молчала
+             бы ровно тогда, когда предупреждение снова нужно, — и само поведение мы не сверяли. -->
+            <B24Alert
+              v-if="mapping.product.onMissing === 'skip-warn' && !skipWarnNoticeHidden"
+              class="mb-4"
+              role="status"
+              color="air-primary-warning"
+              :icon="WarningAlarmIcon"
+              title="Документы без артикулов будут отклонены целиком"
+              :description="`Выбрана настройка «${ON_MISSING_LABEL['skip-warn']}». Если ни одна позиция документа не найдётся в каталоге по артикулу, запись в CRM не создастся — импорт ответит ошибкой. Так и задумано; проверьте, что в ваших документах есть колонка с артикулами.`"
+              close
+              @update:open="skipWarnNoticeHidden = true"
+            />
+
             <ImportStaging
               :upload="upload"
               :job-done="jobDone"

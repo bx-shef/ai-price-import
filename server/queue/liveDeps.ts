@@ -25,14 +25,14 @@ import { findCompanyByTaxId } from '../utils/companyLookup'
 import { fetchCrmCategories } from '../utils/categoryLookup'
 import { fetchCrmMode, leadsEnabled } from '../utils/crmMode'
 import { findProduct } from '../utils/productLookup'
-import { resolveOffersIblockId } from '../utils/offerLookup'
+import { NO_IBLOCKS, resolveIblocks, type CatalogIblocks } from '../utils/catalogLookup'
 import { fetchMeasureRows } from '../utils/measureList'
 import { createMeasureViaRest } from '../utils/measureCreateWrite'
 import { buildMeasureIndex, lookupExistingMeasure, normalizeUnitKey, MAX_AUTO_MEASURES_PER_JOB, type MeasureIndex } from '~/utils/measureCreate'
 import { fetchVatRates } from '../utils/portalVat'
 import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
-import { buildActivityLines, buildConfigurableActivity, entityOpenPath, COMPANY_ENTITY_TYPE_ID } from '../utils/configurableActivity'
+import { buildActivityInput, buildConfigurableActivity } from '../utils/configurableActivity'
 import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
@@ -502,20 +502,22 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
   }
   const ensureMeasureIndex = async (): Promise<MeasureIndex> =>
     (await loadMeasureIndex()) ?? { codes: [], byName: new Map() }
-  // Offers (SKU / ТП) iblock — resolved ONCE per job, then passed to every findProduct so offers get
-  // priority over the base product. Fail-soft: no offers catalog / no catalog subscription → null →
-  // findProduct just does the base-product lookup (the pre-offer behaviour). Memoized (undefined = not
-  // yet resolved) so a portal without offers doesn't re-query catalog.catalog.list on every line.
-  let offersIblockId: number | null | undefined
-  const ensureOffersIblock = async (): Promise<number | null> => {
-    if (offersIblockId === undefined) {
+  // Инфоблоки каталога — резолвятся ОДИН раз на задание и передаются в каждый findProduct.
+  // ⚠ Нужны ОБА, а не только предложения: методы `catalog.*` (пришли на смену deprecated
+  // `crm.product.*`) требуют `iblockId` в фильтре, поэтому без инфоблока товаров базовый подбор
+  // не может сделать ни одного запроса. Fail-soft: нечитаемый каталог / нет подписки → оба `null`
+  // → подбора не будет, но импорт пройдёт свободными строками, а не упадёт. Мемо (undefined = ещё
+  // не резолвили), иначе `catalog.catalog.list` дёргался бы на каждую позицию.
+  let iblocks: CatalogIblocks | undefined
+  const ensureIblocks = async (): Promise<CatalogIblocks> => {
+    if (iblocks === undefined) {
       try {
-        offersIblockId = await resolveOffersIblockId((await need()).call)
+        iblocks = await resolveIblocks((await need()).call)
       } catch {
-        offersIblockId = null
+        iblocks = NO_IBLOCKS
       }
     }
-    return offersIblockId
+    return iblocks
   }
   // Portal CRM mode — resolved ONCE per job. In the SIMPLE CRM (no leads) a lead target is redirected to
   // a deal (crmSyncCore). Fail-open: an unreadable mode keeps leads enabled.
@@ -541,7 +543,7 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     findExisting: async (entityTypeId, filter) => findExistingItemId(entityTypeId, filter, (await need()).call),
     originatorPrefix: process.env.IMPORT_ORIGINATOR_ID,
     findCompanyByTaxId: async taxId => findCompanyByTaxId(taxId, (await need()).call),
-    findProduct: async item => findProduct(item, mapping, (await need()).call, await ensureOffersIblock()),
+    findProduct: async item => findProduct(item, mapping, (await need()).call, await ensureIblocks()),
     // Auto-create measure (opt-in): wired only when enabled so crm-sync's presence check gates it.
     // Find-before-create against the portal index (reuse → {created:false}); otherwise allocate +
     // create (→ {created:true}), pushing the new code into the index so repeats/later units reuse it.
@@ -642,24 +644,27 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // Сборка тела дела — чистая функция (`buildActivityLines`): здесь она была невидима для
       // тестов, и мутация «убрать совет» или «вернуть его внутрь обрезаемого списка» проходила
       // при всех зелёных проверках.
-      const lines = buildActivityLines({ rowCount, supplierName, warnings, advice })
-      const title = `Импорт: ${supplierName ?? 'документ'}`
-      const hasCompany = !!companyId && companyId > 0
       const call = (await need()).call
+      // Компания найдена → она владелец дела, а созданная сущность привязывается вторым шагом.
+      const hasCompany = !!companyId && companyId > 0
+      // Вход дела собирает ЧИСТАЯ функция (`buildActivityInput`): здесь её было не достать тестом,
+      // и подмена признака «чистый импорт» дублирующим ключом проходила при зелёных проверках.
       // ONE дело. Owner = the client company when matched (its card is the natural home), else the
       // created entity. «Открыть» jumps to the created entity from the company timeline; with no company
       // the owner IS the entity → no button (nothing else to open).
-      const res = await call('crm.activity.configurable.add', buildConfigurableActivity({
-        ownerTypeId: hasCompany ? COMPANY_ENTITY_TYPE_ID : entityTypeId,
-        ownerId: hasCompany ? companyId! : entityId,
-        title,
-        lines,
-        openPath: entityOpenPath(entityTypeId, entityId),
-        showOpenButton: hasCompany,
+      const res = await call('crm.activity.configurable.add', buildConfigurableActivity(buildActivityInput({
+        entityTypeId,
+        entityId,
+        companyId,
+        supplierName,
+        rowCount,
+        warnings,
+        advice,
+        sourceFileUrl,
         // Имя файла — подпись ссылки в деле (#328). Берём из задания; нет — билдер подставит
         // нейтральное «Открыть файл».
-        ...(sourceFileUrl ? { sourceFileUrl, sourceFileName: (await getJob(memberId, jobId, jobRedis))?.fileName ?? '' } : {})
-      })) as { activity?: { id?: number } } | undefined
+        ...(sourceFileUrl ? { sourceFileName: (await getJob(memberId, jobId, jobRedis))?.fileName ?? '' } : {})
+      }))) as { activity?: { id?: number } } | undefined
       // Additional binding to the created entity so the SAME дело shows on both the company AND the
       // entity timeline (crm.activity.binding.add — live-verified with a configurable activity). Best-
       // effort: the дело is already on the company timeline; a binding failure (or already-bound) is fine.

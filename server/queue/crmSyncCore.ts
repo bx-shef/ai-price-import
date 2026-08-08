@@ -5,8 +5,9 @@ import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/
 import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
+import { buildImportTitle, supplierNameTrusted } from '~/utils/importTitle'
 import { normalizeUnitKey } from '~/utils/measureCreate'
-import { allLinesSkippedError, lineSkippedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
+import { allLinesSkippedError, lineSkippedWarning, noLinesMatchedWarning, skippedLinesAdvice } from '~/utils/importOutcome'
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
@@ -255,6 +256,7 @@ export async function runCrmSync(
   const rows: Array<Record<string, unknown>> = []
   const warnedUnits = new Set<string>() // dedupe per-unit measure warnings across rows
   let skippedLines = 0
+  let matchedLines = 0
   let sort = 10
   for (const item of doc.items) {
     // Only a positive rate is matched (validated in the pre-pass); 0 / absent = «Без НДС» → taxRate
@@ -267,6 +269,7 @@ export async function runCrmSync(
       skippedLines++
       continue
     }
+    if (productId) matchedLines++
     // onMissing === 'freeform' (product creation was removed): an unmatched line is written as a
     // free-form position (productId undefined) carrying the document name/price.
 
@@ -383,6 +386,15 @@ export async function runCrmSync(
   // поломка документа. Отдельное поле снимает и обрезку, и счётчик разом.
   const advice = skippedLines > 0 ? skippedLinesAdvice() : undefined
 
+  // ⚠ «Ни одна строка не связалась с каталогом» — ОТДЕЛЬНОЕ предупреждение и самый тихий исход из
+  // возможных: строки записаны все до единой, сумма верна, статус «Готово», а связи с номенклатурой
+  // нет ни у одной. Заметить нечего, всплывает недели спустя в отчёте по товарам. Ставится только
+  // при `freeform` (при `skip-warn` строк просто не будет и сработает другой текст) и только когда
+  // записанные строки ЕСТЬ — иначе оно повторяло бы отказ выше.
+  if (rows.length > 0 && matchedLines === 0 && mapping.product.onMissing === 'freeform') {
+    warnings.push(noLinesMatchedWarning(Boolean(mapping.article.field)))
+  }
+
   const entityTypeId = target.entityTypeId
   let entityId: number
   let created: boolean
@@ -404,18 +416,24 @@ export async function runCrmSync(
     if (!allLinesWritten && doc.total != null && Number.isFinite(doc.total)) {
       warnings.push('Часть строк пропущена, поэтому сумма записи меньше итога документа. Сверьте сумму вручную или добавьте недостающие товары в каталог и повторите импорт.')
     }
+    // Одно вычисление на обе точки: повторный вызов с `!` ломался бы молча при следующей правке.
+    const trustedSupplierName = supplierNameTrusted(doc)
     const fields: Record<string, unknown> = {
       // Idempotency marker FIRST so a retry can find this exact create.
       ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
-      title: `Импорт: ${doc.supplier?.name ?? 'документ'}`.slice(0, 255),
+      title: buildImportTitle(doc, opportunityValue),
       // Counterparty (#135): supplier FOUND → link companyId (repeat lead / deal on a company).
       // Supplier NOT found on a LEAD target → fill the lead's own companyTitle from the document
       // (a "raw" lead a manager qualifies) — this removes the unmatched dead-end that other
       // targets have. Other target kinds keep the prior behaviour (created without a company).
+      // ⚠ `companyTitle` лида подчиняется ТОМУ ЖЕ правилу, что и заголовок (#440): здесь непроверенное
+      // название становится не подписью, а ПОЛЕМ ДАННЫХ карточки — то есть хуже заголовка. Два
+      // независимых условия разъехались бы, и имя, не попавшее в заголовок, всё равно оказалось бы
+      // в карточке; поэтому обе точки читают один `supplierNameTrusted`.
       ...(companyId
         ? { companyId }
-        : (target.entityTypeId === ENTITY_TYPE_ID.lead && doc.supplier?.name
-            ? { companyTitle: doc.supplier.name.slice(0, 255) }
+        : (target.entityTypeId === ENTITY_TYPE_ID.lead && trustedSupplierName
+            ? { companyTitle: trustedSupplierName.slice(0, 255) }
             : {})),
       ...(doc.currency ? { currencyId: doc.currency } : {}),
       // Set the total explicitly (+ manual flag): live-verified that productrow.set does

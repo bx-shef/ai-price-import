@@ -82,6 +82,29 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
   const mapping = await deps.getMapping(job.memberId)
   const crmDeps = deps.crmSyncDeps(job.memberId, job.jobId, mapping)
   const result = await runCrmSync(job.jobId, loaded.doc, mapping, loaded.signals, crmDeps)
+  // ⚠ Счётчики поднимаются ДО перевода задания в терминальный статус (#444). Экран читает метрики
+  // ровно в момент, когда последнее задание пачки становится `done`, — при обратном порядке между
+  // этими двумя действиями лежал апсерт в Postgres, и чтение попадало в окно: человек видел числа
+  // «на один документ назад». Промах не самозаживает — второго обновления не будет до следующего
+  // импорта, а правдоподобно неверная картинка хуже необновлённой.
+  // ⚠ Порядок безопасен: обе операции best-effort, `bumpMetricsSafe` глушит свои отказы, поэтому
+  // сбой счётчиков не может помешать заданию получить статус.
+  // Dashboard counters. `errors` is bumped upstream (reportErrors) — not here.
+  //  - Idempotent redelivery (job already processed): the whole document was SKIPPED — count
+  //    it as `skipped` and re-count nothing else (no new doc/entity/rows were produced).
+  //  - Fresh run: one document processed, plus (on success) the CRM entity and the product
+  //    rows ACTUALLY written (result.rowCount, after skips — not doc.items.length), plus
+  //    `unmatched` when the supplier company could not be resolved.
+  if (deps.bumpMetrics) {
+    await bumpMetricsSafe(deps.bumpMetrics, job.memberId, result.idempotent
+      ? { skipped: 1 }
+      : {
+          docs: 1,
+          created: result.created ? 1 : 0,
+          lines: result.rowCount,
+          unmatched: result.unmatched ? 1 : 0
+        })
+  }
   await deps.setJobStatus(
     job.memberId, job.jobId,
     result.created || !result.errors.length ? 'done' : 'error',
@@ -102,22 +125,6 @@ export async function handleCrmSyncJob(job: CrmSyncJob, deps: HandlerDeps): Prom
       errors: result.errors
     })
   )
-  // Dashboard counters. `errors` is bumped upstream (reportErrors) — not here.
-  //  - Idempotent redelivery (job already processed): the whole document was SKIPPED — count
-  //    it as `skipped` and re-count nothing else (no new doc/entity/rows were produced).
-  //  - Fresh run: one document processed, plus (on success) the CRM entity and the product
-  //    rows ACTUALLY written (result.rowCount, after skips — not doc.items.length), plus
-  //    `unmatched` when the supplier company could not be resolved.
-  if (deps.bumpMetrics) {
-    await bumpMetricsSafe(deps.bumpMetrics, job.memberId, result.idempotent
-      ? { skipped: 1 }
-      : {
-          docs: 1,
-          created: result.created ? 1 : 0,
-          lines: result.rowCount,
-          unmatched: result.unmatched ? 1 : 0
-        })
-  }
   // Terminal now (status recorded, no crm-sync retry) — drop the raw client
   // document. Best-effort: never fail the job on a cleanup error.
   if (deps.deleteDocument) {

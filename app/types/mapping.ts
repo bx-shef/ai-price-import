@@ -34,6 +34,19 @@ export interface RoutingRule {
 export interface ArticleFieldConfig {
   /** Catalog property code holding the supplier article(s). */
   field: string
+  /**
+   * КАКОМУ инфоблоку принадлежит свойство: торговым предложениям или базовым товарам.
+   *
+   * ⚠ Свойство живёт ровно в одном из них, поэтому искать по нему нужно ОДИН раз и именно там.
+   * Хранить это обязательно, а не угадывать: портал **молча игнорирует** фильтр по свойству,
+   * которого в инфоблоке нет, и возвращает ВЕСЬ список (проверено вживую 2026-08-05 —
+   * `%PROPERTY_999999` вернул все товары, свойство предложений на товарах — тоже все). Искать
+   * «на всякий случай в обоих» значило бы в одном из них получить весь каталог и подобрать
+   * произвольную позицию.
+   * ⚠ `'product'` — значение по умолчанию для настроек, сохранённых до появления поля: прежний
+   * пикер показывал только свойства основного каталога товаров.
+   */
+  scope?: 'product' | 'offer'
   /** 'text' → one article per line; 'string' → delimiter-separated. */
   kind: 'text' | 'string'
   /** Required when kind === 'string' — admin-chosen delimiter. */
@@ -42,8 +55,10 @@ export interface ArticleFieldConfig {
 
 /** Product lookup strategy. */
 export interface ProductLookupConfig {
-  /** 'article' → by supplier article; 'name' → by full product name. */
-  by: 'article' | 'name'
+  /** Единственная стратегия — по артикулу (свойство каталога → внешний код). Подбора по ИМЕНИ нет:
+   *  решение владельца 2026-08-05, обоснование — в `server/utils/productLookup.findProduct`. Поле
+   *  оставлено как `'article'`-литерал, чтобы сохранённые настройки порталов читались без миграции. */
+  by: 'article'
   /** What to do when no product matched. Creating a catalog product was removed (too complex an
    *  operation for a multitenant import) — an unmatched line is either dropped with a warning
    *  (`skip-warn`) or written as a free-form position without a product id (`freeform`). */

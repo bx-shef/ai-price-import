@@ -3,7 +3,7 @@ import { runCrmSync } from '../server/queue/crmSyncCore'
 import { defaultMapping } from '../app/utils/portalSettings'
 import type { ExtractedDocument } from '../app/types/document'
 import type { PortalMapping } from '../app/types/mapping'
-import { skippedLinesAdvice } from '../app/utils/importOutcome'
+import { noLinesMatchedWarning, skippedLinesAdvice } from '../app/utils/importOutcome'
 
 const VAT = [{ id: '1', name: 'Без НДС', rate: null }, { id: '5', name: 'НДС 22%', rate: 22 }]
 
@@ -329,7 +329,12 @@ describe('runCrmSync — happy + supplier/idempotency', () => {
     // несёт предупреждение «подтвердить флаг нечем» — раньше этот случай уходил молча.
     expect(writeActivity).toHaveBeenCalledWith({
       entityTypeId: 2, entityId: 555, companyId: 42, supplierName: 'ООО Ромашка', rowCount: 1,
-      warnings: [expect.stringMatching(/нет строки «Всего к оплате»/)],
+      // ⚠ Второе предупреждение — «ни одна позиция не связана с каталогом»: в этой фикстуре
+      // свойство артикула не задано, значит подбор не мог сработать, и молчать об этом нельзя.
+      warnings: [
+        expect.stringMatching(/нет строки «Всего к оплате»/),
+        expect.stringMatching(/Ни одна позиция не связана с каталогом/)
+      ],
       advice: undefined
     })
   })
@@ -1094,5 +1099,47 @@ describe('runCrmSync — products / units / routing', () => {
     const deps2 = baseDeps()
     await runCrmSync('j', doc, m, {}, deps2)
     expect(deps2.createTarget).toHaveBeenCalledWith(expect.objectContaining({ stageId: 'C1:NEW' }), expect.any(Object))
+  })
+})
+
+describe('«ни одна позиция не связана с каталогом» — самый тихий исход', () => {
+  // ⚠ До 2026-08-05 об этом исходе НЕ ГОВОРИЛОСЬ ничего: строки записывались все, сумма сходилась,
+  // статус был «Готово», дело таймлайна шло без блока «Проблемы» — а связи с номенклатурой не было
+  // ни у одной строки. Всплывает это в отчёте по товарам недели спустя и выглядит как расхождение
+  // данных, а не как ошибка импорта. Удаление подбора по имени сделало исход типовым, поэтому
+  // предупреждение появилось вместе с ним.
+
+  it('ничего не подобрано + freeform → предупреждение есть', async () => {
+    const deps = baseDeps({ findProduct: vi.fn(async () => null) })
+    const res = await runCrmSync('j1', doc, mapping(), { documentType: 'накладная' }, deps)
+    expect(res.rowCount).toBe(1)
+    expect(res.warnings.some(w => w.includes('Ни одна позиция не связана с каталогом'))).toBe(true)
+  })
+
+  it('хотя бы одна позиция подобрана → предупреждения НЕТ', async () => {
+    // ⚠ Несущая половина: предупреждение о полном промахе не должно печататься при частичном —
+    // иначе оно обесценится и его перестанут читать ровно тогда, когда оно верно.
+    const deps = baseDeps({ findProduct: vi.fn(async () => 77) })
+    const res = await runCrmSync('j2', doc, mapping(), { documentType: 'накладная' }, deps)
+    expect(res.warnings.some(w => w.includes('Ни одна позиция не связана с каталогом'))).toBe(false)
+  })
+
+  it('skip-warn НЕ получает это предупреждение — там свой текст', async () => {
+    // ⚠ При `skip-warn` неподобранные строки не пишутся вовсе: либо часть пропущена (сработает
+    // `skippedLinesAdvice`), либо все — и тогда жёсткая ошибка «запись не создана». Текст про
+    // «внесены как есть» там был бы просто ложью.
+    const m = mapping()
+    m.product.onMissing = 'skip-warn'
+    const deps = baseDeps({ findProduct: vi.fn(async () => null) })
+    const res = await runCrmSync('j3', doc, m, { documentType: 'накладная' }, deps)
+    expect(res.warnings.some(w => w.includes('Ни одна позиция не связана с каталогом'))).toBe(false)
+  })
+
+  it('текст называет причину по СОСТОЯНИЮ НАСТРОЙКИ, а не наугад', async () => {
+    const m = mapping()
+    m.article.field = 'PROPERTY_130'
+    const deps = baseDeps({ findProduct: vi.fn(async () => null) })
+    const res = await runCrmSync('j4', doc, m, { documentType: 'накладная' }, deps)
+    expect(res.warnings).toContain(noLinesMatchedWarning(true))
   })
 })

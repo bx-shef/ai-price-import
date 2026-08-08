@@ -13,23 +13,18 @@
 // by the unit tests (tests/diskDownload.test.ts), not here. ⚠ The production path uses the per-portal
 // OAuth frame token (makeBareTokenSdkCall), whose disk.file.get may return a differently-shaped
 // DOWNLOAD_URL — verify that end-to-end on a real installed portal (via the feedback widget) too.
-import { readFileSync } from 'node:fs'
 import { downloadDiskFile } from '../server/utils/diskDownload.ts'
 import { uploadFile } from '../server/utils/disk.ts'
 import { commitFeedbackFile } from '../server/utils/feedbackGithub.ts'
 import { resolveFeedbackConfig } from '../server/utils/feedbackConfig.ts'
 import { feedbackFilePath } from '../app/utils/feedback.ts'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { readEnvValue } from './lib/envFile.mjs'
 
 const argv = process.argv.slice(2)
 const doCommit = argv.includes('--commit')
 
-const readEnv = (file, key) => {
-  const m = readFileSync(file, 'utf8').match(new RegExp(`^\\s*${key}=(.+)$`, 'm'))
-  if (!m) throw new Error(`${key} not found in ${file}`)
-  return m[1].trim().replace(/^["']|["']$/g, '')
-}
-const WEBHOOK = readEnv('.env.b24test', 'B24_TEST_WEBHOOK')
+const WEBHOOK = readEnvValue('.env.b24test', 'B24_TEST_WEBHOOK')
 assertTestPortal(WEBHOOK)
 // Portal host for the SSRF guard (DOWNLOAD_URL must be on this host).
 const DOMAIN = new URL(WEBHOOK).host

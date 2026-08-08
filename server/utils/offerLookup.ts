@@ -1,72 +1,50 @@
 import type { RestCall } from './b24Rest'
+import type { ArticleFieldConfig } from '~/types/mapping'
+import { findCatalogByProperty, findCatalogByXmlId, OFFER_SOURCE, resolveIblocks } from './catalogLookup'
 
 // Trade-offer (SKU / «торговое предложение») lookup for crm-sync. Offers live in a SEPARATE iblock
-// linked to the product iblock: `catalog.catalog.list` returns one catalog per iblock, and the one whose
-// `productIblockId` is set IS the offers catalog (its `iblockId` is the offers iblock; the base-product
-// catalog has `productIblockId: null`). A document's printed article often IS the offer's XML_ID (the
-// base product carries a DIFFERENT XML_ID), so crm-sync searches offers FIRST and prefers them over the
-// base product — owner ask «приоритет отдавать товару SKU». ACTIVE-only.
+// linked to the product iblock: `catalog.catalog.list` returns one catalog per iblock, and the one
+// whose `productIblockId` is set IS the offers catalog. A document's printed article often IS the
+// offer's xmlId (the base product carries a DIFFERENT one), so crm-sync searches offers FIRST —
+// owner ask «приоритет отдавать товару SKU». ACTIVE-only.
 //
-// LIVE-VERIFIED on bel.bitrix24.by: offers iblock 27 (productIblockId 25); `catalog.product.offer.list`
-// REQUIRES `iblockId` in BOTH filter AND select; filtering by `xmlId`/`name`+`active:'Y'` returns the
-// offer; a wrong xmlId → []; and a deal productRow accepts an OFFER id as `productId` (the row shows the
-// offer's name). All FAIL-SOFT: a portal without an offers catalog (or without the catalog subscription)
-// yields null and the caller falls back to the base-product lookup — the pre-offer behaviour.
+// LIVE-VERIFIED on the test portal: offers iblock 27 (productIblockId 25); `catalog.product.offer.list`
+// REQUIRES `iblockId` in BOTH filter AND select; filtering by `xmlId`+`active:'Y'` returns the offer;
+// a wrong xmlId → []; and a deal productRow accepts an OFFER id as `productId` (the row shows the
+// offer's name). All FAIL-SOFT: a portal without an offers catalog (or without the catalog
+// subscription) yields null and the caller falls back to the base-product lookup.
+//
+// ⚠ Механика (сужение фильтром + сверка точного совпадения на клиенте + отбраковка неоднозначного
+// внешнего кода) живёт в `catalogLookup.ts`, ОБЩАЯ с базовым товаром. Две копии одного правила
+// разъезжаются: живая находка про молча игнорируемый фильтр по чужому свойству была записана
+// только в одной из них.
 
-/** Smallest positive `id` among offer rows, or null. */
-function minOfferId(offers: unknown): number | null {
-  if (!Array.isArray(offers) || !offers.length) return null
-  const ids = offers.map(o => Number((o as Record<string, unknown>)?.id)).filter(n => Number.isInteger(n) && n > 0)
-  return ids.length ? Math.min(...ids) : null
-}
-
-/** Resolve the portal's offers iblock id, or null when it has no SKU catalog. `catalog.catalog.list`
- *  returns `{ catalogs: [...] }` (or a bare array on some portals).
- *  ⚠ SINGLE-CATALOG assumption: returns the FIRST catalog whose `productIblockId` is set. A portal with
- *  MULTIPLE product catalogs (each with its own offers iblock) would bind offer lookup to whichever
- *  appears first — offers for items in a different catalog wouldn't be found (they'd fail-soft to the
- *  base-product lookup, not error). Acceptable for the common single-catalog CRM setup; revisit
- *  (resolve per-product iblock) if multi-catalog portals become a target. */
+/** Первый инфоблок предложений портала, либо null. ⚠ Именно ПЕРВЫЙ — это узкий помощник для мест,
+ *  которым нужен один id; сам подбор перебирает ВСЕ каталоги (`productLookup.findProduct`). */
 export async function resolveOffersIblockId(call: RestCall): Promise<number | null> {
-  const res = await call('catalog.catalog.list', {}) as Record<string, unknown> | undefined
-  const catalogs = (Array.isArray(res) ? res : (res?.catalogs as unknown[])) ?? []
-  for (const raw of catalogs as Array<Record<string, unknown>>) {
-    const productIblockId = Number(raw?.productIblockId)
-    const iblockId = Number(raw?.iblockId ?? raw?.id)
-    // The offers catalog is the one that POINTS at a product iblock.
-    if (Number.isInteger(productIblockId) && productIblockId > 0 && Number.isInteger(iblockId) && iblockId > 0) return iblockId
-  }
-  return null
+  return (await resolveIblocks(call)).offer[0] ?? null
 }
 
-/** Find an ACTIVE offer id by external code (xmlId), or null. `iblockId` is required by the method in
- *  both filter and select. */
+/** Find an ACTIVE offer id by external code (xmlId), or null.
+ *  ⚠ «Не нашли» и «отказались выбирать из нескольких написаний» здесь схлопываются в `null`: этой
+ *  обёртке различие не нужно. Различает его САМ подбор (`productLookup.firstXmlIdMatch`) — там оно
+ *  несущее, потому что отказ обязан прекратить перебор каталогов, а не пропустить его дальше. */
 export async function findOfferByXmlId(xmlId: string, iblockId: number, call: RestCall): Promise<number | null> {
-  const q = (xmlId ?? '').trim()
-  if (!q || !iblockId) return null
-  const res = await call('catalog.product.offer.list', {
-    select: ['id', 'iblockId'],
-    filter: { iblockId, xmlId: q, active: 'Y' }
-  }) as { offers?: unknown } | undefined
-  return minOfferId(res?.offers)
+  const hit = await findCatalogByXmlId(OFFER_SOURCE, xmlId, iblockId, call)
+  return hit.kind === 'found' ? hit.id : null
 }
 
-/** Find an ACTIVE offer id by exact name, or null. */
-export async function findOfferByName(name: string, iblockId: number, call: RestCall): Promise<number | null> {
-  const q = (name ?? '').trim()
-  if (!q || !iblockId) return null
-  const res = await call('catalog.product.offer.list', {
-    select: ['id', 'iblockId'],
-    filter: { iblockId, name: q, active: 'Y' }
-  }) as { offers?: unknown } | undefined
-  return minOfferId(res?.offers)
+/** Найти торговое предложение по СВОЙСТВУ, хранящему артикул поставщика. */
+export async function findOfferByProperty(article: string, cfg: ArticleFieldConfig, iblockId: number, call: RestCall): Promise<number | null> {
+  return await findCatalogByProperty(OFFER_SOURCE, article, cfg, iblockId, call)
 }
 
-/** Resolve a document line to an offer id: by article-as-xmlId first (the strong signal), then by exact
- *  name. Null when no offers iblock or nothing matched. */
-export async function findOfferForItem(article: string | undefined, name: string, iblockId: number | null, call: RestCall): Promise<number | null> {
-  if (!iblockId) return null
-  const byArticle = article ? await findOfferByXmlId(article, iblockId, call) : null
-  if (byArticle) return byArticle
-  return findOfferByName(name, iblockId, call)
+/** Resolve a document line to an offer id by article-as-xmlId. Null when no offers iblock or nothing
+ *  matched.
+ *  ⚠ НАЗВАНИЯ ТОВАРА ЗДЕСЬ НЕТ И В СИГНАТУРЕ. Первая редакция оставляла его неиспользуемым
+ *  параметром «чтобы легче было вернуть» — но возвращать нечего: по названию не ищем никогда, и
+ *  параметр, который функция не читает, это ложь сигнатуры и приглашение снова начать читать. */
+export async function findOfferForItem(article: string | undefined, iblockId: number | null, call: RestCall): Promise<number | null> {
+  if (!iblockId || !article) return null
+  return await findOfferByXmlId(article, iblockId, call)
 }

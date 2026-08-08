@@ -8,13 +8,15 @@
 //   pnpm live:crm --type счёт  # crafted счёт → smart-invoice (entityTypeId 31, xmlId marker)
 //   pnpm live:crm --type акт   # crafted акт → dynamic smart process (env LIVE_SP_ETID, default 1120)
 //   pnpm live:crm --ai        # document TEXT → chat extractor → runCrmSync → verify → delete
+//   pnpm live:crm --no-taxid  # supplier WITHOUT a tax id → the fallback title branch (#440)
+//   pnpm live:crm --dead-funnel # направление удалено в CRM → запасная цель + предупреждение
+//   pnpm live:crm --lead        # лид на портале БЕЗ лидов → редирект в сделку + предупреждение
 //   pnpm live:crm --keep      # do not delete the created entity
 //
 // `--type` exercises the routing table below: накладная→deal (originId marker) and
 // счёт→smart-invoice (xmlId marker) are DISTINCT idempotency code paths, so both are worth a
 // live run. Reads git-ignored env: .env.b24test (B24_TEST_WEBHOOK) and, with --ai, the LLM
 // provider from env (LLM_PROVIDER + DEEPSEEK_API_KEY / VIBE_API_KEY). Creates then deletes a [TEST] entity.
-import { readFileSync } from 'node:fs'
 import { buildExtractionPrompt } from '../prompts/extract.ts'
 import { runCrmSync } from '../server/queue/crmSyncCore.ts'
 import { resolveLlmConfig } from '../server/agent/llmConfig.ts'
@@ -23,10 +25,18 @@ import { runChatExtract } from '../server/agent/chatExtract.ts'
 import { findCompanyByTaxId } from '../server/utils/companyLookup.ts'
 import { findProduct } from '../server/utils/productLookup.ts'
 import { fetchVatRates } from '../server/utils/portalVat.ts'
+import { fetchCrmCategories } from '../server/utils/categoryLookup.ts'
+import { fetchCrmMode, leadsEnabled } from '../server/utils/crmMode.ts'
+import { fetchMeasureRows } from '../server/utils/measureList.ts'
+import { buildMeasureIndex, lookupExistingMeasure } from '../app/utils/measureCreate.ts'
 import { fetchCurrencies } from '../server/utils/portalCurrency.ts'
 import { createTargetItem, ownerTypeCode, setProductRows } from '../server/utils/crmWrite.ts'
 import { findExistingItemId } from '../server/utils/originLookup.ts'
+import { supplierNameTrusted } from '../app/utils/importTitle.ts'
 import { assertTestPortal } from './lib/testPortalGuard.mjs'
+import { loadLlmEnv } from './lib/llmEnv.mjs'
+import { readEnvValue } from './lib/envFile.mjs'
+import { SEED_PRODUCTS, SEED_SUPPLIER, SEED_UNIT_PROBES, catalogNameFor } from './lib/seedFixture.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
@@ -42,15 +52,21 @@ const typeArg = (() => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : ''
 })()
 const DOC_TYPE = typeArg || 'накладная'
+// #440: прогон ЗАПАСНОЙ ветки заголовка. По умолчанию у поставщика есть налоговый номер, и
+// заголовок всегда берёт его название — то есть вживую наблюдалась ровно одна ветка из двух, а
+// вторая (номер не распознан → «Импорт: <тип> на <сумма>») существовала только в юнит-тестах.
+// Именно она несёт риск: сумма берётся НЕ из печатного итога документа, а из той, что реально
+// уйдёт в запись, и тип сверяется с закрытым списком.
+const noTaxId = args.has('--no-taxid')
+// Две ветки-фолбэка, каждая существует ради ПРЕДУПРЕЖДЕНИЯ человеку, и ни одна раньше не гонялась.
+// ⚠ `--dead-funnel`: настройка указывает на воронку, которой в CRM больше нет. Без фолбэка документ
+// уходил бы в несуществующее направление, и разбираться пришлось бы по факту.
+// ⚠ `--lead`: цель — лид, а портал в простом режиме CRM. Такой лид создаётся и тут же
+// авто-конвертируется, то есть работа сделана впустую, а человек об этом не знает.
+const deadFunnel = args.has('--dead-funnel')
+const asLead = args.has('--lead')
 
-const readEnv = (file, key) => {
-  // Anchor to line start (^…$ with the m flag) so a commented `#KEY=…` or a longer
-  // variable ending with KEY can't be captured; strip surrounding quotes.
-  const m = readFileSync(file, 'utf8').match(new RegExp(`^\\s*${key}=(.+)$`, 'm'))
-  if (!m) throw new Error(`${key} not found in ${file}`)
-  return m[1].trim().replace(/^["']|["']$/g, '')
-}
-const WEBHOOK = readEnv('.env.b24test', 'B24_TEST_WEBHOOK')
+const WEBHOOK = readEnvValue('.env.b24test', 'B24_TEST_WEBHOOK')
 assertTestPortal(WEBHOOK)
 
 const call = async (method, params = {}) => {
@@ -69,9 +85,10 @@ const listCall = async (method, params) => {
   return Array.isArray(r) ? r : []
 }
 
-// A supplier taxId that exists in the seeded portal (crm.requisite RQ_INN) so the
-// company match succeeds; adjust to a value present on your portal.
-const SUPPLIER_TAX_ID = '7712345678'
+// Налоговый номер поставщика — из ОБЩЕЙ фикстуры (`scripts/lib/seedFixture.mjs`), той же, по
+// которой `pnpm seed:b24` заводит компанию. Литерал здесь был третьей копией: разойдись он с
+// посевом — прогон молча уходил бы в ветку «контрагент не найден», а она выглядит штатной.
+const SUPPLIER_TAX_ID = SEED_SUPPLIER.taxId
 
 // The item set deliberately covers the row-write edge cases of #302: a plain 2-dp net line, a
 // SUB-KOPECK unit price with a FRACTIONAL quantity (0.8654 × 12.345 — per-metre pricing; both
@@ -81,32 +98,42 @@ const CRAFTED = {
   documentType: DOC_TYPE,
   currency: 'BYN',
   priceIncludesVat: false,
-  supplier: { name: 'ООО «Тест-Поставщик»', taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
+  supplier: noTaxId ? { name: SEED_SUPPLIER.name } : { name: SEED_SUPPLIER.name, taxId: SUPPLIER_TAX_ID, taxIdKind: 'INN' },
   items: [
-    { name: 'Кабель ВВГ 3х2.5', article: 'KAB-325', quantity: 500, unit: 'м', price: 1.20, vatRate: 20 },
-    { name: 'Автомат С16', article: 'AVT-C16', quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 },
-    { name: 'Провод ПВС 2х1.5', article: 'PVS-215', quantity: 12.345, unit: 'м', price: 0.8654, vatRate: 20 },
-    { name: 'Доставка', article: 'DLV-1', quantity: 1, unit: 'шт', price: 50, vatRate: 0 }
+    // Названия и артикулы — из ОБЩЕЙ фикстуры: разойдись они с посевом, подбор перестал бы
+    // срабатывать, а прогон печатал бы «товара в каталоге нет» — неотличимо от портала без посева.
+    { name: SEED_PRODUCTS[0].docName, article: SEED_PRODUCTS[0].article, quantity: 500, unit: 'м', price: 1.20, vatRate: 20 },
+    { name: SEED_PRODUCTS[1].docName, article: SEED_PRODUCTS[1].article, quantity: 30, unit: 'шт', price: 4.50, vatRate: 20 },
+    { name: SEED_PRODUCTS[2].docName, article: SEED_PRODUCTS[2].article, quantity: 12.345, unit: 'м', price: 0.8654, vatRate: 20 },
+    { name: 'Доставка', article: 'DLV-1', quantity: 1, unit: 'шт', price: 50, vatRate: 0 },
+    // Зонды единиц (#272): проверяют ОБЕ ветки встроенного словаря — код, который на портале есть,
+    // и код, которого нет. Цены круглые, чтобы не сдвигать сверку сумм на копейки.
+    { name: 'Смесь сухая', quantity: 2, unit: SEED_UNIT_PROBES[0].unit, price: 10, vatRate: 20 },
+    { name: 'Перчатки', quantity: 1, unit: SEED_UNIT_PROBES[1].unit, price: 30, vatRate: 20 }
   ]
 }
 
 // Printed totals follow document arithmetic (per-line net rounded to kopecks, VAT per line):
-// 600.00 + 135.00 + round2(0.8654×12.345)=10.68 + 50.00 = 795.68; НДС 120+27+2.14+0 = 149.14.
+// 600.00 + 135.00 + round2(0.8654×12.345)=10.68 + 50.00 + 20.00 + 30.00 = 845.68;
+// НДС 120+27+2.14+0+4+6 = 159.14; к оплате 1004.82.
 const DOC_TEXT = [
   'ТОВАРНАЯ НАКЛАДНАЯ № ТН-2026-777 от 14.07.2026',
-  `Поставщик: ООО «Тест-Поставщик»  ИНН: ${SUPPLIER_TAX_ID}`,
+  noTaxId ? `Поставщик: ${SEED_SUPPLIER.name}` : `Поставщик: ${SEED_SUPPLIER.name}  ИНН: ${SUPPLIER_TAX_ID}`,
   'Наименование | Артикул | Кол-во | Ед. | Цена | Сумма',
-  'Кабель ВВГ 3х2.5 | KAB-325 | 500 | м | 1.20 | 600.00',
-  'Автомат С16 | AVT-C16 | 30 | шт | 4.50 | 135.00',
-  'Провод ПВС 2х1.5 | PVS-215 | 12.345 | м | 0.8654 | 10.68',
+  `${SEED_PRODUCTS[0].docName} | ${SEED_PRODUCTS[0].article} | 500 | м | 1.20 | 600.00`,
+  `${SEED_PRODUCTS[1].docName} | ${SEED_PRODUCTS[1].article} | 30 | шт | 4.50 | 135.00`,
+  `${SEED_PRODUCTS[2].docName} | ${SEED_PRODUCTS[2].article} | 12.345 | м | 0.8654 | 10.68`,
   'Доставка | DLV-1 | 1 | шт | 50.00 | 50.00',
-  'Итого: 795.68', 'НДС 20%: 149.14', 'Всего к оплате: 944.82', 'Валюта: BYN'
+  `Смесь сухая |  | 2 | ${SEED_UNIT_PROBES[0].unit} | 10.00 | 20.00`,
+  `Перчатки |  | 1 | ${SEED_UNIT_PROBES[1].unit} | 30.00 | 30.00`,
+  'Итого: 845.68', 'НДС 20%: 159.14', 'Всего к оплате: 1004.82', 'Валюта: BYN'
 ].join('\n')
 
 async function extractWithAi(text) {
   // The production extractor path: runChatExtract → makeChatFn against an OpenAI-compatible provider
   // (DeepSeek/BitrixGPT), exactly what the worker runs. Provider + key from env (LLM_PROVIDER +
   // DEEPSEEK_API_KEY / VIBE_API_KEY). Returns a validated ExtractedDocument.
+  loadLlmEnv()
   const cfg = resolveLlmConfig(process.env)
   if (!cfg.apiKey) throw new Error(`нет ключа для провайдера '${cfg.label}' (задай DEEPSEEK_API_KEY / VIBE_API_KEY)`)
   console.log(`extract: provider=${cfg.label} model=${cfg.model}`)
@@ -118,13 +145,72 @@ async function extractWithAi(text) {
   return out.document
 }
 
+/**
+ * Свойство артикула ТОГО портала, на котором идёт прогон.
+ *
+ * ⚠ Раньше здесь стояло `PROPERTY_ARTICLE` литералом, и такого свойства на портале нет вовсе —
+ * `findProduct` молча падал на подбор по имени, строки уезжали как ненайденные (с названием из
+ * документа), а прогон печатал зелёное. То есть ПРИОРИТЕТНАЯ ветка подбора не проверялась ни разу,
+ * и это не было видно: расхождение проявляется только в том, чего в выводе НЕТ.
+ * ⚠ Ищем по коду `ARTICLE` — его заводит `pnpm seed:b24`. Нет свойства ⇒ `null`, и подбор идёт
+ * только по внешнему коду, с явной строкой в выводе: молчать нельзя, иначе прогон притворится,
+ * что ветка свойства проверена.
+ * ⚠ Заодно отдаёт ИНФОБЛОКИ: методы `catalog.*` (пришли на смену deprecated `crm.product.*`)
+ * требуют `iblockId` в фильтре, поэтому без них подбор не сделает ни одного запроса.
+ */
+async function articleFieldOnPortal() {
+  let catalogs
+  try {
+    ;({ catalogs } = await call('catalog.catalog.list', { select: ['id', 'iblockId', 'productIblockId'] }))
+  } catch (e) {
+    // ⚠ НЕ глотаем. Голый `catch → null` схлопывал четыре разных состояния в одно — «свойства нет»,
+    // «нет права `catalog`», «портал ответил 5xx», «каталога нет вовсе», — печатал утвердительное
+    // «свойства артикула на портале нет», откатывал подбор в прежнюю непроверенную конфигурацию
+    // `by:'name'` и выключал проверку ниже её же гейтом. Прогон при этом оставался ЗЕЛЁНЫМ, то есть
+    // воспроизводился ровно тот класс, который эта правка и чинит: скрипт притворяется, что артикул
+    // проверен. Отказ портала обязан быть отличим от отсутствия свойства.
+    throw new Error(`не удалось прочитать каталог портала: ${e instanceof Error ? e.message : 'ошибка'}`, { cause: e })
+  }
+  const list = catalogs ?? []
+  const offersCatalog = list.find(c => c.productIblockId)
+  const iblockId = offersCatalog?.productIblockId ?? list[0]?.iblockId
+  // Форма — как у прода (`resolveIblocks`): СПИСКИ инфоблоков, а не по одному. Скрипт обязан
+  // передавать ту же структуру, иначе он проверяет не тот код, который работает у клиента.
+  const iblocks = {
+    offer: offersCatalog?.iblockId ?? offersCatalog?.id ? [Number(offersCatalog.iblockId ?? offersCatalog.id)] : [],
+    product: iblockId ? [Number(iblockId)] : []
+  }
+  if (!iblockId) {
+    console.log('  ⚠ каталога на портале нет — подбора не будет вовсе')
+    return { iblocks, propertyId: null }
+  }
+  const { productProperties } = await call('catalog.productProperty.list', { filter: { iblockId }, select: ['id', 'code'] })
+  const found = (productProperties ?? []).find(p => p.code === 'ARTICLE')
+  if (!found) {
+    console.log('  ⚠ свойства артикула на портале нет — останется только внешний код (`pnpm seed:b24` его заводит)')
+    return { iblocks, propertyId: null }
+  }
+  return { iblocks, propertyId: Number(found.id) }
+}
+
+const { iblocks: IBLOCKS, propertyId: ARTICLE_PROPERTY_ID } = await articleFieldOnPortal()
+const ARTICLE_FIELD = ARTICLE_PROPERTY_ID ? `PROPERTY_${ARTICLE_PROPERTY_ID}` : null
+console.log(`подбор товара: ${ARTICLE_FIELD ? `по артикулу (${ARTICLE_FIELD})` : 'только по внешнему коду — свойства артикула на портале нет'}`)
+
 const mapping = {
-  article: { field: 'PROPERTY_ARTICLE', kind: 'text' },
-  product: { by: 'name', onMissing: 'freeform' },
+  article: { field: ARTICLE_FIELD ?? '', kind: 'text' },
+  // ⚠ `by: 'article'` только когда свойство артикула на портале ЕСТЬ. Прежде здесь стояло
+  // безусловное `by: 'name'`, и ветка артикула — приоритетная в `findProduct` — не запускалась
+  // ВООБЩЕ: она гейтится этим самым полем. Прогон при этом был зелёным, потому что имя тоже даёт
+  // подбор; расхождение видно только по тому, чего в выводе нет.
+  product: { by: 'article', onMissing: 'freeform' },
   units: { dictionary: { шт: 796, м: 6 }, defaultCode: 796, autoCreate: false },
   saveFile: false,
   routingRules: [
-    { match: { type: 'накладная' }, target: { entityTypeId: 2, categoryId: 1 } },
+    // ⚠ `--dead-funnel` подменяет направление на заведомо несуществующее (999): именно так выглядит
+    // портал, где воронку удалили, а настройка импорта осталась прежней.
+    // ⚠ `--lead` целит в ЛИД (entityTypeId 1). Портал в простом режиме CRM, лидов там нет.
+    { match: { type: 'накладная' }, target: asLead ? { entityTypeId: 1 } : { entityTypeId: 2, categoryId: deadFunnel ? 999 : 1 } },
     { match: { type: 'счёт' }, target: { entityTypeId: 31 } },
     // Dynamic smart process (BACKLOG §1 «Живой проход в смарт-процесс»): xmlId marker path on a
     // portal-specific entityTypeId — override with env LIVE_SP_ETID (there is no --etid flag).
@@ -144,7 +230,7 @@ let created = null
 const deps = {
   findExisting: (etid, filter) => findExistingItemId(etid, filter, call),
   findCompanyByTaxId: t => findCompanyByTaxId(t, call),
-  findProduct: it => findProduct(it, mapping, call),
+  findProduct: it => findProduct(it, mapping, call, IBLOCKS),
   portalVatRates: () => fetchVatRates(listCall),
   portalCurrencies: () => fetchCurrencies(call),
   createTarget: async (t, f) => {
@@ -153,6 +239,22 @@ const deps = {
     return entityId
   },
   setRows: (e, i, r) => setProductRows(e, i, r, call),
+  // ⚠ Каталог мер портала — раньше скрипт его НЕ подставлял вовсе, и ветка «сверить встроенный код
+  // с тем, что на портале заведено» уходила в fail-open: без каталога `matched` истинно всегда, то
+  // есть код писался без единой проверки. Именно эта сверка и не давала записать молча неверную
+  // единицу на свежем портале, где мер всего пяток.
+  // ⚠ Обе зависимости ниже прогон раньше НЕ подставлял, и оба пути молчали:
+  //   • без `listCategoryIds` документ с удалённым направлением уходил бы туда, куда указывает
+  //     настройка, — то есть в несуществующую воронку, и разбираться пришлось бы по факту;
+  //   • без `leadsEnabled` лид на портале без лидов создавался бы и тут же авто-конвертировался.
+  // Оба фолбэка существуют ради ПРЕДУПРЕЖДЕНИЯ человеку, и оно проверяется ниже.
+  listCategoryIds: async etid => (await fetchCrmCategories(etid, call)).map(c => c.id),
+  leadsEnabled: async () => leadsEnabled(await fetchCrmMode(call)),
+  measureCatalog: async () => {
+    const idx = buildMeasureIndex(await fetchMeasureRows(call))
+    const codes = new Set(idx.codes)
+    return { hasCode: c => codes.has(c), byName: u => lookupExistingMeasure(u, idx) }
+  },
   reportErrors: async m => console.log('  ⚠ errors →', m),
   notifySuccess: async s => console.log('  ✓ notifySuccess', JSON.stringify(s))
 }
@@ -177,6 +279,57 @@ try {
   if (res.entityId) {
     const { item } = await call('crm.item.get', { entityTypeId: res.entityTypeId, id: res.entityId })
     console.log('entity:', JSON.stringify({ entityTypeId: res.entityTypeId, id: item.id, title: item.title, categoryId: item.categoryId, companyId: item.companyId, currencyId: item.currencyId, opportunity: item.opportunity }))
+    // #440: the title is the record's NAME IN THE CLIENT'S CRM FOREVER, so assert its form rather
+    // than print it. Trusted branch → the supplier's own name; no tax id → «Импорт: <тип> на
+    // <сумма>», where the sum is the one that actually reached the record (`opportunity`), NOT the
+    // document's printed total — those diverge by design on a net invoice.
+    // ⚠ Утверждается НЕСУЩЕЕ свойство, а не форма строки. Пересобрать здесь ожидаемый заголовок
+    // из тех же `toLocaleString`/типа/валюты значило бы переписать `buildImportTitle` вторым
+    // экземпляром — и на `--type акт` проверка ЛОЖНО падала бы при исправном проде: «акт» вне
+    // закрытого списка типов, прод пишет «документ». В `--ai` то же самое даёт любой
+    // documentType от модели вне списка («товарная накладная»).
+    //
+    // ⚠ Сверять при этом есть что и помимо формы: `item.opportunity` приходит С ПОРТАЛА, поэтому
+    // сравнение числа из заголовка с ним — не тавтология. Именно оно ловит подмену
+    // `recordTotal → doc.total`, ради которой заголовок и берёт ушедшую в запись сумму.
+    // ⚠ Ветку ожидания выбирает СОСТОЯНИЕ ДОКУМЕНТА, а не флаг командной строки. Флаг лишь
+    // собирает фикстуру без номера; какую ветку возьмёт прод, решает то, что вернула модель. В
+    // `--ai --no-taxid` она вправе выдумать `taxId` из номера накладной — прод честно уйдёт в
+    // доверенную ветку и напишет имя, а сверка по флагу объявила бы это дефектом, то есть красным
+    // при исправном коде.
+    const trusted = Boolean(supplierNameTrusted(doc))
+    // ⚠ Флаг при этом не выброшен, а работает ПЕРЕКРЁСТНОЙ проверкой: сам `supplierNameTrusted`
+    // тоже может быть сломан, и тогда обе стороны съехали бы вместе — «всегда null» превратил бы
+    // утверждение «имя не утекло» в самоисполняющееся. На крафченой фикстуре состояние документа
+    // известно точно, поэтому расхождение с флагом — отказ. В `--ai` оно законно (модель вправе
+    // выдумать номер из номера накладной), там это предупреждение.
+    if (noTaxId && trusted) {
+      const msg = '#440: флаг --no-taxid, а документ считается доверенным (налоговый номер есть)'
+      if (!useAi) throw new Error(msg)
+      console.log(`  ⚠ ${msg} — модель вернула номер; проверяем доверенную ветку`)
+    }
+    if (!noTaxId && !trusted) throw new Error('#440: номер в фикстуре есть, а документ доверенным не считается')
+    const supplierName = (doc.supplier?.name ?? '').trim()
+    // ⚠ Пустое имя НЕ считается «имени в заголовке нет»: `includes('')` истинно всегда, то есть
+    // молчаливо пропустило бы утечку. В доверенной ветке это отказ самой фикстуры.
+    if (!supplierName && trusted) throw new Error('#440: в документе нет названия поставщика — проверять нечего')
+    const nameInTitle = Boolean(supplierName) && item.title.includes(supplierName)
+    if (!trusted && nameInTitle) throw new Error(`#440: номер не распознан, а название поставщика всё равно в заголовке — «${item.title}»`)
+    if (trusted && !nameInTitle) throw new Error(`#440: номер распознан, но названия поставщика в заголовке нет — «${item.title}»`)
+    if (!trusted) {
+      // Запасной заголовок обязан быть различим в списке сделок: «Импорт: документ» без суммы —
+      // ровно та строка, ради ухода от которой в него кладут тип и сумму. Проверка «есть цифра»
+      // была бы почти пустой: её прошёл бы и заголовок с ЧУЖИМ числом. Нормализуем разделители
+      // (`ru-RU` разделяет тысячи НЕРАЗРЫВНЫМ пробелом U+00A0) и сверяем с суммой записи.
+      const shown = item.title.match(/\d[\d\s\u00a0\u202f]*(?:[.,]\d+)?/)
+      if (!shown) throw new Error(`#440: запасной заголовок без суммы — «${item.title}»`)
+      const num = Number(shown[0].replace(/[\s\u00a0\u202f]/g, '').replace(',', '.'))
+      if (Math.abs(num - Number(item.opportunity)) > 0.01) {
+        throw new Error(`#440: в заголовке сумма ${num}, а в записи ${item.opportunity} — «${item.title}»`)
+      }
+    }
+    console.log(`✓ заголовок записи — ${!trusted ? 'запасной, без названия поставщика, сумма сходится с записью' : 'название поставщика (номер распознан)'}: «${item.title}»`)
+
     // #302: read the rows BACK and hold the invariant «Σ price×qty == сумма сущности». The old
     // check printed `opportunity` — the number WE set — so rows understated by the whole VAT
     // still passed as «live-verified». The portal computes the product tab from row `price`
@@ -190,6 +343,99 @@ try {
     const rowSum = Math.round(rows.reduce((s, r) => s + Number(r.price) * Number(r.quantity), 0) * 100) / 100
     const opp = Number(item.opportunity)
     console.log(`rows: ${rows.length}, Σ price×qty = ${rowSum}`)
+
+    // Подбор БАЗОВОГО товара: строка подобранного товара уходит БЕЗ `productName` (#348), и портал
+    // подставляет каталожное название. Значит каталожное имя в строке — доказательство подбора.
+    //
+    // ⚠ Проверка нужна потому, что промах здесь НЕВИДИМ: не найдя товар, приложение пишет свободную
+    // строку с названием из документа, сумма сходится, статус зелёный. Ровно так эта ветка и не
+    // работала — `product.by` стоял в `name`, а свойства артикула на портале не было вовсе.
+    // ⚠ Утверждение держится на инварианте «каталожное имя ≠ написания в документе» — иначе то же
+    // совпадение дал бы запасной подбор ПО ИМЕНИ при полностью сломанной ветке артикула, и проверка
+    // стала бы тавтологией. Инвариант проверяется здесь же, а не подразумевается.
+    // ⚠ Проверяются ВСЕ засеянные позиции, а не одна: `.some()` покрывал первую, а две другие могли
+    // молча уехать свободными строками.
+    if (ARTICLE_FIELD) {
+      const known = SEED_PRODUCTS.filter(p => doc.items.some(i => (i.article ?? '') === p.article))
+      if (!known.length) {
+        console.log('  ⚠ ни один засеянный артикул не дошёл до документа — подбор проверять не на чем')
+      } else {
+        // ⚠ Считаем ФАКТИЧЕСКИ утверждённые позиции, а не размер списка. Прежняя строка печатала
+        // `known.length` — число позиций В ДОКУМЕНТЕ, — тогда как ветка «товара в каталоге нет»
+        // делает `continue`. На портале без пересева пропускались все три, и прогон оставался
+        // ЗЕЛЁНЫМ со словами «сработал на 3 позициях»: утверждение исчезало молча, ровно тем
+        // способом, против которого написана вся эта проверка.
+        let asserted = 0
+        for (const p of known) {
+          const expected = catalogNameFor(p.docName)
+          if (expected === p.docName) throw new Error(`фикстура сломана: каталожное имя совпало с документным («${expected}») — проверка стала бы тавтологией`)
+          // Тем же отбором, каким ходит прод (`findProductByArticle`): ACTIVE + порядок по ID.
+          // ⚠ Своё имя переменной: снаружи `rows` — это СТРОКИ СОЗДАННОЙ ЗАПИСИ, и затенение их
+          // каталожной выборкой сравнивало бы каталог сам с собой.
+          const { products: catalogRows } = await call('catalog.product.list', {
+            filter: { iblockId: IBLOCKS.product[0], active: 'Y', [`%property${ARTICLE_PROPERTY_ID}`]: p.article },
+            select: ['id', 'iblockId', 'name'], order: { id: 'asc' }
+          })
+          const inCatalog = (catalogRows ?? []).find(r => r.name === expected)
+          if (!inCatalog) {
+            console.log(`  ⚠ товара с артикулом ${p.article} в каталоге нет — проверять не на чем (\`pnpm seed:b24\`)`)
+            continue
+          }
+          const row = rows.find(r => r.productName === expected)
+          if (!row) {
+            throw new Error(`#348: товар с артикулом ${p.article} есть в каталоге («${expected}»), но строка ушла свободной — подбор не сработал`)
+          }
+          asserted++
+        }
+        if (!asserted) {
+          console.log(`  ⚠ подбор по артикулу НЕ проверен: ни одного из ${known.length} артикулов документа нет в каталоге (\`pnpm seed:b24\`)`)
+        } else {
+          console.log(`✓ подбор по артикулу сработал на ${asserted} из ${known.length} позиций: строки несут каталожные названия, а не написание документа`)
+        }
+      }
+    }
+
+    // Фолбэки цели (#262/#269): оба существуют ради ПРЕДУПРЕЖДЕНИЯ и оба до 2026-08-06 не гонялись.
+    //
+    // ⚠ Утверждается ПАРА «куда попало + сказали ли человеку». Одного текста мало: предупреждение
+    // без редиректа означало бы, что документ всё-таки уехал в несуществующее направление, а
+    // редирект без предупреждения — что человек не узнает, почему запись не там, где он её ждёт.
+    if (deadFunnel) {
+      if (item.categoryId !== 0) throw new Error(`фолбэк направления: запись в воронке ${item.categoryId}, ожидалась запасная (0)`)
+      if (!(res.warnings ?? []).some(w => w.includes('Воронка'))) throw new Error('фолбэк направления сработал, но человеку не сказали')
+      console.log('✓ удалённое направление → запасная воронка + предупреждение')
+    }
+    if (asLead) {
+      if (res.entityTypeId !== 2) throw new Error(`лид на портале без лидов: создан тип ${res.entityTypeId}, ожидалась сделка (2)`)
+      if (!(res.warnings ?? []).some(w => w.includes('отключены лиды'))) throw new Error('лид перенаправлен в сделку, но человеку не сказали')
+      console.log('✓ лид на портале без лидов → сделка + предупреждение')
+    }
+
+    // #272: ЕДИНИЦЫ. Утверждается ПРЕДУПРЕЖДЕНИЕ, а не записанный код — и это не придирка.
+    //
+    // ⚠ Живая находка 2026-08-06: портал САМ подменяет неизвестный код единицы на единицу по
+    // умолчанию. Проверено прямой пробой — строка, записанная с `measureCode: 778` (такой меры в
+    // каталоге нет), читается обратно как 796 «шт». Значит по КОДУ отличить «наша сверка с каталогом
+    // сработала» от «портал починил за нас» невозможно: обе ветки дают 796. Первая редакция этой
+    // проверки утверждала именно код и потому была бутафорией — мутация «убрать каталог мер из
+    // зависимостей» проходила зелёной.
+    //
+    // ⚠ Отсюда же следует, ЧТО на самом деле даёт сверка с каталогом портала: не верную единицу
+    // (её обеспечивает портал), а ПРЕДУПРЕЖДЕНИЕ человеку. Без неё `matched` остаётся истинным,
+    // предупреждение не собирается, и админ не узнаёт, что «упак» в его каталоге нет — единица
+    // молча становится штукой. Это и проверяем.
+    const warnText = (res.warnings ?? []).join(' | ')
+    for (const probe of SEED_UNIT_PROBES) {
+      const warned = warnText.includes(`«${probe.unit}»`)
+      if (probe.expect === 'default' && !warned) {
+        throw new Error(`#272: единицы «${probe.unit}» нет в каталоге портала, но предупреждения нет — админ не узнает, что она стала штукой`)
+      }
+      if (probe.expect === 'builtin' && warned) {
+        throw new Error(`#272: единица «${probe.unit}» ЕСТЬ в каталоге портала, а предупреждение всё равно выдано`)
+      }
+      console.log(`✓ единица «${probe.unit}»: ${warned ? 'предупреждение выдано' : 'предупреждения нет'} — ${probe.why}`)
+    }
+
     // #347: what the OPERATOR sees in the «Цена» column. `taxIncluded` picks which stored number
     // the grid prints, so that column must equal the document's own price — in BOTH directions.
     // Sums alone cannot catch a regression here: flipping the flag leaves every total identical
