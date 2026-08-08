@@ -27,13 +27,20 @@ const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, rel
 defineExpose({ reload })
 
 /**
- * Строки для показа: к данным добавлена разобранная дата.
+ * Rows prepared for rendering: parsed date tile and the owner-card path.
  *
- * ⚠ Считается ОДИН раз на строку, а не по вызову в разметке: плитка показывает три части одной
- * даты, и разбор в шаблоне выполнялся бы четырежды на каждую строку при каждой перерисовке —
+ * ⚠ Считается ОДИН раз на строку, а не по вызову в разметке: плитка показывает четыре части одной
+ * даты, и разбор в шаблоне выполнялся бы столько же раз на каждую строку при каждой перерисовке —
  * на списке в сотню строк это заметно, а на телефоне заметно вдвойне.
+ * ⚠ `ownerPath` считается здесь по той же причине: в разметке он стоял бы в `v-if` и вычислялся
+ * на каждую перерисовку, а показ кнопки и её действие обязаны решаться ОДНИМ значением — иначе
+ * возможна кнопка, которая видна, но при нажатии ничего не делает.
  */
-const view = computed(() => rows.value.map(row => ({ row, tile: journalDateTile(row.createdAt) })))
+const view = computed(() => rows.value.map(row => ({
+  row,
+  tile: journalDateTile(row.createdAt),
+  ownerPath: ownerOpenPath(row.ownerTypeId, row.ownerId)
+})))
 
 const scroller = useTemplateRef<{ $el?: HTMLElement }>('scroller')
 
@@ -52,14 +59,13 @@ onMounted(() => {
 })
 
 /**
- * Открыть карточку, в которой лежит дело.
+ * Open the CRM card the activity belongs to.
  *
  * ⚠ Это карточка-ВЛАДЕЛЕЦ: при найденном контрагенте — компания, а не созданная сделка. Путь
- * строит чистая `ownerOpenPath`, знающая про тип 4; собирать его здесь значило бы завести вторую
- * копию правила и однажды забыть про компанию.
+ * приходит готовым из `view` (чистая `ownerOpenPath`, знающая про тип 4); собирать его здесь
+ * значило бы завести вторую копию правила и однажды забыть про компанию.
  */
-async function openOwner(ownerTypeId: number, ownerId: number): Promise<void> {
-  const path = ownerOpenPath(ownerTypeId, ownerId)
+async function openOwner(path: string): Promise<void> {
   if (!path) return
   const { init, get } = useB24()
   await init()
@@ -126,7 +132,7 @@ async function openOwner(ownerTypeId: number, ownerId: number): Promise<void> {
                у нас нет ни чекбокса «выполнено», ни кнопок дела, и рисовать их значило бы обещать
                действия, которых здесь нет. -->
           <li
-            v-for="{ row, tile } in view"
+            v-for="{ row, tile, ownerPath } in view"
             :key="row.activityId"
             class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
           >
@@ -158,15 +164,21 @@ async function openOwner(ownerTypeId: number, ownerId: number): Promise<void> {
                 />
               </div>
               <p class="mt-0.5 text-xs text-(--ui-color-base-3)">
-                <span class="sr-only">Загружено </span>{{ tile ? `${tile.day} ${tile.month}, ${tile.time}` : 'дата неизвестна' }}
+                <span class="sr-only">Загружено </span>{{ tile ? `${tile.day} ${tile.month} ${tile.year}, ${tile.time}` : 'дата неизвестна' }}
               </p>
               <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
-                   каждой строке спорила бы за внимание с «Показать ещё» внизу списка. -->
+                   каждой строке спорила бы за внимание с «Показать ещё» внизу списка.
+                   ⚠ Своя рамка фокуса обязательна: у голого `<button>` её нет, а `B24Button`, у
+                   которого она была, здесь не подходит по виду — без этого до ссылки нельзя
+                   добраться с клавиатуры осмысленно (WCAG 2.4.7).
+                   ⚠ Отступы (`-mx-1 px-1 py-1`) — тач-таргет: строка текста в 20 px на телефоне
+                   промахивается пальцем; отрицательный внешний отступ возвращает текст на прежнее
+                   место по левому краю. -->
               <button
-                v-if="ownerOpenPath(row.ownerTypeId, row.ownerId)"
+                v-if="ownerPath"
                 type="button"
-                class="mt-1.5 text-sm text-(--ui-color-accent-main-link) hover:underline"
-                @click="openOwner(row.ownerTypeId, row.ownerId)"
+                class="-mx-1 mt-1 rounded px-1 py-1 text-sm text-(--ui-color-accent-main-link) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-color-accent-main-primary)"
+                @click="openOwner(ownerPath)"
               >
                 Открыть карточку
               </button>
