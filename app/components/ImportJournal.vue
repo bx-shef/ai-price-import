@@ -11,9 +11,9 @@
 // ⚠ Кнопка «Показать ещё» остаётся ВСЕГДА, а не только как запасной путь: автоподкачка не
 // доступна с клавиатуры и не объявляется программами чтения — человек, не пользующийся мышью,
 // иначе не смог бы добраться до второй страницы вовсе.
-import { onMounted, useTemplateRef } from 'vue'
+import { computed, onMounted, useTemplateRef } from 'vue'
 import { useInfiniteScroll } from '@vueuse/core'
-import { formatJournalDate, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
+import { journalDateTile, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
 
 const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, reload } = useImportJournal()
 
@@ -25,6 +25,22 @@ const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, rel
  * под ним — два блока об одном и том же противоречат друг другу на одном экране.
  */
 defineExpose({ reload })
+
+/**
+ * Rows prepared for rendering: parsed date tile and the owner-card path.
+ *
+ * ⚠ Считается ОДИН раз на строку, а не по вызову в разметке: плитка показывает четыре части одной
+ * даты, и разбор в шаблоне выполнялся бы столько же раз на каждую строку при каждой перерисовке —
+ * на списке в сотню строк это заметно, а на телефоне заметно вдвойне.
+ * ⚠ `ownerPath` считается здесь по той же причине: в разметке он стоял бы в `v-if` и вычислялся
+ * на каждую перерисовку, а показ кнопки и её действие обязаны решаться ОДНИМ значением — иначе
+ * возможна кнопка, которая видна, но при нажатии ничего не делает.
+ */
+const view = computed(() => rows.value.map(row => ({
+  row,
+  tile: journalDateTile(row.createdAt),
+  ownerPath: ownerOpenPath(row.ownerTypeId, row.ownerId)
+})))
 
 const scroller = useTemplateRef<{ $el?: HTMLElement }>('scroller')
 
@@ -43,14 +59,13 @@ onMounted(() => {
 })
 
 /**
- * Открыть карточку, в которой лежит дело.
+ * Open the CRM card the activity belongs to.
  *
  * ⚠ Это карточка-ВЛАДЕЛЕЦ: при найденном контрагенте — компания, а не созданная сделка. Путь
- * строит чистая `ownerOpenPath`, знающая про тип 4; собирать его здесь значило бы завести вторую
- * копию правила и однажды забыть про компанию.
+ * приходит готовым из `view` (чистая `ownerOpenPath`, знающая про тип 4); собирать его здесь
+ * значило бы завести вторую копию правила и однажды забыть про компанию.
  */
-async function openOwner(ownerTypeId: number, ownerId: number): Promise<void> {
-  const path = ownerOpenPath(ownerTypeId, ownerId)
+async function openOwner(path: string): Promise<void> {
   if (!path) return
   const { init, get } = useB24()
   await init()
@@ -110,34 +125,63 @@ async function openOwner(ownerTypeId: number, ownerId: number): Promise<void> {
         ref="scroller"
         class="max-h-[28rem]"
       >
-        <ul class="space-y-2">
+        <ul class="space-y-3">
+          <!-- ⚠ Строка списка сделана ПО МОТИВАМ дела в таймлайне Битрикс24 (решение владельца,
+               скриншот 08.08.2026): плитка-календарь слева, цветная метка исхода, поля подписанными
+               блоками, действие ссылкой внизу. Копия «один в один» не нужна и была бы вредна —
+               у нас нет ни чекбокса «выполнено», ни кнопок дела, и рисовать их значило бы обещать
+               действия, которых здесь нет. -->
           <li
-            v-for="row in rows"
+            v-for="{ row, tile, ownerPath } in view"
             :key="row.activityId"
-            class="flex items-center justify-between gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3"
+            class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
           >
-            <div class="min-w-0">
-              <p class="truncate text-sm font-medium">
-                {{ row.title }}
-              </p>
-              <p class="text-xs text-(--ui-color-base-3)">
-                {{ formatJournalDate(row.createdAt) }}
-              </p>
+            <!-- Плитка даты. ⚠ `aria-hidden`: то же время объявлено словами в подписи ниже, и без
+                 этого программа чтения произносила бы «7 августа 20:28» дважды подряд. -->
+            <div
+              v-if="tile"
+              class="flex w-14 shrink-0 flex-col items-center justify-center rounded-md bg-(--ui-color-base-7) py-1.5 text-center"
+              aria-hidden="true"
+            >
+              <span class="text-lg leading-none font-semibold">{{ tile.day }}</span>
+              <span class="mt-0.5 text-[10px] leading-tight text-(--ui-color-base-3)">{{ tile.month }}</span>
+              <span class="mt-0.5 text-[10px] leading-none text-(--ui-color-base-3)">{{ tile.time }}</span>
             </div>
-            <div class="flex shrink-0 items-center gap-2">
-              <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
-                   чтения и не различается при дальтонизме. -->
-              <B24Badge
-                :color="row.clean ? 'air-primary-success' : 'air-primary-alert'"
-                :label="journalOutcomeLabel(row.clean)"
-              />
-              <B24Button
-                v-if="ownerOpenPath(row.ownerTypeId, row.ownerId)"
-                size="xs"
-                color="air-tertiary-no-accent"
-                label="Открыть"
-                @click="openOwner(row.ownerTypeId, row.ownerId)"
-              />
+
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-2">
+                <p class="min-w-0 flex-1 truncate text-sm font-medium">
+                  {{ row.title }}
+                </p>
+                <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
+                     чтения и не различается при дальтонизме. Цвета те же, что у самого дела в
+                     портале, — человек видит на двух экранах одно и то же. -->
+                <B24Badge
+                  class="shrink-0"
+                  size="xs"
+                  :color="row.clean ? 'air-primary-success' : 'air-primary-alert'"
+                  :label="journalOutcomeLabel(row.clean)"
+                />
+              </div>
+              <p class="mt-0.5 text-xs text-(--ui-color-base-3)">
+                <span class="sr-only">Загружено </span>{{ tile ? `${tile.day} ${tile.month} ${tile.year}, ${tile.time}` : 'дата неизвестна' }}
+              </p>
+              <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
+                   каждой строке спорила бы за внимание с «Показать ещё» внизу списка.
+                   ⚠ Своя рамка фокуса обязательна: у голого `<button>` её нет, а `B24Button`, у
+                   которого она была, здесь не подходит по виду — без этого до ссылки нельзя
+                   добраться с клавиатуры осмысленно (WCAG 2.4.7).
+                   ⚠ Отступы (`-mx-1 px-1 py-1`) — тач-таргет: строка текста в 20 px на телефоне
+                   промахивается пальцем; отрицательный внешний отступ возвращает текст на прежнее
+                   место по левому краю. -->
+              <button
+                v-if="ownerPath"
+                type="button"
+                class="-mx-1 mt-1 rounded px-1 py-1 text-sm text-(--ui-color-accent-main-link) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-color-accent-main-primary)"
+                @click="openOwner(ownerPath)"
+              >
+                Открыть карточку
+              </button>
             </div>
           </li>
         </ul>
