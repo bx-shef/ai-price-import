@@ -54,7 +54,10 @@ const CONTEXT_MARK = '**Контекст:**'
  */
 function hasAttachedFile(body: string): boolean {
   const at = body.lastIndexOf(CONTEXT_MARK)
-  return at >= 0 && body.slice(at).includes(FILE_MARK)
+  if (at < 0) return false
+  // ⚠ Метка ищется как НАЧАЛО СТРОКИ пункта: поле «Замечания» рендерится многострочным блоком
+  // внутри той же секции, и строка `**Исходный файл:**` внутри него дала бы ложный плюс.
+  return body.slice(at).split('\n').some(line => line.trimStart().startsWith(`- ${FILE_MARK}`))
 }
 
 /**

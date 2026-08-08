@@ -188,10 +188,35 @@ describe('прогон сводки', () => {
     expect(sent).toHaveLength(2)
   })
 
-  it('соседний экземпляр уже отправил → мы молчим', async () => {
-    const { deps, sent } = makeDeps({ claimAttempt: async () => 2 })
+  it('соседний экземпляр уже отправил → бюджет выбран, мы молчим', async () => {
+    // Успех закрывает неделю durable-способом (выбирает остаток бюджета), поэтому пришедший
+    // следом экземпляр видит исчерпание, а не «попытка не первая».
+    const { deps, sent } = makeDeps({ claimAttempt: async () => MAX_ATTEMPTS_PER_WEEK + 1 })
     await createDigestRunner(deps)()
     expect(sent).toHaveLength(0)
+  })
+
+  it('перезапуск после неудачной доставки НЕ хоронит сводку на неделю', async () => {
+    // Контейнер перекатывается по десятку раз в день. Прежняя редакция считала «попытка не
+    // первая» признаком «сосед уже отправил», и после выката недоставленная сводка объявлялась
+    // чужой — то есть не приходила ВООБЩЕ до конца недели.
+    let attempt = 0
+    const claimAttempt = async () => ++attempt
+    const first = makeDeps({ claimAttempt, send: vi.fn(async () => false) })
+    await createDigestRunner(first.deps)()
+    // Новый процесс: память чиста, общий счётчик помнит одну неудачную попытку.
+    const second = makeDeps({ claimAttempt })
+    await createDigestRunner(second.deps)()
+    expect(second.sent).toHaveLength(1)
+  })
+
+  it('без Redis бюджет попыток тоже действует — иначе почасовой обход приёмника', async () => {
+    // `send` возвращает `false` и на отказ навсегда (бота выкинули из чата). Память хранила
+    // только успех, поэтому обход приёмника шёл каждый час под токеном издателя.
+    const { deps } = makeDeps({ claimAttempt: async () => null, send: vi.fn(async () => false) })
+    const run = createDigestRunner(deps)
+    for (let i = 0; i < 10; i++) await run()
+    expect(deps.listIssues).toHaveBeenCalledTimes(MAX_ATTEMPTS_PER_WEEK)
   })
 
   it('недоставленная сводка повторяется — но не бесконечно', async () => {
