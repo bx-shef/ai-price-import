@@ -73,22 +73,13 @@ CREATE TABLE IF NOT EXISTS metrics_counter (
 -- осиротевшая таблица читается следующим как действующий механизм. Тот же приём, что с import_job.
 DROP TABLE IF EXISTS portal_consent;
 
--- Notice marks for a legal-document change (#418, EULA §9.3.4). One row per (portal, edition).
---
--- ⚠ Portal level, NOT employee: there is deliberately no user column. The licensee is the
--- organisation (EULA §2.7) — recording WHO saw the banner would widen the personal-data footprint
--- while proving nothing, since delivery is addressed to the licensee. Same reasoning as consent.
---
--- ⚠ The two timestamps are separate because §9.3.4 dates delivery by the EARLIER of them. A single
--- «notified» flag could not answer «when». Both are written once (COALESCE keeps the first): a later
--- show would push the date forward, and the early one is what has to be provable.
-CREATE TABLE IF NOT EXISTS portal_legal_notice (
-  member_id    TEXT NOT NULL,
-  edition_key  TEXT NOT NULL,
-  shown_at     TIMESTAMPTZ,
-  chat_sent_at TIMESTAMPTZ,
-  PRIMARY KEY (member_id, edition_key)
-);
+-- ⚠ portal_legal_notice СНЕСЕНА (#418 удалён): уведомлять лицензиата об изменении документов
+-- отдельным механизмом больше не требуется — при смене лицензии или Политики издатель
+-- перевыпускает приложение в кабинете Маркета, и портал заново проходит принятие условий в самом
+-- диалоге установки. Дублировать это своим баннером и рассылкой значило бы держать канал, который
+-- ничего не доказывает, но выглядит обязательным. Осиротевшая таблица читается следующим как
+-- действующий механизм — поэтому сносим, как сносили portal_consent.
+DROP TABLE IF EXISTS portal_legal_notice;
 
 -- App-rating prompt state, one row per portal (kept «рядом с авторизацией», keyed like it by
 -- member_id). Drives the in-portal «оцените приложение» modal:
