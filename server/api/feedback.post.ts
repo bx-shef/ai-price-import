@@ -15,7 +15,8 @@ import { checkFeedbackRate, feedbackRateMessage } from '../utils/uploadRateLimit
 import { ATTACH_MISSING_NOTICE, checkAttachBudget } from '../utils/feedbackRepoBudget'
 import { feedbackIntakeGate } from '../utils/feedbackIntake'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
-import { fetchActivityFile, downloadAttachment } from '../utils/activityFileFetch'
+import { downloadAttachment } from '../utils/activityFileFetch'
+import { resolveFeedbackAttachment } from '../utils/feedbackAttachment'
 import { originatorCode } from '../utils/originMarker'
 import { sdkPortalDeps, makePortalSdkCall } from '../utils/b24Sdk'
 import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
@@ -114,6 +115,8 @@ export default defineEventHandler(async (event) => {
       // проверенного фрейм-токена — подменить его телом запроса нельзя, поэтому чистка по
       // построению не может выйти за пределы своего портала.
       const portalTag = portalHash(member.memberId)
+      // Локальная копия: внутри замыканий ниже TS теряет сужение, сделанное проверкой выше.
+      const memberId = member.memberId
       let outcome: { status?: string, outcome?: string, notes?: string } = {}
       let fileUrl: string | undefined
       /** Told to the employee whenever the file did NOT go out (#354) — «принято» без оговорки
@@ -133,55 +136,33 @@ export default defineEventHandler(async (event) => {
       // а дело с документом — сколько его держит портал; вложенная ветка теряла бы файл ровно у
       // старого импорта, про который отзыв особенно ценен.
       if (jobId && attachFile) {
-        try {
-          // Attach the source document itself, so the publisher can reproduce the run.
-          //
+        // Документ берётся ИЗ ДЕЛА ТАЙМЛАЙНА (#461), а не из памяти страницы: своей копии у нас нет
+        // (#349), архива на Диске тоже (#458), а дело с вложением есть у КАЖДОГО импорта, включая
+        // неразобранный. Всё решение — в чистой `resolveFeedbackAttachment`; роут только связывает
+        // её с живыми зависимостями и передаёт сотрудника ИЗ ПРОВЕРЕННОГО токена.
+        const res = await resolveFeedbackAttachment(jobId, member.userId, {
+          resolveCall: () => feedbackPortalCall(memberId),
           // Ask GitHub whether the receiver is actually private BEFORE reading any bytes (#200).
           // The slug comes from an env var and nothing else verifies it: one typo, or the repo
-          // being flipped to public later, and real invoices become public. Cached, three-state —
-          // "could not verify" blocks the upload just like "public" does, but is retried sooner.
-          const call = await feedbackPortalCall(member.memberId)
-          if (call && await feedbackUploadAllowed(config, fetchImpl)) {
-            // Байты берутся ИЗ ДЕЛА ТАЙМЛАЙНА (#461), а не из памяти страницы. Своей копии
-            // документа у нас нет (воркер удаляет её сразу, #349), архива на Диске больше не
-            // существует (#458) — зато у КАЖДОГО импорта, включая неразобранный, есть дело с
-            // вложенным документом. Прежний путь через страницу оставлял дыру: перезагрузил
-            // вкладку до отправки отзыва — и отзыв уходил без того, по чему прогон только и
-            // можно воспроизвести.
-            // ⚠ Сужение по сотруднику из ПРОВЕРЕННОГО фрейм-токена живёт внутри `fetchActivityFile`:
-            // `jobId` присылает клиент, и без него чужой идентификатор задания вытянул бы чужой
-            // документ.
-            const got = await fetchActivityFile(jobId, member.userId, {
-              call,
-              download: downloadAttachment,
-              originatorCode: originatorCode(process.env.IMPORT_ORIGINATOR_ID),
-              maxBytes: MAX_FEEDBACK_FILE_BYTES
-            })
-            // В журнал идёт только КЛАСС промаха: имя файла и адрес вложения — данные клиента.
-            if (!got.ok) console.warn(`[feedback] attachment miss: ${got.miss}`)
-            if (got.ok) {
-              // Global hourly ceiling on the RECEIVER (#354) — checked HERE, immediately before
-              // the commit, and not earlier. Earlier it metered intent instead of cost: a review
-              // whose bytes never materialised still spent the ceiling, so 60 tiny bodies with
-              // `attachFile:true` could turn attachments off for every tenant at zero cost to
-              // whoever sent them. A ceiling worth exhausting must cost the sender what it protects.
-              //
-              // Over the ceiling the review is still filed — only without its file, and the
-              // employee is told so: the text of a review is worth more than the file, and a
-              // silent drop would leave them believing the document went out.
-              const budget = await checkAttachBudget(member.memberId, Date.now())
-              if (!budget.allowed) {
-                attachNotice = budget.notice
-              } else {
-                const commit = await commitFeedbackFile(
-                  config, feedbackFilePath(portalTag, jobId, got.file.name), got.file.base64,
-                  `feedback file for job ${jobId}`, fetchImpl
-                )
-                if (commit.ok && commit.htmlUrl) fileUrl = commit.htmlUrl
-              }
-            }
-          }
-        } catch { /* best-effort: отзыв важнее вложения и уходит в любом случае */ }
+          // being flipped to public later, and real invoices become public.
+          uploadAllowed: () => feedbackUploadAllowed(config, fetchImpl),
+          checkBudget: () => checkAttachBudget(memberId, Date.now()),
+          commit: async (name, base64) => {
+            const c = await commitFeedbackFile(
+              config, feedbackFilePath(portalTag, jobId, name), base64,
+              `feedback file for job ${jobId}`, fetchImpl
+            )
+            return c.ok && c.htmlUrl ? c.htmlUrl : null
+          },
+          download: url => downloadAttachment(url, MAX_FEEDBACK_FILE_BYTES),
+          originatorCode: originatorCode(process.env.IMPORT_ORIGINATOR_ID),
+          maxBytes: MAX_FEEDBACK_FILE_BYTES,
+          missingNotice: ATTACH_MISSING_NOTICE,
+          // В журнал идёт только КЛАСС промаха: имя файла и адрес вложения — данные клиента.
+          logMiss: miss => console.warn(`[feedback] attachment miss: ${miss}`)
+        })
+        fileUrl = res.fileUrl
+        attachNotice = res.notice
       }
       // Просили приложить файл, а ссылки на него нет — значит он не ушёл: задание истекло, страница
       // байт не прислала, архива на Диске нет или приёмник не подтверждён приватным. Причины разные,

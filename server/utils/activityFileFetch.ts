@@ -130,9 +130,35 @@ export const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 30_000
  * и только расширяет то, что может утечь.
  * ⚠ Срок ограничен: загрузка идёт внутри обработки отзыва, и зависший портал держал бы запрос
  * сотрудника до самого края.
+ * ⚠ **Переадресация НЕ выполняется** (`redirect: 'manual'`, разбор ревью): хост проверяется у
+ * ИСХОДНОГО адреса, а `fetch` по умолчанию молча пошёл бы за 3xx на любой другой — и весь смысл
+ * проверки домена («по этому адресу ходит НАШ процесс») кончался бы на первом шаге. Ответ 3xx
+ * отдаётся как есть и ядро объявляет его неудачей: законное вложение переадресации не требует.
+ * ⚠ Тело читается **порциями со счётчиком**, а не `arrayBuffer()` целиком: заявленный размер
+ * приходит от портала и может отсутствовать или быть занижен, а `arrayBuffer()` сложил бы в память
+ * процесса весь ответ ДО того, как ядро успело бы объявить его слишком большим. Счётчик обрывает
+ * чтение на первом же превышении.
  */
-export async function downloadAttachment(url: string): Promise<DownloadedBody> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(ATTACHMENT_DOWNLOAD_TIMEOUT_MS) })
-  const bytes = new Uint8Array(await res.arrayBuffer())
-  return { status: res.status, contentType: res.headers.get('content-type') ?? '', bytes }
+export async function downloadAttachment(url: string, maxBytes: number): Promise<DownloadedBody> {
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(ATTACHMENT_DOWNLOAD_TIMEOUT_MS),
+    redirect: 'manual'
+  })
+  const contentType = res.headers.get('content-type') ?? ''
+  const chunks: Uint8Array[] = []
+  let total = 0
+  // Предел проверяется на КАЖДОЙ порции: перебор обрывает чтение, а не обнаруживается после него.
+  // Возвращаем то, что накопили, — ядро увидит превышение и объявит `too-big`.
+  for await (const chunk of (res.body ?? []) as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk)
+    total += chunk.length
+    if (total > maxBytes) break
+  }
+  const bytes = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) {
+    bytes.set(c, at)
+    at += c.length
+  }
+  return { status: res.status, contentType, bytes }
 }

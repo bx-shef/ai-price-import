@@ -67,6 +67,15 @@ describe('#461: файл к отзыву берётся из дела', () => {
     expect(download).not.toHaveBeenCalled()
   })
 
+  it('НЕуспешный код ответа — неудача, даже когда тип содержимого правильный', async () => {
+    // Порядок проверок «страница входа → код ответа» иначе можно переставить незаметно: единственный
+    // тест на страницу входа шёл с кодом 200, и обе ветки давали один и тот же исход.
+    const r = await fetchActivityFile('job-1', 17, deps({
+      download: async () => ({ status: 403, contentType: 'application/pdf', bytes: BYTES })
+    }))
+    expect(r).toEqual({ ok: false, miss: 'download-failed' })
+  })
+
   it('слишком большой файл: заявленный размер отсекается ДО скачивания', async () => {
     const download = vi.fn()
     const r = await fetchActivityFile('job-1', 17, deps({
