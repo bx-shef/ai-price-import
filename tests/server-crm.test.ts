@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { buildProductRow, buildProductRows, computeOpportunity, createTargetItem, ownerTypeCode, setProductRows, supportsOpportunity } from '../server/utils/crmWrite'
 import { findCompanyByTaxId } from '../server/utils/companyLookup'
+import { originMarkerFields, originatorCode } from '../server/utils/originMarker'
 import { DESCRIPTION_TYPE_BB, TODO_COLOR_CLEAN, TODO_COLOR_ISSUES, activityMarkerFilter, buildActivityInput, buildActivityMarkerFields, buildTodoActivity, entityOpenPath } from '../server/utils/todoActivity'
 
 describe('computeOpportunity', () => {
@@ -256,5 +258,28 @@ describe('ownerTypeCode — hex с буквами и регистр', () => {
     // форма из офдоки — тест ловит случайный .toUpperCase(), который мимо буквенно-чистых
     // пинов (0x460, 0x406) прошёл бы незамеченным.
     expect(ownerTypeCode(1054)).toBe('T41e')
+  })
+})
+
+describe('#458: маркер дела — то, на чём держится журнал импортов', () => {
+  it('проводка ставит маркер тем же вызовом, что и разметку', () => {
+    // ⚠ Гард по ИСХОДНИКУ проводки, а не по билдеру: билдер покрыт отдельно, но мутация «убрать
+    // вызов update из liveDeps» его тестов не роняла — дело писалось бы без маркера, экран
+    // журнала не находил бы НИ ОДНОГО своего дела, и обнаружилось бы это уже у клиента.
+    const src = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
+      .replace(/\/\/.*$/gm, '')
+    expect(src, 'маркер не ставится на дело').toMatch(/buildActivityMarkerFields\(/)
+    expect(src, 'маркер строится не из общего кода источника').toMatch(/originatorCode\(/)
+    // Аргументы стоят на следующей строке, поэтому смотрим с переносами: без этой проверки гард
+    // прошёл бы и при `buildActivityMarkerFields(code, '')`.
+    expect(src, 'id задания не попадает в маркер').toMatch(/buildActivityMarkerFields\([\s\S]{0,120}jobId/)
+  })
+
+  it('код источника — один и тот же у сущности и у дела', () => {
+    // Два разных значения означали бы, что «наше» определяется по-разному в двух местах: журнал
+    // нашёл бы дела, а защита от дубля не нашла бы прежнюю запись.
+    const fields = buildActivityMarkerFields(originatorCode(undefined), 'job-1')
+    expect(fields.ORIGINATOR_ID).toBe('SH_APP_IMPORT_PRICE_AI')
+    expect(originMarkerFields(2, 'job-1').originatorId).toBe(fields.ORIGINATOR_ID)
   })
 })

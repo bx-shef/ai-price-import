@@ -57,5 +57,11 @@ export const FORMATS_HUMAN = 'PDF, фото, Excel, Word, CSV'
  *
  * Deliberately far below MAX_UPLOAD_BYTES (20 MB): an attachment exists to REPRODUCE a run, not to
  * archive it, and it rides inside a JSON body (base64 is ~4/3 of the bytes).
+ *
+ * ⚠ Владелец решил поднять его до 20 МБ (#458), но НЕ СЕЙЧАС — и это выяснилось попыткой: пока
+ * байты везёт браузер внутри JSON-тела, 20 МБ превращаются в ~27 МБ и не проходят кап тела роута
+ * (8 МБ), то есть отзыв перестал бы отправляться ВООБЩЕ. Поднимать надо ВМЕСТЕ с переходом на
+ * чтение файла из вложения дела: тогда тело перестаёт нести байты, и ограничение снимается
+ * естественно. Связка удержана тестом `feedbackIntake`, который эту правку и завернул.
  */
 export const MAX_FEEDBACK_FILE_BYTES = 5 * 1024 * 1024
