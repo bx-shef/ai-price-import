@@ -1,6 +1,7 @@
 import { resolveFeedbackConfig } from '../utils/feedbackConfig'
 import { listOpenFeedbackIssues } from '../utils/feedbackGithubAdmin'
-import { buildDigestText, isoWeekKey, summarizeFeedbackIssues } from '../utils/feedbackDigest'
+import { feedbackIssuesUrl } from '../utils/feedbackDigest'
+import { createDigestRunner } from '../utils/feedbackDigestRun'
 import { resolveTelegramConfig, sendTelegramAlert } from '../utils/telegramAlert'
 import { queueRuntimeConfig } from '../queue/runtime'
 import { connectionOptions } from '../queue/connection'
@@ -42,36 +43,36 @@ export default defineNitroPlugin(() => {
   }
 
   const counter = windowCounterStore(connectionOptions())
-  const fetchImpl = globalThis.fetch as typeof fetch
-  let running = false
-
-  const claimWeek = async (key: string): Promise<boolean> => {
-    if (!counter) return true
-    const n = await counter.incrWithTtl(key, 8 * 24 * 3600).catch(() => null)
-    // Redis не ответил — шлём: пропущенная сводка хуже лишней.
-    return n === null || n <= 1
+  if (!counter) {
+    // ⚠ Без Redis отсечка держится только памятью процесса: при часовом тике и перекатах
+    // контейнера по десятку раз в день это заметно чаще недельного намерения. Говорим вслух —
+    // молчаливая деградация здесь читалась бы как исправная работа.
+    console.warn('[feedback-digest] нет Redis: отсечка недели только в памяти процесса — после перезапуска сводка придёт снова')
   }
+  const fetchImpl = globalThis.fetch as typeof fetch
 
-  const run = async () => {
-    if (running) return
-    running = true
-    try {
-      if (!await claimWeek(`feedback-digest:${isoWeekKey(new Date())}`)) return
-      const read = await listOpenFeedbackIssues(config, fetchImpl)
-      // ⚠ `null` доезжает до текста КАК ОТДЕЛЬНЫЙ ИСХОД, а не подменяется нулями: нечитаемый
-      // приёмник и пустой приёмник дали бы одинаковую сводку, и авария канала выглядела бы
-      // спокойной неделей.
-      const stats = read ? summarizeFeedbackIssues(read.issues, Date.now()) : null
-      let text = buildDigestText(stats)
-      if (read?.truncated) text += '\n⚠️ Список обрезан — отзывов больше, чем показано.'
-      console.info(`[feedback-digest] открытых=${stats?.open ?? 'нет данных'}`)
+  const runDigest = createDigestRunner({
+    listIssues: () => listOpenFeedbackIssues(config, fetchImpl),
+    send: async (text) => {
       const r = await sendTelegramAlert(telegram, text, fetchImpl)
       if (!r.ok) console.warn(`[feedback-digest] сводка не доставлена: status=${r.status}`)
+      return r.ok
+    },
+    claimAttempt: key => counter ? counter.incrWithTtl(key, 8 * 24 * 3600).catch(() => null) : Promise.resolve(null),
+    issuesUrl: feedbackIssuesUrl(config.repo),
+    now: () => Date.now(),
+    log: m => console.warn(`[feedback-digest] ${m}`)
+  })
+
+  const run = async () => {
+    try {
+      const r = await runDigest()
+      // Строка пишется на КАЖДОМ исходе: иначе «неделя уже отправлена», «Redis не отвечает» и
+      // «GitHub молчит» выглядят одинаково пустым журналом, а различать их — весь смысл канала.
+      console.info(`[feedback-digest] ${r.sent ? `отправлено=${r.delivered}` : `пропуск: ${r.skipped}`}`)
     } catch {
       // Текст ошибки в журнал не идёт: у undici туда попадает адрес запроса с токеном.
       console.error('[feedback-digest] сбой прогона')
-    } finally {
-      running = false
     }
   }
 

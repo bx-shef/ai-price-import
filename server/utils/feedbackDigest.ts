@@ -1,4 +1,6 @@
 import type { FeedbackIssueRef } from './feedbackRetention'
+import { pluralRu } from '~/utils/jobStatus'
+import { APP_NAME } from '~/config/appIdentity'
 
 // Еженедельная сводка по неразобранным отзывам (#466).
 //
@@ -39,6 +41,21 @@ export interface DigestStats {
 
 /** Признак «к отзыву приложен документ» — его печатает `buildFeedbackIssue`. */
 const FILE_MARK = '**Исходный файл:**'
+/** Заголовок секции, которую печатает билдер; всё наше — строго после ПОСЛЕДНЕГО вхождения. */
+const CONTEXT_MARK = '**Контекст:**'
+
+/**
+ * Есть ли у отзыва приложенный документ.
+ *
+ * ⚠ Ищем ТОЛЬКО в хвосте после последнего `**Контекст:**`, а не по всему телу — тем же приёмом,
+ * что и в чистке (#417). Комментарий сотрудника экранируется по HTML, но звёздочки в нём живы и
+ * стоят ВЫШЕ секции контекста: написавший `**Исходный файл:**` руками накрутил бы счётчик. Секцию
+ * печатает билдер, и она всегда последняя.
+ */
+function hasAttachedFile(body: string): boolean {
+  const at = body.lastIndexOf(CONTEXT_MARK)
+  return at >= 0 && body.slice(at).includes(FILE_MARK)
+}
 
 /**
  * Свернуть список открытых задач приёмника в счётчики.
@@ -56,10 +73,12 @@ export function summarizeFeedbackIssues(issues: FeedbackIssueRef[], nowMs: numbe
     stats.open += 1
     if (issue.labels.includes('feedback:up')) stats.up += 1
     if (issue.labels.includes('feedback:down')) stats.down += 1
-    if (issue.body.includes(FILE_MARK)) stats.withFile += 1
+    if (hasAttachedFile(issue.body)) stats.withFile += 1
     // Непрочитанная дата не должна ни состарить отзыв, ни омолодить: считаем только по разобранной.
     if (!Number.isFinite(created)) continue
-    const days = Math.floor((nowMs - created) / DAY_MS)
+    // ⚠ Отрицательный возраст возможен при расхождении часов (задача «из будущего») и дал бы
+    // «Самый старый ждёт -1 день». Зажимаем нулём — там же, где отбраковывается битая дата.
+    const days = Math.max(0, Math.floor((nowMs - created) / DAY_MS))
     if (days >= STALE_DAYS) stats.stale += 1
     if (days < 7) stats.lastWeek += 1
     if (stats.oldestDays === null || days > stats.oldestDays) stats.oldestDays = days
@@ -67,12 +86,25 @@ export function summarizeFeedbackIssues(issues: FeedbackIssueRef[], nowMs: numbe
   return stats
 }
 
-function plural(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10
-  const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return one
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few
-  return many
+/**
+ * Ссылка на нужную выборку приёмника.
+ *
+ * ⚠ Без неё сводка оставалась «уведомлением, которое требует, чтобы кто-то уже пошёл смотреть» —
+ * то есть ровно тем дефектом, ради которого её и завели: чтобы перейти к разбору, надо было
+ * вспомнить имя приватного репозитория и собрать фильтр руками, с телефона. Имя репозитория —
+ * данные издателя, а не клиента.
+ */
+export function feedbackIssuesUrl(repo: string): string {
+  return `https://github.com/${repo}/issues?q=is%3Aopen+label%3Auser-feedback+sort%3Acreated-asc`
+}
+
+export interface DigestTextOpts {
+  /** Календарная неделя — чтобы на телефоне не спутать сводку с прошлой. */
+  weekKey: string
+  /** Куда идти разбирать; пусто — ссылку не печатаем. */
+  issuesUrl?: string
+  /** Список приёмника пришлось обрезать — тогда ВСЕ числа ниже занижены. */
+  truncated?: boolean
 }
 
 /**
@@ -81,27 +113,42 @@ function plural(n: number, one: string, few: string, many: string): string {
  * ⚠ `null` — это НЕ «отзывов нет», и разница написана словами. Приёмник мог не ответить (сеть,
  * права, исчерпанная квота), и в обоих случаях счётчики были бы нулевыми — то есть авария канала
  * выглядела бы спокойной неделей. Ровно от этого сводка и заводится: молчание должно быть
- * различимо от тишины.
+ * различимо от тишины. У этого исхода есть СВОЙ совет — как у классов отказа распознавания:
+ * сообщение без следующего шага заставляет вспоминать его заново каждый раз.
+ * ⚠ Пометка об обрезке идёт ПЕРВОЙ и говорит, что числа ЗАНИЖЕНЫ, а не что «список длинный»:
+ * прочитанная сноской в конце, она уже ничего не меняет в том, как прочли числа.
+ * ⚠ Единицы — «дней», а не «суток»: у слова «сутки» нет формы для единицы, и «ждёт 1 сутки» /
+ * «21 сутки» читаются как ошибка (проверено выводом на 1/2/5/11/21/101).
  */
-export function buildDigestText(stats: DigestStats | null): string {
+export function buildDigestText(stats: DigestStats | null, opts: DigestTextOpts): string {
+  const head = opts.truncated ? '⚠️ Список обрезан — счётчики ниже занижены.\n' : ''
   if (!stats) {
-    return '⚠️ Сводка по отзывам: приёмник не прочитан — счётчики недоступны. Это НЕ значит, что отзывов нет.'
+    return `${head}⚠️ ${APP_NAME}: приёмник отзывов не прочитан — счётчики недоступны.\n`
+      + 'Это НЕ значит, что отзывов нет. Проверьте GITHUB_FEEDBACK_TOKEN и квоту GitHub.'
   }
+  const lines: string[] = []
   if (stats.open === 0) {
-    return '📋 Сводка по отзывам за неделю: неразобранных нет.'
+    lines.push(`📋 ${APP_NAME} · сводка за ${opts.weekKey}: неразобранных нет.`)
+  } else {
+    lines.push(`📋 ${APP_NAME} · сводка за ${opts.weekKey}: ${stats.open} ${pluralRu(stats.open, ['неразобранный отзыв', 'неразобранных отзыва', 'неразобранных отзывов'])}.`)
+    // ⚠ «Без оценки» печатается, когда сумма не сходится с числом отзывов: читатель складывает
+    // 👍+👎 и ждёт `open`, а задача без нашей метки в эти два счётчика не попадает намеренно.
+    const unrated = stats.open - stats.up - stats.down
+    lines.push(`👎 ${stats.down} · 👍 ${stats.up}${unrated > 0 ? ` · без оценки: ${unrated}` : ''}`)
+    // Документ — признак воспроизводимости, то есть приоритет разбора, а не просто счётчик.
+    lines.push(`С документом (можно воспроизвести): ${stats.withFile}`)
+    lines.push(`Из них новых за 7 дней: ${stats.lastWeek}`)
+    if (stats.oldestDays !== null) {
+      lines.push(stats.oldestDays === 0
+        ? 'Самый старый пришёл сегодня'
+        : `Самый старый ждёт ${stats.oldestDays} ${pluralRu(stats.oldestDays, ['день', 'дня', 'дней'])}`)
+    }
+    if (stats.stale > 0) {
+      lines.push(`⚠️ ${stats.stale} ${pluralRu(stats.stale, ['ждёт', 'ждут', 'ждут'])} дольше ${STALE_DAYS} ${pluralRu(STALE_DAYS, ['дня', 'дней', 'дней'])} — разберите их первыми.`)
+    }
   }
-  const lines = [
-    `📋 Сводка по отзывам за неделю: ${stats.open} ${plural(stats.open, 'неразобранный', 'неразобранных', 'неразобранных')}.`,
-    `👍 ${stats.up} · 👎 ${stats.down} · с документом ${stats.withFile}`,
-    `Пришло за неделю: ${stats.lastWeek}`
-  ]
-  if (stats.oldestDays !== null) {
-    lines.push(`Самый старый ждёт ${stats.oldestDays} ${plural(stats.oldestDays, 'сутки', 'суток', 'суток')}`)
-  }
-  if (stats.stale > 0) {
-    lines.push(`⚠️ Лежат дольше ${STALE_DAYS} суток: ${stats.stale}`)
-  }
-  return lines.join('\n')
+  if (opts.issuesUrl) lines.push(opts.issuesUrl)
+  return head + lines.join('\n')
 }
 
 /**
