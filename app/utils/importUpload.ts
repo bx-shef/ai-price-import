@@ -1,8 +1,12 @@
 // Pure upload validation core (P5). No DOM/I/O. See docs/PROCESS.md
 
-import { FORMATS_HUMAN, SUPPORTED_EXT, buildAccept } from '~/config/uploadFormats'
+import { FORMATS_HUMAN, MAX_UPLOAD_BYTES, SUPPORTED_EXT, buildAccept } from '~/config/uploadFormats'
 
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024 // 20 MB
+// ⚠ Предел размера переехал в `app/config/uploadFormats.ts` и здесь только реэкспортируется (#461):
+// вложение к отзыву обязано быть равно ему, а импорт в обратную сторону дал бы цикл
+// (`config` ← `utils` ← `config`). Данные живут в `config`, вычисления — здесь; реэкспорт оставлен,
+// чтобы десяток существующих импортов не пришлось переписывать ради переноса одной константы.
+export { MAX_UPLOAD_BYTES }
 export const MAX_UPLOAD_FILES = 10
 /** Formats come from the SHARED list (#341) — the portal used to accept fewer than the landing demo,
  *  so a CSV price-list that «worked» on the landing was rejected right after install. */

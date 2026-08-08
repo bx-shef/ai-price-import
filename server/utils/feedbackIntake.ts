@@ -1,5 +1,3 @@
-import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
-
 // Intake gate for POST /api/feedback — everything the route decides BEFORE it does any work, as a
 // pure function (#351 review).
 //
@@ -12,7 +10,14 @@ import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
 // the rating, so one authenticated employee can loop «issue + 5 MB commit» and burn the publisher's
 // GitHub quota. Rate first, then size — both before the body is read.
 
-/** Cap on the whole JSON body: the attachment as base64 (×4/3) plus the comment and context. */
+/**
+ * Cap on the whole JSON body: comment + context.
+ *
+ * ⚠ Байт документа тело БОЛЬШЕ НЕ НЕСЁТ (#461) — сервер читает его из вложения дела, — поэтому
+ * предел давно перестал быть узким местом и остаётся обычной защитой от раздутого запроса.
+ * Текст отказа при этом продолжает советовать «отправьте без файла»: другого способа получить
+ * такое тело у сотрудника нет, а совет остаётся исполнимым.
+ */
 export const MAX_FEEDBACK_BODY_BYTES = 8 * 1024 * 1024
 
 export interface IntakeRefusal {
@@ -60,24 +65,4 @@ export function feedbackIntakeGate(input: IntakeInput): IntakeRefusal | null {
     }
   }
   return null
-}
-
-/**
- * Validate the file the PAGE sent along with a rating (#349). Untrusted input on an authenticated
- * route: accept only a base64 string of sane size, and let `feedbackFilePath` sanitise the name (it
- * already strips directories and non-allowlisted chars, so no path traversal into the repo).
- * Anything odd → null, i.e. the feedback is filed without a file rather than refused.
- *
- * ⚠ The bytes are NOT verified against the job they are attached to — the server has no copy to
- * compare with (that is the point of #349). An employee can therefore attach a different file than
- * the one that was imported. Not a cross-tenant risk (own portal, own rating), but the publisher
- * reading the issue should know the attachment is «what the employee sent», not «what we processed».
- */
-export function parseClientFile(raw: unknown): { name: string, base64: string } | null {
-  if (!raw || typeof raw !== 'object') return null
-  const { name, base64 } = raw as { name?: unknown, base64?: unknown }
-  if (typeof base64 !== 'string' || !base64) return null
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return null // not base64 → refuse rather than store junk
-  if (Math.ceil((base64.length * 3) / 4) > MAX_FEEDBACK_FILE_BYTES) return null
-  return { name: typeof name === 'string' && name ? name : '', base64 }
 }

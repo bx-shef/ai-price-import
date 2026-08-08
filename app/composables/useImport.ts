@@ -33,19 +33,13 @@ export interface ImportJobView {
  *  that POST) — seconds in practice; a minute is comfortably outside it. */
 const EXPIRE_UNKNOWN_AFTER_MS = 60_000
 
-// Bytes of the documents imported on THIS page, kept only in memory (#349). The feedback widget
-// sends them itself: the server deletes the uploaded file the moment the text is extracted, so there
-// is nothing to fetch back — and a 👎 on «документ не распознан» has no Disk archive either. Living
-// in page memory means the same lifetime the owner accepted for everything else here: while the tab
-// is open. A total cap keeps a 10-file batch of 20 MB scans from pinning 200 MB.
-const REMEMBERED_BYTES_MAX = 60 * 1024 * 1024
+// ⚠ ПАМЯТИ ФАЙЛОВ ЗДЕСЬ БОЛЬШЕ НЕТ (#461). Страница держала байты каждого импорта, чтобы виджет
+// отзыва мог их приложить (#349) — до 60 МБ на вкладку, — и всё равно теряла их при перезагрузке.
+// Теперь документ приложен к делу таймлайна, и сервер читает его оттуда сам: страница о файле
+// после отправки не знает ничего, и знать ей незачем.
 
 export function useImport() {
   const { init, ensureAuth, inFrame } = useB24()
-  /** jobId → the File the employee picked. Deliberately NOT reactive: it is a side table for the
-   *  feedback widget, never rendered, and making it reactive would deep-track File objects. */
-  const files = new Map<string, File>()
-  let rememberedBytes = 0
   const jobs = ref<ImportJobView[]>([])
   const loading = ref(false)
   const uploading = ref(false)
@@ -189,25 +183,6 @@ export function useImport() {
     }
   }
 
-  /** Keep the picked File in page memory so a later 👍/👎 can attach it (#349). Dropping the oldest
-   *  entries past the cap is safe: the feedback simply goes without a file, and the widget says so. */
-  function rememberFile(jobId: string, file: File): void {
-    if (files.has(jobId)) return
-    files.set(jobId, file)
-    rememberedBytes += file.size
-    while (rememberedBytes > REMEMBERED_BYTES_MAX && files.size > 1) {
-      const oldest = files.keys().next().value as string | undefined
-      if (!oldest) break
-      rememberedBytes -= files.get(oldest)?.size ?? 0
-      files.delete(oldest)
-    }
-  }
-
-  /** The File for a job, if this page still holds it (undefined after reload / past the cap). */
-  function fileFor(jobId: string): File | undefined {
-    return files.get(jobId)
-  }
-
   /** Add a job row to the in-memory list (newest first). Idempotent by jobId — a retried upload of
    *  the same staged file must not produce a second row. */
   function track(jobId: string, fileName: string, target?: TargetRef | null): void {
@@ -247,28 +222,16 @@ export function useImport() {
     scheduleNext()
   }
 
-  /** Drop every finished row from the visible list (page memory only — nothing persists anywhere).
-   *  Their remembered bytes go with them: the row is gone, so no one can rate it any more. */
+  /** Drop every finished row from the visible list (page memory only — nothing persists anywhere). */
   function clearList(): void {
-    const dropped = jobs.value.filter(j => jobStatusMeta(j.status).terminal)
     jobs.value = jobs.value.filter(j => !jobStatusMeta(j.status).terminal)
-    for (const j of dropped) forgetFile(j.jobId)
-  }
-
-  /** Release a remembered File (row removed / cleared). */
-  function forgetFile(jobId: string): void {
-    const f = files.get(jobId)
-    if (!f) return
-    rememberedBytes -= f.size
-    files.delete(jobId)
   }
 
   /** Forget a single row (page memory only). The server keeps only ephemeral status; this just stops
    *  the page polling/showing that jobId. */
   function removeJob(jobId: string): void {
     jobs.value = jobs.value.filter(j => j.jobId !== jobId)
-    forgetFile(jobId)
   }
 
-  return { jobs, loading, uploading, error, listError, listWarning, hasActive, refresh, refreshNow, upload, track, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob, rememberFile, fileFor }
+  return { jobs, loading, uploading, error, listError, listWarning, hasActive, refresh, refreshNow, upload, track, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob }
 }

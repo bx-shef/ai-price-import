@@ -76,9 +76,11 @@ describe('исходник НЕ хранится на сервере (#349, от
     expect(read('../server/utils/nodeFileIO.ts')).toContain('purgePortalFiles')
   })
 
-  it('роут отзыва больше не читает файл с диска — байты приходят от страницы', () => {
-    const route = read('../server/api/feedback.post.ts')
-    expect(route).not.toContain('readUploadBase64')
-    expect(route).toContain('parseClientFile')
+  it('роут отзыва не читает файл С ДИСКА — своей копии документа нет', () => {
+    // Инвариант тот же, что был (#349): байты загрузки удаляются сразу после извлечения текста, и
+    // читать их обратно неоткуда. ⚠ Изменился ИСТОЧНИК вложения: со страницы (`parseClientFile`) на
+    // вложение дела таймлайна (#461) — это покрыто гардами в `feedbackIntake`. Здесь остаётся
+    // единственное утверждение, которое принадлежит хранилищу файлов: с диска роут не читает.
+    expect(read('../server/api/feedback.post.ts')).not.toContain('readUploadBase64')
   })
 })

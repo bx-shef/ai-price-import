@@ -5,11 +5,6 @@ import { computed, onMounted, ref } from 'vue'
 import LikeIcon from '@bitrix24/b24icons-vue/outline/LikeIcon'
 import DislikeIcon from '@bitrix24/b24icons-vue/outline/DislikeIcon'
 import { useFeedback } from '~/composables/useFeedback'
-import { UPLOAD_ACCEPT } from '~/utils/importUpload'
-// Кап вложения — ОДНО число на клиент и сервер (#351 ревью): два независимых разъехались бы молча,
-// потому что превышение не ломает отправку — вложение просто исчезает, а отзыв уходит «успешно».
-// Импорт принимает 20 МБ, поэтому скан вполне может кап превысить, и сказать об этом надо заранее.
-import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
 
 // Compact «нравится / не нравится» widget under an import result row. Renders nothing unless the
 // channel is enabled on the server (probed via useFeedback). ОБЕ оценки ведут себя ОДИНАКОВО (#299):
@@ -28,12 +23,13 @@ import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
 // row simply shows «Спасибо» until the page dies together with the list. No server-side
 // search-before-create either.
 //
-// ФАЙЛ БЕРЁТСЯ ИЗ ПАМЯТИ СТРАНИЦЫ (#349): сервер удаляет загруженные байты сразу после извлечения
-// текста, поэтому «дай мне файл этого задания» ему больше не адресуешь. Страница всё ещё держит
-// выбранный сотрудником File — его и отправляем вместе с оценкой. Если файла в памяти нет
-// (перезагрузили вкладку, открыли в другой), честно предлагаем выбрать его вручную, а не молча
-// отправляем отзыв без файла: у «документ не распознан» файл — это вся суть отзыва.
-const props = defineProps<{ jobId?: string, fileName?: string, file?: File | null }>()
+// ФАЙЛ БЕРЁТ СЕРВЕР ИЗ ДЕЛА ТАЙМЛАЙНА (#461), страница его больше не везёт. Прежде байты слал сам
+// браузер из памяти (#349), и это оставляло дыру: перезагрузил вкладку — и отзыв уходил без
+// документа, то есть без того, ради чего отзыв на «документ не распознан» вообще нужен. Теперь у
+// каждого импорта есть дело с вложенным документом, и сервер находит его по маркеру задания,
+// сузив выборку до самого сотрудника. Отсюда же исчезли выбор файла вручную и предупреждение о
+// размере: страница о файле больше ничего не знает и обещать за сервер не может.
+const props = defineProps<{ jobId?: string, fileName?: string }>()
 const { enabled, ensureEnabled, submit } = useFeedback()
 
 // Какую оценку подтверждаем в форме. `null` — форма ещё не открыта: отдельного флага «форма видна»
@@ -50,40 +46,6 @@ const sent = ref(false)
  *  как «документ ушёл». */
 const notice = ref('')
 const error = ref('')
-/** Файл, выбранный вручную, когда страница своей копии уже не держит. */
-const manualFile = ref<File | null>(null)
-const fileInput = ref<HTMLInputElement | null>(null)
-/** Файл-кандидат: копия страницы либо выбранная вручную. Может оказаться слишком большим. */
-const candidateFile = computed<File | null>(() => manualFile.value ?? props.file ?? null)
-/** Слишком большой файл — не «нет файла»: об этом надо сказать, а не молча отправить без него. */
-const tooBig = computed(() => !!candidateFile.value && candidateFile.value.size > MAX_FEEDBACK_FILE_BYTES)
-/** Что реально уйдёт с отзывом. */
-const fileToSend = computed<File | null>(() => (tooBig.value ? null : candidateFile.value))
-
-/** Прочитать файл в base64 для отправки. Возвращает null, если чтение не удалось — отзыв уйдёт
- *  без файла, но уйдёт: терять оценку из-за сбоя чтения хуже, чем потерять вложение. */
-async function readAsBase64(file: File): Promise<{ name: string, base64: string } | null> {
-  try {
-    const buf = await file.arrayBuffer()
-    let binary = ''
-    const bytes = new Uint8Array(buf)
-    const CHUNK = 0x8000 // посимвольный String.fromCharCode переполнил бы стек на мегабайтах
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
-    }
-    return { name: file.name, base64: btoa(binary) }
-  } catch {
-    return null
-  }
-}
-
-function pickManualFile(e: Event): void {
-  const input = e.target as HTMLInputElement
-  const f = input.files?.[0] ?? null
-  if (f) manualFile.value = f
-  input.value = ''
-}
-
 onMounted(() => {
   ensureEnabled()
 })
@@ -109,11 +71,10 @@ async function send(withFile: boolean): Promise<void> {
   try {
     // submit() returns false (without throwing) outside a portal frame — do NOT claim success.
     // Файл уходит ТОЛЬКО по явному ответу на вопрос — одинаково для обеих оценок (#299).
-    const attachment = withFile && fileToSend.value ? await readAsBase64(fileToSend.value) : null
     const res = await submit(kind, comment.value.trim() || undefined, {
       jobId: props.jobId,
       fileName: props.fileName
-    }, withFile, attachment)
+    }, withFile)
     if (res.ok) {
       sent.value = true
       notice.value = res.notice ?? ''
@@ -196,44 +157,15 @@ async function send(withFile: boolean): Promise<void> {
           </p>
           <p class="text-(--ui-color-base-4)">
             Копия документа уйдёт разработчику вместе с отзывом — она нужна, чтобы воспроизвести разбор.
-            <template v-if="fileToSend">
-              Отправится «{{ fileToSend.name }}» — файл берётся из этой страницы, на сервере он не хранится.
-            </template>
-            <template v-else-if="tooBig">
-              Файл «{{ candidateFile?.name }}» слишком большой, чтобы приложить его к отзыву
-              (больше {{ Math.round(MAX_FEEDBACK_FILE_BYTES / 1024 / 1024) }} МБ). Отправьте отзыв без файла —
-              напишите в комментарии, что было в документе, и мы попросим его отдельно.
-            </template>
-            <template v-else>
-              Эта страница копию документа уже не держит (перезагрузили вкладку или открыли в другой),
-              а на сервере файл не хранится — выберите его вручную или отправьте отзыв без файла.
-            </template>
+            Документ берётся из дела в CRM, куда приложение вложило его при импорте, — выбирать файл
+            заново не нужно.
           </p>
-          <div
-            v-if="!fileToSend"
-            class="mt-1"
-          >
-            <B24Button
-              size="xs"
-              color="air-tertiary"
-              :disabled="sending"
-              label="Выбрать файл"
-              @click="fileInput?.click()"
-            />
-            <input
-              ref="fileInput"
-              type="file"
-              class="sr-only"
-              :accept="UPLOAD_ACCEPT"
-              @change="pickManualFile"
-            >
-          </div>
           <div class="mt-1 flex flex-wrap items-center gap-2">
             <B24Button
               size="xs"
               color="air-primary"
               :loading="sending"
-              :disabled="sending || !fileToSend"
+              :disabled="sending"
               label="Отправить с файлом"
               @click="send(true)"
             />
