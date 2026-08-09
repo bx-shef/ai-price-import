@@ -111,14 +111,6 @@ onMounted(async () => {
       id="top"
       :class="`landing-root relative min-h-screen ${SHELL_CLASS}`"
     >
-      <!-- Уведомление об изменении документов (#418, п. 9.3.3): баннер обязан быть и в приложении,
-           и на сайте. Здесь он БЕЗ отметки о показе — отмечать нечего: посетитель лендинга не
-           лицензиат, а адресное уведомление обращено к порталу. -->
-      <div class="relative z-20 mx-auto max-w-[1080px] px-[22px] pt-4 lg:px-8">
-        <!-- `compact`: на телефоне полный состав занимал 44% первого экрана и вытеснял заголовок
-             с кнопками. Обязанность уведомить выполняется показом и доступом к содержанию. -->
-        <LegalChangeBanner compact />
-      </div>
       <!-- radial brand glow (clip blurred blobs here, not on <main>, for the sticky header) -->
       <div
         class="pointer-events-none absolute inset-0 overflow-hidden"
