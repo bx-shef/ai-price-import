@@ -117,6 +117,44 @@ describe('buildErrorMessage', () => {
     expect(msg).toContain('• e19')
     expect(msg).not.toContain('• e20')
   })
+
+  // #385: у админа не было ни идентификатора импорта, ни пути в приложение — соседнее сообщение об
+  // отказе несло `Задание:` всегда, это не несло ничего, и разница ниоткуда не была видна.
+  it('несёт идентификатор задания и ссылку в приложение', () => {
+    const msg = buildErrorMessage('Ромашка', ['нет валюты'], {
+      jobId: 'job-7',
+      appUrl: 'https://acme.bitrix24.by/marketplace/view/shef.priceimport/'
+    })
+    expect(msg).toContain('Задание: job-7')
+    expect(msg).toContain('[URL=https://acme.bitrix24.by/marketplace/view/shef.priceimport/]открыть приложение[/URL]')
+  })
+
+  // Мёртвая ссылка обещает путь и никуда не ведёт — ровно тот дефект, с которого #385 начался.
+  it('без известного адреса строки со ссылкой нет вовсе', () => {
+    const msg = buildErrorMessage('Ромашка', ['нет валюты'], { jobId: 'job-7' })
+    expect(msg).toContain('Задание: job-7')
+    expect(msg).not.toContain('[URL=')
+    expect(msg).not.toContain('открыть приложение')
+  })
+
+  // Хвост не должен становиться дырой в обезвреживании: `]` закрыл бы тег раньше времени, и
+  // остаток строки отрисовался бы разметкой под нашей подписью.
+  it('обезвреживает разметку в адресе и в идентификаторе', () => {
+    const msg = buildErrorMessage('Ромашка', ['x'], {
+      jobId: 'job]7[URL=https://evil.example]тут[/URL',
+      appUrl: 'https://acme.bitrix24.by/x]?[URL=https://evil.example]тут[/URL'
+    })
+    expect(msg).not.toContain('evil.example]')
+    expect(msg).not.toContain('[/URL]тут')
+    expect(msg.match(/\[URL=/g) ?? []).toHaveLength(1)
+  })
+
+  // Пустой хвост не печатается: «Задание: » и голая подпись без адреса — мусор, а не сведения.
+  it('пустые значения хвоста не печатаются', () => {
+    const msg = buildErrorMessage('Ромашка', ['x'], { jobId: '', appUrl: null })
+    expect(msg).not.toContain('Задание')
+    expect(msg).not.toContain('открыть приложение')
+  })
 })
 
 describe('sendChatMessage', () => {
