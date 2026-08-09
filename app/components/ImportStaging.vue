@@ -8,6 +8,7 @@ import { MAX_ITEMS } from '~/utils/extractedDocument'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
 import { readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
+import { adoptDefaultTarget } from '~/utils/settingsAdopt'
 
 // Batch import staging (owner rework, round 2): pick files, choose ONE target for the whole batch,
 // press «Импортировать». The button LOCKS the page (via update:busy), uploads the files, then WAITS
@@ -317,6 +318,27 @@ function cancelImport(): void {
   // parent's poll is alive to show them (it may have self-stopped while we were waiting).
   void props.refreshNow()
 }
+
+/**
+ * Принять новую цель по умолчанию, пришедшую с событием «настройки изменились» (#443).
+ *
+ * Родитель зовёт это ПОСЛЕ перечитывания настроек. Само решение — в чистой `adoptDefaultTarget`:
+ * «побеждает новое значение, идущую пачку не трогаем» — правило владельца, и жить оно должно там,
+ * где его можно проверить, а не в обработчике события.
+ *
+ * ⚠ Возвращаем ПРИМЕНИЛОСЬ ЛИ: без этого родитель не может отличить «цель обновлена» от «пачка идёт,
+ * отложили» — а это разные вещи и для журнала, и для теста проводки.
+ */
+function adoptSettingsTarget(defaultTarget: TargetRef | null | undefined): boolean {
+  const decision = adoptDefaultTarget({ importing: importing.value, defaultTarget })
+  if (!decision.apply) return false
+  // Присваивание цели само пишет память вкладки (watch выше) — второй записи здесь быть не должно,
+  // иначе одно и то же значение уходило бы в хранилище дважды на каждое событие.
+  target.value = decision.target
+  return true
+}
+
+defineExpose({ adoptSettingsTarget })
 </script>
 
 <template>
