@@ -89,6 +89,9 @@ watch(target, (t) => {
 })
 // Set by «Отменить»; checked between uploads and inside the wait loop.
 const cancelled = ref(false)
+// Правка настроек, прилетевшая ВО ВРЕМЯ пачки: применяется на её спаде (#443). Отложить, а не
+// выбросить — иначе рассылку теряет ровно тот, кто в этот момент работает.
+const pendingSettings = ref(false)
 
 /** Stable idempotency key per staged file → reused across retries so a re-upload can't create a second
  *  CRM entity (the server keys the job on it). ALWAYS a valid v4 UUID (uuidv4 has non-crypto fallbacks) —
@@ -210,6 +213,13 @@ async function startImport(): Promise<void> {
     // PHASE 1 — upload the batch. Sequential HTTP posts (the upload itself is seconds; the WAIT is the
     // long part), one shared target, a failed file marks its row and the batch MOVES ON (owner ask).
     const sent: StagedFile[] = []
+    // ⚠ ЦЕЛЬ ЗАМОРОЖЕНА НА ПРОГОН — снимок берётся ЗДЕСЬ, а цикл читает только его. Шапка это
+    // обещала («frozen for the duration of the run»), но цикл брал `target.value` на КАЖДОМ файле:
+    // пока цель менял один пикер, дефект спал, а с рассылкой настроек менять её на середине стало
+    // кому. Исход на экране невидим — половина накладных в одной воронке, половина в другой, и
+    // вскрывается это только в CRM. Замок на пикере (`:disabled`) — ВТОРОЙ и независимый: он
+    // защищает от руки, снимок — от кода.
+    const runTarget = target.value
     for (const s of queue) {
       if (cancelled.value) break
       // A queued row can still be removed while the run is going — skip any row that left the list.
@@ -219,7 +229,7 @@ async function startImport(): Promise<void> {
       notice.value = `Отправляем «${s.file.name}»…`
       // The row's stable key is the desired jobId → a retry of THIS row reuses it and can't create a
       // duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
-      const outcome = await props.upload(s.file, target.value, s.key)
+      const outcome = await props.upload(s.file, runTarget, s.key)
       if (outcome.ok) {
         s.status = 'sent'
         sent.push(s)
@@ -307,6 +317,12 @@ async function startImport(): Promise<void> {
         s.error = 'Отправка прервалась — нажмите «Импортировать» ещё раз.'
       }
     }
+    // Правка настроек, пришедшая во время прогона, применяется ЗДЕСЬ — после снятия `importing`,
+    // иначе `adoptDefaultTarget` снова увидит идущую пачку и отложит её во второй раз навсегда.
+    if (pendingSettings.value) {
+      pendingSettings.value = false
+      adoptSettingsTarget()
+    }
   }
 }
 
@@ -320,23 +336,25 @@ function cancelImport(): void {
 }
 
 /**
- * Принять новую цель по умолчанию, пришедшую с событием «настройки изменились» (#443).
+ * Принять событие «настройки изменились» (#443).
  *
- * Родитель зовёт это ПОСЛЕ перечитывания настроек. Само решение — в чистой `adoptDefaultTarget`:
- * «побеждает новое значение, идущую пачку не трогаем» — правило владельца, и жить оно должно там,
- * где его можно проверить, а не в обработчике события.
+ * Родитель зовёт это ПОСЛЕ перечитывания настроек. Само решение — в чистой `adoptDefaultTarget`.
  *
- * ⚠ Ничего не возвращает. Первая редакция отдавала «применилось ли» и объясняла это тем, что
- * родителю нужно отличать «цель обновлена» от «пачка идёт, отложили» — но родитель значение не
- * читал НИГДЕ, то есть комментарий обещал поведение, которого нет. Отложенный случай проверяется
- * там, где он и решается, — юнит-тестом чистого правила.
+ * ⚠ Выбор вкладки сбрасывается на «Авто (по правилам)», а НЕ подменяется целью по умолчанию:
+ * подставленная цель уехала бы с файлом как ручной выбор, а он на сервере бьёт выше правил
+ * маршрутизации — админ выключал бы собственные правила у всего портала одним сохранением
+ * (разбор PR #476). Подробности — в шапке `settingsAdopt.ts`.
+ *
+ * ⚠ Пришедшее во время пачки ОТКЛАДЫВАЕТСЯ, а не выбрасывается: правку теряет ровно тот сотрудник,
+ * который сейчас работает, то есть тот, ради кого её и рассылали.
  */
-function adoptSettingsTarget(defaultTarget: TargetRef | null | undefined): void {
-  const decision = adoptDefaultTarget({ importing: importing.value, defaultTarget })
-  if (!decision.apply) return
-  // Присваивание цели само пишет память вкладки (watch выше) — второй записи здесь быть не должно,
-  // иначе одно и то же значение уходило бы в хранилище дважды на каждое событие.
-  target.value = decision.target
+function adoptSettingsTarget(): void {
+  if (!adoptDefaultTarget({ importing: importing.value }).apply) {
+    pendingSettings.value = true
+    return
+  }
+  // Присваивание само пишет память вкладки (watch выше) — второй записи здесь быть не должно.
+  target.value = null
 }
 
 defineExpose({ adoptSettingsTarget })

@@ -36,7 +36,7 @@ describe('#443: событие настроек меняет содержимо�
     // Без этого вызова событие снимало бы только баннер «сначала настройте» — узкая цель, ради
     // которой механизм и делался, и которая перестала быть достаточной.
     const page = code('../../app/pages/app.vue')
-    expect(page).toMatch(/stagingRef\.value\?\.adoptSettingsTarget\(mapping\.value\.defaultTarget\)/)
+    expect(page).toMatch(/stagingRef\.value\?\.adoptSettingsTarget\(\)/)
   })
 
   it('карточка загрузки действительно отдаёт этот метод наружу', () => {
@@ -45,7 +45,7 @@ describe('#443: событие настроек меняет содержимо�
     const staging = code('../../app/components/ImportStaging.vue')
     expect(staging).toMatch(/defineExpose\(\{ adoptSettingsTarget \}\)/)
     // И решение принимает ЧИСТОЕ правило, а не переписанное здесь условие.
-    expect(staging).toMatch(/adoptDefaultTarget\(\{ importing: importing\.value, defaultTarget \}\)/)
+    expect(staging).toMatch(/adoptDefaultTarget\(\{ importing: importing\.value \}\)/)
   })
 })
 
@@ -89,5 +89,44 @@ describe('#443: блокировка на время пачки — настоя
     const p = page()
     expect(p).toMatch(/:class="busy \? 'opacity-60' : ''"/)
     expect(p).not.toContain('select-none')
+  })
+})
+
+describe('#443: канал рассылки — порядок и живучесть', () => {
+  it('рассылка ОЖИДАЕТСЯ до закрытия слайдера', () => {
+    // ⚠ Мутация «вернуть `void notifyReload()`» проходила все тесты (найдено разбором): ни один
+    // тест не смотрел на `settings.vue` вовсе. А дефект настоящий и невидимый — `closeAfter()`
+    // уничтожает фрейм, из которого сообщение уходит, и соседи перестают получать правку тем чаще,
+    // чем быстрее закрывается слайдер. Отказ при этом не показывается никому: канал best-effort.
+    const src = code('../../app/pages/settings.vue')
+    const fn = src.slice(src.indexOf('async function saveAndClose'), src.indexOf('async function cancel'))
+    expect(fn, 'обработчик сохранения не найден — подпись изменилась').not.toBe('')
+    expect(fn).toContain('await notifyReload()')
+    expect(fn).not.toContain('void notifyReload()')
+    // Порядок: рассылка ДО закрытия, иначе ожидание ничего не спасает.
+    expect(fn.indexOf('await notifyReload()')).toBeLessThan(fn.indexOf('await closeAfter()'))
+  })
+
+  it('подписка НЕ снимается до попытки открыть слайдер', () => {
+    // ⚠ Вторая мутация, которую тесты пропускали: `unsubscribeReload()` безусловно первой строкой
+    // ветки пусковой страницы. Тогда на портале, где слайдеры не открываются, экран уходит в
+    // рабочий режим с навсегда мёртвым каналом — правка настроек не доезжает никогда, а выглядит
+    // это как «push не работает», то есть обвиняется исправный механизм.
+    const src = code('../../app/pages/app.vue')
+    const branch = src.slice(src.indexOf('if (launch.value === \'launcher\') {'))
+    const firstUnsub = branch.indexOf('unsubscribeReload()')
+    const firstOpen = branch.indexOf('canAutoOpenMain(')
+    expect(firstOpen, 'ветка пусковой страницы не найдена').toBeGreaterThan(-1)
+    expect(firstUnsub, 'подписку снимают ДО попытки открыть слайдер').toBeGreaterThan(firstOpen)
+  })
+
+  it('подписка снимается и в РАБОЧЕМ режиме — иначе канал утекает', () => {
+    // ⚠ Дефект, найденный разбором: снятие жило ТОЛЬКО внутри ветки пусковой страницы, а на самом
+    // частом пути её не снимал никто. Фолбэк настроек и метрик уходит обычной навигацией, страница
+    // размонтируется, поднятый ею pull-клиент остаётся жить, и по возвращении на `/app` рядом со
+    // старым поднимается второй — ровно то удвоение, ради которого лаунчер и делался, только на
+    // пути, которым ходят каждый день.
+    const src = code('../../app/pages/app.vue')
+    expect(src).toContain('onBeforeUnmount(unsubscribeReload)')
   })
 })

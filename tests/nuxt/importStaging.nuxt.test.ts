@@ -310,24 +310,18 @@ describe('ImportStaging (пачка + ожидание результатов)',
 // прямо назвал цену того приёма: он видит текст, а не выполнение. Утверждения ниже — про то, что
 // метод, отданный наружу через `defineExpose`, реально работает и реально пишет память вкладки:
 // греп подтвердил бы наличие строки и при опечатке в имени параметра.
-describe('#443: приём новой цели по умолчанию', () => {
+describe('#443: приём события «настройки изменились»', () => {
   const DEAL = { entityTypeId: 2, categoryId: 7 }
   const key = 'ai-price-import.target.unknown'
+  type Api = { adoptSettingsTarget: () => void }
 
-  it('вне прогона цель применяется и уходит в память вкладки', async () => {
-    window.sessionStorage.removeItem(key)
+  it('вне прогона выбор вкладки СБРАСЫВАЕТСЯ, и память очищается', async () => {
+    // ⚠ Сбрасывается на «Авто», а не подменяется целью по умолчанию: подставленная цель уехала бы
+    // с файлом как ручной выбор, а он на сервере бьёт выше правил маршрутизации — одно сохранение
+    // настроек выключало бы правила у всего портала (разбор PR #476).
+    window.sessionStorage.setItem(key, JSON.stringify(DEAL))
     const w = await mount(instantDone())
-    ;(w.vm as unknown as { adoptSettingsTarget: (t: unknown) => void }).adoptSettingsTarget(DEAL)
-    await tick()
-    expect(JSON.parse(window.sessionStorage.getItem(key) ?? 'null')).toMatchObject(DEAL)
-  })
-
-  it('«Авто» очищает память — иначе настройку нельзя откатить', async () => {
-    const w = await mount(instantDone())
-    const vm = w.vm as unknown as { adoptSettingsTarget: (t: unknown) => void }
-    vm.adoptSettingsTarget(DEAL)
-    await tick()
-    vm.adoptSettingsTarget(null)
+    ;(w.vm as unknown as Api).adoptSettingsTarget()
     await tick()
     expect(window.sessionStorage.getItem(key)).toBeNull()
   })
@@ -335,7 +329,7 @@ describe('#443: приём новой цели по умолчанию', () => {
   it('во время пачки цель НЕ подменяется — документы уедут туда, куда человек их отправил', async () => {
     // ⚠ Несущая проверка задачи: цель одна на пачку и заморожена. Подмена посреди прогона увела бы
     // оставшиеся файлы в другое место — молча и вопреки тому, что человек видел, когда запускал.
-    window.sessionStorage.removeItem(key)
+    window.sessionStorage.setItem(key, JSON.stringify(DEAL))
     const t = instantDone()
     // Загрузка «зависает», поэтому прогон не успевает кончиться до нашего вызова.
     t.upload = vi.fn(() => new Promise(() => {}) as never)
@@ -343,8 +337,30 @@ describe('#443: приём новой цели по умолчанию', () => {
     await pick(w, [file('накладная.pdf')])
     await clickText(w, 'Импортировать')
     await tick()
-    ;(w.vm as unknown as { adoptSettingsTarget: (t: unknown) => void }).adoptSettingsTarget(DEAL)
+    ;(w.vm as unknown as Api).adoptSettingsTarget()
     await tick()
-    expect(window.sessionStorage.getItem(key), 'цель подменили посреди пачки').toBeNull()
+    expect(JSON.parse(window.sessionStorage.getItem(key) ?? 'null'), 'цель подменили посреди пачки').toMatchObject(DEAL)
+  })
+
+  it('отложенная правка применяется на спаде пачки, а не теряется', async () => {
+    // ⚠ Прежде событие во время прогона выбрасывалось насовсем — и рассылку терял ровно тот
+    // сотрудник, ради которого её делали: он же единственный, кто в этот момент работает.
+    window.sessionStorage.setItem(key, JSON.stringify(DEAL))
+    let finish: (v: unknown) => void = () => {}
+    const t = instantDone()
+    t.upload = vi.fn(() => new Promise((res) => {
+      finish = res
+    }) as never)
+    const w = await mount(t)
+    await pick(w, [file('накладная.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    ;(w.vm as unknown as Api).adoptSettingsTarget()
+    await tick()
+    expect(window.sessionStorage.getItem(key), 'применили посреди пачки').not.toBeNull()
+
+    finish({ ok: false, stop: true, message: 'стоп' })
+    for (let i = 0; i < 20 && window.sessionStorage.getItem(key) !== null; i++) await tick()
+    expect(window.sessionStorage.getItem(key), 'отложенная правка потерялась').toBeNull()
   })
 })
