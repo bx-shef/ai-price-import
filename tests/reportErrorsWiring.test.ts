@@ -19,15 +19,23 @@ import type { PortalMapping } from '~/types/settings'
 interface Sent { method: string, params: Record<string, unknown> }
 
 const DOMAIN = 'b24-hrbvzq.bitrix24.by'
-const APP_URL = `https://${DOMAIN}/marketplace/view/shef.priceimport/`
+// ⚠ Адрес ЧИСЛОВОЙ (`/marketplace/app/<ID>/`): символьный код карточки Маркета на портале не
+// открывается — проверено владельцем вживую 09.08.2026. `ID` приходит из `app.info`.
+const APP_ID = 3
+const APP_URL = `https://${DOMAIN}/marketplace/app/${APP_ID}/`
 
 function harness(opts: { domain?: string | null } = {}) {
   const sent: Sent[] = []
   let tokenReads = 0
+  let appInfoCalls = 0
   const call = async (method: string, params: Record<string, unknown> = {}) => {
     sent.push({ method, params })
     // Бота нет — отправка идёт старым путём (`im.message.add`), как на портале без скоупа `imbot`.
     if (method.startsWith('imbot.')) throw new Error('ACCESS_DENIED')
+    if (method === 'app.info') {
+      appInfoCalls++
+      return { ID: APP_ID } as never
+    }
     return {} as never
   }
   const query = async (sql: string) => {
@@ -40,7 +48,7 @@ function harness(opts: { domain?: string | null } = {}) {
   }
   const infra = { query } as unknown as LiveInfra
   const rest = async () => ({ call, list: async () => [] } as never)
-  return { sent, infra, rest, tokenReads: () => tokenReads }
+  return { sent, infra, rest, tokenReads: () => tokenReads, appInfoCalls: () => appInfoCalls }
 }
 
 // Настоящие дефолты портала, а не самодельный объект: подделка молча разошлась бы с боевой формой
@@ -91,5 +99,8 @@ describe('#385: сообщение в чат ошибок доезжает со�
     await deps.reportErrors?.(['ошибка'], 'ООО Ромашка')
 
     expect(h.tokenReads()).toBe(1)
+    // Тем же мемо покрыт и REST-вызов за идентификатором приложения — он появился вместе с
+    // числовой формой адреса, и без мемо стоил бы обращения к порталу на каждого получателя.
+    expect(h.appInfoCalls()).toBe(1)
   })
 })

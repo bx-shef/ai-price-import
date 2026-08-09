@@ -123,10 +123,10 @@ describe('buildErrorMessage', () => {
   it('несёт идентификатор задания и ссылку в приложение', () => {
     const msg = buildErrorMessage('Ромашка', ['нет валюты'], {
       jobId: 'job-7',
-      appUrl: 'https://acme.bitrix24.by/marketplace/view/shef.priceimport/'
+      appUrl: 'https://acme.bitrix24.by/marketplace/app/1/'
     })
     expect(msg).toContain('Задание: job-7')
-    expect(msg).toContain('[URL=https://acme.bitrix24.by/marketplace/view/shef.priceimport/]открыть приложение[/URL]')
+    expect(msg).toContain('[URL=https://acme.bitrix24.by/marketplace/app/1/]открыть приложение[/URL]')
   })
 
   // Мёртвая ссылка обещает путь и никуда не ведёт — ровно тот дефект, с которого #385 начался.
