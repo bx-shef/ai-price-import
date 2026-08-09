@@ -263,7 +263,13 @@ export async function notifyImportFailure(
   memberId: string,
   jobId: string,
   reason: string,
-  opts: { alsoErrorChat?: boolean, rest?: (m: string) => Promise<SdkTransport | null>, mapping?: PortalMapping } = {}
+  // `appUrl` — уже разрешённый адрес приложения на портале. Его передаёт crm-sync, где на одном
+  // отказе адрес нужен и здесь, и в сообщении в чат ошибок: без передачи строка портала читалась бы
+  // из Postgres дважды за одну обработку, узнавая второй раз ровно то же самое (#385).
+  // ⚠ Ключ значим: `undefined` — «не передавали, разреши сам», `null` — «разрешали, адреса нет»,
+  // и его нельзя лечить фолбэком на своё чтение, иначе мемо вызывающего перестало бы работать
+  // ровно в том случае, ради которого заведено (домена нет / база недоступна).
+  opts: { alsoErrorChat?: boolean, rest?: (m: string) => Promise<SdkTransport | null>, mapping?: PortalMapping, appUrl?: string | null } = {}
 ): Promise<void> {
   try {
     // Resolve the transport FIRST. Claiming before this burnt the once-only right to speak even
@@ -291,7 +297,7 @@ export async function notifyImportFailure(
       errorChatId,
       alsoErrorChat: opts.alsoErrorChat !== false,
       jobId,
-      appUrl: await backLinkUrl(memberId, uploaderId, infra)
+      appUrl: 'appUrl' in opts ? opts.appUrl ?? null : await backLinkUrl(memberId, uploaderId, infra)
     })
     for (const m of planned) {
       try {
@@ -333,14 +339,22 @@ export async function notifyImportFailure(
  *      the document failed, with no log and no counter. Measured on a fake query that failed only
  *      this statement: zero messages sent, and the retry sent nothing either — the right to speak
  *      was already spent.
- *   2. It is skipped when there is no personal recipient: only the personal message carries the
- *      link (the error chat gets a job id), so reading the portal row for the other branch was a
- *      query per notification that nothing consumed.
+ *   2. `backLinkUrl` пропускает чтение, когда личного получателя нет: у `planFailureNotify` ссылку
+ *      несёт ТОЛЬКО личное сообщение, и без него запрос к базе не потреблял никто.
+ *
+ * ⚠ Гейт из п. 2 остаётся именно у `backLinkUrl`, а не у `portalBackLink`: у сообщения в чат ошибок
+ * (`buildErrorMessage`) получатель другой — там ссылка нужна независимо от того, известен ли
+ * загрузивший (#385). Свалить оба вызова в одну функцию с гейтом значило бы молча выкинуть ссылку
+ * из админского сообщения ровно у тех импортов, где id сотрудника не пришёл.
  */
-async function backLinkUrl(memberId: string, uploaderId: string | null, infra: LiveInfra): Promise<string | null> {
-  if (!uploaderId) return null
+async function portalBackLink(memberId: string, infra: LiveInfra): Promise<string | null> {
   const domain = await getToken(memberId, infra.query).then(t => t?.domain).catch(() => null)
   return portalAppUrl(domain, LANDING_MARKET_CODE)
+}
+
+async function backLinkUrl(memberId: string, uploaderId: string | null, infra: LiveInfra): Promise<string | null> {
+  if (!uploaderId) return null
+  return portalBackLink(memberId, infra)
 }
 
 export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
@@ -403,7 +417,16 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
  * warning) or `freeform` (write a free-form position). Creating catalog products was removed
  * (too complex an operation for a multitenant import).
  */
-function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping, rest: (m: string) => Promise<SdkTransport | null>, infra: LiveInfra): CrmSyncDeps {
+/**
+ * Пер-джобовые зависимости crm-sync.
+ *
+ * ⚠ Экспортируется РАДИ ШВА, а не для внешних вызывающих: транспорт (`rest`) и инфраструктуру
+ * принимает параметрами, поэтому проводку можно прогнать на фейках. Без экспорта единственный путь
+ * сюда — `liveCrmSyncHandlerDeps`, который строит транспорт внутри себя и на тесте полез бы в сеть,
+ * то есть проводка осталась бы непроверяемой. Тот же приём, что у `notifyImportFailure` с её
+ * инъектируемым `opts.rest` (#385).
+ */
+export function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping, rest: (m: string) => Promise<SdkTransport | null>, infra: LiveInfra): CrmSyncDeps {
   const need = async (): Promise<SdkTransport> => {
     const t = await rest(memberId)
     if (!t) throw new Error('портал не авторизован (нет токена)')
@@ -418,6 +441,19 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
     // Reuse the job's transport instead of resolving a second one — same portal, same client.
     botIdMemo = await resolvePortalBotId(memberId, infra, async () => (await need()).call)
     return botIdMemo
+  }
+  // Адрес приложения на портале — мемо на джобу, тем же приёмом, что `botId` выше.
+  //
+  // ⚠ Мемо не украшение: на одном отказе адрес нужен ДВАЖДЫ — личному сообщению сотруднику
+  // (через `notifyImportFailure`) и сообщению в чат ошибок, — а каждый вызов читает строку портала
+  // из Postgres. Без мемо правка #385 добавляла второй SELECT на каждый отказ, ничего им не узнавая:
+  // домен один и тот же, портал тот же, обработка та же. `undefined` — «ещё не спрашивали»,
+  // `null` — «спросили, адреса нет» (домена нет или чтение упало); второе тоже кэшируется, иначе
+  // мёртвая база опрашивалась бы повторно ровно тогда, когда она мертва.
+  let appUrlMemo: string | null | undefined
+  const appUrl = async (): Promise<string | null> => {
+    if (appUrlMemo === undefined) appUrlMemo = await portalBackLink(memberId, infra)
+    return appUrlMemo
   }
   // Auto-create measure state (Q11): the portal's existing measures indexed once per job — codes
   // (seed the allocator) + title/symbol → code (FIND-before-create, so a unit already in the catalog
@@ -530,7 +566,9 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
       // All the reasons, not just the first: a document can miss both a currency and a VAT rate,
       // and telling the person one of them makes them fix it, re-upload and fail again on the other.
       // Reuses the resolver + mapping already resolved for this job (one client, one token load).
-      await notifyImportFailure(infra, memberId, jobId, messages.join('; ') || 'документ не удалось внести в CRM', { alsoErrorChat: false, rest, mapping })
+      // `appUrl` передаём уже разрешённым: то же значение нужно сообщению в чат ошибок ниже, и без
+      // передачи строка портала читалась бы из Postgres дважды на один отказ (#385).
+      await notifyImportFailure(infra, memberId, jobId, messages.join('; ') || 'документ не удалось внести в CRM', { alsoErrorChat: false, rest, mapping, appUrl: await appUrl() })
       // Deliver to the error chat (im.message.add, BB-neutralised). Best-effort:
       // a chat failure must not mask the underlying import error.
       // Claimed once per job, and only AFTER a transport exists — a redelivered job must not post
@@ -539,7 +577,16 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         try {
           const t = await rest(memberId)
           if (t && await claimJobErrorChat(memberId, jobId, jobRedis)) {
-            await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call, await botId(), console.warn)
+            // Хвост сообщения (#385): идентификатор задания — чтобы админ вообще мог найти этот
+            // импорт, ссылка — чтобы из чата был путь в приложение. Соседнее сообщение об отказе
+            // (`planFailureNotify`) несло `Задание:` всегда, это — не несло ничего.
+            await sendChatMessage(
+              mapping.errorChatId,
+              buildErrorMessage(supplierName, messages, { jobId, appUrl: await appUrl() }),
+              t.call,
+              await botId(),
+              console.warn
+            )
           }
         } catch { /* swallow — dashboard counter already bumped */ }
       }

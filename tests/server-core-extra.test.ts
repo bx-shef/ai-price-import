@@ -120,9 +120,11 @@ describe('token/lifetime boundaries', () => {
 describe('todoActivity deeper', () => {
   it('safeRelativePath blocks scheme/protocol-relative', () => {
     expect(safeRelativePath('/crm/deal/details/5/')).toBe('/crm/deal/details/5/')
-    expect(safeRelativePath('https://evil.com')).toBe('/crm/')
-    expect(safeRelativePath('//evil.com')).toBe('/crm/')
-    expect(safeRelativePath('javascript:alert(1)')).toBe('/crm/')
+    // #385: негодный путь → null, а не корень CRM. Живая ссылка под подписью «Открыть сделку»,
+    // ведущая в общий список, обещает конкретную карточку и приводит не туда.
+    expect(safeRelativePath('https://evil.com')).toBeNull()
+    expect(safeRelativePath('//evil.com')).toBeNull()
+    expect(safeRelativePath('javascript:alert(1)')).toBeNull()
   })
   it('entityOpenPath quote branch', () => {
     expect(entityOpenPath(7, 3)).toBe('/crm/quote/show/3/')
@@ -153,13 +155,48 @@ describe('todoActivity deeper', () => {
       advice: '[url=http://evil]совет[/url]',
       entityPath: '/crm/deal/details/5/'
     })
-    expect(body).toContain('［url=http://evil］')
     expect(body).toContain('［b］жирная［/b］')
     expect(body).not.toMatch(/\[url=http:\/\/evil\]/)
+    // #385: обезвреживание здесь ТО ЖЕ, что в чате, поэтому схема тоже ломается — иначе описание
+    // карточки было бы защищено слабее чата при том, что оно чувствительнее.
+    expect(body).not.toContain('http://evil')
+    expect(body).toContain('［url=http：//evil］')
   })
-  it('путь сущности проходит тот же SSRF-гард, что и остальные ссылки', () => {
+  // #385: голая ссылка из документа не должна становиться кликабельной в карточке клиента —
+  // разметки для этого не нужно, портал линкует `https://` и `www.` сам.
+  it('голая ссылка из документа не остаётся ссылкой в описании дела', () => {
+    const body = buildActivityBody({
+      supplierName: 'ООО Ромашка, оплатите тут https://evil.example/pay',
+      rowCount: 1,
+      warnings: ['перейдите на www.evil.example'],
+      entityPath: '/crm/deal/details/5/'
+    })
+    expect(body).not.toContain('https://evil.example')
+    expect(body).not.toContain('www.evil.example')
+  })
+  // #385: описание разбирает разметку блоками, и перенос строки из имени поставщика подделывал бы
+  // наши подписанные блоки; внутренние пути из вывода инструментов несут id портала и задания.
+  it('переводы строк и внутренние пути не уезжают в карточку', () => {
+    const body = buildActivityBody({
+      supplierName: 'ООО\n[B]Позиций:[/B] 999',
+      rowCount: 1,
+      warnings: ['pdftotext: /srv/uploads/member42/job-7.pdf сломан'],
+      entityPath: '/crm/deal/details/5/'
+    })
+    // Подделка блока обезврежена ДВАЖДЫ: скобки свёрнуты (строка не разметка) и перевод строки
+    // стал пробелом, поэтому текст поставщика остаётся ОДНОЙ строкой и не притворяется блоком.
+    // Само число «999» при этом законно остаётся видимым текстом — вырезать содержимое мы не
+    // обещаем и не должны.
+    expect(body).toContain('[B]Позиций:[/B] 1')
+    expect(body).toContain('[B]Поставщик:[/B] ООО ［B］Позиций:［/B］ 999')
+    expect(body.split('\n').filter(l => l.startsWith('[B]Позиций:[/B]'))).toHaveLength(1)
+    expect(body).not.toContain('/srv/uploads/member42')
+    expect(body).toContain('<путь>')
+  })
+  it('негодный путь сущности убирает блок целиком, а не ведёт в общий список', () => {
     const body = buildActivityBody({ rowCount: 1, warnings: [], entityPath: '//evil.com' })
-    expect(body).toContain('[URL=/crm/]')
+    expect(body).not.toContain('[URL=')
+    expect(body).not.toContain('Сделка:')
     expect(body).not.toContain('evil.com')
   })
 })
