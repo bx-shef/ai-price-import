@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Announcement } from '~/utils/announcement'
+import { deliveryNote } from '~/utils/announcementDelivery'
 import {
   DEFAULT_ANNOUNCEMENT_DAYS, MAX_ANNOUNCEMENT_CTA, MAX_ANNOUNCEMENT_IMAGE_BYTES,
   MAX_ANNOUNCEMENT_TEXT, MAX_ANNOUNCEMENT_TITLE
@@ -67,7 +68,12 @@ async function send(action: 'preview' | 'publish' | 'clear'): Promise<void> {
   problems.value = []
   message.value = ''
   try {
-    const r = await $fetch<{ preview?: Announcement, announcement?: Announcement, cleared?: boolean }>(
+    const r = await $fetch<{
+      preview?: Announcement
+      announcement?: Announcement
+      cleared?: boolean
+      broadcast?: { total: number, sent: number, failed: number, truncated: boolean } | null
+    }>(
       '/api/ops/announcement',
       { method: 'POST', body: { action, draft: draft.value, confirm: action === 'publish' } }
     )
@@ -77,10 +83,10 @@ async function send(action: 'preview' | 'publish' | 'clear'): Promise<void> {
     } else if (action === 'publish') {
       current.value = r?.announcement ?? null
       preview.value = null
-      message.value = 'Отправлено. Каждый сотрудник увидит объявление один раз.'
+      message.value = `Отправлено. Каждый сотрудник увидит объявление один раз. ${deliveryNote(r?.broadcast)}`
     } else {
       current.value = null
-      message.value = 'Объявление снято — новым сотрудникам оно больше не покажется.'
+      message.value = `Объявление снято — новым сотрудникам оно больше не покажется. ${deliveryNote(r?.broadcast)}`
     }
   } catch (e) {
     const data = (e as { data?: { error?: string, problems?: string[] } })?.data

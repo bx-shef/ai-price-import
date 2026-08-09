@@ -3,6 +3,12 @@ import { handleAnnouncementOp } from '../../utils/announcementOpsHandler'
 import { announcementRedis } from '../../utils/announcementRedis'
 import { clearAnnouncement, writeAnnouncement } from '../../utils/announcementStore'
 import { connectionOptions } from '../../queue/connection'
+import { MAX_BROADCAST_PORTALS, broadcastAnnouncement } from '../../utils/announcementBroadcast'
+import { shouldBroadcast } from '~/utils/announcementDelivery'
+import { makePortalSdkCall, sdkPortalDeps } from '../../utils/b24Sdk'
+import { listPortalStatus } from '../../utils/tokenStore'
+import { query } from '../../db/client'
+import { LANDING_MARKET_CODE } from '~/utils/landing'
 import { MAX_ANNOUNCEMENT_BODY_BYTES } from '~/config/announcement'
 
 // POST /api/ops/announcement — завести, посмотреть или снять объявление издателя (#469).
@@ -39,5 +45,46 @@ export default defineEventHandler(async (event) => {
     now: () => Date.now()
   })
   setResponseStatus(event, res.status)
+  // ⚠ Рассылка живого сигнала — ПОСЛЕ успешной записи и только для действий, которые меняют
+  // объявление (#478). До этого объявление доезжало лишь при открытии рабочего экрана, то есть у
+  // сотрудника с уже открытой вкладкой не появлялось вовсе.
+  //
+  // ⚠ Рассылка НЕ вправе завалить операцию: объявление уже записано и доедет запасным путём, а её
+  // отказ — строка в отчёте, а не ошибка. Но и молчать нельзя: молчаливо провалившаяся рассылка
+  // неотличима от «никто не открывал экран», и владелец ждал бы реакции на объявление, которого
+  // никто не получил. Поэтому сводка едет оператору в ответе.
+  //
+  // ⚠ Снятие объявления рассылается ТОЖЕ: иначе снятое продолжало бы висеть у всех, кто держит
+  // вкладку открытой, — то есть ровно у тех, ради кого сигнал и заводился. Уже ОТКРЫТОЕ окно при
+  // этом не закрывается: гасить его под руками у читающего человека хуже, чем дать дочитать.
+  // Условие — в чистой `shouldBroadcast`: инлайн в роуте его не покрывал ни один тест, а мутация
+  // «рассылать и на предпросмотр» превращала каждое нажатие «Проверить» в обход всех порталов.
+  if (shouldBroadcast(body?.action, res.status)) {
+    try {
+      const infra = sdkPortalDeps({
+        query,
+        clientId: process.env.B24_CLIENT_ID ?? '',
+        clientSecret: process.env.B24_CLIENT_SECRET ?? '',
+        encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
+        now: () => Date.now()
+      })
+      const broadcast = await broadcastAnnouncement({
+        // ⚠ Предел передаётся ЯВНО. У `listPortalStatus` свой дефолт (500), и он резал выборку
+        // РАНЬШЕ, чем рассылка успевала об этом узнать: признак «выборка обрезана» сравнивал длину
+        // уже урезанного списка со своим капом и потому не становился истинным никогда. Порталы
+        // сверх пятисот молча не получали бы сигнал, а оператор читал «доставлено всем».
+        // Берём на один больше капа — иначе «ровно кап» неотличимо от «обрезано».
+        listPortals: async () => (await listPortalStatus(query, MAX_BROADCAST_PORTALS + 1)).map(p => p.memberId),
+        callFor: async m => (await makePortalSdkCall(m, infra))?.call ?? null,
+        moduleId: String(process.env.NUXT_PUBLIC_B24_MARKET_CODE || LANDING_MARKET_CODE),
+        log: msg => console.info(msg)
+      })
+      return { ...(res.body as Record<string, unknown>), broadcast }
+    } catch {
+      // Читаем это как «разослать не удалось целиком» — например, база недоступна. Операция всё
+      // равно состоялась, поэтому отдаём тело как есть с явной пометкой, а не 500.
+      return { ...(res.body as Record<string, unknown>), broadcast: null }
+    }
+  }
   return res.body
 })
