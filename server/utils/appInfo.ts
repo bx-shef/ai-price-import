@@ -13,13 +13,18 @@ import type { RestCall } from './b24Rest'
  *
  * ⚠ Отказ — `null`, а не исключение: ссылка это удобство, а уведомление — суть. Сообщение о неудаче
  * обязано доехать даже если портал не ответил про приложение.
+ * ⚠ Путь отказа стал на этот вызов ДОЛЬШЕ, и это честнее сказать вслух: своего таймаута тут нет,
+ * границу задаёт транспорт SDK (30 с). То есть в худшем случае сообщение о неудачном импорте уйдёт
+ * на полминуты позже — но уйдёт.
  */
 export async function fetchAppId(call: RestCall): Promise<number | null> {
   try {
     const res = await call('app.info', {}) as { ID?: unknown } | null
     // Портал отдаёт `ID` то числом, то строкой — приводим сами и проверяем как целое положительное.
+    // ⚠ Верхняя граница зеркалит `portalAppUrl`: `Number.isInteger(1e21)` истинно, а печатается это
+    // как `1e+21` — то есть ссылка выглядела бы рабочей и вела в никуда.
     const id = Number((res as { ID?: unknown } | null)?.ID)
-    return Number.isInteger(id) && id > 0 ? id : null
+    return Number.isInteger(id) && id > 0 && id <= Number.MAX_SAFE_INTEGER ? id : null
   } catch {
     return null
   }

@@ -82,12 +82,20 @@ export function marketDetailPath(code: string): string | null {
  * Returns null when the portal host or the app id is unknown — the caller then sends the text
  * without a link. A broken link is worse than no link: it promises a way back and leads nowhere.
  */
-export function portalAppUrl(portalDomain: string | undefined | null, appId: number | null | undefined): string | null {
+export function portalAppUrl(portalDomain: string | undefined | null, appId: number | string | null | undefined): string | null {
   const host = portalHost(portalDomain)
   // ⚠ Идентификатор проверяется как ЦЕЛОЕ ПОЛОЖИТЕЛЬНОЕ, а не «непустое»: портал отдаёт его строкой
-  // или числом, а `0`/`NaN`/дробь дали бы адрес, который выглядит рабочим и ведёт в никуда.
+  // или числом (отсюда и `string` в сигнатуре — тип обязан говорить то же, что делает код), а
+  // `0`/`NaN`/дробь дали бы адрес, который выглядит рабочим и ведёт в никуда.
+  // ⚠ Верхняя граница — НЕ педантизм: `Number.isInteger(1e21)` истинно, но в шаблон такое число
+  // подставляется как `1e+21`, то есть получается ссылка, которая выглядит рабочей и ведёт в
+  // никуда — ровно то, что здесь запрещено (находка проверки безопасности). `MAX_SAFE_INTEGER`
+  // отсекает экспоненциальную запись по построению: до него все целые печатаются цифрами.
+  // ⚠ Проверка ДУБЛИРУЕТ ту, что уже сделала `fetchAppId`, и это намеренно: у функции есть и
+  // другие вызывающие, а «значение уже кем-то проверено» — свойство сегодняшнего кода, не гарантия.
   const id = Number(appId)
-  return host && Number.isInteger(id) && id > 0 ? `https://${host}/marketplace/app/${id}/` : null
+  const ok = Number.isInteger(id) && id > 0 && id <= Number.MAX_SAFE_INTEGER
+  return host && ok ? `https://${host}/marketplace/app/${id}/` : null
 }
 
 /**
