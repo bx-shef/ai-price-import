@@ -202,5 +202,23 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, isAdmin, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
+  /** Close via the SDK's own slider path (`slider.closeSliderAppPage`, #477). */
+  //
+  // ⚠ Заведён РАДИ СТЕНДА, а не потому, что нужен продукту: в коде мы закрываем слайдер через
+  // `parent.closeApplication()`, а в справочнике и в заказе назван `closeSliderAppPage()`. В SDK
+  // (`dist/esm/frame/parent.mjs` и `frame/slider.mjs`, проверено по исходнику 09.08.2026) оба шлют
+  // ОДНУ И ТУ ЖЕ команду `MessageCommands.closeApplication` с ОДИНАКОВЫМИ параметрами
+  // (`isSafely: false`) — то есть разницы быть не должно вовсе.
+  // ⚠ Первая редакция этого комментария писала «отличаются только флагом `isSafely`» — неверно, и
+  // поймано разбором: флаг у них совпадает. Ошибка ровно того рода, ради которой стенд и собран,
+  // причём допущенная в комментарии К САМОМУ СТЕНДУ. «Разницы быть не должно» остаётся выводом из
+  // чтения исходника, а не наблюдением, — стенд существует, чтобы проверить это глазами.
+  async function closeSliderViaSdk(): Promise<void> {
+    const f = await init()
+    try {
+      await f?.slider.closeSliderAppPage()
+    } catch { /* not framed → nothing to close */ }
+  }
+
+  return { init, get, auth, isAdmin, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider, closeSliderViaSdk }
 }
