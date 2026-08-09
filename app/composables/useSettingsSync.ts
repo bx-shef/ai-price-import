@@ -14,6 +14,9 @@ import { ANNOUNCEMENT_PULL_COMMAND } from '~/utils/announcementPull'
 // pull-сервера портала (может быть выключен), и всё это вырождается в no-op.
 // ⚠ Pull channel semantics (module id / command routing) are portal-specific — verify on a live portal.
 
+/** Предел ожидания рассылки — дальше закрываем форму, не заставляя админа ждать портал. */
+const NOTIFY_TIMEOUT_MS = 3000
+
 /** App code as registered on the portal = the pull `MODULE_ID` / subscribe `moduleId`. */
 function appModuleId(): string {
   return String(useRuntimeConfig().public.b24MarketCode || LANDING_MARKET_CODE)
@@ -58,13 +61,24 @@ export function useSettingsSync() {
   }
 
   /** Tell other open instances to reload settings. Best-effort — a pull failure never blocks a save. */
+  //
+  // ⚠ Ожидание ОГРАНИЧЕНО по времени. Вызывающий ждёт эту рассылку перед закрытием слайдера (иначе
+  // сообщение теряется вместе с фреймом), и без предела медленный портал держал бы админа перед
+  // формой, которая уже сказала «Сохранено ✓», но не закрывается — «сохранил и завис». Рассылка
+  // best-effort: не успела — соседи узнают при следующем открытии экрана, это дешевле зависания.
   async function notifyReload(): Promise<void> {
     try {
       await init()
       const frame = get()
       if (!frame) return degrade('not-framed')
       // actions.v2.call.make — the non-deprecated replacement for frame.callMethod() (removed in SDK 2.0).
-      await frame.actions.v2.call.make({ method: 'pull.application.event.add', params: buildSettingsReloadEvent(appModuleId()) })
+      const sent = frame.actions.v2.call.make({ method: 'pull.application.event.add', params: buildSettingsReloadEvent(appModuleId()) })
+      const timedOut = Symbol('timeout')
+      const race = await Promise.race([
+        sent.then(() => 'ok' as const),
+        new Promise<typeof timedOut>(resolve => setTimeout(() => resolve(timedOut), NOTIFY_TIMEOUT_MS))
+      ])
+      if (race === timedOut) return degrade('send-failed')
     } catch {
       // pull unavailable / not framed → соседние вкладки не обновятся; сохранение уже прошло.
       degrade('send-failed')
