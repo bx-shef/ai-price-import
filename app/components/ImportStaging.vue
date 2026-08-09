@@ -8,7 +8,7 @@ import { MAX_ITEMS } from '~/utils/extractedDocument'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
 import { readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
-import { adoptDefaultTarget } from '~/utils/settingsAdopt'
+import { targetInvalidMessage, type TargetInvalidReason } from '~/utils/targetValidity'
 
 // Batch import staging (owner rework, round 2): pick files, choose ONE target for the whole batch,
 // press «Импортировать». The button LOCKS the page (via update:busy), uploads the files, then WAITS
@@ -59,6 +59,9 @@ const emit = defineEmits<{ 'update:busy': [boolean] }>()
 /** «10 000», а не «10000»: длинное число без разделителя читается как случайный набор цифр. */
 const maxItemsHuman = MAX_ITEMS.toLocaleString('ru-RU')
 
+// Сообщения о негодном маршруте — тостом b24ui (layout `clear` держит `B24App`, он их и рендерит).
+const toast = useToast()
+
 const staged = ref<StagedFile[]>([])
 let nextId = 1
 const importing = ref(false)
@@ -89,9 +92,6 @@ watch(target, (t) => {
 })
 // Set by «Отменить»; checked between uploads and inside the wait loop.
 const cancelled = ref(false)
-// Правка настроек, прилетевшая ВО ВРЕМЯ пачки: применяется на её спаде (#443). Отложить, а не
-// выбросить — иначе рассылку теряет ровно тот, кто в этот момент работает.
-const pendingSettings = ref(false)
 
 /** Stable idempotency key per staged file → reused across retries so a re-upload can't create a second
  *  CRM entity (the server keys the job on it). ALWAYS a valid v4 UUID (uuidv4 has non-crypto fallbacks) —
@@ -317,47 +317,26 @@ async function startImport(): Promise<void> {
         s.error = 'Отправка прервалась — нажмите «Импортировать» ещё раз.'
       }
     }
-    // Правка настроек, пришедшая во время прогона, применяется ЗДЕСЬ — после снятия `importing`,
-    // иначе `adoptDefaultTarget` снова увидит идущую пачку и отложит её во второй раз навсегда.
-    if (pendingSettings.value) {
-      pendingSettings.value = false
-      adoptSettingsTarget()
-    }
   }
 }
 
 /** «Отменить»: stop uploading the rest and stop holding the page. Already-sent jobs finish on the
  *  server — see the run notice. */
+/**
+ * Маршрут, выбранный на вкладке, перестал существовать (#488): пикер уже увёл выбор в «Авто», наше
+ * дело — СКАЗАТЬ об этом. Молчаливая замена запрещена: человек увидел бы в поле другое значение и
+ * не понял, почему, а следующая пачка ушла бы не туда, куда он рассчитывал.
+ */
+function onTargetInvalid(reason: TargetInvalidReason): void {
+  toast.add({ title: 'Цель импорта изменена', description: targetInvalidMessage(reason), color: 'warning' })
+}
+
 function cancelImport(): void {
   cancelled.value = true
   // The sent jobs keep running server-side and their results still land below — make sure the
   // parent's poll is alive to show them (it may have self-stopped while we were waiting).
   void props.refreshNow()
 }
-
-/**
- * Принять событие «настройки изменились» (#443).
- *
- * Родитель зовёт это ПОСЛЕ перечитывания настроек. Само решение — в чистой `adoptDefaultTarget`.
- *
- * ⚠ Выбор вкладки сбрасывается на «Авто (по правилам)», а НЕ подменяется целью по умолчанию:
- * подставленная цель уехала бы с файлом как ручной выбор, а он на сервере бьёт выше правил
- * маршрутизации — админ выключал бы собственные правила у всего портала одним сохранением
- * (разбор PR #476). Подробности — в шапке `settingsAdopt.ts`.
- *
- * ⚠ Пришедшее во время пачки ОТКЛАДЫВАЕТСЯ, а не выбрасывается: правку теряет ровно тот сотрудник,
- * который сейчас работает, то есть тот, ради кого её и рассылали.
- */
-function adoptSettingsTarget(): void {
-  if (!adoptDefaultTarget({ importing: importing.value }).apply) {
-    pendingSettings.value = true
-    return
-  }
-  // Присваивание само пишет память вкладки (watch выше) — второй записи здесь быть не должно.
-  target.value = null
-}
-
-defineExpose({ adoptSettingsTarget })
 </script>
 
 <template>
@@ -491,6 +470,7 @@ defineExpose({ adoptSettingsTarget })
         <TargetPicker
           v-model:target="target"
           :disabled="importing"
+          @invalid="onTargetInvalid"
         />
       </div>
       <B24Button

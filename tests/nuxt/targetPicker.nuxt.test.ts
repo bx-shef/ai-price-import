@@ -109,3 +109,36 @@ describe('TargetPicker: недоступный тип на портале (#269)
     }
   })
 })
+
+// #488. Исчезнувшие направление и стадию раньше дочищали МОЛЧА: поле показывало другое значение без
+// объяснения, а следующая пачка уходила не туда, куда человек рассчитывал. Теперь пикер уводит выбор
+// в «Авто» и ОБЪЯВЛЯЕТ причину наверх — там её показывают сообщением.
+//
+// ⚠ Гарантия ПОВЕДЕНЧЕСКАЯ, и это выяснилось разбором: мутации «убрать вызов `failToAuto`» и
+// «перенести проверку ПОСЛЕ тихой дочистки» проходили бесследно — про этот путь не было ни одного
+// теста, вся гарантия жила в комментариях.
+describe('TargetPicker: исчезнувший маршрут объявляется, а не дочищается молча (#488)', () => {
+  it('удалённое НАПРАВЛЕНИЕ → «Авто» + событие с причиной', async () => {
+    // У сделки на портале направления 0 и 5; сохранено 42 — его удалили.
+    const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 2, categoryId: 42 } } })
+    await tick()
+    await tick()
+    expect(w.emitted('invalid')?.[0]?.[0], 'причина не объявлена — человек не узнает, почему сменилась цель').toBe('category')
+    expect(lastTarget(w), 'выбор обязан уехать в «Авто»').toBeNull()
+  })
+
+  it('удалённая СТАДИЯ → «Авто» + событие с причиной', async () => {
+    const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 2, categoryId: 5, stageId: 'GONE' } } })
+    await tick()
+    await tick()
+    expect(w.emitted('invalid')?.[0]?.[0]).toBe('stage')
+    expect(lastTarget(w)).toBeNull()
+  })
+
+  it('годный маршрут молчит — ложная тревога хуже задержки', async () => {
+    const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 2, categoryId: 5, stageId: 'NEW' } } })
+    await tick()
+    await tick()
+    expect(w.emitted('invalid')).toBeUndefined()
+  })
+})
