@@ -57,6 +57,10 @@ onMounted(async () => {
 
 /** Explicit save (starter Save/Cancel pattern — no autosave). On success, notify other open
  *  instances to reload (pull `reload.options`), then close per how settings was opened. */
+/** Сколько ждём отправку рассылки перед закрытием слайдера — см. разбор в `saveAndClose`. */
+const NOTIFY_WAIT_MS = 3000
+/** Идёт закрытие с ожиданием рассылки: форма на это время выключена. */
+const closing = ref(false)
 async function saveAndClose(): Promise<void> {
   await save()
   if (error.value) return // save() sets error; keep the form open so the admin can retry
@@ -64,9 +68,23 @@ async function saveAndClose(): Promise<void> {
   // этот REST-вызов: при `void` успел браузер отправить POST — рассылка ушла, не успел — её не
   // получил НИКТО, а `console.warn` об отказе печатался бы в уже мёртвый фрейм. Пока событие
   // означало «обнови баннер», потеря стоила мало; теперь оно означает «у всех стало как настроил
-  // админ» (#443), и молча терять его нельзя. Метод best-effort и не бросает — ожидание лишь
-  // отодвигает закрытие на один REST-вызов.
-  await notifyReload()
+  // админ» (#443), и молча терять его нельзя.
+  //
+  // ⚠ НО ЖДЁМ ОГРАНИЧЕННО. `notifyReload` не бросает, зато идёт через axios SDK: таймаут 30 с и до
+  // трёх ретраев на сетевой ошибке — мёртвый pull-эндпоинт держал бы слайдер открытым до двух
+  // минут. Цель ожидания не «дождаться ответа», а «дать браузеру отправить POST»; на это хватает
+  // секунд, и дальше закрываемся независимо от исхода.
+  //
+  // ⚠ И ЗАКРЫВАЕМ ФОРМУ НА ВРЕМЯ ОЖИДАНИЯ. `saving` к этому моменту уже `false`, поэтому без своего
+  // флага «Сохранить» снова доступна и подписана как обычно (рядом горит ✓ «Сохранено», а слайдер
+  // просто стоит), а «Отмена» уничтожает фрейм ПОСРЕДИ незавершённого запроса — то есть возвращает
+  // ровно ту потерю рассылки, ради устранения которой ожидание и заведено, только руками человека.
+  closing.value = true
+  try {
+    await Promise.race([notifyReload(), new Promise(resolve => setTimeout(resolve, NOTIFY_WAIT_MS))])
+  } finally {
+    closing.value = false
+  }
   await closeAfter()
 }
 /** Cancel: close per how settings was opened (slider → close overlay, in-frame → back to /app); as a
@@ -783,13 +801,13 @@ const ARTICLE_KIND_ITEMS = [
               <B24Button
                 color="air-primary-success"
                 :loading="saving"
-                :disabled="saving || loading || !isAdmin"
+                :disabled="saving || closing || loading || !isAdmin"
                 :label="saving ? 'Сохраняем…' : 'Сохранить'"
                 @click="saveAndClose"
               />
               <B24Button
                 color="air-tertiary"
-                :disabled="saving"
+                :disabled="saving || closing"
                 label="Отмена"
                 @click="cancel"
               />

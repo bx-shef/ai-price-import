@@ -179,6 +179,14 @@ async function onCategory(v: unknown): Promise<void> {
   const t: { categoryId?: number } = { categoryId: categoryId.value }
   catPicker.setCategory(t, v)
   categoryId.value = t.categoryId
+  // ⚠ Стадию чистим ДО `emit()`, как это делает `chooseEntity`. Порядок «эмитим, потом чистим»
+  // выпускал наружу цель со стадией ПРЕЖНЕЙ воронки, а после появления вотчера модели он же дал
+  // самовозбуждение: вотчер видел в модели стадию, которой во внутреннем состоянии уже нет,
+  // считал смену внешней, отменял `seq++`-ом свой же `reloadStages` и запускал каскад заново —
+  // два лишних вызова к порталу на каждый выбор направления. Инвариант «сменил направление →
+  // стадия сброшена» держался при этом не построением, а тем, что id стадий сделки выглядят как
+  // `C5:NEW` и не переживают `reconcileStage`.
+  stageId.value = undefined
   emit() // commit the direction immediately (stage cascade may still be loading)
   await reloadStages(++seq)
 }
