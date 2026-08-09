@@ -162,21 +162,29 @@ export function useB24() {
    *  with place/width/title). Returns false when not framed / on SDK error so the caller can
    *  fall back to plain navigation.
    *
-   *  Slider settings ride on `bx24_`-prefixed keys, and we send ONLY the two the b24jssdk reference
-   *  documents: `bx24_width` and `bx24_title` (the title is also reflected to the browser tab). The
-   *  coloured header badge `bx24_label` was carried over from a sample and is in no reference — it was
-   *  hard-coded to a colour of its own and no call site ever passed it, so it shipped as dead weight
-   *  that read from the signature like a supported feature. */
+   *  We pass `bx24_width` + `bx24_title` and nothing else. NOT because the platform has nothing else:
+   *  the `BX24.openApplication` reference — the page the SDK's own `@link` points at, since
+   *  `openSliderAppPage` forwards to `MessageCommands.openApplication` — documents FOUR keys
+   *  (`bx24_width`, `bx24_label`, `bx24_title`, `bx24_leftBoundary`). The coloured header badge
+   *  `bx24_label` is supported and can come back any time; it was dropped because it was DEAD — no
+   *  call site ever passed it in any revision, so the signature advertised a feature nobody used. The
+   *  reference also warns that `bgColor`/`text` may not apply in some contexts, which makes the badge
+   *  a poor thing to reintroduce without a live check.
+   *
+   *  `width` is REQUIRED on purpose. A default would hide the decision that actually matters: these
+   *  pages are laid out against Tailwind's `sm` breakpoint (640px) and capped at `max-w-2xl` (672px),
+   *  so the slider width picks a LAYOUT CLASS, not just a size — below 640 the desktop slider silently
+   *  renders the phone variant. A forgotten argument must not make that choice silently. */
   async function openAppSlider(
     place: string,
-    opts: { width?: number, title?: string } = {}
+    opts: { width: number, title?: string }
   ): Promise<boolean> {
     const f = await init()
     if (!f) return false
     try {
       await f.slider.openSliderAppPage({
         place,
-        bx24_width: opts.width ?? 900,
+        bx24_width: opts.width,
         ...(opts.title ? { bx24_title: opts.title } : {})
       })
       return true
