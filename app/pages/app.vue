@@ -16,7 +16,6 @@ import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
 import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMode } from '~/utils/appLaunchMode'
 import { formatMinutes } from '~/utils/savings'
-import type { TargetRef } from '~/types/mapping'
 import { APP_NAME } from '~/config/appIdentity'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
@@ -145,7 +144,7 @@ const { subscribeReload } = useSettingsSync()
 // СНЯТЬ, а не просто заглушить обработчик: сама подписка поднимает websocket, и он висел бы вторым —
 // рядом с тем, что поднимает открытый слайдер. Ровно то удвоение, ради которого лаунчер и делался.
 // Ссылка на карточку загрузки — по событию настроек ей передаётся новая цель по умолчанию.
-const stagingRef = useTemplateRef<{ adoptSettingsTarget: (t: TargetRef | null | undefined) => void }>('stagingRef')
+const stagingRef = useTemplateRef<{ adoptSettingsTarget: () => void }>('stagingRef')
 const unsubscribeReload = subscribeReload(async () => {
   if (launch.value === 'launcher') return
   // ⚠ Тело обёрнуто в try/catch, и это не перестраховка: подписчик зовёт обработчик БЕЗ `await` и
@@ -167,7 +166,7 @@ const unsubscribeReload = subscribeReload(async () => {
     // ⚠ `?.` молчит намеренно: карточки загрузки нет на экране настройки и на пусковой странице, и
     // применять новую цель там просто некуда — при следующем монтировании она стартует с «Авто»,
     // то есть с тем же исходом.
-    stagingRef.value?.adoptSettingsTarget(mapping.value.defaultTarget)
+    stagingRef.value?.adoptSettingsTarget()
   } catch {
     // Молча: синхронизация — удобство, а не действие, которого человек ждёт. Отказ самой загрузки
     // настроек уже отражён в состоянии экрана (`loadError`), второй раз о нём сообщать нечем.
@@ -223,11 +222,20 @@ onMounted(async () => {
   if (launch.value === 'launcher') {
     // Базовый фрейм — только пусковая страница. Опрос статусов, метрики и настройки здесь НЕ
     // поднимаем: иначе они крутились бы одновременно и тут, и в открытом слайдере.
-    unsubscribeReload()
     // Автооткрытие — не чаще раза в окно (страховка от цикла); человек всегда может нажать кнопку.
     // Если окно уже открывали только что — просто показываем кнопку, ничего не поднимая.
-    if (!canAutoOpenMain(lastMainSliderAt(), Date.now())) return
-    if (await openMain()) return
+    // ⚠ Подписка снимается ТОЛЬКО когда пусковая страница действительно остаётся пусковой. Прежде
+    // её снимали ПЕРЕД попыткой открыть слайдер, и на портале, где слайдеры не открываются, экран
+    // уходил в рабочий режим с навсегда мёртвым каналом: правка настроек не доезжала никогда, а
+    // выглядело это как «push не работает» (разбор PR #476).
+    if (!canAutoOpenMain(lastMainSliderAt(), Date.now())) {
+      unsubscribeReload()
+      return
+    }
+    if (await openMain()) {
+      unsubscribeReload()
+      return
+    }
     // Слайдер не открылся — не оставляем человека на мёртвой странице, работаем как раньше.
     launch.value = 'work'
   }

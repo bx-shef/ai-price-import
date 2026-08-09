@@ -36,7 +36,7 @@ describe('#443: событие настроек меняет содержимо�
     // Без этого вызова событие снимало бы только баннер «сначала настройте» — узкая цель, ради
     // которой механизм и делался, и которая перестала быть достаточной.
     const page = code('../../app/pages/app.vue')
-    expect(page).toMatch(/stagingRef\.value\?\.adoptSettingsTarget\(mapping\.value\.defaultTarget\)/)
+    expect(page).toMatch(/stagingRef\.value\?\.adoptSettingsTarget\(\)/)
   })
 
   it('карточка загрузки действительно отдаёт этот метод наружу', () => {
@@ -45,7 +45,7 @@ describe('#443: событие настроек меняет содержимо�
     const staging = code('../../app/components/ImportStaging.vue')
     expect(staging).toMatch(/defineExpose\(\{ adoptSettingsTarget \}\)/)
     // И решение принимает ЧИСТОЕ правило, а не переписанное здесь условие.
-    expect(staging).toMatch(/adoptDefaultTarget\(\{ importing: importing\.value, defaultTarget \}\)/)
+    expect(staging).toMatch(/adoptDefaultTarget\(\{ importing: importing\.value \}\)/)
   })
 })
 

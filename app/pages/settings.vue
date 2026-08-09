@@ -60,7 +60,10 @@ onMounted(async () => {
 async function saveAndClose(): Promise<void> {
   await save()
   if (error.value) return // save() sets error; keep the form open so the admin can retry
-  void notifyReload()
+  // ⚠ ЖДЁМ рассылку до закрытия: `closeAfter()` уничтожает фрейм, из которого она отправляется, и
+  // `void` означал гонку — сообщение соседям терялось тем чаще, чем быстрее закрывался слайдер
+  // (разбор PR #476). `notifyReload` не бросает: канал best-effort, отказ он объявляет сам.
+  await notifyReload()
   await closeAfter()
 }
 /** Cancel: close per how settings was opened (slider → close overlay, in-frame → back to /app); as a
