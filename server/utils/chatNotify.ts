@@ -110,11 +110,38 @@ export function buildSuccessMessage(s: SuccessSummary, portalDomain?: string): s
   return lines.join('\n')
 }
 
-/** Build the error chat message (BB-safe). */
-export function buildErrorMessage(supplierName: string | undefined, messages: string[]): string {
+export interface ErrorMessageContext {
+  /** Job id — the admin's only handle for looking the failure up (there is no server-side job list). */
+  jobId?: string | null
+  /** Absolute app URL on the PORTAL, when known. Never our own host — see `portalAppUrl` (#385). */
+  appUrl?: string | null
+}
+
+/**
+ * Build the error chat message (BB-safe).
+ *
+ * ⚠ Хвост — «Задание» и ссылка — появился при сплошном отсмотре сообщений (#385), и это не
+ * украшение. Сообщений об отказе в чат ошибок **два**: это (жёсткая ошибка crm-sync) и соседнее из
+ * `planFailureNotify`. Второе всегда несло `Задание: <id>`, первое — ничего, поэтому у половины
+ * отказов админ читал «Импорт не выполнен» и не имел ни идентификатора, чтобы найти этот импорт,
+ * ни пути в приложение, чтобы что-то сделать. Разница была невидима: оба сообщения выглядят
+ * одинаково законченными.
+ *
+ * ⚠ Ссылка ставится ТОЛЬКО когда адрес известен, и `portalAppUrl` строит его от домена ПОРТАЛА.
+ * Неизвестен ⇒ строки нет вовсе: мёртвая ссылка обещает путь и никуда не ведёт — ровно тот дефект,
+ * с которого #385 начался. Адрес всё равно проходит `neutralizeBb`: `]` внутри закрыл бы тег
+ * раньше времени, и остаток строки отрисовался бы как разметка под нашей подписью.
+ */
+export function buildErrorMessage(
+  supplierName: string | undefined,
+  messages: string[],
+  ctx: ErrorMessageContext = {}
+): string {
   const who = (supplierName ? chatSafeText(supplierName, MAX_CHAT_FILE_NAME) : '') || 'документ'
   const lines = [`⛔ Импорт не выполнен: ${who}`]
   for (const m of messages.slice(0, 20)) lines.push(`• ${chatSafeText(m, MAX_CHAT_REASON)}`)
+  if (ctx.jobId) lines.push(`Задание: ${chatSafeText(ctx.jobId, 64)}`)
+  if (ctx.appUrl) lines.push(`[URL=${neutralizeBb(ctx.appUrl)}]открыть приложение[/URL]`)
   return lines.join('\n')
 }
 

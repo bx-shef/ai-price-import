@@ -333,14 +333,22 @@ export async function notifyImportFailure(
  *      the document failed, with no log and no counter. Measured on a fake query that failed only
  *      this statement: zero messages sent, and the retry sent nothing either — the right to speak
  *      was already spent.
- *   2. It is skipped when there is no personal recipient: only the personal message carries the
- *      link (the error chat gets a job id), so reading the portal row for the other branch was a
- *      query per notification that nothing consumed.
+ *   2. `backLinkUrl` пропускает чтение, когда личного получателя нет: у `planFailureNotify` ссылку
+ *      несёт ТОЛЬКО личное сообщение, и без него запрос к базе не потреблял никто.
+ *
+ * ⚠ Гейт из п. 2 остаётся именно у `backLinkUrl`, а не у `portalBackLink`: у сообщения в чат ошибок
+ * (`buildErrorMessage`) получатель другой — там ссылка нужна независимо от того, известен ли
+ * загрузивший (#385). Свалить оба вызова в одну функцию с гейтом значило бы молча выкинуть ссылку
+ * из админского сообщения ровно у тех импортов, где id сотрудника не пришёл.
  */
-async function backLinkUrl(memberId: string, uploaderId: string | null, infra: LiveInfra): Promise<string | null> {
-  if (!uploaderId) return null
+async function portalBackLink(memberId: string, infra: LiveInfra): Promise<string | null> {
   const domain = await getToken(memberId, infra.query).then(t => t?.domain).catch(() => null)
   return portalAppUrl(domain, LANDING_MARKET_CODE)
+}
+
+async function backLinkUrl(memberId: string, uploaderId: string | null, infra: LiveInfra): Promise<string | null> {
+  if (!uploaderId) return null
+  return portalBackLink(memberId, infra)
 }
 
 export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
@@ -539,7 +547,16 @@ function liveCrmSyncDeps(memberId: string, jobId: string, mapping: PortalMapping
         try {
           const t = await rest(memberId)
           if (t && await claimJobErrorChat(memberId, jobId, jobRedis)) {
-            await sendChatMessage(mapping.errorChatId, buildErrorMessage(supplierName, messages), t.call, await botId(), console.warn)
+            // Хвост сообщения (#385): идентификатор задания — чтобы админ вообще мог найти этот
+            // импорт, ссылка — чтобы из чата был путь в приложение. Соседнее сообщение об отказе
+            // (`planFailureNotify`) несло `Задание:` всегда, это — не несло ничего.
+            await sendChatMessage(
+              mapping.errorChatId,
+              buildErrorMessage(supplierName, messages, { jobId, appUrl: await portalBackLink(memberId, infra) }),
+              t.call,
+              await botId(),
+              console.warn
+            )
           }
         } catch { /* swallow — dashboard counter already bumped */ }
       }
