@@ -3,7 +3,8 @@ import { handleAnnouncementOp } from '../../utils/announcementOpsHandler'
 import { announcementRedis } from '../../utils/announcementRedis'
 import { clearAnnouncement, writeAnnouncement } from '../../utils/announcementStore'
 import { connectionOptions } from '../../queue/connection'
-import { broadcastAnnouncement } from '../../utils/announcementBroadcast'
+import { MAX_BROADCAST_PORTALS, broadcastAnnouncement } from '../../utils/announcementBroadcast'
+import { shouldBroadcast } from '~/utils/announcementDelivery'
 import { makePortalSdkCall, sdkPortalDeps } from '../../utils/b24Sdk'
 import { listPortalStatus } from '../../utils/tokenStore'
 import { query } from '../../db/client'
@@ -56,8 +57,9 @@ export default defineEventHandler(async (event) => {
   // ⚠ Снятие объявления рассылается ТОЖЕ: иначе снятое продолжало бы висеть у всех, кто держит
   // вкладку открытой, — то есть ровно у тех, ради кого сигнал и заводился. Уже ОТКРЫТОЕ окно при
   // этом не закрывается: гасить его под руками у читающего человека хуже, чем дать дочитать.
-  const changed = res.status < 400 && (body?.action === 'publish' || body?.action === 'clear')
-  if (changed) {
+  // Условие — в чистой `shouldBroadcast`: инлайн в роуте его не покрывал ни один тест, а мутация
+  // «рассылать и на предпросмотр» превращала каждое нажатие «Проверить» в обход всех порталов.
+  if (shouldBroadcast(body?.action, res.status)) {
     try {
       const infra = sdkPortalDeps({
         query,
@@ -67,7 +69,12 @@ export default defineEventHandler(async (event) => {
         now: () => Date.now()
       })
       const broadcast = await broadcastAnnouncement({
-        listPortals: async () => (await listPortalStatus(query)).map(p => p.memberId),
+        // ⚠ Предел передаётся ЯВНО. У `listPortalStatus` свой дефолт (500), и он резал выборку
+        // РАНЬШЕ, чем рассылка успевала об этом узнать: признак «выборка обрезана» сравнивал длину
+        // уже урезанного списка со своим капом и потому не становился истинным никогда. Порталы
+        // сверх пятисот молча не получали бы сигнал, а оператор читал «доставлено всем».
+        // Берём на один больше капа — иначе «ровно кап» неотличимо от «обрезано».
+        listPortals: async () => (await listPortalStatus(query, MAX_BROADCAST_PORTALS + 1)).map(p => p.memberId),
         callFor: async m => (await makePortalSdkCall(m, infra))?.call ?? null,
         moduleId: String(process.env.NUXT_PUBLIC_B24_MARKET_CODE || LANDING_MARKET_CODE),
         log: msg => console.info(msg)

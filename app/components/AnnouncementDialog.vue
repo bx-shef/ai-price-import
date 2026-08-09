@@ -2,6 +2,7 @@
 import { createReusableTemplate, useMediaQuery } from '@vueuse/core'
 import { useAnnouncement } from '~/composables/useAnnouncement'
 import { useSettingsSync } from '~/composables/useSettingsSync'
+import { ANNOUNCEMENT_CHECK_JITTER_MS } from '~/utils/announcementPull'
 
 // Объявление издателя (#469): на компьютере — модальное окно, на телефоне — шторка снизу.
 //
@@ -43,7 +44,12 @@ void check()
 // следующем открытии экрана. Живой сигнал ускоряет доставку, а не заменяет её.
 const { subscribeAnnouncement } = useSettingsSync()
 subscribeAnnouncement(() => {
-  void check()
+  // ⚠ СЛУЧАЙНАЯ ЗАДЕРЖКА перед запросом, и это не украшение. Сигнал получают ВСЕ сотрудники ВСЕХ
+  // порталов одновременно — момент выбирает издатель, — а запрос за объявлением не бесплатный: он
+  // проверяет фрейм-токен, то есть идёт в базу и делает исходящий вызов к порталу. Без разброса
+  // штатная публикация сама себе устраивала бы всплеск на самом дорогом пути ровно в одну секунду.
+  // Объявление — не срочность: несколько секунд разницы человек не заметит, а всплеска не будет.
+  setTimeout(() => void check(), Math.floor(Math.random() * ANNOUNCEMENT_CHECK_JITTER_MS))
 })
 
 /** Ниже `sm` (640px) — телефон и мобильное приложение портала. */

@@ -5,11 +5,13 @@ import { LANDING_MARKET_CODE } from '~/utils/landing'
 import { SETTINGS_RELOAD_COMMAND, buildSettingsReloadEvent } from '~/utils/settingsSync'
 import { ANNOUNCEMENT_PULL_COMMAND } from '~/utils/announcementPull'
 
-// Cross-instance settings sync (pattern from bitrix24/b24-ai-starter). After an admin saves settings,
-// `notifyReload()` fires `pull.application.event.add` on the app's pull channel; other open instances
-// subscribed via `subscribeReload()` re-read settings live — so a second admin's form doesn't overwrite
-// with stale values. Both sides are BEST-EFFORT and never throw: the send is a plain REST call, and the
-// receive needs the portal's pull server (may be off / unavailable), so it degrades to a no-op.
+// ОБЩАЯ МАШИНЕРИЯ PULL-КАНАЛА портала. Изначально это была только синхронизация настроек (отсюда имя
+// файла и типов), но с #478 через ту же трубу ходит и сигнал «проверь объявление издателя» — каналов
+// два, труба одна:
+//   • `reload.options`     — админ сохранил настройки, шлёт САМ ПОРТАЛ из фрейма (#443);
+//   • `announcement.check` — издатель опубликовал объявление, шлёт НАШ СЕРВЕР всем порталам (#478).
+// Обе стороны BEST-EFFORT и никогда не бросают: отправка — обычный REST-вызов, приём требует
+// pull-сервера портала (может быть выключен), и всё это вырождается в no-op.
 // ⚠ Pull channel semantics (module id / command routing) are portal-specific — verify on a live portal.
 
 /** App code as registered on the portal = the pull `MODULE_ID` / subscribe `moduleId`. */
@@ -41,13 +43,18 @@ export function useSettingsSync() {
   // ⚠ Отказ объявляется ОДИН РАЗ НА ПРИЧИНУ, а не на попытку: канал best-effort, а `notifyReload`
   // зовётся на каждое сохранение — иначе портал с выключенным pull получал бы строку в журнале при
   // каждом нажатии «Сохранить», и полезное сообщение утонуло бы в собственном шуме.
-  const announced = new Set<SettingsSyncFailure>()
-  function degrade(reason: SettingsSyncFailure) {
+  const announced = new Set<string>()
+  // ⚠ В строке журнала называется КАНАЛ, а не «настройки». Пока труба обслуживала один механизм,
+  // захардкоженный текст был верен; с появлением второго (#478) отказ подписки НА ОБЪЯВЛЕНИЕ писал
+  // бы «недоступно обновление настроек» — то есть уводил бы отладку к другому механизму. Ровно то
+  // молчаливое враньё, против которого заведена вся наблюдаемость канала.
+  function degrade(reason: SettingsSyncFailure, channel = 'settings') {
     state.value = 'unavailable'
     failure.value = reason
-    if (announced.has(reason)) return
-    announced.add(reason)
-    console.warn(`[settings-sync] живое обновление настроек недоступно (${reason})`)
+    const key = `${channel}:${reason}`
+    if (announced.has(key)) return
+    announced.add(key)
+    console.warn(`[pull-sync] живой канал недоступен: ${channel} (${reason})`)
   }
 
   /** Tell other open instances to reload settings. Best-effort — a pull failure never blocks a save. */
@@ -84,43 +91,74 @@ export function useSettingsSync() {
     return subscribeCommand(ANNOUNCEMENT_PULL_COMMAND, onCheck)
   }
 
+  // ⚠ Клиент ОДИН на композабл, а подписок на нём сколько угодно. Первая редакция строила свой
+  // `B24PullClientManager` в каждой подписке, и на рабочем экране, где подписаны оба канала, это
+  // давало ДВА websocket-соединения к одной и той же трубе портала — различающихся только именем
+  // команды. SDK умеет несколько подписок на одном клиенте, и лишнее соединение здесь ничем не
+  // оправдано: это расход у клиента и у pull-сервера портала плюс лишняя площадь для гонок при
+  // повторных монтированиях.
+  let shared: InstanceType<typeof B24PullClientManager> | null = null
+  let starting: Promise<InstanceType<typeof B24PullClientManager> | null> | null = null
+  let subscribers = 0
+
+  async function ensurePull(channel: string): Promise<InstanceType<typeof B24PullClientManager> | null> {
+    if (shared) return shared
+    // ⚠ Общий «в полёте» промис: две подписки заводятся в одном setup подряд, и без него они обе
+    // ушли бы поднимать свой клиент — то самое удвоение, только по гонке, а не по построению.
+    starting ??= (async () => {
+      await init()
+      const frame = get()
+      if (!frame) {
+        degrade('not-framed', channel)
+        return null
+      }
+      const client = new B24PullClientManager({ b24: frame, restApplication: appModuleId() })
+      await client.start()
+      shared = client
+      state.value = 'live'
+      return client
+    })().catch(() => {
+      degrade('pull-failed', channel)
+      return null
+    }).finally(() => {
+      starting = null
+    })
+    return starting
+  }
+
   /** Общая машинерия подписки: канал один, команды разные. */
   function subscribeCommand(command: string, onEvent: () => void): () => void {
     let disposed = false
     let dispose: (() => void) | null = null
-    let pull: InstanceType<typeof B24PullClientManager> | null = null
 
     const teardown = () => {
       try {
         dispose?.()
-        pull?.destroy?.()
       } catch { /* ignore */ }
       dispose = null
-      pull = null
+      // ⚠ Клиент гасится только когда ушёл ПОСЛЕДНИЙ подписчик: он общий, и снос его первой же
+      // размонтированной подпиской оборвал бы соседнюю.
+      subscribers = Math.max(0, subscribers - 1)
+      if (subscribers === 0 && shared) {
+        try {
+          shared.destroy?.()
+        } catch { /* ignore */ }
+        shared = null
+      }
     }
 
+    subscribers++
     void (async () => {
       try {
-        await init()
-        if (disposed) return
-        const frame = get()
-        if (!frame) return degrade('not-framed')
-        const moduleId = appModuleId()
-        pull = new B24PullClientManager({ b24: frame, restApplication: moduleId })
+        const pull = await ensurePull(command)
+        if (!pull || disposed) return
         // The SDK dispatches this callback ONLY for the subscribed command bucket —
         // it passes (params, extra, command, meta), so react unconditionally; there's no {command} arg.
-        dispose = pull.subscribe({ moduleId, command, callback: () => onEvent() })
-        // disposed mid-await → drop the just-built client
-        if (disposed) {
-          teardown()
-          return
-        }
-        await pull.start()
+        dispose = pull.subscribe({ moduleId: appModuleId(), command, callback: () => onEvent() })
         if (disposed) teardown()
-        else state.value = 'live'
       } catch {
         // pull server off / not framed → живого обновления нет; ручная перезагрузка работает.
-        degrade('pull-failed')
+        degrade('pull-failed', command)
       }
     })()
 

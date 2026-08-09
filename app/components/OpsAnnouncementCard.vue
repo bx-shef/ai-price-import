@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Announcement } from '~/utils/announcement'
+import { deliveryNote } from '~/utils/announcementDelivery'
 import {
   DEFAULT_ANNOUNCEMENT_DAYS, MAX_ANNOUNCEMENT_CTA, MAX_ANNOUNCEMENT_IMAGE_BYTES,
   MAX_ANNOUNCEMENT_TEXT, MAX_ANNOUNCEMENT_TITLE
@@ -60,23 +61,6 @@ function onImage(e: Event): void {
     preview.value = null // содержимое изменилось — прежний предпросмотр больше не про него
   }
   reader.readAsDataURL(file)
-}
-
-/**
- * Строка про живую доставку (#478).
- *
- * ⚠ Молчать о рассылке нельзя: провалившаяся выглядит ровно как «никто не открывал экран», и
- * владелец ждал бы реакции на объявление, которого никто не получил. Поэтому строка печатается
- * ВСЕГДА, включая случай «доставлено всем» — иначе её отсутствие пришлось бы толковать.
- * ⚠ `null` — рассылку не удалось даже начать (база недоступна). Это НЕ то же самое, что «ноль
- * порталов», и текст обязан их различать.
- */
-function deliveryNote(b: { total: number, sent: number, failed: number, truncated: boolean } | null | undefined): string {
-  if (b === null) return 'Разослать сигнал не удалось — сотрудники увидят при следующем открытии экрана.'
-  if (!b || b.total === 0) return 'Порталов с установленным приложением пока нет.'
-  const tail = b.truncated ? ' Выборка обрезана — часть порталов сигнал не получила.' : ''
-  if (!b.failed) return `Сигнал доставлен всем порталам (${b.sent}).${tail}`
-  return `Сигнал доставлен ${b.sent} из ${b.total}; остальные увидят при следующем открытии экрана.${tail}`
 }
 
 async function send(action: 'preview' | 'publish' | 'clear'): Promise<void> {
