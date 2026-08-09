@@ -5,10 +5,21 @@ import { LANDING_MARKET_CODE } from '~/utils/landing'
 import { SETTINGS_RELOAD_COMMAND, buildSettingsReloadEvent } from '~/utils/settingsSync'
 
 // Cross-instance settings sync (pattern from bitrix24/b24-ai-starter). After an admin saves settings,
-// `notifyReload()` fires `pull.application.event.add` on the app's pull channel; other open instances
-// subscribed via `subscribeReload()` re-read settings live — so a second admin's form doesn't overwrite
-// with stale values. Both sides are BEST-EFFORT and never throw: the send is a plain REST call, and the
-// receive needs the portal's pull server (may be off / unavailable), so it degrades to a no-op.
+// `notifyReload()` fires `pull.application.event.add` on the app's pull channel; open instances
+// subscribed via `subscribeReload()` re-read settings live. Both sides are BEST-EFFORT and never throw:
+// the send is a plain REST call, and the receive needs the portal's pull server (may be off /
+// unavailable), so it degrades to a no-op.
+//
+// ⚠ КТО ПОДПИСАН, А КТО НЕТ. Подписку заводит ТОЛЬКО экран импорта (`app/pages/app.vue`); `/settings`
+// пользуется отсюда одним `notifyReload`. Прежняя редакция этой шапки обещала, что канал спасает от
+// потерянного обновления — «so a second admin's form doesn't overwrite with stale values», — и это
+// неправда: форма второго админа на событие не реагирует и при сохранении затрёт правку первого.
+// Обещание убрано, а не подкреплено кодом, потому что подписывать форму на живое перечитывание
+// значило бы затирать несохранённые правки того, кто её сейчас заполняет.
+//
+// ⚠ Адресат рассылки — ВСЕ сотрудники портала: `USER_ID` не передаётся намеренно, событие уходит в
+// общий канал. Значит и проверять доставку надо на ДРУГОМ пользователе, а не во второй вкладке
+// того же (#443).
 // ⚠ Pull channel semantics (module id / command routing) are portal-specific — verify on a live portal.
 
 /** App code as registered on the portal = the pull `MODULE_ID` / subscribe `moduleId`. */

@@ -42,7 +42,7 @@ const { counters, savings, moneyBlocker, resetting, error: metricsError, load: l
 // (article field, target, chats). On load we read the portal settings; if nothing has been touched
 // (pristine defaults) we nudge — an admin to open /settings, a non-admin to ask their admin. Only
 // when settings actually loaded IN the portal (`settingsLoaded` — no frame → error → no nudge).
-const { mapping, isAdmin, error: settingsError, load: loadSettings } = useSettings()
+const { mapping, isAdmin, error: settingsError, loadError: settingsLoadError, load: loadSettings } = useSettings()
 const settingsLoaded = ref(false)
 const needsSetup = computed(() => settingsLoaded.value && !isPortalConfigured(mapping.value))
 
@@ -104,6 +104,9 @@ watch(stagingBusy, (now, was) => {
 // Персистентного намеренно нет: см. комментарий у самого предупреждения.
 const skipWarnNoticeHidden = ref(false)
 const busy = computed(() => stagingBusy.value || uploading.value)
+/** Одна формулировка на `aria-label` и `title` шестерёнки: разойдясь, они озвучивали бы программе
+ *  чтения одно, а мыши показывали другое. Видимый носитель причины — баннер прогона. */
+const SETTINGS_BLOCKED_LABEL = 'Настройки импорта — недоступны, пока идёт импорт'
 // Detect the Bitrix24 MOBILE APP via b24ui's own mechanism (useDevice → platform «bitrix-mobile», set by
 // the b24ui platform plugin from the BitrixMobile UA — NOT the JS SDK). In the mobile app we hide
 // desktop-only chrome (settings gear + «Подробные метрики»); hiding is a `v-if`, so it's theme-agnostic.
@@ -135,18 +138,23 @@ const { subscribeReload } = useSettingsSync()
 // Подписку заводим синхронно (после await теряется scope эффекта), но в пусковой странице её надо
 // СНЯТЬ, а не просто заглушить обработчик: сама подписка поднимает websocket, и он висел бы вторым —
 // рядом с тем, что поднимает открытый слайдер. Ровно то удвоение, ради которого лаунчер и делался.
-// Счётчик применённых правок настроек (#443). Растёт ПОСЛЕ того, как настройки перечитаны, — иначе
-// потребитель увидел бы сигнал раньше данных и подхватил прежнюю цель.
+// Счётчик УСПЕШНО применённых правок настроек (#443). Растёт после того, как настройки перечитаны,
+// иначе потребитель увидел бы сигнал раньше данных.
+//
+// ⚠ Только на УСПЕХЕ, и это не педантизм: `useSettings.load()` не бросает никогда — на 401, 502 или
+// истёкшем фрейм-токене он ставит `loadError` и ОСТАВЛЯЕТ `mapping` прежним. Прежняя редакция
+// растила счётчик в `.finally`, то есть неудачное перечитывание отменяло ручной выбор сотрудника,
+// ничего взамен не узнав, и делало это молча — на `/app` ошибка загрузки настроек не выводится.
+// Отказ канала обязан быть «ничего не произошло», а не «сбросили выбор».
 //
 // ⚠ Счётчик, а не наблюдение за самой целью: админ может сохранить настройки, не тронув цель по
-// умолчанию, и наблюдение за значением такое сохранение проглядело бы. А ручной выбор сотрудника
-// отменяется в обоих случаях — решение владельца: после правки у всех становится так, как настроил
-// админ (см. `applySettingsChangeToTarget`).
+// умолчанию, и наблюдение за значением такое сохранение проглядело бы. А ручной выбор отменяется в
+// обоих случаях — у всех становится так, как настроил админ (см. `applySettingsChangeToTarget`).
 const settingsVersion = ref(0)
 const unsubscribeReload = subscribeReload(() => {
   if (launch.value === 'launcher') return
-  void loadSettings().finally(() => {
-    settingsVersion.value++
+  void loadSettings().then(() => {
+    if (!settingsLoadError.value) settingsVersion.value++
   })
 })
 
@@ -195,12 +203,24 @@ onMounted(async () => {
   if (launch.value === 'launcher') {
     // Базовый фрейм — только пусковая страница. Опрос статусов, метрики и настройки здесь НЕ
     // поднимаем: иначе они крутились бы одновременно и тут, и в открытом слайдере.
-    unsubscribeReload()
+    //
+    // ⚠ Подписку снимаем ТОЛЬКО на путях, где пусковая страница таковой и остаётся. Прежде она
+    // снималась первой строкой, до попытки открыть слайдер, — и на портале, где слайдеры не
+    // открываются, экран уходил в рабочий режим с НАВСЕГДА мёртвым каналом: сотрудник не получал
+    // `reload.options` вовсе. То есть посылка #443 «событие уходит всем» ломалась именно там, где
+    // проверить её труднее всего.
     // Автооткрытие — не чаще раза в окно (страховка от цикла); человек всегда может нажать кнопку.
     // Если окно уже открывали только что — просто показываем кнопку, ничего не поднимая.
-    if (!canAutoOpenMain(lastMainSliderAt(), Date.now())) return
-    if (await openMain()) return
+    if (!canAutoOpenMain(lastMainSliderAt(), Date.now())) {
+      unsubscribeReload()
+      return
+    }
+    if (await openMain()) {
+      unsubscribeReload()
+      return
+    }
     // Слайдер не открылся — не оставляем человека на мёртвой странице, работаем как раньше.
+    // Канал при этом ОСТАЁТСЯ живым: экран стал рабочим, и правки настроек ему нужны.
     launch.value = 'work'
   }
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
@@ -307,18 +327,22 @@ watch(jobs, (list) => {
         >
           <template #right>
             <!-- ⚠ Блокируется на время пачки (#475). Не «для порядка»: сохранение настроек
-                 рассылает ВСЕМ сотрудникам событие «перечитайте настройки» (#443), а идущая пачка
-                 работает на тех, с которыми стартовала, — открыв настройки на середине, оператор
-                 получил бы экран, спорящий сам с собой. `:disabled` настоящий: кнопка выпадает из
-                 обхода по Tab, тогда как `pointer-events-none` гасил бы только мышь. Причина —
-                 в `title`, иначе выключенная кнопка неотличима от сломанной. -->
+                 рассылает ВСЕМ сотрудникам событие «перечитайте настройки» (#443) и возвращает их
+                 на «Авто», а идущая пачка держит свою цель слепком — открыв настройки на середине,
+                 оператор получил бы экран, спорящий сам с собой. `:disabled` настоящий: кнопка
+                 выпадает из обхода по Tab, тогда как `pointer-events-none` гасил бы только мышь.
+                 ⚠ ПРИЧИНА ЖИВЁТ НЕ В `title`: у выключенной кнопки Chromium не доставляет событий
+                 указателя, всплывающей подсказки там не будет вовсе, а из обхода по Tab она уже
+                 выпала — то есть ни мышь, ни клавиатура её бы не получили. Носитель причины —
+                 ВИДИМАЯ строка в баннере прогона (`ImportStaging`), одна на все выключенные
+                 действия; `aria-label` и `title` держат ту же формулировку как вспомогательные. -->
             <B24Button
               :icon="SettingsIcon"
               color="air-tertiary-no-accent"
               size="sm"
               :disabled="busy"
-              :aria-label="busy ? 'Настройки импорта — недоступны, пока идёт импорт' : 'Настройки импорта'"
-              :title="busy ? 'Пока идёт импорт, настройки менять нельзя' : 'Настройки импорта'"
+              :aria-label="busy ? SETTINGS_BLOCKED_LABEL : 'Настройки импорта'"
+              :title="busy ? SETTINGS_BLOCKED_LABEL : 'Настройки импорта'"
               @click="openSettings"
             />
           </template>
@@ -460,7 +484,6 @@ watch(jobs, (list) => {
               :refresh-now="refreshNow"
               :list-error="listError"
               :portal-domain="portalDomain"
-              :default-target="mapping.defaultTarget"
               :settings-version="settingsVersion"
               @update:busy="v => stagingBusy = v"
             />
@@ -478,7 +501,7 @@ watch(jobs, (list) => {
             <div
               v-if="jobs.length || uploading || listError || listWarning"
               class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
-              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+              :class="busy ? 'opacity-60 select-none' : ''"
             >
               <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h2 class="text-base font-semibold">
@@ -507,6 +530,7 @@ watch(jobs, (list) => {
                     label="Очистить список"
                     color="air-tertiary-no-accent"
                     size="xs"
+                    :disabled="busy"
                     @click="() => { confirmClear = true }"
                   />
                 </template>
@@ -516,12 +540,14 @@ watch(jobs, (list) => {
                     label="Да, очистить"
                     color="air-primary-alert"
                     size="xs"
+                    :disabled="busy"
                     @click="doClearList"
                   />
                   <B24Button
                     label="Отмена"
                     color="air-tertiary-no-accent"
                     size="xs"
+                    :disabled="busy"
                     @click="() => { confirmClear = false }"
                   />
                 </template>
@@ -530,7 +556,7 @@ watch(jobs, (list) => {
                   color="air-tertiary-no-accent"
                   size="xs"
                   :loading="loading"
-                  :disabled="loading"
+                  :disabled="busy || loading"
                   :label="loading ? 'Обновляем…' : 'Обновить'"
                   @click="refreshNow"
                 />
@@ -593,7 +619,7 @@ watch(jobs, (list) => {
             <B24Card
               variant="outline"
               class="mt-4 transition-opacity"
-              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+              :class="busy ? 'opacity-60 select-none' : ''"
             >
               <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
                 <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
@@ -632,9 +658,8 @@ watch(jobs, (list) => {
                   <button
                     v-if="!isBitrixMobile"
                     type="button"
-                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-default disabled:no-underline disabled:opacity-60"
+                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-default disabled:no-underline"
                     :disabled="busy"
-                    :title="busy ? 'Пока идёт импорт, метрики недоступны' : undefined"
                     @click="openMetrics"
                   >
                     Подробные метрики →
@@ -651,6 +676,7 @@ watch(jobs, (list) => {
                     label="Сбросить"
                     color="air-tertiary-no-accent"
                     size="xs"
+                    :disabled="busy"
                     @click="() => { confirmReset = true }"
                   />
                   <div
@@ -662,7 +688,7 @@ watch(jobs, (list) => {
                       color="air-primary-alert"
                       size="xs"
                       :loading="resetting"
-                      :disabled="resetting"
+                      :disabled="busy || resetting"
                       :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
                       @click="doReset"
                     />
@@ -670,6 +696,7 @@ watch(jobs, (list) => {
                       label="Отмена"
                       color="air-tertiary-no-accent"
                       size="xs"
+                      :disabled="busy"
                       @click="() => { confirmReset = false }"
                     />
                   </div>
@@ -685,7 +712,7 @@ watch(jobs, (list) => {
             </B24Card>
             <p
               class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
-              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+              :class="busy ? 'opacity-60 select-none' : ''"
             >
               <span>Документов: {{ counters.docs || 0 }}</span>
               <span>Создано в CRM: {{ counters.created || 0 }}</span>

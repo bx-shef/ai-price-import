@@ -70,26 +70,17 @@ describe('запись и чтение цели', () => {
 })
 
 describe('applySettingsChangeToTarget (#443): админ поменял настройки — что с памятью', () => {
-  const nextDefault = { entityTypeId: 2, categoryId: 7 }
-
-  it('вне прогона новая цель по умолчанию побеждает запомненную', () => {
-    // Смысл рассылки в том, чтобы у всех стало как настроил админ. Память, пережившая правку,
-    // отменяла бы её молча и у каждого по-своему.
-    expect(applySettingsChangeToTarget({ importing: false, nextDefault }))
-      .toEqual({ adopt: true, target: nextDefault })
+  it('вне прогона возвращаемся на «Авто (по правилам)»', () => {
+    // ⚠ Именно `null`, а НЕ цель по умолчанию из настроек. Первая редакция принимала
+    // `mapping.defaultTarget`, а он ВСЕГДА конкретен (`parsePortalSettings` подставляет
+    // `FALLBACK_TARGET`). Конкретная цель уезжает в задание как `manualOverride` и в `resolveTarget`
+    // бьёт выше правил маршрутизации — то есть любое сохранение настроек отключало бы админу его же
+    // правила у всего портала. `null` не кладёт поле `target` вовсе, и сервер идёт по правилам.
+    expect(applySettingsChangeToTarget({ importing: false })).toEqual({ adopt: true, target: null })
   })
 
   it('во время пачки не трогаем ничего', () => {
-    // Задание уже принято сервером и работает на настройках НА МОМЕНТ ПОСТАНОВКИ. Подменив цель на
-    // середине, мы отправили бы остаток пачки не туда, куда ушло её начало.
-    expect(applySettingsChangeToTarget({ importing: true, nextDefault }))
-      .toEqual({ adopt: false, target: null })
-  })
-
-  it('цель по умолчанию не пришла — принимаем «Авто», а не оставляем прежнюю', () => {
-    // `null` здесь значит «правила маршрутизации», а не «нет данных»: настройки уже перечитаны,
-    // счётчик растёт ПОСЛЕ загрузки. Оставить прежнюю цель значило бы проигнорировать правку.
-    expect(applySettingsChangeToTarget({ importing: false, nextDefault: null }))
-      .toEqual({ adopt: true, target: null })
+    // Подменив цель на середине, мы отправили бы остаток пачки не туда, куда ушло её начало.
+    expect(applySettingsChangeToTarget({ importing: true })).toEqual({ adopt: false, target: null })
   })
 })

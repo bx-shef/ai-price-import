@@ -60,7 +60,13 @@ onMounted(async () => {
 async function saveAndClose(): Promise<void> {
   await save()
   if (error.value) return // save() sets error; keep the form open so the admin can retry
-  void notifyReload()
+  // ⚠ Рассылку ЖДЁМ, а не пускаем вдогонку. Следующая строка уничтожает фрейм, из которого летит
+  // этот REST-вызов: при `void` успел браузер отправить POST — рассылка ушла, не успел — её не
+  // получил НИКТО, а `console.warn` об отказе печатался бы в уже мёртвый фрейм. Пока событие
+  // означало «обнови баннер», потеря стоила мало; теперь оно означает «у всех стало как настроил
+  // админ» (#443), и молча терять его нельзя. Метод best-effort и не бросает — ожидание лишь
+  // отодвигает закрытие на один REST-вызов.
+  await notifyReload()
   await closeAfter()
 }
 /** Cancel: close per how settings was opened (slider → close overlay, in-frame → back to /app); as a

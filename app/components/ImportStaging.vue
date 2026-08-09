@@ -50,12 +50,10 @@ const props = defineProps<{
   /** The parent's last poll error, '' when polling is healthy. Shown during the wait so a dead
    *  connection is not mistaken for a slow portal. */
   listError: string
-  /** Цель по умолчанию из настроек портала — источник новой цели, когда админ их поменял (#443). */
-  defaultTarget?: TargetRef | null
-  /** Счётчик правок настроек: растёт, когда прилетело событие «настройки изменились» и они
-   *  перечитаны. Именно СЧЁТЧИК, а не сама цель: админ может сохранить настройки, не тронув цель,
-   *  и наблюдение за значением такое сохранение проглядело бы — а отменить ручной выбор оно должно
-   *  тоже (решение владельца: у всех становится как настроил админ). */
+  /** Counter of successfully re-read portal settings; bumped on each applied `reload.options` (#443).
+   *
+   *  ⚠ Именно СЧЁТЧИК, а не сама цель: наблюдать тут нечего — принимаем мы всегда «Авто», и админ
+   *  может сохранить настройки, вообще не тронув цель, а ручной выбор отменять надо и тогда. */
   settingsVersion?: number
 }>()
 // Surface the «идёт импорт» state to the parent so it can BLOCK the rest of the UI while the run is
@@ -94,15 +92,24 @@ watch(target, (t) => {
   writeTarget(window.sessionStorage, memoryKey.value, t)
 })
 
-// Админ поменял настройки, событие разошлось по всем сотрудникам (#443) — принимаем новую цель.
-// Правило и его цена живут в `applySettingsChangeToTarget`; здесь только применение. Запись в
-// sessionStorage делает watcher выше, отдельной строкой её дублировать не нужно.
+// Админ поменял настройки, событие разошлось по всем сотрудникам (#443) — возвращаемся на «Авто
+// (по правилам)», то есть к конфигурации админа целиком. Правило и его цена (в том числе почему
+// НЕ `defaultTarget`) живут в `applySettingsChangeToTarget`; здесь только применение. Запись в
+// sessionStorage делает watcher выше, дублировать её не нужно.
+// ⚠ Отложенную правку ОБЯЗАТЕЛЬНО применяем на спаде прогона. Без этого `adopt:false` означал бы не
+// «позже», а «никогда»: счётчик правок больше не изменится, и правку потеряет ровно тот сотрудник,
+// ради которого рассылка и делалась, — активно грузящий документы. Флаг, а не отложенное значение:
+// принимаем мы всегда одно и то же («Авто»), а копить нечего.
+let settingsChangePending = false
 watch(() => props.settingsVersion, () => {
-  const decision = applySettingsChangeToTarget({
-    importing: importing.value,
-    nextDefault: props.defaultTarget ?? null
-  })
+  const decision = applySettingsChangeToTarget({ importing: importing.value })
   if (decision.adopt) target.value = decision.target
+  else settingsChangePending = true
+})
+watch(importing, (now, was) => {
+  if (!(was && !now) || !settingsChangePending) return
+  settingsChangePending = false
+  target.value = applySettingsChangeToTarget({ importing: false }).target
 })
 // Set by «Отменить»; checked between uploads and inside the wait loop.
 const cancelled = ref(false)
@@ -399,7 +406,7 @@ function cancelImport(): void {
       color="air-primary"
       size="sm"
       title="Идёт импорт — не закрывайте страницу"
-      description="Список результатов живёт только на этой странице: закроете или перезагрузите — он пропадёт, хотя сами документы сервер дообработает."
+      description="Список результатов живёт только на этой странице: закроете или перезагрузите — он пропадёт, хотя сами документы сервер дообработает. Пока идёт импорт, настройки, метрики и очистка списка недоступны."
       role="status"
     />
 

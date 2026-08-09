@@ -303,32 +303,42 @@ describe('ImportStaging (пачка + ожидание результатов)',
   })
 })
 
-// Админ поменял настройки портала, и событие разошлось ВСЕМ сотрудникам (#443). Здесь проверяется
-// приём этой правки на экране импорта. Пикер в этом наборе застаблен, поэтому цель приезжает
-// единственным путём — через `defaultTarget` + рост `settingsVersion`, ровно как в бою.
+// Админ поменял настройки портала, и событие разошлось ВСЕМ сотрудникам (#443). Пикер в этом наборе
+// застаблен, поэтому цель приезжает единственным путём — ростом `settingsVersion`, ровно как в бою.
 describe('ImportStaging: прилетела правка настроек (#443)', () => {
   const A = { entityTypeId: 2, categoryId: 1 }
   const B = { entityTypeId: 1120, categoryId: 5 }
 
-  it('вне прогона новая цель по умолчанию применяется к следующей пачке', async () => {
-    const t = instantDone()
-    const w = await mountSuspended(ImportStaging, {
-      props: { ...t, defaultTarget: A, settingsVersion: 0 } as never,
-      global: { stubs }
-    })
-    await w.setProps({ settingsVersion: 1 } as never)
-    await tick()
+  it('вне прогона ручной выбор отменяется — следующая пачка идёт по правилам', () => {
+    // «По правилам» = поле `target` в задание не кладётся вовсе. Проверяем именно это: если бы мы
+    // принимали конкретную цель по умолчанию, она уехала бы как ручное переопределение и отключила
+    // правила маршрутизации у всего портала.
+    return (async () => {
+      const t = instantDone()
+      const w = await mountSuspended(ImportStaging, {
+        props: { ...t, settingsVersion: 0 } as never,
+        global: { stubs }
+      })
+      await pick(w, [file('накладная.pdf')])
+      w.findComponent({ name: 'TargetPicker' }).vm.$emit('update:target', A)
+      await tick()
 
-    await pick(w, [file('накладная.pdf')])
-    await clickText(w, 'Импортировать')
-    await tick()
+      await w.setProps({ settingsVersion: 1 } as never)
+      await tick()
 
-    expect(t.upload).toHaveBeenCalledWith(expect.anything(), A, expect.anything())
+      await clickText(w, 'Импортировать')
+      await tick()
+
+      expect(t.upload).toHaveBeenCalledWith(expect.anything(), null, expect.anything())
+    })()
   })
 
   it('правка ПОСРЕДИ пачки не уводит её остаток в другую цель', async () => {
-    // Самый дорогой из возможных исходов: половина накладных в одной воронке, половина в другой.
-    // На экране это не видно вовсе — расхождение вскрывается только в CRM.
+    // ⚠ Это СЦЕНАРНЫЙ тест: он проверяет исход целиком и в одиночку не убивает ни одного мутанта —
+    // зелен и при снятом гарде «во время прогона не принимаем», и при снятой заморозке, потому что
+    // каждая из защит закрывает дыру за другую. Краснеет, когда сняты обе. Гард проверяется
+    // юнит-тестом ядра (`tests/targetMemory.test.ts`), заморозка — следующим тестом; здесь
+    // сторожится, что вместе они дают обещанное поведение.
     const seen: unknown[] = []
     let release!: () => void
     const gate = new Promise<void>((r) => {
@@ -349,20 +359,18 @@ describe('ImportStaging: прилетела правка настроек (#443)
         jobDone: (): JobStatus | null => 'done',
         refreshNow: async () => {},
         listError: '',
-        defaultTarget: A,
         settingsVersion: 0
       } as never,
       global: { stubs }
     })
-    await w.setProps({ settingsVersion: 1 } as never)
+    await pick(w, [file('первая.pdf'), file('вторая.pdf')])
+    w.findComponent({ name: 'TargetPicker' }).vm.$emit('update:target', A)
     await tick()
 
-    await pick(w, [file('первая.pdf'), file('вторая.pdf')])
     void clickText(w, 'Импортировать')
     await tick()
 
-    // Админ сохранил настройки с ДРУГОЙ целью, событие доехало — но пачка уже идёт.
-    await w.setProps({ defaultTarget: B, settingsVersion: 2 } as never)
+    await w.setProps({ settingsVersion: 2 } as never)
     await tick()
     release()
     await tick()
@@ -373,9 +381,9 @@ describe('ImportStaging: прилетела правка настроек (#443)
 
   it('цель, изменённая ЛЮБЫМ путём после старта, на идущую пачку не влияет', async () => {
     // ⚠ Отдельный тест от предыдущего, и вот почему. Там цель не менялась вовсе — её не пустил
-    // гард «во время прогона не принимаем правку». То есть тот тест сторожит ГАРД, а снятие
-    // заморозки в цикле он проходит зелёным (проверено мутацией). Здесь цель меняется в обход
-    // гарда — через модель пикера, — и падает ровно снятие заморозки.
+    // гард. То есть тот тест сторожит ГАРД, а снятие заморозки в цикле он проходит зелёным
+    // (проверено мутацией). Здесь цель меняется в обход гарда — через модель пикера, — и падает
+    // ровно снятие заморозки.
     const seen: unknown[] = []
     let release!: () => void
     const gate = new Promise<void>((r) => {
@@ -396,15 +404,14 @@ describe('ImportStaging: прилетела правка настроек (#443)
         jobDone: (): JobStatus | null => 'done',
         refreshNow: async () => {},
         listError: '',
-        defaultTarget: A,
         settingsVersion: 0
       } as never,
       global: { stubs }
     })
-    await w.setProps({ settingsVersion: 1 } as never)
+    await pick(w, [file('первая.pdf'), file('вторая.pdf')])
+    w.findComponent({ name: 'TargetPicker' }).vm.$emit('update:target', A)
     await tick()
 
-    await pick(w, [file('первая.pdf'), file('вторая.pdf')])
     void clickText(w, 'Импортировать')
     await tick()
 
@@ -415,5 +422,74 @@ describe('ImportStaging: прилетела правка настроек (#443)
     await tick()
 
     expect(seen).toEqual([A, A])
+  })
+})
+
+// ⚠ ШОВ «ImportStaging → TargetPicker» — отдельный тест, потому что его не видел НИКТО. Пикер
+// проверен в изоляции с `disabled: true`, здесь он застаблен — и удаление `:disabled="importing"` у
+// `<TargetPicker>`, то есть буквальное возвращение дефекта #475, оставляло весь набор из 2490
+// тестов зелёным. Классический проход по совпадению: обе стороны покрыты, стык — нет.
+describe('ImportStaging: пикер цели выключен на время прогона (#475)', () => {
+  it('до старта доступен, во время пачки выключен', async () => {
+    const w = await mountSuspended(ImportStaging, {
+      props: {
+        upload: vi.fn(async () => OK),
+        jobDone: (): JobStatus | null => null, // не завершаем — прогон держится
+        refreshNow: async () => {},
+        listError: ''
+      } as never,
+      global: { stubs }
+    })
+    await pick(w, [file('накладная.pdf')])
+    const picker = () => w.findComponent({ name: 'TargetPicker' })
+
+    expect(picker().props('disabled')).toBe(false)
+
+    void clickText(w, 'Импортировать')
+    await tick()
+    await tick()
+
+    expect(picker().props('disabled')).toBe(true)
+  })
+})
+
+// ⚠ Отложенная правка. `adopt:false` во время прогона означает «не сейчас», а не «никогда»: счётчик
+// правок больше не изменится, и без применения на спаде рассылку потерял бы ровно тот сотрудник,
+// ради которого она делалась, — активно грузящий документы.
+describe('ImportStaging: правка, прилетевшая во время пачки, применяется после неё (#443)', () => {
+  it('следующая пачка идёт по правилам, хотя событие пришло во время прошлой', async () => {
+    const seen: unknown[] = []
+    const upload = vi.fn(async (_f: File, target?: unknown) => {
+      seen.push(target)
+      return OK
+    })
+    const w = await mountSuspended(ImportStaging, {
+      props: {
+        upload,
+        jobDone: (): JobStatus | null => 'done',
+        refreshNow: async () => {},
+        listError: '',
+        settingsVersion: 0
+      } as never,
+      global: { stubs }
+    })
+    await pick(w, [file('первая.pdf')])
+    w.findComponent({ name: 'TargetPicker' }).vm.$emit('update:target', { entityTypeId: 2, categoryId: 1 })
+    await tick()
+
+    // Пачка идёт → правка откладывается.
+    void clickText(w, 'Импортировать')
+    await w.setProps({ settingsVersion: 1 } as never)
+    await tick()
+    await tick()
+    await tick()
+
+    // Прогон закончился — правка обязана примениться сама, без нового события.
+    await pick(w, [file('вторая.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    await tick()
+
+    expect(seen).toEqual([{ entityTypeId: 2, categoryId: 1 }, null])
   })
 })

@@ -139,11 +139,32 @@ describe('TargetPicker: блокировка на время пачки (#475)',
     await tick()
     await tick()
     const selects = w.findAll('[aria-label="Направление (воронка)"], [aria-label="Стадия"]')
-    expect(selects.length).toBeGreaterThan(0)
-    for (const s of selects) {
-      const inner = s.element.querySelector('button, input, select') as HTMLElement | null
-      const el = (inner ?? s.element) as HTMLElement
-      expect(el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true' || el.dataset.disabled !== undefined).toBe(true)
-    }
+    // ⚠ Ровно два и ровно НАТИВНЫЙ `disabled`. Прежняя редакция принимала ещё `data-disabled` и
+    // `aria-disabled`, а `data-disabled` reka-ui ставит ВСЕГДА — то есть тест пережил бы ровно ту
+    // регрессию, ради которой написан: пропади нативный атрибут, списки снова стали бы доступны с
+    // клавиатуры, а проверка осталась бы зелёной.
+    expect(selects.length).toBe(2)
+    for (const s of selects) expect((s.element as HTMLElement).hasAttribute('disabled')).toBe(true)
+  })
+})
+
+describe('TargetPicker: цель сменили снаружи (#443)', () => {
+  it('экран показывает НОВУЮ цель, а не ту, что была выбрана руками', async () => {
+    // ⚠ Несущий тест, а не косметика. Локальные `etid`/`categoryId`/`stageId` сеются один раз в
+    // setup, поэтому без вотчера на модель внешняя смена цели меняла бы то, КУДА УЕДЕТ ДОКУМЕНТ, не
+    // трогая ни одной подсвеченной кнопки: человек видит «Сделка», документ идёт по правилам, и
+    // узнаёт он об этом только из CRM.
+    const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 2 } } })
+    await tick()
+    await tick()
+    const pressed = () => w.findAll('button').filter(b => b.attributes('aria-pressed') === 'true').map(b => b.text())
+    expect(pressed()).toEqual(['Сделка'])
+
+    // Админ сохранил настройки → сотрудник возвращается на «Авто (по правилам)».
+    await w.setProps({ target: null })
+    await tick()
+    await tick()
+
+    expect(pressed()).toEqual(['Авто (по правилам)'])
   })
 })

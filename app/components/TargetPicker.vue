@@ -99,6 +99,33 @@ watch([CHOICES, () => etid.value], () => {
   unavailableTarget.value = true
   emit()
 })
+// Цель сменили СНАРУЖИ (#443: админ сохранил настройки → сотрудник возвращается на «Авто»).
+//
+// ⚠ Без этого вотчера экран УТВЕРЖДАЛ БЫ НЕПРАВДУ, и это не мелочь показа: `etid`/`categoryId`/
+// `stageId` сеются один раз в setup, поэтому внешняя смена модели меняла бы то, куда уедет
+// документ, не трогая ни одной подсвеченной кнопки. Человек видит «Сделка», документ идёт по
+// правилам — и узнаёт об этом только из CRM. Хуже прецедента #269, где подмену цели сочли
+// обязательной к объявлению словами, хотя там экран хотя бы не врал.
+//
+// ⚠ Сравниваем со СВОИМ состоянием и молчим, если совпало: наш же `emit()` присваивает модель, и
+// без этой проверки вотчер отвечал бы на собственную запись — лишний прогон каскада на каждый клик,
+// а при `stageId` ещё и его сброс в `reloadStages`.
+watch(target, (t) => {
+  const sameEntity = (t?.entityTypeId ?? null) === etid.value
+  const sameCat = (t?.categoryId ?? undefined) === categoryId.value
+  const sameStage = (t?.stageId ?? undefined) === stageId.value
+  if (sameEntity && sameCat && sameStage) return
+  seq++ // отменяем каскад, который мог быть в полёте от прежнего выбора
+  etid.value = t?.entityTypeId ?? null
+  categoryId.value = t?.categoryId
+  stageId.value = t?.stageId
+  cats.value = undefined
+  stages.value = undefined
+  // Прежняя цель могла быть недоступна — это сообщение относилось к ней, а не к новой.
+  unavailableTarget.value = false
+  void initCascade()
+})
+
 async function initCascade(): Promise<void> {
   if (etid.value == null) return
   const my = ++seq
