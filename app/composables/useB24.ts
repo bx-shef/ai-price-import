@@ -159,11 +159,17 @@ export function useB24() {
 
   /** Open THIS app in a B24 slider at the given `place` (self-routed by the global middleware).
    *  Pattern from the official bitrix24/app-template-automation-rules (index.client → openSliderAppPage
-   *  with place/width/label/title). Returns false when not framed / on SDK error so the caller can
-   *  fall back to plain navigation. `label` renders the coloured badge on the slider header. */
+   *  with place/width/title). Returns false when not framed / on SDK error so the caller can
+   *  fall back to plain navigation.
+   *
+   *  Slider settings ride on `bx24_`-prefixed keys, and we send ONLY the two the b24jssdk reference
+   *  documents: `bx24_width` and `bx24_title` (the title is also reflected to the browser tab). The
+   *  coloured header badge `bx24_label` was carried over from a sample and is in no reference — it was
+   *  hard-coded to a colour of its own and no call site ever passed it, so it shipped as dead weight
+   *  that read from the signature like a supported feature. */
   async function openAppSlider(
     place: string,
-    opts: { width?: number, title?: string, label?: { text: string, bgColor?: string, color?: string } } = {}
+    opts: { width?: number, title?: string } = {}
   ): Promise<boolean> {
     const f = await init()
     if (!f) return false
@@ -171,8 +177,7 @@ export function useB24() {
       await f.slider.openSliderAppPage({
         place,
         bx24_width: opts.width ?? 900,
-        ...(opts.title ? { bx24_title: opts.title } : {}),
-        ...(opts.label ? { bx24_label: { bgColor: '#2fc6f6', color: '#ffffff', ...opts.label } } : {})
+        ...(opts.title ? { bx24_title: opts.title } : {})
       })
       return true
     } catch {

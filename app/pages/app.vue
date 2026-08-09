@@ -109,12 +109,12 @@ const busy = computed(() => stagingBusy.value || uploading.value)
 // desktop-only chrome (settings gear + «Подробные метрики»); hiding is a `v-if`, so it's theme-agnostic.
 const { isBitrixMobile } = useDevice()
 async function openSettings(): Promise<void> {
-  const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 900, title: 'Настройки импорта' })
+  const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 600, title: 'Настройки импорта' })
   if (!opened) await navigateTo('/settings')
 }
 // Detailed metrics — same slider pattern as settings (openSliderAppPage → middleware routes to /metrics).
 async function openMetrics(): Promise<void> {
-  const opened = await openAppSlider(APP_SLIDER_PLACE_METRICS, { width: 900, title: 'Метрики импорта' })
+  const opened = await openAppSlider(APP_SLIDER_PLACE_METRICS, { width: 600, title: 'Метрики импорта' })
   if (!opened) await navigateTo('/metrics')
 }
 
