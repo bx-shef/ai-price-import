@@ -1,5 +1,5 @@
 import { ownerTypeCode } from './crmWrite'
-import { neutralizeBb } from './chatNotify'
+import { chatSafeText, neutralizeBb } from './chatNotify'
 
 // Дело таймлайна — УНИВЕРСАЛЬНОЕ (`crm.activity.todo.add`), не конфигурируемое (#328, решение
 // владельца 06.08.2026 после живой разведки на портале b24-hrbvzq).
@@ -82,9 +82,26 @@ export interface ActivityBodyInput {
   entityLinkLabel?: string
 }
 
-/** Внешний текст в BB-разметке: скобки нейтрализуются, длина капается. */
+/**
+ * Внешний текст в описании дела.
+ *
+ * ⚠ Обезвреживание — ТО ЖЕ, что у чата (`chatSafeText`), и это правка отсмотра #385, а не
+ * причёсывание. Прежде здесь стоял голый `neutralizeBb`, то есть из четырёх опасностей,
+ * перечисленных в шапке `chatSafeText`, закрывалась ОДНА:
+ *   • голая ссылка — поставщик «оплатите тут https://…» из документа превращался в кликабельную
+ *     ссылку прямо в карточке CRM клиента, отправленную от имени приложения. В чате это уже
+ *     чинили; карточка чувствительнее чата, а защиты в ней было меньше;
+ *   • переводы строк — описание разбирает разметку, и `\n` из имени поставщика ломал структуру
+ *     подписанных блоков и списка `[LIST]`/`[*]`, позволяя внешнему тексту подделать наши блоки;
+ *   • внутренние пути — предупреждения цитируют вывод инструментов извлечения, а он несёт путь с
+ *     идентификатором портала и задания. Им место в журнале сервера, не в карточке клиента.
+ * ⚠ Перевод строк в пробелы применяется к ЗНАЧЕНИЮ ОДНОГО ПОЛЯ, а не к собранному телу: сами
+ * переносы между блоками ставим мы, и они не проходят через эту функцию.
+ * ⚠ Расхождение было заявлено закрытым в чек-листе приёмки («ссылка не кликабельна в чате И в
+ * карточке») — то есть документ обещал то, чего код в карточке не делал.
+ */
 function safeText(value: string, cap = 300): string {
-  return neutralizeBb(String(value)).slice(0, cap)
+  return chatSafeText(value, cap)
 }
 
 /**
@@ -118,9 +135,14 @@ export function buildActivityBody(input: ActivityBodyInput): string {
     }
   }
 
-  blocks.push('', `[B]Сделка:[/B] [URL=${safeRelativePath(input.entityPath)}]${
-    safeText(input.entityLinkLabel || 'Открыть карточку', 60)
-  }[/URL]`)
+  // Путь негоден ⇒ блока нет вовсе. Подпись «Открыть сделку» над ссылкой в общий список CRM
+  // обещает конкретную карточку и приводит не туда (#385).
+  const entityHref = safeRelativePath(input.entityPath)
+  if (entityHref) {
+    blocks.push('', `[B]Сделка:[/B] [URL=${entityHref}]${
+      safeText(input.entityLinkLabel || 'Открыть карточку', 60)
+    }[/URL]`)
+  }
   if (input.advice) blocks.push('', `[B]Что сделать:[/B] ${safeText(input.advice, 500)}`)
   return blocks.join('\n')
 }
@@ -262,9 +284,19 @@ export function isRelativePath(path: string): boolean {
   return /^\/[^/\\]/.test(path)
 }
 
-/** Guard: only allow a same-portal relative path (no scheme, no protocol-relative). */
-export function safeRelativePath(path: string): string {
-  return isRelativePath(path) ? path : '/crm/'
+/**
+ * Guard: only allow a same-portal relative path (no scheme, no protocol-relative).
+ *
+ * ⚠ Негодный путь ⇒ `null`, а не корень CRM (правка отсмотра #385). Прежняя заглушка `/crm/`
+ * оставляла ЖИВУЮ ссылку под подписью «Открыть сделку», которая вела в общий список — то есть
+ * ровно то, что во всех остальных сообщениях запрещено правилом «мёртвая ссылка хуже отсутствия
+ * ссылки»: она обещает путь к конкретной карточке и приводит не туда, и человек считает, что
+ * карточки нет. Это была единственная ветка, где правило нарушалось намеренно. Сегодня она
+ * недостижима (путь строит `entityOpenPath`), но недостижимость — свойство вызывающего кода, а не
+ * гарантия: гард существует ровно на случай, когда она перестанет быть верной.
+ */
+export function safeRelativePath(path: string): string | null {
+  return isRelativePath(path) ? path : null
 }
 
 /** Portal path to open a created CRM entity (deal/quote/invoice/smart-process). */
