@@ -10,7 +10,7 @@ import { ON_MISSING_LABEL } from '~/config/onMissing'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { useB24 } from '~/composables/useB24'
-import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS, APP_SLIDER_PLACE_MAIN } from '~/config/b24'
+import { APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS, APP_SLIDER_PLACE_MAIN, APP_SLIDER_PLACE_TEST1 } from '~/config/b24'
 import { isPortalConfigured } from '~/utils/portalSettings'
 import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
@@ -120,6 +120,14 @@ const { isBitrixMobile } = useDevice()
 async function openSettings(): Promise<void> {
   const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 720, title: 'Настройки импорта' })
   if (!opened) await navigateTo('/settings')
+}
+// Стенд проверки слайдеров (#477). Открывается ТЕМ ЖЕ способом, что настройки и метрики: если
+// открывать его иначе, он проверял бы не тот путь, ради которого собран.
+// ⚠ Фолбэка на обычную навигацию тут НЕТ намеренно, в отличие от соседей. У них фолбэк нужен, чтобы
+// настройки открылись всегда; здесь же неоткрывшийся слайдер — это САМО НАБЛЮДЕНИЕ, и подменять его
+// переходом по маршруту значит скрыть ровно тот факт, который стенд должен показать.
+async function openSliderProbe(): Promise<void> {
+  await openAppSlider(APP_SLIDER_PLACE_TEST1, { width: 720, title: 'Стенд слайдеров — тест 1' })
 }
 // Detailed metrics — same slider pattern as settings (openSliderAppPage → middleware routes to /metrics).
 async function openMetrics(): Promise<void> {
@@ -745,6 +753,28 @@ watch(jobs, (list) => {
              принятие условий собирает Маркет при перевыпуске приложения. Смешивать нельзя —
              общий канал обесценил бы обязательное сообщение рекламным. -->
           <AnnouncementDialog />
+
+          <!-- СТЕНД ПРОВЕРКИ СЛАЙДЕРОВ (#477) — диагностический инструмент, не функция продукта.
+               ⚠ Виден ВСЕМ, включая мобильное приложение, и это осознанно против соседей: шестерёнка
+               настроек и «Подробные метрики» там скрыты (`!isBitrixMobile`, узкий экран), а здесь
+               прятать нельзя — как ведут себя слайдеры в мобильном клиенте, мы не знаем вовсе, и это
+               ровно половина смысла стенда.
+               ⚠ Клиентам приложение ещё не показывали (решение владельца 09.08.2026), поэтому
+               прятать не от кого; блок убирается целиком после прогона.
+               ⚠ Отдельный вход, а не переиспользование `openSettings`: стенд обязан открываться тем
+               же способом, каким открываются рабочие слайдеры, иначе он проверял бы не тот путь. -->
+          <div class="mt-6 rounded-lg border border-dashed border-(--ui-color-base-5) p-3">
+            <p class="text-xs text-(--ui-color-base-3)">
+              Служебный стенд: проверка поведения слайдеров. Будет убран.
+            </p>
+            <B24Button
+              class="mt-2"
+              label="Открыть стенд слайдеров"
+              color="air-tertiary-no-accent"
+              size="sm"
+              @click="openSliderProbe"
+            />
+          </div>
 
           <BuildFooter />
         </div>

@@ -202,5 +202,21 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  return { init, get, auth, isAdmin, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
+  /**
+   * Close via the SDK's OWN slider path (`slider.closeSliderAppPage`) — второй путь закрытия (#477).
+   *
+   * ⚠ Заведён РАДИ СТЕНДА, а не потому, что нужен продукту: в коде мы закрываем слайдер через
+   * `parent.closeApplication()`, а в справочнике и в заказе назван `closeSliderAppPage()`. В SDK оба
+   * шлют ОДНУ команду `MessageCommands.closeApplication` и отличаются только флагом `isSafely` —
+   * то есть по исходнику разницы быть не должно. «Не должно быть» это вывод из чтения, а не
+   * наблюдение, и стенд существует ровно чтобы такие выводы проверять глазами.
+   */
+  async function closeSliderViaSdk(): Promise<void> {
+    const f = await init()
+    try {
+      await f?.slider.closeSliderAppPage()
+    } catch { /* not framed → nothing to close */ }
+  }
+
+  return { init, get, auth, isAdmin, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider, closeSliderViaSdk }
 }

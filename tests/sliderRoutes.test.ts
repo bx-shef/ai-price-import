@@ -4,22 +4,33 @@ import {
   APP_SLIDER_PLACE_SETTINGS,
   APP_SLIDER_PLACE_METRICS,
   APP_SLIDER_PLACE_MAIN,
+  APP_SLIDER_PLACE_TEST1,
+  APP_SLIDER_PLACE_TEST2,
   APP_SLIDER_ROUTES,
   sliderRouteForPlace
 } from '../app/config/b24'
 
+// ⚠ Два места стенда (#477) перечислены здесь наравне с рабочими намеренно: гард «ключи карты РАВНЫ
+// списку констант» ловит дрейф ровно потому, что список пишется руками. Снимая стенд, убрать и
+// отсюда — иначе тест покраснеет и подскажет, что уборка не закончена.
+const ALL_PLACES = [
+  APP_SLIDER_PLACE_SETTINGS,
+  APP_SLIDER_PLACE_METRICS,
+  APP_SLIDER_PLACE_MAIN,
+  APP_SLIDER_PLACE_TEST1,
+  APP_SLIDER_PLACE_TEST2
+]
+
 describe('APP_SLIDER_ROUTES / sliderRouteForPlace', () => {
   it('maps each PLACE constant to a non-empty absolute in-app route', () => {
-    for (const place of [APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS, APP_SLIDER_PLACE_MAIN]) {
+    for (const place of ALL_PLACES) {
       const route = APP_SLIDER_ROUTES[place]
       expect(route).toBeTruthy()
       expect(route.startsWith('/')).toBe(true)
     }
   })
   it('the map keys ARE exactly the PLACE constants (no drift)', () => {
-    expect(Object.keys(APP_SLIDER_ROUTES).sort()).toEqual(
-      [APP_SLIDER_PLACE_SETTINGS, APP_SLIDER_PLACE_METRICS, APP_SLIDER_PLACE_MAIN].sort()
-    )
+    expect(Object.keys(APP_SLIDER_ROUTES).sort()).toEqual([...ALL_PLACES].sort())
   })
   it('sliderRouteForPlace: known place → route; settings → /settings, metrics → /metrics', () => {
     expect(sliderRouteForPlace(APP_SLIDER_PLACE_SETTINGS)).toBe('/settings')

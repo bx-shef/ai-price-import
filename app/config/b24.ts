@@ -31,6 +31,16 @@ export const APP_SLIDER_PLACE_METRICS = 'metrics'
 /** Главный экран, открытый НАМИ в слайдере (#262). Нужен отдельным `place`, а не признаком
  *  `IFRAME=Y`: по нему открытый слайдер опознаётся однозначно и не пытается открыть себя снова. */
 export const APP_SLIDER_PLACE_MAIN = 'app-main'
+/**
+ * Стенд проверки слайдеров (#477) — ДИАГНОСТИЧЕСКИЙ инструмент, не функция продукта.
+ *
+ * ⚠ Виден всем: решение владельца 09.08.2026 — клиентов ещё не звали, прятать не от кого, а
+ * проверять поведение слайдеров надо именно на боевом портале, потому что там живёт мобильное
+ * приложение. Код убирается целиком после прогона; то, что он останется в истории, владельца
+ * устраивает.
+ */
+export const APP_SLIDER_PLACE_TEST1 = 'slider-test-1'
+export const APP_SLIDER_PLACE_TEST2 = 'slider-test-2'
 
 /** place → in-app route the global middleware redirects a freshly-opened slider frame to.
  *  NB: the app's normal left-menu entry (standard universal «app URL») must NOT carry these `place`
@@ -39,7 +49,9 @@ export const APP_SLIDER_PLACE_MAIN = 'app-main'
 export const APP_SLIDER_ROUTES: Record<string, string> = {
   [APP_SLIDER_PLACE_SETTINGS]: '/settings',
   [APP_SLIDER_PLACE_METRICS]: '/metrics',
-  [APP_SLIDER_PLACE_MAIN]: '/app'
+  [APP_SLIDER_PLACE_MAIN]: '/app',
+  [APP_SLIDER_PLACE_TEST1]: '/slider-test-1',
+  [APP_SLIDER_PLACE_TEST2]: '/slider-test-2'
 }
 
 /** Pure: the in-app route a slider frame opened with `place` should redirect to (undefined = none). */
