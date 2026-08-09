@@ -7,7 +7,7 @@ import { FORMATS_HUMAN } from '~/config/uploadFormats'
 import { MAX_ITEMS } from '~/utils/extractedDocument'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
-import { readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
+import { applySettingsChangeToTarget, readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
 
 // Batch import staging (owner rework, round 2): pick files, choose ONE target for the whole batch,
 // press «Импортировать». The button LOCKS the page (via update:busy), uploads the files, then WAITS
@@ -50,6 +50,13 @@ const props = defineProps<{
   /** The parent's last poll error, '' when polling is healthy. Shown during the wait so a dead
    *  connection is not mistaken for a slow portal. */
   listError: string
+  /** Цель по умолчанию из настроек портала — источник новой цели, когда админ их поменял (#443). */
+  defaultTarget?: TargetRef | null
+  /** Счётчик правок настроек: растёт, когда прилетело событие «настройки изменились» и они
+   *  перечитаны. Именно СЧЁТЧИК, а не сама цель: админ может сохранить настройки, не тронув цель,
+   *  и наблюдение за значением такое сохранение проглядело бы — а отменить ручной выбор оно должно
+   *  тоже (решение владельца: у всех становится как настроил админ). */
+  settingsVersion?: number
 }>()
 // Surface the «идёт импорт» state to the parent so it can BLOCK the rest of the UI while the run is
 // in flight — the operator shouldn't touch settings/metrics mid-run (owner ask).
@@ -85,6 +92,17 @@ onMounted(() => {
 watch(target, (t) => {
   if (typeof window === 'undefined') return
   writeTarget(window.sessionStorage, memoryKey.value, t)
+})
+
+// Админ поменял настройки, событие разошлось по всем сотрудникам (#443) — принимаем новую цель.
+// Правило и его цена живут в `applySettingsChangeToTarget`; здесь только применение. Запись в
+// sessionStorage делает watcher выше, отдельной строкой её дублировать не нужно.
+watch(() => props.settingsVersion, () => {
+  const decision = applySettingsChangeToTarget({
+    importing: importing.value,
+    nextDefault: props.defaultTarget ?? null
+  })
+  if (decision.adopt) target.value = decision.target
 })
 // Set by «Отменить»; checked between uploads and inside the wait loop.
 const cancelled = ref(false)
@@ -208,6 +226,15 @@ async function startImport(): Promise<void> {
   try {
     // PHASE 1 — upload the batch. Sequential HTTP posts (the upload itself is seconds; the WAIT is the
     // long part), one shared target, a failed file marks its row and the batch MOVES ON (owner ask).
+    //
+    // ⚠ Цель СНИМАЕТСЯ СЛЕПКОМ на весь прогон, а не читается на каждом файле. Шапка компонента
+    // обещала «frozen for the duration of the run» с самого начала, но заморозки не было: цикл брал
+    // `target.value`, и любая правка на середине увела бы ОСТАТОК пачки не туда, куда ушло её
+    // начало. Пока цель менял только пикер (а он на время прогона заблокирован), дефект был
+    // спящим; с рассылкой настроек всем сотрудникам (#443) менять её на середине стало кому.
+    // Расхождение вскрылось бы не сразу и не на экране, а в CRM — половина накладных в одной
+    // воронке, половина в другой.
+    const runTarget = target.value
     const sent: StagedFile[] = []
     for (const s of queue) {
       if (cancelled.value) break
@@ -218,7 +245,7 @@ async function startImport(): Promise<void> {
       notice.value = `Отправляем «${s.file.name}»…`
       // The row's stable key is the desired jobId → a retry of THIS row reuses it and can't create a
       // duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
-      const outcome = await props.upload(s.file, target.value, s.key)
+      const outcome = await props.upload(s.file, runTarget, s.key)
       if (outcome.ok) {
         s.status = 'sent'
         sent.push(s)
@@ -437,12 +464,18 @@ function cancelImport(): void {
       v-if="staged.length || importing"
       class="mt-3 flex flex-wrap items-center gap-3"
     >
+      <!-- ⚠ Блокировка НАСТОЯЩАЯ (`:disabled`), а не `pointer-events-none` на обёртке (#475): тот
+           гасит только мышь, и с клавиатуры цель менялась бы прямо во время прогона. `opacity` —
+           теперь оформление поверх блокировки, а не вместо неё. -->
       <div
         class="flex min-w-0 flex-wrap items-center gap-2"
-        :class="importing ? 'pointer-events-none opacity-60' : ''"
+        :class="importing ? 'opacity-60' : ''"
       >
         <span class="text-xs text-(--ui-color-base-4)">Куда импортировать:</span>
-        <TargetPicker v-model:target="target" />
+        <TargetPicker
+          v-model:target="target"
+          :disabled="importing"
+        />
       </div>
       <B24Button
         color="air-primary"

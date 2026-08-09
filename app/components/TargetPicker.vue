@@ -24,7 +24,11 @@ const target = defineModel<TargetRef | null>('target', { default: null })
 // The settings page (default target + routing rules) passes false: those targets are always concrete.
 // NB: Vue casts an ABSENT Boolean prop to `false` (not undefined), so the per-file import picker's
 // «Авто» default must be set explicitly via withDefaults — a `?? true` fallback would never fire.
-const props = withDefaults(defineProps<{ includeAuto?: boolean }>(), { includeAuto: true })
+// `disabled` — НАСТОЯЩАЯ блокировка на время пачки (#475), а не `pointer-events-none` на обёртке:
+// тот гасит только мышь, а кнопки и списки внутри остаются в обходе по Tab и срабатывают по Enter.
+// Здесь цена такой дыры выше средней: цель пачки читается из этой же модели, и подмена на середине
+// увела бы остаток документов в другое место, чем их начало (см. `applySettingsChangeToTarget`).
+const props = withDefaults(defineProps<{ includeAuto?: boolean, disabled?: boolean }>(), { includeAuto: true, disabled: false })
 
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
@@ -176,6 +180,7 @@ function onStage(v: unknown): void {
       size="xs"
       :color="etid === c.id ? 'air-primary' : 'air-tertiary-no-accent'"
       :aria-pressed="etid === c.id"
+      :disabled="props.disabled"
       @click="() => chooseEntity(c.id)"
     />
     <!-- Прежняя цель исчезла с портала (смарт-счета выключили, смарт-процесс удалили). Молча
@@ -193,6 +198,7 @@ function onStage(v: unknown): void {
       :items="catItems"
       class="w-40"
       aria-label="Направление (воронка)"
+      :disabled="props.disabled"
       @update:model-value="onCategory"
     />
     <B24Select
@@ -201,6 +207,7 @@ function onStage(v: unknown): void {
       :items="stageItems"
       class="w-36"
       aria-label="Стадия"
+      :disabled="props.disabled"
       @update:model-value="onStage"
     />
   </div>

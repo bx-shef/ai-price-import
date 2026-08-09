@@ -109,3 +109,41 @@ describe('TargetPicker: недоступный тип на портале (#269)
     }
   })
 })
+
+describe('TargetPicker: блокировка на время пачки (#475)', () => {
+  it('disabled — кнопки сущностей ДЕЙСТВИТЕЛЬНО выключены, а не только погашены мышью', async () => {
+    // ⚠ Проверяем атрибут, а не класс обёртки. Прежний замок был `pointer-events-none` на
+    // контейнере: он гасит указатель, но кнопки внутри остаются в обходе по Tab и срабатывают по
+    // Enter — то есть цель пачки менялась с клавиатуры прямо во время прогона.
+    const w = await mountSuspended(TargetPicker, { props: { disabled: true } })
+    await tick()
+    const buttons = w.findAll('button')
+    expect(buttons.length).toBeGreaterThan(0)
+    expect(buttons.every(b => b.attributes('disabled') !== undefined)).toBe(true)
+  })
+
+  it('без disabled кнопки доступны — блокировка не «всегда включена»', async () => {
+    // Негативная половина: без неё тест прошёл бы и на компоненте, выключенном намертво.
+    const w = await mountSuspended(TargetPicker)
+    await tick()
+    expect(w.findAll('button').some(b => b.attributes('disabled') !== undefined)).toBe(false)
+  })
+
+  it('disabled — выключены и списки направления со стадией', async () => {
+    // Цель задаём моделью: кликнуть по сущности нельзя — кнопки уже выключены, а без выбранной
+    // сущности каскад не рисует ни направления, ни стадии, и проверять было бы нечего.
+    const w = await mountSuspended(TargetPicker, {
+      props: { disabled: true, target: { entityTypeId: 2, categoryId: 5 } }
+    })
+    await tick()
+    await tick()
+    await tick()
+    const selects = w.findAll('[aria-label="Направление (воронка)"], [aria-label="Стадия"]')
+    expect(selects.length).toBeGreaterThan(0)
+    for (const s of selects) {
+      const inner = s.element.querySelector('button, input, select') as HTMLElement | null
+      const el = (inner ?? s.element) as HTMLElement
+      expect(el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true' || el.dataset.disabled !== undefined).toBe(true)
+    }
+  })
+})

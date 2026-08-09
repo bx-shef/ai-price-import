@@ -135,9 +135,19 @@ const { subscribeReload } = useSettingsSync()
 // Подписку заводим синхронно (после await теряется scope эффекта), но в пусковой странице её надо
 // СНЯТЬ, а не просто заглушить обработчик: сама подписка поднимает websocket, и он висел бы вторым —
 // рядом с тем, что поднимает открытый слайдер. Ровно то удвоение, ради которого лаунчер и делался.
+// Счётчик применённых правок настроек (#443). Растёт ПОСЛЕ того, как настройки перечитаны, — иначе
+// потребитель увидел бы сигнал раньше данных и подхватил прежнюю цель.
+//
+// ⚠ Счётчик, а не наблюдение за самой целью: админ может сохранить настройки, не тронув цель по
+// умолчанию, и наблюдение за значением такое сохранение проглядело бы. А ручной выбор сотрудника
+// отменяется в обоих случаях — решение владельца: после правки у всех становится так, как настроил
+// админ (см. `applySettingsChangeToTarget`).
+const settingsVersion = ref(0)
 const unsubscribeReload = subscribeReload(() => {
   if (launch.value === 'launcher') return
-  void loadSettings()
+  void loadSettings().finally(() => {
+    settingsVersion.value++
+  })
 })
 
 // Слайдер не открылся (портал отказал / SDK бросил). Тогда пусковая страница — тупик: единственная
@@ -296,11 +306,19 @@ watch(jobs, (list) => {
           :title="APP_NAME"
         >
           <template #right>
+            <!-- ⚠ Блокируется на время пачки (#475). Не «для порядка»: сохранение настроек
+                 рассылает ВСЕМ сотрудникам событие «перечитайте настройки» (#443), а идущая пачка
+                 работает на тех, с которыми стартовала, — открыв настройки на середине, оператор
+                 получил бы экран, спорящий сам с собой. `:disabled` настоящий: кнопка выпадает из
+                 обхода по Tab, тогда как `pointer-events-none` гасил бы только мышь. Причина —
+                 в `title`, иначе выключенная кнопка неотличима от сломанной. -->
             <B24Button
               :icon="SettingsIcon"
               color="air-tertiary-no-accent"
               size="sm"
-              aria-label="Настройки импорта"
+              :disabled="busy"
+              :aria-label="busy ? 'Настройки импорта — недоступны, пока идёт импорт' : 'Настройки импорта'"
+              :title="busy ? 'Пока идёт импорт, настройки менять нельзя' : 'Настройки импорта'"
               @click="openSettings"
             />
           </template>
@@ -442,6 +460,8 @@ watch(jobs, (list) => {
               :refresh-now="refreshNow"
               :list-error="listError"
               :portal-domain="portalDomain"
+              :default-target="mapping.defaultTarget"
+              :settings-version="settingsVersion"
               @update:busy="v => stagingBusy = v"
             />
 
@@ -612,7 +632,9 @@ watch(jobs, (list) => {
                   <button
                     v-if="!isBitrixMobile"
                     type="button"
-                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline"
+                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-default disabled:no-underline disabled:opacity-60"
+                    :disabled="busy"
+                    :title="busy ? 'Пока идёт импорт, метрики недоступны' : undefined"
                     @click="openMetrics"
                   >
                     Подробные метрики →

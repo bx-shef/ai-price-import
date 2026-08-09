@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readTarget, targetMemoryKey, writeTarget, type TargetStore } from '../app/utils/targetMemory'
+import { applySettingsChangeToTarget, readTarget, targetMemoryKey, writeTarget, type TargetStore } from '../app/utils/targetMemory'
 
 function fakeStore(initial: Record<string, string> = {}): TargetStore & { data: Map<string, string> } {
   const data = new Map(Object.entries(initial))
@@ -66,5 +66,30 @@ describe('запись и чтение цели', () => {
     }
     expect(() => writeTarget(throwing, KEY, { entityTypeId: 2 })).not.toThrow()
     expect(readTarget(throwing, KEY)).toBeNull()
+  })
+})
+
+describe('applySettingsChangeToTarget (#443): админ поменял настройки — что с памятью', () => {
+  const nextDefault = { entityTypeId: 2, categoryId: 7 }
+
+  it('вне прогона новая цель по умолчанию побеждает запомненную', () => {
+    // Смысл рассылки в том, чтобы у всех стало как настроил админ. Память, пережившая правку,
+    // отменяла бы её молча и у каждого по-своему.
+    expect(applySettingsChangeToTarget({ importing: false, nextDefault }))
+      .toEqual({ adopt: true, target: nextDefault })
+  })
+
+  it('во время пачки не трогаем ничего', () => {
+    // Задание уже принято сервером и работает на настройках НА МОМЕНТ ПОСТАНОВКИ. Подменив цель на
+    // середине, мы отправили бы остаток пачки не туда, куда ушло её начало.
+    expect(applySettingsChangeToTarget({ importing: true, nextDefault }))
+      .toEqual({ adopt: false, target: null })
+  })
+
+  it('цель по умолчанию не пришла — принимаем «Авто», а не оставляем прежнюю', () => {
+    // `null` здесь значит «правила маршрутизации», а не «нет данных»: настройки уже перечитаны,
+    // счётчик растёт ПОСЛЕ загрузки. Оставить прежнюю цель значило бы проигнорировать правку.
+    expect(applySettingsChangeToTarget({ importing: false, nextDefault: null }))
+      .toEqual({ adopt: true, target: null })
   })
 })

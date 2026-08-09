@@ -55,6 +55,31 @@ export function writeTarget(store: TargetStore, key: string, target: TargetRef |
 }
 
 /**
+ * Админ поменял настройки портала, и событие прилетело всем сотрудникам (#443) — что делать с
+ * запомненной целью.
+ *
+ * Правило одно и решение владельца 09.08.2026: **память обновляем**, новая цель по умолчанию
+ * побеждает запомненную. Смысл рассылки в том, чтобы у всех стало как настроил админ; память,
+ * пережившая правку, ровно это и отменяла бы — причём молча, у каждого своя.
+ *
+ * ⚠ Цена названа: если сотрудник только что выбрал направление руками и ещё не начал импорт, его
+ * выбор заменится. Это принято сознательно — админ правит настройки редко и осмысленно, а ручной
+ * выбор восстанавливается одним нажатием.
+ *
+ * ⚠ ЕДИНСТВЕННОЕ исключение — идущая пачка. Задание уже принято сервером, и его поведение
+ * определяется настройками НА МОМЕНТ ПОСТАНОВКИ; подменив цель на середине, мы отправили бы
+ * остаток пачки в другое место, чем её начало, — и человек узнал бы об этом только из CRM.
+ * Поэтому во время прогона не трогаем ничего, а новая цель применится к следующей пачке.
+ */
+export function applySettingsChangeToTarget(opts: {
+  importing: boolean
+  nextDefault: TargetRef | null
+}): { adopt: boolean, target: TargetRef | null } {
+  if (opts.importing) return { adopt: false, target: null }
+  return { adopt: true, target: opts.nextDefault }
+}
+
+/**
  * Read back a remembered target. Returns null on anything unexpected — corrupt JSON, wrong shape, a
  * non-positive entity type. The caller then falls back to the portal's default, which is also what
  * must happen when the направление/стадия has since been deleted or renamed: this function cannot

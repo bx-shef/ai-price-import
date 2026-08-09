@@ -302,3 +302,118 @@ describe('ImportStaging (пачка + ожидание результатов)',
     expect(w.text()).toContain('2 КБ')
   })
 })
+
+// Админ поменял настройки портала, и событие разошлось ВСЕМ сотрудникам (#443). Здесь проверяется
+// приём этой правки на экране импорта. Пикер в этом наборе застаблен, поэтому цель приезжает
+// единственным путём — через `defaultTarget` + рост `settingsVersion`, ровно как в бою.
+describe('ImportStaging: прилетела правка настроек (#443)', () => {
+  const A = { entityTypeId: 2, categoryId: 1 }
+  const B = { entityTypeId: 1120, categoryId: 5 }
+
+  it('вне прогона новая цель по умолчанию применяется к следующей пачке', async () => {
+    const t = instantDone()
+    const w = await mountSuspended(ImportStaging, {
+      props: { ...t, defaultTarget: A, settingsVersion: 0 } as never,
+      global: { stubs }
+    })
+    await w.setProps({ settingsVersion: 1 } as never)
+    await tick()
+
+    await pick(w, [file('накладная.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+
+    expect(t.upload).toHaveBeenCalledWith(expect.anything(), A, expect.anything())
+  })
+
+  it('правка ПОСРЕДИ пачки не уводит её остаток в другую цель', async () => {
+    // Самый дорогой из возможных исходов: половина накладных в одной воронке, половина в другой.
+    // На экране это не видно вовсе — расхождение вскрывается только в CRM.
+    const seen: unknown[] = []
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let firstUpload = true
+    const upload = vi.fn(async (_f: File, target?: unknown) => {
+      seen.push(target)
+      if (firstUpload) {
+        firstUpload = false
+        await gate
+      }
+      return OK
+    })
+    const w = await mountSuspended(ImportStaging, {
+      props: {
+        upload,
+        jobDone: (): JobStatus | null => 'done',
+        refreshNow: async () => {},
+        listError: '',
+        defaultTarget: A,
+        settingsVersion: 0
+      } as never,
+      global: { stubs }
+    })
+    await w.setProps({ settingsVersion: 1 } as never)
+    await tick()
+
+    await pick(w, [file('первая.pdf'), file('вторая.pdf')])
+    void clickText(w, 'Импортировать')
+    await tick()
+
+    // Админ сохранил настройки с ДРУГОЙ целью, событие доехало — но пачка уже идёт.
+    await w.setProps({ defaultTarget: B, settingsVersion: 2 } as never)
+    await tick()
+    release()
+    await tick()
+    await tick()
+
+    expect(seen).toEqual([A, A])
+  })
+
+  it('цель, изменённая ЛЮБЫМ путём после старта, на идущую пачку не влияет', async () => {
+    // ⚠ Отдельный тест от предыдущего, и вот почему. Там цель не менялась вовсе — её не пустил
+    // гард «во время прогона не принимаем правку». То есть тот тест сторожит ГАРД, а снятие
+    // заморозки в цикле он проходит зелёным (проверено мутацией). Здесь цель меняется в обход
+    // гарда — через модель пикера, — и падает ровно снятие заморозки.
+    const seen: unknown[] = []
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let firstUpload = true
+    const upload = vi.fn(async (_f: File, target?: unknown) => {
+      seen.push(target)
+      if (firstUpload) {
+        firstUpload = false
+        await gate
+      }
+      return OK
+    })
+    const w = await mountSuspended(ImportStaging, {
+      props: {
+        upload,
+        jobDone: (): JobStatus | null => 'done',
+        refreshNow: async () => {},
+        listError: '',
+        defaultTarget: A,
+        settingsVersion: 0
+      } as never,
+      global: { stubs }
+    })
+    await w.setProps({ settingsVersion: 1 } as never)
+    await tick()
+
+    await pick(w, [file('первая.pdf'), file('вторая.pdf')])
+    void clickText(w, 'Импортировать')
+    await tick()
+
+    w.findComponent({ name: 'TargetPicker' }).vm.$emit('update:target', B)
+    await tick()
+    release()
+    await tick()
+    await tick()
+
+    expect(seen).toEqual([A, A])
+  })
+})
