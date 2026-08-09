@@ -63,22 +63,31 @@ export function marketDetailPath(code: string): string | null {
  * Absolute link that opens THIS app inside the portal (#385).
  *
  * ⚠ Not to be confused with `marketDetailPath` above: `/marketplace/detail/<code>/` is the Market
- * LISTING (where a rating is left), `/marketplace/view/<code>/` is the app ITSELF. The failure
- * message in chat used to point at `NUXT_PUBLIC_SITE_URL + '/app'`, i.e. at our own host — opened
- * outside the portal there is no frame, no frame token and no member_id, so the promised way back
- * was a dead end. The address must be built from the PORTAL's domain, never from ours.
+ * LISTING (where a rating is left), this is the app ITSELF. The failure message in chat used to
+ * point at `NUXT_PUBLIC_SITE_URL + '/app'`, i.e. at our own host — opened outside the portal there
+ * is no frame, no frame token and no member_id, so the promised way back was a dead end. The
+ * address must be built from the PORTAL's domain, never from ours.
  *
- * The symbolic-code form is used rather than the numeric `/marketplace/app/<ID>/`: `ID` is local to
- * each portal (it comes from `app.info`, which additionally only answers in application context),
- * while the code is the same everywhere and needs no REST call.
+ * ⚠ **ЧИСЛОВАЯ форма `/marketplace/app/<ID>/`, а не символьная `/marketplace/view/<код>/`** —
+ * разворот против первой редакции, и его продиктовал живой прогон (владелец, 09.08.2026):
+ * `/marketplace/view/shef.priceimport/` на портале НЕ открывается, работает `/marketplace/app/1/`.
+ * Прежний довод («код одинаков на всех порталах и не требует REST-вызова») был удобен, но неверен
+ * по факту: символьный код принадлежит карточке МАРКЕТА, а установленное на портале приложение
+ * адресуется своим локальным идентификатором — и пока приложение не опубликовано, символьного
+ * адреса не существует вовсе. Плата за разворот названа: `ID` свой на каждом портале, его отдаёт
+ * `app.info` (только в контексте приложения), то есть ссылка стоит одного REST-вызова.
+ * ⚠ Фолбэка на символьную форму НЕТ намеренно: ссылка, работающая на одном классе порталов и
+ * дающая 404 на другом, — это ровно та мёртвая ссылка, которую здесь запрещено отдавать.
  *
- * Returns null when the portal host or the code is unknown — the caller then sends the text without
- * a link. A broken link is worse than no link: it promises a way back and leads nowhere.
+ * Returns null when the portal host or the app id is unknown — the caller then sends the text
+ * without a link. A broken link is worse than no link: it promises a way back and leads nowhere.
  */
-export function portalAppUrl(portalDomain: string | undefined | null, code: string): string | null {
+export function portalAppUrl(portalDomain: string | undefined | null, appId: number | null | undefined): string | null {
   const host = portalHost(portalDomain)
-  const c = code.trim()
-  return host && c ? `https://${host}/marketplace/view/${c}/` : null
+  // ⚠ Идентификатор проверяется как ЦЕЛОЕ ПОЛОЖИТЕЛЬНОЕ, а не «непустое»: портал отдаёт его строкой
+  // или числом, а `0`/`NaN`/дробь дали бы адрес, который выглядит рабочим и ведёт в никуда.
+  const id = Number(appId)
+  return host && Number.isInteger(id) && id > 0 ? `https://${host}/marketplace/app/${id}/` : null
 }
 
 /**

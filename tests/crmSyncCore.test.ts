@@ -754,11 +754,15 @@ describe('runCrmSync — products / units / routing', () => {
       expect(r.errors[0]).toContain('ни одна из 3 позиций')
     })
 
-    it('текст говорит «запись не создана», а не «часть строк пропущена»', async () => {
+    // ⚠ Утверждение ПЕРЕВЁРНУТО (замечание владельца с живого портала): текст обещал, что записи
+    // нет, а с #459 карточка создаётся всегда — тут же, ниже по этому файлу, это и проверяется.
+    // Два теста в одном файле утверждали противоположное об одном исходе.
+    it('текст говорит о пустой карточке, а не «часть строк пропущена» и не «записи нет»', async () => {
       const m = mapping()
       m.product.onMissing = 'skip-warn'
       const r = await runCrmSync('j', twoItems, m, {}, baseDeps())
-      expect(r.errors.some(e => /запись в CRM не создана/i.test(e))).toBe(true)
+      expect(r.errors.some(e => /карточка создана пустой/i.test(e))).toBe(true)
+      expect(r.errors.some(e => /не создан/i.test(e))).toBe(false)
       // Прежний текст про «часть строк» тут — прямая неправда: пропущена не часть, а всё.
       expect(r.errors.concat(r.warnings).some(t => /Часть строк пропущена/i.test(t))).toBe(false)
     })
@@ -801,7 +805,7 @@ describe('runCrmSync — products / units / routing', () => {
       const deps = baseDeps()
       await runCrmSync('j', twoItems, m, {}, deps)
       expect(deps.reportErrors).toHaveBeenCalledWith(
-        expect.arrayContaining([expect.stringMatching(/не найдена в каталоге, запись в CRM не создана/i)]),
+        expect.arrayContaining([expect.stringMatching(/не найдена в каталоге\. Карточка создана пустой/i)]),
         'ООО Ромашка'
       )
     })

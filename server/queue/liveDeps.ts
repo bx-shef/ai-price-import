@@ -44,7 +44,7 @@ import { eventJobToSaveInput } from './topology'
 import type { CrmSyncDeps } from './crmSyncCore'
 import type { PortalMapping } from '~/types/mapping'
 import { portalAppUrl } from '~/config/b24'
-import { LANDING_MARKET_CODE } from '~/utils/landing'
+import { fetchAppId } from '../utils/appInfo'
 
 // Live wiring: bind the pure handlers' DI to real stores / portal REST / extractor / queues.
 // The chat extractor transport, file-extract runners and the OAuth refresh HTTP are INJECTED
@@ -297,7 +297,7 @@ export async function notifyImportFailure(
       errorChatId,
       alsoErrorChat: opts.alsoErrorChat !== false,
       jobId,
-      appUrl: 'appUrl' in opts ? opts.appUrl ?? null : await backLinkUrl(memberId, uploaderId, infra)
+      appUrl: 'appUrl' in opts ? opts.appUrl ?? null : await backLinkUrl(memberId, uploaderId, infra, t.call)
     })
     for (const m of planned) {
       try {
@@ -346,15 +346,21 @@ export async function notifyImportFailure(
  * (`buildErrorMessage`) получатель другой — там ссылка нужна независимо от того, известен ли
  * загрузивший (#385). Свалить оба вызова в одну функцию с гейтом значило бы молча выкинуть ссылку
  * из админского сообщения ровно у тех импортов, где id сотрудника не пришёл.
+ *
+ * ⚠ Адрес требует ДВУХ источников: домен из строки портала и локальный идентификатор приложения из
+ * `app.info` (живая находка 09.08.2026 — символьный код Маркета в адресе не работает). Отсюда
+ * REST-вызов на пути отказа; он идёт тем же транспортом, что и сама отправка, и его отказ даёт
+ * `null`, то есть текст без ссылки, — уведомление важнее ссылки.
  */
-async function portalBackLink(memberId: string, infra: LiveInfra): Promise<string | null> {
+async function portalBackLink(memberId: string, infra: LiveInfra, call: RestCall): Promise<string | null> {
   const domain = await getToken(memberId, infra.query).then(t => t?.domain).catch(() => null)
-  return portalAppUrl(domain, LANDING_MARKET_CODE)
+  if (!domain) return null
+  return portalAppUrl(domain, await fetchAppId(call))
 }
 
-async function backLinkUrl(memberId: string, uploaderId: string | null, infra: LiveInfra): Promise<string | null> {
+async function backLinkUrl(memberId: string, uploaderId: string | null, infra: LiveInfra, call: RestCall): Promise<string | null> {
   if (!uploaderId) return null
-  return portalBackLink(memberId, infra)
+  return portalBackLink(memberId, infra, call)
 }
 
 export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
@@ -452,7 +458,7 @@ export function liveCrmSyncDeps(memberId: string, jobId: string, mapping: Portal
   // мёртвая база опрашивалась бы повторно ровно тогда, когда она мертва.
   let appUrlMemo: string | null | undefined
   const appUrl = async (): Promise<string | null> => {
-    if (appUrlMemo === undefined) appUrlMemo = await portalBackLink(memberId, infra)
+    if (appUrlMemo === undefined) appUrlMemo = await portalBackLink(memberId, infra, (await need()).call)
     return appUrlMemo
   }
   // Auto-create measure state (Q11): the portal's existing measures indexed once per job — codes

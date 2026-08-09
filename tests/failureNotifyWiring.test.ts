@@ -17,12 +17,16 @@ import type { LiveInfra } from '../server/queue/liveDeps'
 
 interface Sent { method: string, params: Record<string, unknown> }
 
-function harness(opts: { queryThrows?: boolean, domain?: string } = {}) {
+function harness(opts: { queryThrows?: boolean, domain?: string, appInfoFails?: boolean } = {}) {
   const sent: Sent[] = []
   const call = async (method: string, params: Record<string, unknown> = {}) => {
     sent.push({ method, params })
     // Бота нет — отправка идёт старым путём (`im.message.add`), как на портале без скоупа `imbot`.
     if (method.startsWith('imbot.')) throw new Error('ACCESS_DENIED')
+    // ⚠ Адрес приложения теперь ЧИСЛОВОЙ (`/marketplace/app/<ID>/`, #385 второй заход): символьный
+    // код карточки Маркета на портале не открывается. `ID` приходит из `app.info`, и портал,
+    // который на него не отвечает, законно оставляет сообщение без ссылки — это отдельная ветка.
+    if (method === 'app.info') return (opts.appInfoFails ? null : { ID: 3 }) as never
     return {} as never
   }
   const query = async (sql: string) => {
@@ -61,8 +65,23 @@ describe('#385: проводка ссылки не может съесть са�
 
     const msgs = messages(h.sent)
     expect(msgs.length).toBe(1)
-    expect(msgs[0]).toContain('[URL=https://b24-hrbvzq.bitrix24.by/marketplace/view/')
-    expect(msgs[0]).not.toContain('/app]')
+    expect(msgs[0]).toContain('[URL=https://b24-hrbvzq.bitrix24.by/marketplace/app/3/]')
+    // Символьная форма сюда вернуться не должна: она на портале не открывается (#385, живой прогон).
+    expect(msgs[0]).not.toContain('/marketplace/view/')
+  })
+
+  it('портал не отвечает про приложение — уведомление уходит БЕЗ ссылки, а не пропадает', async () => {
+    // ⚠ Адрес стоит REST-вызова (`app.info`), и это новый способ потерять сообщение: метод отвечает
+    // только в контексте приложения, у него свои отказы. Отказ ссылки не вправе глушить сам отказ
+    // импорта — тот же инвариант, что и у падения базы выше, только по другой причине.
+    const h = harness({ domain: 'b24-hrbvzq.bitrix24.by', appInfoFails: true })
+    await createJob('m1', 'j-no-appinfo', 'счёт.pdf', jobRedis, null, '7')
+    await notifyImportFailure(h.infra, 'm1', 'j-no-appinfo', 'документ не распознан', { rest: h.rest, alsoErrorChat: false })
+
+    const msgs = messages(h.sent)
+    expect(msgs.length, 'сообщение потеряно').toBe(1)
+    expect(msgs[0]).toContain('Файл можно загрузить снова в приложении.')
+    expect(msgs[0]).not.toContain('[URL=')
   })
 
   it('подменённый домен → ссылки нет, а не ссылка на чужой хост', async () => {
