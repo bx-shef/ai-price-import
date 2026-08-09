@@ -3,6 +3,11 @@ import { handleAnnouncementOp } from '../../utils/announcementOpsHandler'
 import { announcementRedis } from '../../utils/announcementRedis'
 import { clearAnnouncement, writeAnnouncement } from '../../utils/announcementStore'
 import { connectionOptions } from '../../queue/connection'
+import { broadcastAnnouncement } from '../../utils/announcementBroadcast'
+import { makePortalSdkCall, sdkPortalDeps } from '../../utils/b24Sdk'
+import { listPortalStatus } from '../../utils/tokenStore'
+import { query } from '../../db/client'
+import { LANDING_MARKET_CODE } from '~/utils/landing'
 import { MAX_ANNOUNCEMENT_BODY_BYTES } from '~/config/announcement'
 
 // POST /api/ops/announcement — завести, посмотреть или снять объявление издателя (#469).
@@ -39,5 +44,40 @@ export default defineEventHandler(async (event) => {
     now: () => Date.now()
   })
   setResponseStatus(event, res.status)
+  // ⚠ Рассылка живого сигнала — ПОСЛЕ успешной записи и только для действий, которые меняют
+  // объявление (#478). До этого объявление доезжало лишь при открытии рабочего экрана, то есть у
+  // сотрудника с уже открытой вкладкой не появлялось вовсе.
+  //
+  // ⚠ Рассылка НЕ вправе завалить операцию: объявление уже записано и доедет запасным путём, а её
+  // отказ — строка в отчёте, а не ошибка. Но и молчать нельзя: молчаливо провалившаяся рассылка
+  // неотличима от «никто не открывал экран», и владелец ждал бы реакции на объявление, которого
+  // никто не получил. Поэтому сводка едет оператору в ответе.
+  //
+  // ⚠ Снятие объявления рассылается ТОЖЕ: иначе снятое продолжало бы висеть у всех, кто держит
+  // вкладку открытой, — то есть ровно у тех, ради кого сигнал и заводился. Уже ОТКРЫТОЕ окно при
+  // этом не закрывается: гасить его под руками у читающего человека хуже, чем дать дочитать.
+  const changed = res.status < 400 && (body?.action === 'publish' || body?.action === 'clear')
+  if (changed) {
+    try {
+      const infra = sdkPortalDeps({
+        query,
+        clientId: process.env.B24_CLIENT_ID ?? '',
+        clientSecret: process.env.B24_CLIENT_SECRET ?? '',
+        encKey: process.env.B24_TOKEN_ENC_KEY ?? '',
+        now: () => Date.now()
+      })
+      const broadcast = await broadcastAnnouncement({
+        listPortals: async () => (await listPortalStatus(query)).map(p => p.memberId),
+        callFor: async m => (await makePortalSdkCall(m, infra))?.call ?? null,
+        moduleId: String(process.env.NUXT_PUBLIC_B24_MARKET_CODE || LANDING_MARKET_CODE),
+        log: msg => console.info(msg)
+      })
+      return { ...(res.body as Record<string, unknown>), broadcast }
+    } catch {
+      // Читаем это как «разослать не удалось целиком» — например, база недоступна. Операция всё
+      // равно состоялась, поэтому отдаём тело как есть с явной пометкой, а не 500.
+      return { ...(res.body as Record<string, unknown>), broadcast: null }
+    }
+  }
   return res.body
 })

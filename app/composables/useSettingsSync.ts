@@ -3,6 +3,7 @@ import { B24PullClientManager } from '@bitrix24/b24jssdk'
 import { useB24 } from './useB24'
 import { LANDING_MARKET_CODE } from '~/utils/landing'
 import { SETTINGS_RELOAD_COMMAND, buildSettingsReloadEvent } from '~/utils/settingsSync'
+import { ANNOUNCEMENT_PULL_COMMAND } from '~/utils/announcementPull'
 
 // Cross-instance settings sync (pattern from bitrix24/b24-ai-starter). After an admin saves settings,
 // `notifyReload()` fires `pull.application.event.add` on the app's pull channel; other open instances
@@ -69,6 +70,22 @@ export function useSettingsSync() {
    * client can't start, this is a silent no-op.
    */
   function subscribeReload(onReload: () => void): () => void {
+    return subscribeCommand(SETTINGS_RELOAD_COMMAND, onReload)
+  }
+
+  /**
+   * Подписка на сигнал «проверь объявление издателя» (#478).
+   *
+   * ⚠ Та же труба, ДРУГАЯ команда — и отдельная функция именно поэтому: подписчик получает вызовы
+   * только своей команды, и один обработчик на обе означал бы поход за настройками на каждое
+   * объявление и наоборот. Отправитель тут не портал, а наш сервер (рассылает всем порталам).
+   */
+  function subscribeAnnouncement(onCheck: () => void): () => void {
+    return subscribeCommand(ANNOUNCEMENT_PULL_COMMAND, onCheck)
+  }
+
+  /** Общая машинерия подписки: канал один, команды разные. */
+  function subscribeCommand(command: string, onEvent: () => void): () => void {
     let disposed = false
     let dispose: (() => void) | null = null
     let pull: InstanceType<typeof B24PullClientManager> | null = null
@@ -90,9 +107,9 @@ export function useSettingsSync() {
         if (!frame) return degrade('not-framed')
         const moduleId = appModuleId()
         pull = new B24PullClientManager({ b24: frame, restApplication: moduleId })
-        // The SDK dispatches this callback ONLY for the subscribed command bucket (reload.options) —
+        // The SDK dispatches this callback ONLY for the subscribed command bucket —
         // it passes (params, extra, command, meta), so react unconditionally; there's no {command} arg.
-        dispose = pull.subscribe({ moduleId, command: SETTINGS_RELOAD_COMMAND, callback: () => onReload() })
+        dispose = pull.subscribe({ moduleId, command, callback: () => onEvent() })
         // disposed mid-await → drop the just-built client
         if (disposed) {
           teardown()
@@ -117,5 +134,5 @@ export function useSettingsSync() {
 
   // `state`/`failure` — только для наблюдения (журнал, будущая подсказка на экране). Ни один
   // вызывающий не обязан их читать: канал остаётся best-effort.
-  return { notifyReload, subscribeReload, state: readonly(state), failure: readonly(failure) }
+  return { notifyReload, subscribeReload, subscribeAnnouncement, state: readonly(state), failure: readonly(failure) }
 }
