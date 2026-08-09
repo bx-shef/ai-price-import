@@ -107,6 +107,9 @@ const busy = computed(() => stagingBusy.value || uploading.value)
 /** Одна формулировка на `aria-label` и `title` шестерёнки: разойдясь, они озвучивали бы программе
  *  чтения одно, а мыши показывали другое. Видимый носитель причины — баннер прогона. */
 const SETTINGS_BLOCKED_LABEL = 'Настройки импорта — недоступны, пока идёт импорт'
+/** Обычная подпись той же кнопки. Тоже константа: разъехаться две ветки тернарника могут ровно так
+ *  же, как разъезжались `aria-label` и `title` до сведения, — просто на другой ветке. */
+const SETTINGS_LABEL = 'Настройки импорта'
 // Detect the Bitrix24 MOBILE APP via b24ui's own mechanism (useDevice → platform «bitrix-mobile», set by
 // the b24ui platform plugin from the BitrixMobile UA — NOT the JS SDK). In the mobile app we hide
 // desktop-only chrome (settings gear + «Подробные метрики»); hiding is a `v-if`, so it's theme-agnostic.
@@ -341,8 +344,8 @@ watch(jobs, (list) => {
               color="air-tertiary-no-accent"
               size="sm"
               :disabled="busy"
-              :aria-label="busy ? SETTINGS_BLOCKED_LABEL : 'Настройки импорта'"
-              :title="busy ? SETTINGS_BLOCKED_LABEL : 'Настройки импорта'"
+              :aria-label="busy ? SETTINGS_BLOCKED_LABEL : SETTINGS_LABEL"
+              :title="busy ? SETTINGS_BLOCKED_LABEL : SETTINGS_LABEL"
               @click="openSettings"
             />
           </template>
@@ -501,7 +504,7 @@ watch(jobs, (list) => {
             <div
               v-if="jobs.length || uploading || listError || listWarning"
               class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
-              :class="busy ? 'opacity-60 select-none' : ''"
+              :class="busy ? 'transition-opacity' : ''"
             >
               <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h2 class="text-base font-semibold">
@@ -547,7 +550,6 @@ watch(jobs, (list) => {
                     label="Отмена"
                     color="air-tertiary-no-accent"
                     size="xs"
-                    :disabled="busy"
                     @click="() => { confirmClear = false }"
                   />
                 </template>
@@ -619,7 +621,7 @@ watch(jobs, (list) => {
             <B24Card
               variant="outline"
               class="mt-4 transition-opacity"
-              :class="busy ? 'opacity-60 select-none' : ''"
+              :class="busy ? 'transition-opacity' : ''"
             >
               <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
                 <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
@@ -658,7 +660,7 @@ watch(jobs, (list) => {
                   <button
                     v-if="!isBitrixMobile"
                     type="button"
-                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-default disabled:no-underline"
+                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-default disabled:no-underline disabled:opacity-30"
                     :disabled="busy"
                     @click="openMetrics"
                   >
@@ -696,7 +698,6 @@ watch(jobs, (list) => {
                       label="Отмена"
                       color="air-tertiary-no-accent"
                       size="xs"
-                      :disabled="busy"
                       @click="() => { confirmReset = false }"
                     />
                   </div>
@@ -712,7 +713,7 @@ watch(jobs, (list) => {
             </B24Card>
             <p
               class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
-              :class="busy ? 'opacity-60 select-none' : ''"
+              :class="busy ? 'transition-opacity' : ''"
             >
               <span>Документов: {{ counters.docs || 0 }}</span>
               <span>Создано в CRM: {{ counters.created || 0 }}</span>

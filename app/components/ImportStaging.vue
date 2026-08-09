@@ -101,16 +101,44 @@ watch(target, (t) => {
 // ради которого рассылка и делалась, — активно грузящий документы. Флаг, а не отложенное значение:
 // принимаем мы всегда одно и то же («Авто»), а копить нечего.
 let settingsChangePending = false
+/**
+ * Сообщение о том, что цель сменил не человек, а правка настроек.
+ *
+ * ⚠ Без него сброс был МОЛЧАЛИВЫМ: подсветка переезжала на «Авто», списки направления и стадии
+ * исчезали — и ни одного нового слова на экране. У сотрудника, который только что выбрал
+ * направление руками, внешней причины догадаться нет вовсе: с его стороны ничего не происходило.
+ * Прецедент проекта прямо противоположный — исчезнувшую с портала цель (#269) мы объявляем словами,
+ * хотя там повод догадаться хотя бы есть.
+ *
+ * ⚠ Это же делает наблюдаемым ОТКАЗ канала: пока сброс молчал, «настройки перечитались» и
+ * «перечитать не удалось» выглядели на экране одинаково.
+ */
+const settingsNotice = ref('')
+function adoptSettingsChange(): void {
+  target.value = applySettingsChangeToTarget({ importing: false }).target
+  settingsNotice.value = 'Администратор изменил настройки — цель вернулась на «Авто (по правилам)».'
+}
 watch(() => props.settingsVersion, () => {
   const decision = applySettingsChangeToTarget({ importing: importing.value })
-  if (decision.adopt) target.value = decision.target
+  if (decision.adopt) adoptSettingsChange()
   else settingsChangePending = true
 })
 watch(importing, (now, was) => {
   if (!(was && !now) || !settingsChangePending) return
   settingsChangePending = false
-  target.value = applySettingsChangeToTarget({ importing: false }).target
+  adoptSettingsChange()
 })
+// Человек выбрал цель сам — сообщение своё дело сделало и мешает.
+//
+// ⚠ Условие «цель стала НЕ пустой», а не «цель изменилась»: сам сброс тоже меняет цель, и первая
+// редакция гасила сообщение в тот же тик, в котором его и ставила. Сравнивать со значением или
+// держать флаг «это мы» — хрупко: когда цель УЖЕ была «Авто», присваивание не будит вотчер вовсе,
+// и флаг оставался бы взведённым до следующего выбора, съедая уже его.
+// ⚠ Плата названа: человек, вернувший «Авто» руками, оставит сообщение на экране. Оно про то же
+// состояние, в котором он и оказался, поэтому не врёт.
+watch(target, (t) => {
+  if (t) settingsNotice.value = ''
+}, { flush: 'post' })
 // Set by «Отменить»; checked between uploads and inside the wait loop.
 const cancelled = ref(false)
 
@@ -226,10 +254,11 @@ async function startImport(): Promise<void> {
   let sentTotal = 0
   let doneOk = 0
   let failed = 0
-  // try/finally around the whole run: `importing` drives `pointer-events-none` on this component AND
-  // (via update:busy) on the rest of /app. If anything below ever threw, the flag would stay `true` and
-  // the page would look alive but ignore every click (#258). `upload()` swallows its own errors today,
-  // so this is a backstop, not a fix for a known throw.
+  // try/finally around the whole run: `importing` disables the picker here and (via update:busy) the
+  // actions on the rest of /app. If anything below ever threw, the flag would stay `true` and the page
+  // would stay VISIBLY disabled forever — не «живой экран, глотающий клики», как было при замке на
+  // `pointer-events-none` (#258): с `:disabled` зависший флаг хотя бы честно выглядит выключенным.
+  // `upload()` swallows its own errors today, so this is a backstop, not a fix for a known throw.
   try {
     // PHASE 1 — upload the batch. Sequential HTTP posts (the upload itself is seconds; the WAIT is the
     // long part), one shared target, a failed file marks its row and the batch MOVES ON (owner ask).
@@ -406,7 +435,7 @@ function cancelImport(): void {
       color="air-primary"
       size="sm"
       title="Идёт импорт — не закрывайте страницу"
-      description="Список результатов живёт только на этой странице: закроете или перезагрузите — он пропадёт, хотя сами документы сервер дообработает. Пока идёт импорт недоступны настройки, метрики, «Очистить список» и «Обновить»."
+      description="Список результатов живёт только на этой странице: закроете или перезагрузите — он пропадёт, хотя сами документы сервер дообработает. Пока идёт импорт остальные действия на экране выключены — доступны только результаты ниже: их можно читать и убирать из списка."
       role="status"
     />
 
@@ -483,6 +512,17 @@ function cancelImport(): void {
           v-model:target="target"
           :disabled="importing"
         />
+        <!-- ⚠ Цель сменил не человек — говорим об этом. Молчаливая подмена особенно опасна у пачки
+             с ОСТАТКОМ: после отмены или упавшей строки список живёт дальше, и повтор той же кнопкой
+             увёл бы остаток не туда, куда ушло начало, — ровно то, ради чего заводилась заморозка,
+             только через границу прогона. `role="status"` — тот же носитель, что у #269. -->
+        <p
+          v-if="settingsNotice"
+          class="w-full text-xs text-(--ui-color-accent-main-warning)"
+          role="status"
+        >
+          {{ settingsNotice }}
+        </p>
       </div>
       <B24Button
         color="air-primary"

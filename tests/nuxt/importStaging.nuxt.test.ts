@@ -493,3 +493,45 @@ describe('ImportStaging: правка, прилетевшая во время п
     expect(seen).toEqual([{ entityTypeId: 2, categoryId: 1 }, null])
   })
 })
+
+// ⚠ Сброс цели ОБЯЗАН быть сказан словами. Подсветка молча переезжает на «Авто», списки направления
+// и стадии исчезают — и ни одного нового слова: у сотрудника, который сам ничего не делал, нет даже
+// повода догадаться. Прецедент проекта обратный (#269: исчезнувшую цель объявляем строкой). Это же
+// делает наблюдаемым ОТКАЗ канала: пока сброс молчал, «перечиталось» и «не удалось» выглядели
+// одинаково.
+describe('ImportStaging: сброс цели объявлен словами (#443)', () => {
+  it('после правки настроек на экране появляется пояснение', async () => {
+    const t = instantDone()
+    const w = await mountSuspended(ImportStaging, {
+      props: { ...t, settingsVersion: 0 } as never,
+      global: { stubs }
+    })
+    await pick(w, [file('накладная.pdf')])
+    w.findComponent({ name: 'TargetPicker' }).vm.$emit('update:target', { entityTypeId: 2 })
+    await tick()
+    expect(w.text()).not.toContain('Администратор изменил настройки')
+
+    await w.setProps({ settingsVersion: 1 } as never)
+    await tick()
+
+    expect(w.text()).toContain('Администратор изменил настройки')
+  })
+
+  it('пояснение уходит, когда человек сам выбрал цель', async () => {
+    const t = instantDone()
+    const w = await mountSuspended(ImportStaging, {
+      props: { ...t, settingsVersion: 0 } as never,
+      global: { stubs }
+    })
+    await pick(w, [file('накладная.pdf')])
+    await w.setProps({ settingsVersion: 1 } as never)
+    await tick()
+    expect(w.text()).toContain('Администратор изменил настройки')
+
+    w.findComponent({ name: 'TargetPicker' }).vm.$emit('update:target', { entityTypeId: 31 })
+    await tick()
+    await tick()
+
+    expect(w.text()).not.toContain('Администратор изменил настройки')
+  })
+})
