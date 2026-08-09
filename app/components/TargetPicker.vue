@@ -10,6 +10,7 @@ import { ENTITY, autoPickSingleCategory, buildEntityChoices, directionApplies, s
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import type { CrmStageOption } from '~/utils/stagePicker'
 import type { TargetRef } from '~/types/mapping'
+import { targetInvalidReason, type TargetInvalidReason } from '~/utils/targetValidity'
 
 // Compact «куда импортировать» picker — reusable PER FILE and shared with /settings (via the same pure
 // rules in ~/utils/targetOptions). Default «Авто (по правилам)» (null target = follow routing rules).
@@ -29,6 +30,10 @@ const target = defineModel<TargetRef | null>('target', { default: null })
 // с клавиатуры выбор менялся, и следующие файлы пачки уехали бы в другое место. Проп проходит в сами
 // поля, а не гасит обёртку: браузер сам убирает их из порядка обхода.
 const props = withDefaults(defineProps<{ includeAuto?: boolean, disabled?: boolean }>(), { includeAuto: true, disabled: false })
+// ⚠ О негодном маршруте пикер СООБЩАЕТ наверх, а не чинит его молча (#488): раньше удалённые
+// направление и стадия дочищались тихо, человек видел в полях другое значение и не знал, почему.
+// Показать сообщение — дело владельца состояния (карточки загрузки), а не выпадающего списка.
+const emitInvalid = defineEmits<{ invalid: [reason: TargetInvalidReason] }>()
 
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
@@ -99,12 +104,40 @@ watch([CHOICES, () => etid.value], () => {
   unavailableTarget.value = true
   emit()
 })
+/**
+ * Увести выбор в «Авто» и объявить причину. Порядок важен: сначала состояние, потом сообщение —
+ * обработчик наверху вправе смотреть на модель.
+ *
+ * ⚠ Сюда идут ТОЛЬКО направление и стадия. Исчезнувшая СУЩНОСТЬ разбирается отдельным сторожем
+ * выше (#269) и объясняется постоянной строкой прямо под кнопками — она стоит у места выбора и не
+ * исчезает через несколько секунд. Слать по ней ещё и всплывающее сообщение значило бы сказать
+ * человеку одно и то же дважды.
+ *
+ * ⚠ А направление и стадию до этой правки дочищали МОЛЧА: поле показывало другое значение без
+ * объяснения, и следующая пачка уходила не туда, куда человек рассчитывал (#488).
+ */
+function failToAuto(reason: TargetInvalidReason): void {
+  etid.value = null
+  categoryId.value = undefined
+  stageId.value = undefined
+  cats.value = undefined
+  stages.value = undefined
+  emit()
+  emitInvalid('invalid', reason)
+}
+
 async function initCascade(): Promise<void> {
   if (etid.value == null) return
   const my = ++seq
   const nextCats = await loadCrmCategories(etid.value)
   if (my !== seq) return
   cats.value = nextCats
+  // ⚠ ПРОВЕРКА ИДЁТ ДО тихой дочистки ниже: та снимает негодное значение, и после неё отличить
+  // «направление удалили» от «его и не было» уже нечем — сообщение человеку стало бы невозможным.
+  if (categoryId.value != null && targetInvalidReason(
+    { entityTypeId: etid.value, categoryId: categoryId.value },
+    { entityIds: undefined, categoryIds: nextCats?.map(c => c.id), stageIds: undefined }
+  ) === 'category') return failToAuto('category')
   // Reconcile a STALE direction: if the saved categoryId no longer exists on the portal (funnel
   // deleted), clear it so the picker doesn't show a dangling value and a bad id isn't re-saved.
   const before = { categoryId: categoryId.value, stageId: stageId.value }
@@ -114,6 +147,10 @@ async function initCascade(): Promise<void> {
   const nextStages = await loadCrmStages(etid.value, categoryId.value ?? null)
   if (my !== seq) return
   stages.value = nextStages
+  if (stageId.value != null && targetInvalidReason(
+    { entityTypeId: etid.value, stageId: stageId.value },
+    { entityIds: undefined, categoryIds: undefined, stageIds: nextStages?.map(s => s.id) }
+  ) === 'stage') return failToAuto('stage')
   // Reconcile a STALE stage likewise.
   const stageT = { stageId: stageId.value }
   stagePicker.reconcileStage(stageT, nextStages)

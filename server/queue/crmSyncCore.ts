@@ -1,7 +1,7 @@
 import type { ExtractedDocument } from '~/types/document'
 import type { PortalMapping, TargetRef } from '~/types/mapping'
 import { ENTITY_TYPE_ID } from '~/config/b24'
-import { resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
+import { FALLBACK_TARGET, resolveTarget, resolveValidTarget, type RoutingSignals } from '~/utils/routing'
 import { describeTotalMismatch, findTotalGapSuspect, pricingTolerance, reconcilePricing } from '~/utils/pricing'
 import { resolveMeasure } from '~/utils/units'
 import { supplierNotLinkedWarning } from '~/utils/taxIdLabel'
@@ -446,7 +446,7 @@ export async function runCrmSync(
     ? `${pricing.grossTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${doc.currency ? ` ${doc.currency}` : ''}`
     : ''
 
-  const entityTypeId = target.entityTypeId
+  let entityTypeId = target.entityTypeId
   let entityId: number
   let created: boolean
   if (existingId) {
@@ -473,9 +473,9 @@ export async function runCrmSync(
     }
     // Одно вычисление на обе точки: повторный вызов с `!` ломался бы молча при следующей правке.
     const trustedSupplierName = supplierNameTrusted(doc)
-    const fields: Record<string, unknown> = {
+    const buildFields = (t: TargetRef): Record<string, unknown> => ({
       // Idempotency marker FIRST so a retry can find this exact create.
-      ...originMarkerFields(target.entityTypeId, jobId, deps.originatorPrefix),
+      ...originMarkerFields(t.entityTypeId, jobId, deps.originatorPrefix),
       // ⚠ Заголовок неудачной загрузки говорит об этом ПЕРВЫМ СЛОВОМ: такие карточки человек
       // отличает в списке сущностей, не открывая их (#459).
       title: failedImport ? buildFailedImportTitle(deps.sourceFileName) : buildImportTitle(doc, opportunityValue),
@@ -489,7 +489,7 @@ export async function runCrmSync(
       // в карточке; поэтому обе точки читают один `supplierNameTrusted`.
       ...(companyId
         ? { companyId }
-        : (target.entityTypeId === ENTITY_TYPE_ID.lead && trustedSupplierName
+        : (t.entityTypeId === ENTITY_TYPE_ID.lead && trustedSupplierName
             ? { companyTitle: trustedSupplierName.slice(0, 255) }
             : {})),
       ...(doc.currency ? { currencyId: doc.currency } : {}),
@@ -497,11 +497,41 @@ export async function runCrmSync(
       // NOT recompute `opportunity` on portals without trade-accounting → deal would show 0.
       // Only for entities that always expose the field (deal/smart-invoice); dynamic
       // smart-processes are skipped (the field may be absent → create could be rejected).
-      ...(rows.length && supportsOpportunity(target.entityTypeId)
+      ...(rows.length && supportsOpportunity(t.entityTypeId)
         ? { opportunity: opportunityValue, isManualOpportunity: 'Y' }
         : {})
+    })
+    // СОЗДАНИЕ, а при отказе — ЗАПАСНАЯ СДЕЛКА (#488, решение владельца 09.08.2026).
+    //
+    // ⚠ «Не удалось создать выбранную сущность» и «документ пропал» — РАЗНЫЕ исходы, а до этой
+    // правки они совпадали: тип, отключённый на портале (смарт-счёт выключён, смарт-процесс удалён
+    // между выбором и обработкой), давал жёсткий отказ, и документ не попадал в CRM вообще. Теперь
+    // такой документ приземляется в СДЕЛКУ направления 0 (стадия подставится сама) с явным
+    // предупреждением: карточка не по плану лучше, чем отсутствие карточки.
+    //
+    // ⚠ Идемпотентность обязана искать маркер ПОД ЗАПАСНЫМ ТИПОМ, а не под выбранным: маркер у
+    // разных типов лежит в разных полях, и повтор задания искал бы под исходным типом, не находил
+    // ничего и создавал ВТОРУЮ сделку на каждую попытку. Поиск дешевле дубля.
+    //
+    // ⚠ Поля пересобираются под запасной тип, а не переиспользуются: в них зашит маркер этого типа,
+    // а у лида ещё и своё поле названия компании.
+    try {
+      entityId = await deps.createTarget(target, buildFields(target))
+    } catch (err) {
+      const fb = FALLBACK_TARGET
+      const alreadyFallback = target.entityTypeId === fb.entityTypeId && (target.categoryId ?? 0) === (fb.categoryId ?? 0)
+      const fbFilter = alreadyFallback ? null : originSearchFilter(fb.entityTypeId, jobId, deps.originatorPrefix)
+      // Запасная цель — та же самая, или маркер под ней невозможен ⇒ спасать нечем, отказ настоящий.
+      if (!fbFilter) throw err
+      const already = await deps.findExisting(fb.entityTypeId, fbFilter)
+      entityId = already ?? await deps.createTarget(fb, buildFields(fb))
+      // ⚠ Дальше по коду читается ИМЕННО `entityTypeId` (строки товаров, дело, ссылка на карточку),
+      // а `target` больше нигде — поэтому обновляется он один. Присваивать `target` «для порядка»
+      // нельзя: мёртвое присваивание читается как «здесь всё синхронизировано», и следующий, кто
+      // добавит чтение `target` ниже, получит верное значение по случайности, а не по устройству.
+      entityTypeId = fb.entityTypeId
+      warnings.push('Выбранную запись создать не удалось — возможно, этот тип отключён в вашей CRM или направление удалили. Документ внесён в сделку в направлении по умолчанию. Проверьте настройки импорта и при необходимости перенесите карточку.')
     }
-    entityId = await deps.createTarget(target, fields)
     created = true
   }
 
