@@ -24,7 +24,11 @@ const target = defineModel<TargetRef | null>('target', { default: null })
 // The settings page (default target + routing rules) passes false: those targets are always concrete.
 // NB: Vue casts an ABSENT Boolean prop to `false` (not undefined), so the per-file import picker's
 // «Авто» default must be set explicitly via withDefaults — a `?? true` fallback would never fire.
-const props = withDefaults(defineProps<{ includeAuto?: boolean }>(), { includeAuto: true })
+// `disabled` — на время идущей пачки (#443): цель ОДНА на пачку и заморожена на время прогона, и
+// до этой правки заморозка держалась на `pointer-events-none` у обёртки, то есть только для мыши —
+// с клавиатуры выбор менялся, и следующие файлы пачки уехали бы в другое место. Проп проходит в сами
+// поля, а не гасит обёртку: браузер сам убирает их из порядка обхода.
+const props = withDefaults(defineProps<{ includeAuto?: boolean, disabled?: boolean }>(), { includeAuto: true, disabled: false })
 
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
@@ -176,6 +180,7 @@ function onStage(v: unknown): void {
       size="xs"
       :color="etid === c.id ? 'air-primary' : 'air-tertiary-no-accent'"
       :aria-pressed="etid === c.id"
+      :disabled="props.disabled"
       @click="() => chooseEntity(c.id)"
     />
     <!-- Прежняя цель исчезла с портала (смарт-счета выключили, смарт-процесс удалили). Молча
@@ -192,6 +197,7 @@ function onStage(v: unknown): void {
       :model-value="catValue"
       :items="catItems"
       class="w-40"
+      :disabled="props.disabled"
       aria-label="Направление (воронка)"
       @update:model-value="onCategory"
     />
@@ -200,6 +206,7 @@ function onStage(v: unknown): void {
       :model-value="stageValue"
       :items="stageItems"
       class="w-36"
+      :disabled="props.disabled"
       aria-label="Стадия"
       @update:model-value="onStage"
     />
