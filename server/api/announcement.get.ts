@@ -1,8 +1,6 @@
 import { extractFrameAuth } from '../utils/frameAuth'
 import { resolveFrameMember } from '../utils/resolveFrameMember'
-import { announcementRedis } from '../utils/announcementRedis'
-import { readAnnouncement } from '../utils/announcementStore'
-import { connectionOptions } from '../queue/connection'
+import { currentAnnouncement } from '../utils/announcementCurrent'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import { query } from '../db/client'
 
@@ -34,11 +32,12 @@ export default defineEventHandler(async (event) => {
       }
       // ⚠ Недоступное хранилище — это «объявления нет», а не 502: объявление украшение, и ронять
       // из-за него рабочий экран нельзя. Причина уходит в журнал одной строкой из ядра.
-      const announcement = await readAnnouncement(
-        announcementRedis(connectionOptions()),
-        Date.now(),
-        m => console.warn(`[announcement] ${m}`)
-      )
+      const announcement = await currentAnnouncement()
+      // ⚠ Короткий кэш на стороне БРАУЗЕРА, а не на общем прокси (`private`): ответ одинаков для
+      // всех, но идёт по фрейм-токену конкретного сотрудника, и общий кэш пришлось бы отдельно
+      // объяснять. Минута снимает повторные запросы при переоткрытии экрана и не задерживает
+      // снятое объявление дольше, чем человек успевает заметить.
+      setResponseHeader(event, 'cache-control', 'private, max-age=60')
       return { announcement }
     }
   )

@@ -1,7 +1,5 @@
 import { OP_COOKIE, operatorAllowed } from '../../utils/operatorSession'
-import { announcementRedis } from '../../utils/announcementRedis'
-import { readAnnouncement } from '../../utils/announcementStore'
-import { connectionOptions } from '../../queue/connection'
+import { currentAnnouncement } from '../../utils/announcementCurrent'
 
 // GET /api/ops/announcement → { announcement } — что сейчас показывается клиентам (#469).
 // Сессия оператора. Нужен, чтобы владелец видел действующее объявление и мог снять его досрочно,
@@ -11,10 +9,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 401)
     return { error: 'unauthorized' }
   }
-  const announcement = await readAnnouncement(
-    announcementRedis(connectionOptions()),
-    Date.now(),
-    m => console.warn(`[announcement] ${m}`)
-  )
+  const announcement = await currentAnnouncement()
   return { announcement }
 })
