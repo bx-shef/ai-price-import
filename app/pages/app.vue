@@ -108,13 +108,21 @@ const busy = computed(() => stagingBusy.value || uploading.value)
 // the b24ui platform plugin from the BitrixMobile UA — NOT the JS SDK). In the mobile app we hide
 // desktop-only chrome (settings gear + «Подробные метрики»); hiding is a `v-if`, so it's theme-agnostic.
 const { isBitrixMobile } = useDevice()
+// Ширина 720 у обоих слайдеров-форм ВЫВЕДЕНА из вёрстки, а не выбрана на глаз, и держится на двух
+// числах. Контент обеих страниц закапан `max-w-2xl` = 672 px, поэтому всё, что шире 672, — поля:
+// 720 и прежние 900 рисуются одинаково, ничего не потеряно. Нижняя граница жёстче: 640 px — это
+// брейкпоинт `sm`, а внутри слайдера медиазапросы считаются от вьюпорта фрейма. Уйдя под 640,
+// ДЕСКТОПНЫЙ слайдер молча получил бы мобильную вёрстку — и с ней исчезла бы подсказка «обнулить
+// счётчики может администратор» (`metrics.vue`, `hidden sm:inline-flex`), то есть единственное
+// объяснение не-админу, ровно то, ради чего её завели (#411). Оставшиеся 48 px над 672 — запас на
+// поля слайдера, которых мы не измеряли: сесть вплотную к 640 значит зависеть от них.
 async function openSettings(): Promise<void> {
-  const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 900, title: 'Настройки импорта' })
+  const opened = await openAppSlider(APP_SLIDER_PLACE_SETTINGS, { width: 720, title: 'Настройки импорта' })
   if (!opened) await navigateTo('/settings')
 }
 // Detailed metrics — same slider pattern as settings (openSliderAppPage → middleware routes to /metrics).
 async function openMetrics(): Promise<void> {
-  const opened = await openAppSlider(APP_SLIDER_PLACE_METRICS, { width: 900, title: 'Метрики импорта' })
+  const opened = await openAppSlider(APP_SLIDER_PLACE_METRICS, { width: 720, title: 'Метрики импорта' })
   if (!opened) await navigateTo('/metrics')
 }
 
