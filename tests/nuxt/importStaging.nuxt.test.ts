@@ -302,3 +302,49 @@ describe('ImportStaging (пачка + ожидание результатов)',
     expect(w.text()).toContain('2 КБ')
   })
 })
+
+// #443. Событие «настройки изменились» широковещательное: админ поменял цель по умолчанию — оно
+// прилетает всем сотрудникам портала, и их экраны должны подхватить новое значение.
+//
+// ⚠ Здесь тест ПОВЕДЕНЧЕСКИЙ намеренно. Проводка проверяется отдельно грепом по исходнику, и разбор
+// прямо назвал цену того приёма: он видит текст, а не выполнение. Утверждения ниже — про то, что
+// метод, отданный наружу через `defineExpose`, реально работает и реально пишет память вкладки:
+// греп подтвердил бы наличие строки и при опечатке в имени параметра.
+describe('#443: приём новой цели по умолчанию', () => {
+  const DEAL = { entityTypeId: 2, categoryId: 7 }
+  const key = 'ai-price-import.target.unknown'
+
+  it('вне прогона цель применяется и уходит в память вкладки', async () => {
+    window.sessionStorage.removeItem(key)
+    const w = await mount(instantDone())
+    ;(w.vm as unknown as { adoptSettingsTarget: (t: unknown) => void }).adoptSettingsTarget(DEAL)
+    await tick()
+    expect(JSON.parse(window.sessionStorage.getItem(key) ?? 'null')).toMatchObject(DEAL)
+  })
+
+  it('«Авто» очищает память — иначе настройку нельзя откатить', async () => {
+    const w = await mount(instantDone())
+    const vm = w.vm as unknown as { adoptSettingsTarget: (t: unknown) => void }
+    vm.adoptSettingsTarget(DEAL)
+    await tick()
+    vm.adoptSettingsTarget(null)
+    await tick()
+    expect(window.sessionStorage.getItem(key)).toBeNull()
+  })
+
+  it('во время пачки цель НЕ подменяется — документы уедут туда, куда человек их отправил', async () => {
+    // ⚠ Несущая проверка задачи: цель одна на пачку и заморожена. Подмена посреди прогона увела бы
+    // оставшиеся файлы в другое место — молча и вопреки тому, что человек видел, когда запускал.
+    window.sessionStorage.removeItem(key)
+    const t = instantDone()
+    // Загрузка «зависает», поэтому прогон не успевает кончиться до нашего вызова.
+    t.upload = vi.fn(() => new Promise(() => {}) as never)
+    const w = await mount(t)
+    await pick(w, [file('накладная.pdf')])
+    await clickText(w, 'Импортировать')
+    await tick()
+    ;(w.vm as unknown as { adoptSettingsTarget: (t: unknown) => void }).adoptSettingsTarget(DEAL)
+    await tick()
+    expect(window.sessionStorage.getItem(key), 'цель подменили посреди пачки').toBeNull()
+  })
+})

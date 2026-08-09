@@ -16,6 +16,7 @@ import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
 import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMode } from '~/utils/appLaunchMode'
 import { formatMinutes } from '~/utils/savings'
+import type { TargetRef } from '~/types/mapping'
 import { APP_NAME } from '~/config/appIdentity'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
@@ -135,10 +136,39 @@ const { subscribeReload } = useSettingsSync()
 // Подписку заводим синхронно (после await теряется scope эффекта), но в пусковой странице её надо
 // СНЯТЬ, а не просто заглушить обработчик: сама подписка поднимает websocket, и он висел бы вторым —
 // рядом с тем, что поднимает открытый слайдер. Ровно то удвоение, ради которого лаунчер и делался.
-const unsubscribeReload = subscribeReload(() => {
+// Ссылка на карточку загрузки — по событию настроек ей передаётся новая цель по умолчанию.
+const stagingRef = useTemplateRef<{ adoptSettingsTarget: (t: TargetRef | null | undefined) => void }>('stagingRef')
+const unsubscribeReload = subscribeReload(async () => {
   if (launch.value === 'launcher') return
-  void loadSettings()
+  // ⚠ Тело обёрнуто в try/catch, и это не перестраховка: подписчик зовёт обработчик БЕЗ `await` и
+  // без своего перехвата, а обработчик теперь async — то есть любой брошенный отсюда отказ стал бы
+  // необработанным отказом промиса на каждое сохранение настроек соседом. Сегодня не стреляет лишь
+  // потому, что `loadSettings` глотает свои ошибки сама; это свойство ВЫЗЫВАЕМОГО кода, а не наша
+  // гарантия, и держаться на нём нельзя.
+  try {
+    // ⚠ Перечитываем настройки и ЖДЁМ их: раньше здесь стоял голый `void loadSettings()`, и цель по
+    // умолчанию бралась бы из ещё не обновлённого `mapping` — экран показал бы прежнее значение и
+    // остался бы с ним до следующего события. Тихо и правдоподобно.
+    await loadSettings()
+    // ⚠ Событие меняет СОДЕРЖИМОЕ экрана, а не только баннер «сначала настройте» (#443). Ради баннера
+    // это и делалось изначально, и цель узкой быть перестала: админ сменил направление именно затем,
+    // чтобы документы шли туда, а вкладка, продолжающая слать по-старому, обесценивает саму правку.
+    // Единицы измерения и поведение при ненайденном товаре читает сервер на момент постановки задачи,
+    // поэтому в браузере их обновлять нечего — обновляется то, что человек видит и чем управляет.
+    // ⚠ Идущая пачка не затрагивается — решение внутри `adoptSettingsTarget`, см. `settingsAdopt.ts`.
+    // ⚠ `?.` молчит намеренно: карточки загрузки нет на экране настройки и на пусковой странице, и
+    // применять новую цель там просто некуда — при следующем монтировании она стартует с «Авто»,
+    // то есть с тем же исходом.
+    stagingRef.value?.adoptSettingsTarget(mapping.value.defaultTarget)
+  } catch {
+    // Молча: синхронизация — удобство, а не действие, которого человек ждёт. Отказ самой загрузки
+    // настроек уже отражён в состоянии экрана (`loadError`), второй раз о нём сообщать нечем.
+  }
 })
+// ⚠ Двойное сохранение подряд даёт ДВА события и два перечитывания, и порядок ответов сети не
+// гарантирован — теоретически применится более старый набор. Здесь это оставлено как есть: цена
+// ошибки — одно устаревшее значение до следующего события, а склейка повторов и предел частоты
+// заведены отдельной задачей (#482), потому что они про нагрузку на портал, а не про этот экран.
 
 // Слайдер не открылся (портал отказал / SDK бросил). Тогда пусковая страница — тупик: единственная
 // кнопка молча ничего не делает. Показываем это словами, а сам экран уводим в рабочий режим.
@@ -296,11 +326,22 @@ watch(jobs, (list) => {
           :title="APP_NAME"
         >
           <template #right>
+            <!-- ⚠ Шестерёнка блокируется на время пачки, как карточка «Экономия» (#443). Прежде
+                 блокировки у неё не было ВОВСЕ: она живёт в слоте навбара каркаса, то есть вне всех
+                 блоков, которые гасятся по `busy`, — и сотрудник открывал настройки прямо посреди
+                 загрузки. Несимметричность была невидима: обе кнопки выглядят одинаково доступными.
+                 ⚠ Настоящий `:disabled`, а НЕ `pointer-events-none`: второе блокирует только мышь,
+                 кнопка остаётся в порядке обхода по Tab и срабатывает по Enter (см. карточку
+                 «Экономия» ниже — там этот же приём заменён по той же причине).
+                 ⚠ Подпись меняется вместе с состоянием: отключённая кнопка без объяснения читается
+                 как поломка. Программе чтения объяснение нужно тем более — визуальной подсказки
+                 (приглушённая карточка рядом) она не передаёт. -->
             <B24Button
               :icon="SettingsIcon"
               color="air-tertiary-no-accent"
               size="sm"
-              aria-label="Настройки импорта"
+              :disabled="busy"
+              :aria-label="busy ? 'Настройки импорта недоступны, пока идёт загрузка' : 'Настройки импорта'"
               @click="openSettings"
             />
           </template>
@@ -444,6 +485,7 @@ watch(jobs, (list) => {
             />
 
             <ImportStaging
+              ref="stagingRef"
               :upload="upload"
               :job-done="jobDone"
               :refresh-now="refreshNow"
@@ -465,7 +507,7 @@ watch(jobs, (list) => {
             <div
               v-if="jobs.length || uploading || listError || listWarning"
               class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
-              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+              :class="busy ? 'opacity-60' : ''"
             >
               <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h2 class="text-base font-semibold">
@@ -494,6 +536,7 @@ watch(jobs, (list) => {
                     label="Очистить список"
                     color="air-tertiary-no-accent"
                     size="xs"
+                    :disabled="busy"
                     @click="() => { confirmClear = true }"
                   />
                 </template>
@@ -503,12 +546,14 @@ watch(jobs, (list) => {
                     label="Да, очистить"
                     color="air-primary-alert"
                     size="xs"
+                    :disabled="busy"
                     @click="doClearList"
                   />
                   <B24Button
                     label="Отмена"
                     color="air-tertiary-no-accent"
                     size="xs"
+                    :disabled="busy"
                     @click="() => { confirmClear = false }"
                   />
                 </template>
@@ -577,10 +622,16 @@ watch(jobs, (list) => {
 
             <!-- Экономия (по макету docs/ui-spec.md §2.7): две крупные цифры в строку, справа — ссылка на
              подробные метрики и сброс; счётчики отдельной тихой строкой ПОД карточкой. -->
+            <!-- ⚠ `opacity` остаётся ОФОРМЛЕНИЕМ, а блокируют настоящие `:disabled` на самих
+                 кнопках (#443). Прежде замок держался на `pointer-events-none`, и это была
+                 блокировка ТОЛЬКО ДЛЯ МЫШИ: кнопки внутри такого контейнера остаются в порядке
+                 обхода по Tab и срабатывают по Enter — то есть посреди пачки счётчики можно было
+                 обнулить с клавиатуры. `select-none` убран вместе с ним: он запрещал выделять
+                 текст, что к блокировке действий отношения не имеет и мешало скопировать число. -->
             <B24Card
               variant="outline"
               class="mt-4 transition-opacity"
-              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+              :class="busy ? 'opacity-60' : ''"
             >
               <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
                 <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
@@ -619,7 +670,8 @@ watch(jobs, (list) => {
                   <button
                     v-if="!isBitrixMobile"
                     type="button"
-                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline"
+                    :disabled="busy"
+                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
                     @click="openMetrics"
                   >
                     Подробные метрики →
@@ -636,6 +688,7 @@ watch(jobs, (list) => {
                     label="Сбросить"
                     color="air-tertiary-no-accent"
                     size="xs"
+                    :disabled="busy"
                     @click="() => { confirmReset = true }"
                   />
                   <div
@@ -647,7 +700,7 @@ watch(jobs, (list) => {
                       color="air-primary-alert"
                       size="xs"
                       :loading="resetting"
-                      :disabled="resetting"
+                      :disabled="resetting || busy"
                       :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
                       @click="doReset"
                     />
@@ -670,7 +723,7 @@ watch(jobs, (list) => {
             </B24Card>
             <p
               class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
-              :class="busy ? 'pointer-events-none opacity-60 select-none' : ''"
+              :class="busy ? 'opacity-60' : ''"
             >
               <span>Документов: {{ counters.docs || 0 }}</span>
               <span>Создано в CRM: {{ counters.created || 0 }}</span>

@@ -8,6 +8,7 @@ import { MAX_ITEMS } from '~/utils/extractedDocument'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
 import { readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
+import { adoptDefaultTarget } from '~/utils/settingsAdopt'
 
 // Batch import staging (owner rework, round 2): pick files, choose ONE target for the whole batch,
 // press «Импортировать». The button LOCKS the page (via update:busy), uploads the files, then WAITS
@@ -201,7 +202,7 @@ async function startImport(): Promise<void> {
   let sentTotal = 0
   let doneOk = 0
   let failed = 0
-  // try/finally around the whole run: `importing` drives `pointer-events-none` on this component AND
+  // try/finally around the whole run: `importing` disables the picker + the file input on this component AND
   // (via update:busy) on the rest of /app. If anything below ever threw, the flag would stay `true` and
   // the page would look alive but ignore every click (#258). `upload()` swallows its own errors today,
   // so this is a backstop, not a fix for a known throw.
@@ -317,6 +318,28 @@ function cancelImport(): void {
   // parent's poll is alive to show them (it may have self-stopped while we were waiting).
   void props.refreshNow()
 }
+
+/**
+ * Принять новую цель по умолчанию, пришедшую с событием «настройки изменились» (#443).
+ *
+ * Родитель зовёт это ПОСЛЕ перечитывания настроек. Само решение — в чистой `adoptDefaultTarget`:
+ * «побеждает новое значение, идущую пачку не трогаем» — правило владельца, и жить оно должно там,
+ * где его можно проверить, а не в обработчике события.
+ *
+ * ⚠ Ничего не возвращает. Первая редакция отдавала «применилось ли» и объясняла это тем, что
+ * родителю нужно отличать «цель обновлена» от «пачка идёт, отложили» — но родитель значение не
+ * читал НИГДЕ, то есть комментарий обещал поведение, которого нет. Отложенный случай проверяется
+ * там, где он и решается, — юнит-тестом чистого правила.
+ */
+function adoptSettingsTarget(defaultTarget: TargetRef | null | undefined): void {
+  const decision = adoptDefaultTarget({ importing: importing.value, defaultTarget })
+  if (!decision.apply) return
+  // Присваивание цели само пишет память вкладки (watch выше) — второй записи здесь быть не должно,
+  // иначе одно и то же значение уходило бы в хранилище дважды на каждое событие.
+  target.value = decision.target
+}
+
+defineExpose({ adoptSettingsTarget })
 </script>
 
 <template>
@@ -327,7 +350,7 @@ function cancelImport(): void {
     <label
       class="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors"
       :class="[
-        importing ? 'pointer-events-none opacity-60' : '',
+        importing ? 'opacity-60' : '',
         dragging ? 'border-(--ui-color-accent-main-primary) bg-(--ui-color-accent-main-primary)/5' : 'border-(--ui-color-base-5) hover:border-(--ui-color-accent-main-primary)'
       ]"
       @dragover.prevent="dragging = true"
@@ -437,12 +460,20 @@ function cancelImport(): void {
       v-if="staged.length || importing"
       class="mt-3 flex flex-wrap items-center gap-3"
     >
+      <!-- ⚠ Заморозка цели на время пачки — НАСТОЯЩАЯ, а не `pointer-events-none` (#443): тот приём
+           блокирует только мышь, а поля пикера остаются в порядке обхода по Tab и меняются с
+           клавиатуры. Цена этой дыры была не косметической: цель одна на пачку, и смена её посреди
+           прогона увела бы оставшиеся файлы в другое место — молча и вопреки тому, что человек
+           видел, когда запускал. `opacity` осталась оформлением. -->
       <div
         class="flex min-w-0 flex-wrap items-center gap-2"
-        :class="importing ? 'pointer-events-none opacity-60' : ''"
+        :class="importing ? 'opacity-60' : ''"
       >
         <span class="text-xs text-(--ui-color-base-4)">Куда импортировать:</span>
-        <TargetPicker v-model:target="target" />
+        <TargetPicker
+          v-model:target="target"
+          :disabled="importing"
+        />
       </div>
       <B24Button
         color="air-primary"
