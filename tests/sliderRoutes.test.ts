@@ -4,21 +4,18 @@ import {
   APP_SLIDER_PLACE_SETTINGS,
   APP_SLIDER_PLACE_METRICS,
   APP_SLIDER_PLACE_MAIN,
-  APP_SLIDER_PLACE_TEST1,
-  APP_SLIDER_PLACE_TEST2,
   APP_SLIDER_ROUTES,
   sliderRouteForPlace
 } from '../app/config/b24'
 
-// ⚠ Два места стенда (#477) перечислены здесь наравне с рабочими намеренно: гард «ключи карты РАВНЫ
-// списку констант» ловит дрейф ровно потому, что список пишется руками. Снимая стенд, убрать и
-// отсюда — иначе тест покраснеет и подскажет, что уборка не закончена.
+// ⚠ Список пишется РУКАМИ — в этом и смысл: гард «ключи карты равны списку констант» ловит дрейф
+// только потому, что вторая сторона не выводится из первой. Два места стенда слайдеров (#477) стояли
+// здесь наравне с рабочими и при удалении стенда честно уронили тест, показав, что уборка не
+// закончена, — ровно то поведение, ради которого список не сгенерирован.
 const ALL_PLACES = [
   APP_SLIDER_PLACE_SETTINGS,
   APP_SLIDER_PLACE_METRICS,
-  APP_SLIDER_PLACE_MAIN,
-  APP_SLIDER_PLACE_TEST1,
-  APP_SLIDER_PLACE_TEST2
+  APP_SLIDER_PLACE_MAIN
 ]
 
 describe('APP_SLIDER_ROUTES / sliderRouteForPlace', () => {

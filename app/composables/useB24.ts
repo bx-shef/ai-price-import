@@ -195,6 +195,19 @@ export function useB24() {
 
   /** Close the current app slider overlay (parent.closeApplication). No-op / swallows when not framed.
    *  Shared by settings.vue and metrics.vue so the close path isn't duplicated. */
+  //
+  // ⚠ Причина «портал не отвечает после закрытия слайдера» (#258) найдена и она НЕ у нас:
+  // bitrix24/b24jssdk#328. В модуле `rest` портала (`applayout.min.js`) обработчик закрытия
+  // сериализует объект слайдера в JSON, объект циклический, летит `TypeError` — и до
+  // `focusTrap.deactivate()` с `destroy()` исполнение не доходит. Слайдер визуально исчезает, а
+  // `inert` остаётся на меню, шапке и подвале: щёлкать по порталу больше нечем. На старых
+  // коробочных версиях это было безобидно (ловушки фокуса там не было) и стало блокирующим, когда
+  // в облаке появился `ui.a11y` с автоматическим `inert`.
+  // ⚠ Отсюда два следствия, важных при правке этого места. Первое: **менять способ закрытия
+  // бесполезно** — `parent.closeApplication()` и `slider.closeSliderAppPage()` шлют порталу ОДНУ И
+  // ТУ ЖЕ команду с одинаковыми параметрами (сверено по исходнику SDK 09.08.2026), то есть попасть
+  // мимо дефекта выбором метода нельзя. Второе: **чинить нечего на нашей стороне** — исправление
+  // ждём в портале, а до него симптом воспроизводится и остаётся известным.
   async function closeSlider(): Promise<void> {
     const f = await init()
     try {
@@ -202,23 +215,5 @@ export function useB24() {
     } catch { /* not framed → nothing to close */ }
   }
 
-  /** Close via the SDK's own slider path (`slider.closeSliderAppPage`, #477). */
-  //
-  // ⚠ Заведён РАДИ СТЕНДА, а не потому, что нужен продукту: в коде мы закрываем слайдер через
-  // `parent.closeApplication()`, а в справочнике и в заказе назван `closeSliderAppPage()`. В SDK
-  // (`dist/esm/frame/parent.mjs` и `frame/slider.mjs`, проверено по исходнику 09.08.2026) оба шлют
-  // ОДНУ И ТУ ЖЕ команду `MessageCommands.closeApplication` с ОДИНАКОВЫМИ параметрами
-  // (`isSafely: false`) — то есть разницы быть не должно вовсе.
-  // ⚠ Первая редакция этого комментария писала «отличаются только флагом `isSafely`» — неверно, и
-  // поймано разбором: флаг у них совпадает. Ошибка ровно того рода, ради которой стенд и собран,
-  // причём допущенная в комментарии К САМОМУ СТЕНДУ. «Разницы быть не должно» остаётся выводом из
-  // чтения исходника, а не наблюдением, — стенд существует, чтобы проверить это глазами.
-  async function closeSliderViaSdk(): Promise<void> {
-    const f = await init()
-    try {
-      await f?.slider.closeSliderAppPage()
-    } catch { /* not framed → nothing to close */ }
-  }
-
-  return { init, get, auth, isAdmin, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider, closeSliderViaSdk }
+  return { init, get, auth, isAdmin, ensureAuth, inFrame, placementPlace, isSliderMode, openAppSlider, closeSlider }
 }
