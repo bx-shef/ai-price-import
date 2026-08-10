@@ -38,7 +38,7 @@ const emitInvalid = defineEmits<{ invalid: [reason: TargetInvalidReason] }>()
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
 const { leadsEnabled, load: loadCrmMode } = useCrmMode()
-const { types: smartProcesses, smartInvoiceEnabled, load: loadCrmTypes } = useCrmTypes()
+const { types: smartProcesses, smartInvoiceEnabled, typesLoaded, load: loadCrmTypes } = useCrmTypes()
 onMounted(() => {
   void loadCrmMode()
   void loadCrmTypes()
@@ -94,7 +94,11 @@ watch([CHOICES, () => etid.value], () => {
   const id = etid.value
   if (id == null) return
   // Smart processes arrive asynchronously — don't drop a valid one just because the list is empty yet.
-  if (id >= 1000 && !smartProcesses.value.length) return
+  // ⚠ Признак — «список получен» (`typesLoaded`), а не «список непустой»: у портала со стёртым
+  // смарт-процессом и без единого другого список ПУСТ и после загрузки, и прежняя проверка защищала
+  // такой id вечно — то есть #269 на этом портале не работал вовсе. Заодно `typesLoaded` перестал
+  // быть мёртвым экспортом: он заводился ради этой проверки (#488), но его никто не читал (#492).
+  if (id >= 1000 && !typesLoaded.value) return
   if (CHOICES.value.some(c => c.id === id)) return
   etid.value = props.includeAuto ? null : ENTITY.deal
   categoryId.value = undefined
@@ -117,11 +121,29 @@ watch([CHOICES, () => etid.value], () => {
  * объяснения, и следующая пачка уходила не туда, куда человек рассчитывал (#488).
  */
 function failToAuto(reason: TargetInvalidReason): void {
-  etid.value = null
-  categoryId.value = undefined
+  // ⚠ Тип обнуляем ТОЛЬКО там, где «Авто» вообще предлагается (#492). На `/settings` цели всегда
+  // конкретны, и `null` там означает не «решают правила», а «цель не задана»: сеттер по умолчанию
+  // подставит голую сделку, то есть смарт-счёт или смарт-процесс админа МОЛЧА превратится в
+  // сделку, а правило маршрутизации потеряет цель. Это было бы то же самое молчаливое искажение,
+  // которое #488 объявил дефектом, только перенесённое на экран настроек, где цена выше: там
+  // портится сохранённая конфигурация портала, а не выбор одной пачки.
+  // ⚠ Сообщение (`invalid`) шлём в ОБОИХ случаях: сказать человеку надо всегда, а вот трогать его
+  // сохранённую настройку — нет.
+  // ⚠ Сосед по файлу (сторож #269, исчезнувшая СУЩНОСТЬ) устроен ИНАЧЕ и тип на `/settings` всё-таки
+  // подменяет на сделку — но он же единственный, кто показывает постоянную строку под кнопками
+  // (`unavailableTarget`), то есть молчаливым не является. Не «та же оговорка»: два механизма, и
+  // сводить их — отдельная работа (#500).
+  if (props.includeAuto) {
+    etid.value = null
+    cats.value = undefined
+    stages.value = undefined
+    categoryId.value = undefined
+  } else if (reason === 'category') {
+    // ⚠ Снимаем ТОЛЬКО то, что негодно. Ветка 'stage' означает, что направление проверку прошло, и
+    // обнулять его заодно — потерять годную настройку админа за компанию с негодной.
+    categoryId.value = undefined
+  }
   stageId.value = undefined
-  cats.value = undefined
-  stages.value = undefined
   emit()
   emitInvalid('invalid', reason)
 }
@@ -137,7 +159,17 @@ async function initCascade(): Promise<void> {
   if (categoryId.value != null && targetInvalidReason(
     { entityTypeId: etid.value, categoryId: categoryId.value },
     { entityIds: undefined, categoryIds: nextCats?.map(c => c.id), stageIds: undefined }
-  ) === 'category') return failToAuto('category')
+  ) === 'category') {
+    failToAuto('category')
+    // ⚠ НЕ выходим из функции: на `/settings` тип остаётся выбранным, и без загрузки стадий блок
+    // «Стадия» просто не нарисуется — админ увидит, что направление исчезло, а стадии нет вовсе, без
+    // объяснения. Раньше `return` был безвреден, потому что тип обнулялся вместе с направлением.
+    if (props.includeAuto) return
+    const fallbackStages = await loadCrmStages(etid.value, null)
+    if (my !== seq) return
+    stages.value = fallbackStages
+    return
+  }
   // Reconcile a STALE direction: if the saved categoryId no longer exists on the portal (funnel
   // deleted), clear it so the picker doesn't show a dangling value and a bad id isn't re-saved.
   const before = { categoryId: categoryId.value, stageId: stageId.value }

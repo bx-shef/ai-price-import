@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
-// CI-gate for the feedback-triage kit's offline validator (docs/BACKLOG.md §8.3).
+// CI-gate for the feedback-triage kit's offline validator (docs/BACKLOG.md, «Как идёт разбор»).
 // scripts/validate-docs.sh keeps the doc + scripts consistent: bash -n, shellcheck, a BEHAVIOURAL
 // run of the real `_api` through a mocked curl (happy-path + 8 guard cases — token/HTTP/privacy/
 // slug/num), the rate-limit rule pointer to CLAUDE.md, an anchored privacy-guard grep, and the

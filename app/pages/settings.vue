@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { targetInvalidMessage } from '~/utils/targetValidity'
 import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 import { navigateTo } from '#app'
 import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
@@ -322,6 +323,27 @@ function rowTarget(row: EditableRoutingRow): TargetRef | null {
     ? { entityTypeId: row.entityTypeId, ...(row.categoryId != null ? { categoryId: row.categoryId } : {}), ...(row.stageId ? { stageId: row.stageId } : {}) }
     : null
 }
+const toast = useToast()
+
+/**
+ * Маршрут в настройках стал негодным — СКАЗАТЬ, а не подменить молча (#492).
+ *
+ * ⚠ Пикер объявлял причину и раньше, но на этом экране её никто не слушал: направление или стадия
+ * просто исчезали из формы, и ближайшее «Сохранить» записывало обрезанную настройку портала. То же
+ * молчаливое искажение, что #488 объявил дефектом на экране импорта, только здесь оно портит не
+ * одну пачку, а сохранённую конфигурацию.
+ *
+ * ⚠ Тост, а не строка в форме: пикеров на экране много (цель по умолчанию плюс каждое правило), и
+ * место под сообщение у каждого из них превратило бы форму в частокол пустых мест.
+ */
+function onTargetInvalid(reason: 'entity' | 'category' | 'stage'): void {
+  toast.add({
+    title: targetInvalidMessage(reason),
+    description: 'Значение убрано из формы. Выберите новое и сохраните настройки.',
+    color: 'air-primary-warning'
+  })
+}
+
 function setRowTarget(row: EditableRoutingRow, t: TargetRef | null): void {
   row.entityTypeId = t?.entityTypeId ?? null
   row.categoryId = t?.categoryId
@@ -442,6 +464,7 @@ const ARTICLE_KIND_ITEMS = [
                       <TargetPicker
                         v-model:target="defaultTargetModel"
                         :include-auto="false"
+                        @invalid="onTargetInvalid"
                       />
                     </B24FormField>
 
@@ -470,6 +493,7 @@ const ARTICLE_KIND_ITEMS = [
                             :target="rowTarget(row)"
                             :include-auto="false"
                             @update:target="(t: TargetRef | null) => setRowTarget(row, t)"
+                            @invalid="onTargetInvalid"
                           />
                           <B24Button
                             color="air-tertiary-no-accent"

@@ -1,3 +1,4 @@
+import { isPortalTypeUnavailable } from '~/utils/portalErrors'
 import type { RestCall } from './b24Rest'
 
 // Smart-process (СПА) types via crm.type.list, so the settings/import UI can offer them as a NAMED list
@@ -66,7 +67,7 @@ export async function probeSmartInvoiceEnabled(call: RestCall): Promise<boolean 
     // enough: B24 returns it for many reasons, and treating it as «нет смарт-счетов» would HIDE a
     // working target — the opposite of the fail-open policy this probe is built on.
     const msg = e instanceof Error ? e.message : String(e)
-    return /не\s+поддерживается|not\s+supported/i.test(msg) ? false : null
+    return isPortalTypeUnavailable(msg) ? false : null
   }
 }
 

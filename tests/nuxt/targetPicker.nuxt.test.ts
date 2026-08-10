@@ -26,6 +26,8 @@ mockNuxtImport('useCrmTypes', () => () => ({
     { entityTypeId: 1050, title: 'Заявки', hasCategories: true, hasStages: true }
   ]),
   smartInvoiceEnabled,
+  // Список типов ПОЛУЧЕН: сторож #269 без этого признака ничего не роняет (#492).
+  typesLoaded: ref(true),
   load: async () => {}
 }))
 
@@ -140,5 +142,30 @@ describe('TargetPicker: исчезнувший маршрут объявляет
     await tick()
     await tick()
     expect(w.emitted('invalid')).toBeUndefined()
+  })
+})
+
+// #492. Тот же исчезнувший маршрут на ЭКРАНЕ НАСТРОЕК, где «Авто» не предлагается. Там `null`
+// означает не «решают правила», а «цель не задана»: сеттер подставит голую сделку, то есть
+// смарт-счёт админа молча превратится в сделку, а правило маршрутизации потеряет цель. Молчаливое
+// искажение сохранённой настройки портала — та же ошибка, что #488, только дороже.
+describe('TargetPicker: на /settings негодный маршрут не обнуляет тип (#492)', () => {
+  it('удалённое направление: причина объявлена, ТИП сохранён', async () => {
+    const w = await mountSuspended(TargetPicker, {
+      props: { target: { entityTypeId: 31, categoryId: 42 }, includeAuto: false }
+    })
+    await tick()
+    await tick()
+    expect(w.emitted('invalid')?.[0]?.[0], 'сказать человеку надо и здесь').toBe('category')
+    expect(lastTarget(w), 'тип обнулять нельзя — иначе настройка портала испорчена молча')
+      .toMatchObject({ entityTypeId: 31 })
+  })
+
+  it('на экране импорта поведение прежнее — выбор уходит в «Авто»', async () => {
+    // Обратная половина: гейт не должен выключить #488 там, где «Авто» есть.
+    const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 2, categoryId: 42 } } })
+    await tick()
+    await tick()
+    expect(lastTarget(w)).toBeNull()
   })
 })

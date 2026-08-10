@@ -1,3 +1,4 @@
+import { isPortalAccessDenied, isPortalTypeUnavailable } from './portalErrors'
 // Turning a raw Bitrix24 REST error into something an employee can act on (#269).
 //
 // The worker used to write `сбой обработки: <текст портала>` verbatim, so a portal without smart
@@ -32,13 +33,9 @@ export function isKnownTargetType(entityTypeId: number | null | undefined): bool
 // A bare NOT_FOUND is deliberately NOT here: it is B24's most common generic code (товар, компания,
 // стадия, файл на Диске…), and routing all of those into «выберите другую цель» would hand out a
 // wrong instruction far more often than a right one.
-const UNSUPPORTED_PATTERNS = [
-  /сущность\s+crm\s+не\s+поддерживается/i,
-  /entity\s+.*not\s+supported/i,
-  /смарт-процесс\s+не\s+найден/i
-]
-
-const ACCESS_PATTERNS = [/access\s*denied/i, /нет\s+прав/i, /ACCESS_DENIED/]
+// ⚠ Формулировки — из ОБЩЕГО словаря (`portalErrors.ts`): тот же список решает, попадёт ли документ
+// в CRM через запасную сделку (`server/utils/targetFallback.ts`). Две копии отвечали бы по-разному
+// на один и тот же ответ портала — человеку одно, коду другое.
 
 /** Cap on the raw portal text quoted back to the user (the row is one line). */
 const MAX_PORTAL_DETAIL = 200
@@ -56,11 +53,11 @@ export function describeImportFailure(raw: string, target?: FailureTarget | null
 
   // ACCESS first: an access error can mention a missing entity too, and «выберите другую цель» would
   // send the employee down the wrong path when the real fix is «попросите открыть доступ».
-  if (ACCESS_PATTERNS.some(re => re.test(text))) {
+  if (isPortalAccessDenied(text)) {
     return `Не удалось внести документ в «${where}» — не хватает прав в CRM. Попросите администратора `
       + `открыть доступ к этому разделу и загрузите файл снова.${detail}`
   }
-  if (UNSUPPORTED_PATTERNS.some(re => re.test(text))) {
+  if (isPortalTypeUnavailable(text)) {
     return `Не удалось внести документ в «${where}» — этот тип записи недоступен на вашем портале `
       + `или был удалён. Выберите другую цель (например, Сделку) и загрузите файл снова.${detail}`
   }
