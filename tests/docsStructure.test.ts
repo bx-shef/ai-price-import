@@ -255,7 +255,7 @@ describe('живые проверки перечислены в документ
  * каждую сессию.
  */
 describe('CLAUDE.md не растёт обратно', () => {
-  const CLAUDE_MAX_BYTES = 165_000
+  const CLAUDE_MAX_BYTES = 140_000
 
   it(`укладывается в ${CLAUDE_MAX_BYTES} байт`, () => {
     const size = Buffer.byteLength(readFileSync(abs('CLAUDE.md'), 'utf8'), 'utf8')
