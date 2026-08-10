@@ -16,7 +16,9 @@ useHead({ title: `Служебная консоль / ${APP_NAME}`, meta: [{ nam
 
 interface QueueCounts { name: string, waiting: number, active: number, completed: number, failed: number, delayed: number }
 interface QueueAlert { kind: 'stalled' | 'failing' | 'unreadable', queue: string, text: string }
-interface FailedJob { queue: string, id: string, reason: string, failedAt: number | null, attempts: number }
+// `portal` — необратимый отпечаток портала (#498). Без него «сорок отказов подряд» нельзя было
+// связать с конкретным клиентом, и ручной разбор упирался в отдельную раскопку по логам.
+interface FailedJob { queue: string, id: string, reason: string, failedAt: number | null, attempts: number, portal?: string }
 interface PortalStatus { memberId: string, domain: string, ageDays: number, expiresInDays: number, health: 'ok' | 'near-expiry' | 'stale' }
 type RatingState = 'reviewed' | 'opened' | 'prompted' | 'none'
 interface RatingStatus { memberId: string, domain: string, state: RatingState, promptedAtMs: number | null, openedAtMs: number | null }
@@ -546,7 +548,7 @@ onMounted(async () => {
               <span class="min-w-0 flex-1">
                 <span class="block text-xs break-words text-(--ui-color-base-2)">{{ j.reason }}</span>
                 <span class="block text-xs text-(--ui-color-base-4)">
-                  {{ j.failedAt ? formatClock(j.failedAt) : 'время неизвестно' }} · попыток: {{ j.attempts }} · id {{ j.id }}
+                  {{ j.failedAt ? formatClock(j.failedAt) : 'время неизвестно' }} · попыток: {{ j.attempts }} · портал {{ j.portal || 'неизвестен' }} · id {{ j.id }}
                 </span>
               </span>
               <span class="flex shrink-0 items-center gap-2">
