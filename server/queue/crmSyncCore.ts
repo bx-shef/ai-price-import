@@ -11,6 +11,7 @@ import { allLinesSkippedError, lineSkippedWarning, noLinesMatchedWarning, skippe
 import { matchVatRate, type PortalVatRate } from '~/utils/vat'
 import { buildProductRow, computeOpportunity, supportsOpportunity } from '../utils/crmWrite'
 import { originMarkerFields, originSearchFilter } from '../utils/originMarker'
+import { isMissingTargetError } from '../utils/targetFallback'
 
 // Pure crm-sync orchestration with injected dependencies (no I/O here).
 // Deps are abstract async fns → wired to the isolated MCP tools (not direct REST):
@@ -182,7 +183,7 @@ export async function runCrmSync(
   const markerFilter = originSearchFilter(target.entityTypeId, jobId, deps.originatorPrefix)
   if (!markerFilter) {
     errors.push(`Импорт остановлен: в этот тип CRM-сущности (${target.entityTypeId}) вносить нельзя — приложение не сможет защититься от повторной записи. Откройте настройки импорта и выберите сделку, смарт-счёт или смарт-процесс.`)
-    // ⚠ ЕДИНСТВЕННОЕ исключение из правила «запись создаётся всегда» (#459), и оно вынужденное:
+    // ⚠ Исключение первое из двух (второе — #492: портал сломан ⇒ не создаём ничего) из правила «запись создаётся всегда» (#459), и оно вынужденное:
     // у типа без маркера повтор задания не сможет найти прежнюю запись, поэтому «создавать всегда»
     // означало бы «дублировать при каждом ретрае». Молча плодить карточки хуже, чем не оставить
     // следа: клиент получил бы не пропуск в журнале, а мусор в воронке, растущий сам по себе.
@@ -379,6 +380,10 @@ export async function runCrmSync(
   // and its retry, the retry searches under a different key and may duplicate. This targets crash
   // recovery, not concurrent reconfiguration; acceptable residual for the «search in B24» design.
   const existingId = await deps.findExisting(target.entityTypeId, markerFilter!)
+  // Запись нашлась под ЗАПАСНЫМ маркером (см. ветку создания ниже) — тоже повторная доставка,
+  // просто маркер лежит в поле другого типа. Отдельный флаг, потому что `existingId` ищется под
+  // ВЫБРАННЫМ типом и на этой ветке всегда пуст.
+  let fallbackIdempotent = false
 
   // EVERY line was skipped (skip-warn + not a single product matched the catalogue) — #373. Before
   // this guard the import created an entity with NO rows, sum 0 and no company, and reported it as
@@ -521,12 +526,24 @@ export async function runCrmSync(
     try {
       entityId = await deps.createTarget(target, buildFields(target))
     } catch (err) {
+      // ⚠⚠ У Б24 что-то не так ⇒ МЫ И СДЕЛКУ НЕ СОЗДАДИМ (#492, решение владельца 10.08.2026).
+      // Отказ прав, протухший токен, предел частоты, таймаут — задание падает целиком, и это нужное
+      // поведение: упавшее видно в списке неудачных и в тревоге по очередям, и его чинит повтор.
+      // Запасная сделка законна РОВНО в одном случае — портал жив и внятно ответил, что такой цели
+      // здесь нет. Разбор и цена обеих ошибок — `server/utils/targetFallback.ts`.
+      // ⚠ Проверка стоит ДО поиска маркера: на сломанном портале второй вызов упрётся в то же
+      // самое, то есть мы бы сходили в него ещё раз впустую и затёрли настоящую причину отказа.
+      if (!isMissingTargetError(err)) throw err
       const fb = FALLBACK_TARGET
       const alreadyFallback = target.entityTypeId === fb.entityTypeId && (target.categoryId ?? 0) === (fb.categoryId ?? 0)
       const fbFilter = alreadyFallback ? null : originSearchFilter(fb.entityTypeId, jobId, deps.originatorPrefix)
       // Запасная цель — та же самая, или маркер под ней невозможен ⇒ спасать нечем, отказ настоящий.
       if (!fbFilter) throw err
       const already = await deps.findExisting(fb.entityTypeId, fbFilter)
+      // ⚠ Нашли по маркеру ⇒ это ПОВТОРНАЯ ДОСТАВКА того же задания, а не создание: первая попытка
+      // уже завела запасную сделку и упала позже. Без этой пометки `created` уходил истинным, и
+      // счётчик «внесено» рос на каждую редоставку одного документа (#492).
+      fallbackIdempotent = !!already
       entityId = already ?? await deps.createTarget(fb, buildFields(fb))
       // ⚠ Дальше по коду читается ИМЕННО `entityTypeId` (строки товаров, дело, ссылка на карточку),
       // а `target` больше нигде — поэтому обновляется он один. Присваивать `target` «для порядка»
@@ -535,7 +552,12 @@ export async function runCrmSync(
       entityTypeId = fb.entityTypeId
       warnings.push('Выбранную запись создать не удалось — возможно, этот тип отключён в вашей CRM или направление удалили. Документ внесён в сделку в направлении по умолчанию. Проверьте настройки импорта и при необходимости перенесите карточку.')
     }
-    created = true
+    // ⚠ `created` ЛОЖЕН на повторной доставке, а не только в возвращаемом объекте: он читается ещё
+    // двумя ветками ниже — гейтом однократной записи дела (`writeActivityOnce`) и заголовком
+    // сообщения в чат. Правка только в `return` оставляла бы ВТОРОЕ дело в таймлайне у документа,
+    // чья первая попытка успела создать запасную сделку и упасть позже, — то есть один импорт
+    // дважды в журнале, который из дел и строится.
+    created = !fallbackIdempotent
   }
 
   if (rows.length) await deps.setRows(entityTypeId, entityId, rows)
@@ -591,7 +613,7 @@ export async function runCrmSync(
     }
   }
 
-  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId, unmatched: !companyId, warnings, errors, advice }
+  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId || fallbackIdempotent, unmatched: !companyId, warnings, errors, advice }
 }
 
 function clampNonNeg(n: number, fallback = 0): number {
