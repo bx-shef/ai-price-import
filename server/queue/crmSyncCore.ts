@@ -183,7 +183,7 @@ export async function runCrmSync(
   const markerFilter = originSearchFilter(target.entityTypeId, jobId, deps.originatorPrefix)
   if (!markerFilter) {
     errors.push(`Импорт остановлен: в этот тип CRM-сущности (${target.entityTypeId}) вносить нельзя — приложение не сможет защититься от повторной записи. Откройте настройки импорта и выберите сделку, смарт-счёт или смарт-процесс.`)
-    // ⚠ ЕДИНСТВЕННОЕ исключение из правила «запись создаётся всегда» (#459), и оно вынужденное:
+    // ⚠ Исключение первое из двух (второе — #492: портал сломан ⇒ не создаём ничего) из правила «запись создаётся всегда» (#459), и оно вынужденное:
     // у типа без маркера повтор задания не сможет найти прежнюю запись, поэтому «создавать всегда»
     // означало бы «дублировать при каждом ретрае». Молча плодить карточки хуже, чем не оставить
     // следа: клиент получил бы не пропуск в журнале, а мусор в воронке, растущий сам по себе.
@@ -552,7 +552,12 @@ export async function runCrmSync(
       entityTypeId = fb.entityTypeId
       warnings.push('Выбранную запись создать не удалось — возможно, этот тип отключён в вашей CRM или направление удалили. Документ внесён в сделку в направлении по умолчанию. Проверьте настройки импорта и при необходимости перенесите карточку.')
     }
-    created = true
+    // ⚠ `created` ЛОЖЕН на повторной доставке, а не только в возвращаемом объекте: он читается ещё
+    // двумя ветками ниже — гейтом однократной записи дела (`writeActivityOnce`) и заголовком
+    // сообщения в чат. Правка только в `return` оставляла бы ВТОРОЕ дело в таймлайне у документа,
+    // чья первая попытка успела создать запасную сделку и упасть позже, — то есть один импорт
+    // дважды в журнале, который из дел и строится.
+    created = !fallbackIdempotent
   }
 
   if (rows.length) await deps.setRows(entityTypeId, entityId, rows)
@@ -608,7 +613,7 @@ export async function runCrmSync(
     }
   }
 
-  return { entityTypeId, entityId, created: created && !fallbackIdempotent, rowCount: rows.length, idempotent: !!existingId || fallbackIdempotent, unmatched: !companyId, warnings, errors, advice }
+  return { entityTypeId, entityId, created, rowCount: rows.length, idempotent: !!existingId || fallbackIdempotent, unmatched: !companyId, warnings, errors, advice }
 }
 
 function clampNonNeg(n: number, fallback = 0): number {

@@ -127,6 +127,31 @@ export function buildRefreshPersist(save: (input: SaveTokenInput) => Promise<voi
   }
 }
 
+/** Ошибка портала с СОХРАНЁННЫМ машинным кодом (#492).
+ *
+ * ⚠ `getErrorMessages()` отдаёт только человеческое описание: `AjaxError.formatErrorMessage`
+ * возвращает голый `description`, если он есть, и ни код, ни статус в текст не попадают. А описание
+ * портала может процитировать присланное поле — в `crm.item.add` мы кладём в `title` имя поставщика
+ * ИЗ ДОКУМЕНТА и имя загруженного файла. Значит любое решение, принятое по тексту, управляется тем,
+ * кто прислал накладную: достаточно назвать поставщика «ООО not supported». Тот же урок уже куплен
+ * в #416 (`llmErrorSignature`), где слова `ENERGOSBYT`/`EXPORT`/`EURO` из инвойса подходили под
+ * форму кода ошибки.
+ *
+ * Поэтому код и статус выносятся В ПОЛЯ ошибки, и классификаторы читают их, а не строку. Текст
+ * по-прежнему первым в сообщении — его видит человек в журнале. */
+function restError(res: { getErrorMessages: () => string[], getErrors?: () => Iterable<unknown> }, method: string): Error {
+  const text = res.getErrorMessages().join('; ') || `B24 REST ${method} failed`
+  // ⚠ `getErrors` объявлен не во всех вариантах результата SDK — читаем защитно: потерять код
+  // хуже, чем не получить его вовсе, но ронять транспорт из-за отсутствующего метода нельзя.
+  const errors = typeof res.getErrors === 'function' ? [...res.getErrors()] : []
+  const first = errors[0] as { code?: unknown, status?: unknown, _status?: unknown } | undefined
+  const code = typeof first?.code === 'string' ? first.code : undefined
+  const rawStatus = first?.status ?? first?._status
+  const status = typeof rawStatus === 'number' ? rawStatus : undefined
+  const err = new Error(code ? `${code}${status ? ` (${status})` : ''}: ${text}` : text)
+  return Object.assign(err, { portalCode: code, portalStatus: status })
+}
+
 /** Wrap a B24 OAuth client as our `RestCall`: run the (rate-limited, auto-retried) call and
  *  return the UNWRAPPED `result` (ai-price-import's contract — callers cast it directly, e.g.
  *  `crm.product.list` → array). Throws the SDK's error messages so a failed call fails the
@@ -138,7 +163,7 @@ export function makeSdkRestCall(client: OAuthCallClient, opts: { memberId?: stri
     { system: 'bitrix24', operation: method, method, scope: method.split('.')[0], memberId: opts.memberId },
     async () => {
       const res = await client.actions.v2.call.make({ method, params })
-      if (!res.isSuccess) throw new Error(res.getErrorMessages().join('; ') || `B24 REST ${method} failed`)
+      if (!res.isSuccess) throw restError(res, method)
       const data = (res.getData() ?? {}) as { result?: unknown }
       return data.result
     }

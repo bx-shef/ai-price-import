@@ -128,13 +128,21 @@ function failToAuto(reason: TargetInvalidReason): void {
   // которое #488 объявил дефектом, только перенесённое на экран настроек, где цена выше: там
   // портится сохранённая конфигурация портала, а не выбор одной пачки.
   // ⚠ Сообщение (`invalid`) шлём в ОБОИХ случаях: сказать человеку надо всегда, а вот трогать его
-  // сохранённую настройку — нет. Сосед по этому файлу (сторож #269) делает ту же оговорку.
+  // сохранённую настройку — нет.
+  // ⚠ Сосед по файлу (сторож #269, исчезнувшая СУЩНОСТЬ) устроен ИНАЧЕ и тип на `/settings` всё-таки
+  // подменяет на сделку — но он же единственный, кто показывает постоянную строку под кнопками
+  // (`unavailableTarget`), то есть молчаливым не является. Не «та же оговорка»: два механизма, и
+  // сводить их — отдельная работа (#498).
   if (props.includeAuto) {
     etid.value = null
     cats.value = undefined
     stages.value = undefined
+    categoryId.value = undefined
+  } else if (reason === 'category') {
+    // ⚠ Снимаем ТОЛЬКО то, что негодно. Ветка 'stage' означает, что направление проверку прошло, и
+    // обнулять его заодно — потерять годную настройку админа за компанию с негодной.
+    categoryId.value = undefined
   }
-  categoryId.value = undefined
   stageId.value = undefined
   emit()
   emitInvalid('invalid', reason)
@@ -151,7 +159,17 @@ async function initCascade(): Promise<void> {
   if (categoryId.value != null && targetInvalidReason(
     { entityTypeId: etid.value, categoryId: categoryId.value },
     { entityIds: undefined, categoryIds: nextCats?.map(c => c.id), stageIds: undefined }
-  ) === 'category') return failToAuto('category')
+  ) === 'category') {
+    failToAuto('category')
+    // ⚠ НЕ выходим из функции: на `/settings` тип остаётся выбранным, и без загрузки стадий блок
+    // «Стадия» просто не нарисуется — админ увидит, что направление исчезло, а стадии нет вовсе, без
+    // объяснения. Раньше `return` был безвреден, потому что тип обнулялся вместе с направлением.
+    if (props.includeAuto) return
+    const fallbackStages = await loadCrmStages(etid.value, null)
+    if (my !== seq) return
+    stages.value = fallbackStages
+    return
+  }
   // Reconcile a STALE direction: if the saved categoryId no longer exists on the portal (funnel
   // deleted), clear it so the picker doesn't show a dangling value and a bad id isn't re-saved.
   const before = { categoryId: categoryId.value, stageId: stageId.value }

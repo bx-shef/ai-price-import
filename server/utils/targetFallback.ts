@@ -1,3 +1,4 @@
+import { isPortalAccessDenied, isPortalTypeUnavailable } from '~/utils/portalErrors'
 import { isAuthRejection } from './b24Rest'
 
 // Когда отказ портала при создании записи законно лечится ЗАПАСНОЙ СДЕЛКОЙ, а когда — не лечится
@@ -24,10 +25,10 @@ import { isAuthRejection } from './b24Rest'
 // портала что-то не так» и роняет задание. Цена ошибки несимметрична — ложное падение стоит
 // повтора, ложный успех стоит карточки в чужой воронке, которую никто не заметит.
 
-/** Явное «такого типа здесь нет» от портала. Единственная формулировка, которую он даёт на
- *  отключённый смарт-счёт и на удалённый смарт-процесс — та же, что ловит `probeSmartInvoiceEnabled`
- *  (`typeLookup.ts`), и проверена вживую на `T1120` против `T460`. */
-const TARGET_MISSING = /не\s+поддерживается|not\s+supported|ENTITY_TYPE_NOT_SUPPORTED|CRM_ENTITY_TYPE_NOT_FOUND/i
+// Формулировки живут в ОДНОМ месте — `app/utils/portalErrors.ts`. ⚠ Своя копия здесь была третьей
+// в проекте, и она уже разошлась с соседями: не знала «Смарт-процесс не найден», то есть на самом
+// частом случае #488 (СП удалили в CRM) запасная сделка не срабатывала вовсе и документ не попадал
+// в CRM ни при каких условиях — ровно то, что #488 и чинил.
 
 /**
  * Означает ли отказ портала, что запись просто **некуда** класть — тип отключён, направление
@@ -42,7 +43,44 @@ const TARGET_MISSING = /не\s+поддерживается|not\s+supported|ENTI
  * вывод уже сделан в `typeLookup.probeSmartInvoiceEnabled` и закреплён там комментарием.
  */
 export function isMissingTargetError(err: unknown): boolean {
-  if (isAuthRejection(err)) return false
   const msg = err instanceof Error ? err.message : String(err)
-  return TARGET_MISSING.test(msg)
+  // ⚠ ДВЕ проверки прав, а не одна: `isAuthRejection` ловит формы с пробелом и коды статуса, а
+  // `isPortalAccessDenied` — подчёркнутый `ACCESS_DENIED`, который приходит машинным кодом REST и
+  // мимо первой проходил. Пропустить отказ прав здесь — значит создать карточку в чужой воронке.
+  if (isAuthRejection(err) || isPortalAccessDenied(msg)) return false
+
+  // ⚠⚠ ЕСТЬ МАШИННЫЙ КОД ⇒ РЕШАЕМ ТОЛЬКО ПО НЕМУ, текст не смотрим вовсе. Описание портала вправе
+  // процитировать присланное поле, а в `crm.item.add` мы кладём в `title` имя поставщика ИЗ
+  // ДОКУМЕНТА и имя загруженного файла — то есть решение по тексту управляется тем, кто прислал
+  // накладную: достаточно назвать поставщика «ООО not supported», и документ уедет в запасную
+  // сделку вместо честного отказа. Тот же урок куплен в #416 (`llmErrorSignature`), где
+  // `ENERGOSBYT`/`EXPORT`/`EURO` из инвойса подходили под форму кода ошибки.
+  const code = (err as { portalCode?: unknown } | null)?.portalCode
+  const status = (err as { portalStatus?: unknown } | null)?.portalStatus
+  if (typeof status === 'number' && (status === 401 || status === 403)) return false
+  if (typeof code === 'string' && code) {
+    const upper = code.toUpperCase()
+    if (TARGET_MISSING_CODES.has(upper)) return true
+    // ⚠ `NOT_FOUND` — ЕДИНСТВЕННЫЙ неоднозначный код, и разбирать его приходится по тексту.
+    // По справочнику именно `crm.item.add` отвечает `NOT_FOUND: Смарт-процесс не найден` на
+    // удалённый СП, то есть на ГОЛОВНОЙ случай #488, — а `ENTITY_TYPE_NOT_SUPPORTED` документирован
+    // у других методов (`crm.item.productrow.*`, `crm.category.*`). Решать по одному коду здесь
+    // нельзя: тот же `NOT_FOUND` портал отдаёт на товар, компанию, стадию и файл на Диске.
+    // ⚠ Текст этой ветки НЕ управляется документом: совпасть должна конкретная формулировка про
+    // смарт-процесс, а имя поставщика попадает в `title`, а не в название типа. Но гарантия слабее
+    // кода, поэтому ветка одна и узкая.
+    if (upper !== 'NOT_FOUND') return false
+  }
+
+  // Кода нет (не-SDK транспорт, сетевой сбой, тесты) — падаем на формулировки. Это слабее, поэтому
+  // и стоит ПОСЛЕ кода, а не вместо него.
+  return isPortalTypeUnavailable(msg)
 }
+
+/** Машинные коды «такой цели здесь нет». ⚠ Закрытый список ИМЕННО кодов: форма кода (`SNAKE_CASE`)
+ *  проверкой быть не может — под неё подходят слова из документа, см. #416. */
+const TARGET_MISSING_CODES = new Set([
+  'ENTITY_TYPE_NOT_SUPPORTED',
+  'CRM_ENTITY_TYPE_NOT_FOUND',
+  'ERROR_ENTITY_TYPE_NOT_SUPPORTED'
+])
