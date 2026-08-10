@@ -59,10 +59,13 @@ export function parseActivityBody(description: unknown): ActivitySummary {
     if (clean && clean !== 'не указан') out.supplier = clean.slice(0, 200)
   }
 
-  const rows = /\[B\]Позиций:\[\/B\]\s*(\d+)/i.exec(description)
-  out.rows = intOrUndefined(rows?.[1])
-  const matched = /сопоставлено с каталогом:\s*(\d+)/i.exec(description)
-  out.matched = intOrUndefined(matched?.[1])
+  // ⚠ Оба числа читаются из ОДНОЙ строки блока «Позиций», а не по всему телу. Разбор нашёл дыру:
+  // «сопоставлено с каталогом» встречается и в тексте проблем, а туда попадает НАЗВАНИЕ ТОВАРА из
+  // документа — то есть поставщик мог назвать позицию так, чтобы журнал показал выдуманное число.
+  // Это ровно то, что запрещает шапка файла: домысленное число хуже отсутствующего.
+  const rowsLine = /\[B\]Позиций:\[\/B\][^\n]*/i.exec(description)?.[0] ?? ''
+  out.rows = intOrUndefined(/\[B\]Позиций:\[\/B\]\s*(\d+)/i.exec(rowsLine)?.[1])
+  out.matched = intOrUndefined(/сопоставлено с каталогом:\s*(\d+)/i.exec(rowsLine)?.[1])
 
   const amount = /\[B\]Сумма:\[\/B\]\s*(.+)/i.exec(description)?.[1]
   if (amount) out.amount = stripUrl(amount).slice(0, 60)

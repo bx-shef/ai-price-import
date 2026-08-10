@@ -34,7 +34,7 @@ const row = (over: Partial<JournalRow> = {}): JournalRow => ({
   createdAt: '2024-08-07T20:28:00+03:00',
   ownerTypeId: 4,
   ownerId: 55,
-  description: '[B]Поставщик:[/B] ООО Ромашка\n[B]Позиций:[/B] 14\n[B]Сумма:[/B] 1 200,00 BYN',
+  summary: { supplier: 'ООО Ромашка', rows: 14, amount: '1 200,00 BYN' },
   fileUrl: 'https://portal.bitrix24.by/bitrix/tools/crm_show_file.php?fileId=1',
   colorId: '4',
   ...over
@@ -136,5 +136,26 @@ describe('#494: одна лента вместо двух списков', () =>
     const w = await render([], { uploading: true })
     expect(w.text()).not.toContain('Вы ещё ничего не импортировали')
     expect(w.text()).toContain('Отправляем файл…')
+  })
+})
+
+// Разбор мутациями показал две дыры: обе «проходили бесследно», то есть возврат дефекта не ронял
+// ни одного теста. Обе закрыты здесь.
+describe('#495: гарантии строки журнала', () => {
+  it('ссылка на файл открывается безопасно — target и rel вместе', async () => {
+    // ⚠ Без `rel` открытая вкладка получает ссылку на наше окно (`window.opener`) и может им
+    // управлять. Адрес портальный, но страница по нему — не наша, а `target="_blank"` без `rel`
+    // это классическая дыра, которую видно только в разметке.
+    const w = await render([row()])
+    const a = w.findAll('a').find(x => x.text().includes('Исходный файл'))
+    expect(a, 'ссылки на файл нет вовсе').toBeTruthy()
+    expect(a!.attributes('target')).toBe('_blank')
+    expect(a!.attributes('rel')).toContain('noopener')
+    expect(a!.attributes('rel')).toContain('noreferrer')
+  })
+
+  it('файла нет — ссылки нет, а не пустая кнопка', async () => {
+    const w = await render([row({ fileUrl: '' })])
+    expect(w.findAll('a').some(x => x.text().includes('Исходный файл'))).toBe(false)
   })
 })

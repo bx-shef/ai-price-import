@@ -13,7 +13,7 @@
 // иначе не смог бы добраться до второй страницы вовсе.
 import { computed, onMounted } from 'vue'
 import { journalDateTile, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
-import { activityOutcome, parseActivityBody } from '~/utils/activityBody'
+import { activityOutcome } from '~/utils/activityBody'
 import type { ImportJobView } from '~/composables/useImport'
 
 // ⚠ ЖИВЫЕ строки приходят пропом, а не читаются здесь (#494). Источника два и они разной природы:
@@ -74,9 +74,9 @@ const view = computed(() => rows.value.map(row => ({
   row,
   tile: journalDateTile(row.createdAt),
   ownerPath: ownerOpenPath(row.ownerTypeId, row.ownerId),
-  // Результат берётся ИЗ ДЕЛА (#495): те же числа, что человек видит в карточке портала, потому
-  // что источник буквально один. Прежде «результат» жил в статусе задания и совпасть не мог.
-  summary: parseActivityBody(row.description),
+  // Результат приходит уже разобранным с сервера (#495): в браузер уходят пять чисел, а не тело
+  // дела целиком — там имя поставщика и тексты проблем из документа клиента.
+  summary: row.summary,
   outcome: activityOutcome(row.colorId)
 })))
 

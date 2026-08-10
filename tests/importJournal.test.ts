@@ -46,7 +46,7 @@ describe('#458: журнал импортов — разбор ответа', ()
     expect(mapJournalRows([row()])).toEqual([{
       activityId: 55, jobId: 'job-1', title: 'Импорт: ООО Ромашка', clean: true,
       createdAt: '2026-08-08T10:00:00+03:00', ownerTypeId: 2, ownerId: 341,
-      description: '', fileUrl: '', colorId: ''
+      summary: {}, fileUrl: '', colorId: ''
     }])
   })
 

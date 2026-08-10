@@ -1,3 +1,4 @@
+import type { ActivitySummary } from '~/utils/activityBody'
 // Журнал импортов на экране: чистые правила подкачки и подписей (#458).
 //
 // Вынесено из компонента потому, что здесь живут ровно те решения, которые в разметке не увидишь
@@ -14,8 +15,8 @@ export interface JournalRow {
   /** Владелец дела: компания при найденном контрагенте, иначе созданная сущность. */
   ownerTypeId: number
   ownerId: number
-  /** Тело дела — из него берутся поставщик, позиции, сумма и число проблем (#495). */
-  description: string
+  /** Результат импорта, разобранный НА СЕРВЕРЕ из тела дела (#495). */
+  summary: ActivitySummary
   /** Адрес вложенного документа в портале; пусто — файла нет. */
   fileUrl: string
   /** Цвет самого дела: по нему красится исход, а не по признаку «дело закрыто». */
@@ -40,40 +41,6 @@ export function ownerOpenPath(ownerTypeId: number, ownerId: number): string {
   if (ownerTypeId === 7) return `/crm/quote/show/${ownerId}/`
   if (!Number.isInteger(ownerTypeId) || ownerTypeId <= 0) return ''
   return `/crm/type/${ownerTypeId}/details/${ownerId}/`
-}
-
-/**
- * Дописать страницу к уже показанному списку.
- *
- * ⚠ Дедуп по `activityId` ОБЯЗАТЕЛЕН, и это не перестраховка. Пагинация портала — по смещению
- * (`start`), а список отсортирован по убыванию id: пока человек читает, приходит новый импорт,
- * всё съезжает на позицию вниз, и следующая страница возвращает строку, которая уже показана.
- * Без дедупа человек видит один и тот же документ дважды и считает, что импорт задвоился.
- * ⚠ Порядок сохраняется: новые строки дописываются В КОНЕЦ, а не сортируются заново — иначе при
- * подгрузке список бы прыгал под пальцем.
- */
-export function appendPage(shown: JournalRow[], page: JournalRow[]): JournalRow[] {
-  const seen = new Set(shown.map(r => r.activityId))
-  const fresh = page.filter(r => !seen.has(r.activityId))
-  return fresh.length ? [...shown, ...fresh] : shown
-}
-
-/**
- * Пора ли грузить следующую страницу.
- *
- * ⚠ Проверяется И `hasMore`, И «сейчас не грузим». Без второго условия наблюдатель прокрутки
- * выстреливает несколько раз подряд, пока идёт первый запрос, и портал получает три-четыре
- * одинаковых вызова на одно движение пальца — на мобильном это заметно сразу, лимитом Б24.
- * ⚠ Отказ (`failed`) тоже останавливает автоподкачку: иначе экран уходил бы в бесконечный цикл
- * запросов к недоступному порталу, и человек не увидел бы даже сообщения об ошибке.
- */
-export function shouldLoadMore(state: { hasMore: boolean, loading: boolean, failed: boolean }): boolean {
-  return state.hasMore && !state.loading && !state.failed
-}
-
-/** Смещение следующей страницы: считаем от ПОКАЗАННОГО, а не от номера страницы. */
-export function nextStart(shown: JournalRow[]): number {
-  return shown.length
 }
 
 /**

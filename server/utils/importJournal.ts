@@ -1,4 +1,6 @@
 import { activityMarkerFilter } from './todoActivity'
+import { isSafeB24Domain } from './b24Rest'
+import { parseActivityBody, type ActivitySummary } from '~/utils/activityBody'
 
 // Журнал импортов — список дел, которые приложение записало в таймлайн CRM (#458).
 //
@@ -91,8 +93,16 @@ export interface JournalRow {
    */
   ownerTypeId: number
   ownerId: number
-  /** Тело дела как есть — разбирается на клиенте (`parseActivityBody`). */
-  description: string
+  /**
+   * Результат импорта, РАЗОБРАННЫЙ на сервере.
+   *
+   * ⚠ Тело дела в браузер больше не уходит (разбор #495): во-первых, обрезка длинного тела на
+   * границе 4000 знаков резала как раз ХВОСТ, где стоит ссылка на карточку и совет, — и терялись
+   * они именно у самых шумных импортов, то есть у тех, которые человеку и надо открыть; во-вторых,
+   * тело несёт имя поставщика и тексты проблем из документа клиента, и отдавать его целиком ради
+   * пяти чисел незачем. Разбор — та же чистая функция, просто вызванная на шаг раньше.
+   */
+  summary: ActivitySummary
   /** Адрес вложенного документа в портале; пусто — файла у дела нет. */
   fileUrl: string
   /** Цвет САМОГО дела (`SETTINGS.COLOR`) — по нему журнал и красит исход. */
@@ -123,7 +133,17 @@ interface RawActivity {
 function fileUrlOf(files: unknown): string {
   if (!Array.isArray(files) || !files.length) return ''
   const url = (files[0] as { url?: unknown })?.url
-  return typeof url === 'string' && url.startsWith('https://') ? url : ''
+  if (typeof url !== 'string' || !url.startsWith('https://')) return ''
+  try {
+    // ⚠ Сверяется ХОСТ, а не только схема (разбор #495): первая редакция смотрела на префикс
+    // `https://`, хотя комментарий обещал «портальный адрес». Дело можно отредактировать в портале
+    // руками, и тогда под нашей подписью «Исходный файл» человеку уходила бы ссылка на чужой сайт —
+    // мы ручались бы за адрес, которого не выдавали. Гард ОБЩИЙ с остальными обращениями к порталу:
+    // вторая копия правила однажды разошлась бы с первой.
+    return isSafeB24Domain(new URL(url).hostname) ? url : ''
+  } catch {
+    return '' // неразбираемый адрес — не адрес; кнопка в никуда хуже её отсутствия
+  }
 }
 
 /** Цвет дела лежит ВНУТРИ `SETTINGS` — отдельного поля `COLOR` у дела нет (живая проверка). */
@@ -162,9 +182,7 @@ export function mapJournalRows(rows: unknown): JournalRow[] {
       createdAt: String(raw?.CREATED ?? ''),
       ownerTypeId: num(raw?.OWNER_TYPE_ID),
       ownerId: num(raw?.OWNER_ID),
-      // Тело уходит в браузер как есть и печатается через `{{ }}`: разметка нейтрализована ещё при
-      // записи, а разбор — чистая функция на клиенте, ей нужен исходный текст.
-      description: typeof raw?.DESCRIPTION === 'string' ? raw.DESCRIPTION.slice(0, 4000) : '',
+      summary: parseActivityBody(raw?.DESCRIPTION),
       fileUrl: fileUrlOf(raw?.FILES),
       colorId: colorOf(raw?.SETTINGS)
     })
