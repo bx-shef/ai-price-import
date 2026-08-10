@@ -44,8 +44,11 @@ export interface CrmSyncDeps {
   createMeasure?: (unit: string) => Promise<{ code: number, created: boolean } | null>
   /** Optional: the portal's own measure catalogue (catalog.measure.list), loaded once per job.
    *  Needed because the built-in synonym map (#272) yields an ОКЕИ code that a given portal may not
-   *  actually have — writing such a code produces a silently wrong measure on the row. `null` means
-   *  the catalogue could not be read (distinct from «read, code absent»). */
+   *  actually have. ⚠ Не ради верной единицы: живая проба 2026-08-06 показала, что портал САМ
+   *  подменяет неизвестный код на единицу по умолчанию (778 читается обратно как 796 «шт»). Сверка
+   *  нужна ради ПРЕДУПРЕЖДЕНИЯ человеку — без неё `matched` остаётся истинным, и админ не узнает,
+   *  что «упак» стала штукой. `null` means the catalogue could not be read (distinct from «read,
+   *  code absent»). */
   measureCatalog?: () => Promise<MeasureCatalog | null>
   portalVatRates: () => Promise<PortalVatRate[]>
   /** Optional: allowed portal currency codes; when provided, an unknown currency is a hard error. */
