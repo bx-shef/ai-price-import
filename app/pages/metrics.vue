@@ -9,7 +9,7 @@ import { useB24 } from '~/composables/useB24'
 import { APP_SLIDER_PLACE_METRICS } from '~/config/b24'
 import { formatMinutes } from '~/utils/savings'
 import { formatRate, summarizeMetrics } from '~/utils/metricsView'
-import { PORTAL_CONTENT_X, PORTAL_NAVBAR_X } from '~/config/portalShell'
+import { PORTAL_CONTENT_X, PORTAL_NAVBAR_CLASS } from '~/config/portalShell'
 
 // Detailed metrics page (P8 UI, second level). The motivating figures live on /app; this is the
 // full per-portal breakdown: savings estimate + success rate + every counter with a label.
@@ -114,7 +114,7 @@ async function doReset(): Promise<void> {
         <B24DashboardNavbar
           :toggle="false"
           title="Метрики импорта"
-          :b24ui="{ root: PORTAL_NAVBAR_X }"
+          :b24ui="{ root: PORTAL_NAVBAR_CLASS }"
         >
           <template #leading>
             <B24Button

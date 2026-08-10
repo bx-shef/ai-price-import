@@ -17,7 +17,7 @@ import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 import { ON_MISSING_FIELD_LABEL, ON_MISSING_ITEMS } from '~/config/onMissing'
 import { portalCurrencySettingsUrl } from '~/utils/entityLink'
-import { PORTAL_CONTENT_X, PORTAL_NAVBAR_X } from '~/config/portalShell'
+import { PORTAL_CONTENT_X, PORTAL_NAVBAR_CLASS } from '~/config/portalShell'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -376,7 +376,7 @@ const ARTICLE_KIND_ITEMS = [
         <B24DashboardNavbar
           :toggle="false"
           title="Настройки импорта"
-          :b24ui="{ root: PORTAL_NAVBAR_X }"
+          :b24ui="{ root: PORTAL_NAVBAR_CLASS }"
         >
           <template #leading>
             <B24Button
