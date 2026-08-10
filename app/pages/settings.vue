@@ -17,6 +17,7 @@ import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 import { ON_MISSING_FIELD_LABEL, ON_MISSING_ITEMS } from '~/config/onMissing'
 import { portalCurrencySettingsUrl } from '~/utils/entityLink'
+import { PORTAL_CONTENT_X, PORTAL_NAVBAR_X } from '~/config/portalShell'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -369,9 +370,13 @@ const ARTICLE_KIND_ITEMS = [
       <template #header>
         <!-- Same chrome as /metrics: навбар каркаса (#259) с кнопкой закрытия. Механика закрытия не
              тронута — по-прежнему `cancel`, чтобы in-frame фолбэк возвращал на /app. -->
+        <!-- ⚠ Отступы навбара выровнены с колонкой контента (`px-4 sm:px-6`): родные `ps-2 lg:ps-4`
+             ставили заголовок левее карточек, и на широком экране шапка читалась отдельно от
+             страницы. Та же правка, что на `/app` (10.08.2026). -->
         <B24DashboardNavbar
           :toggle="false"
           title="Настройки импорта"
+          :b24ui="{ root: PORTAL_NAVBAR_X }"
         >
           <template #leading>
             <B24Button
@@ -397,7 +402,11 @@ const ARTICLE_KIND_ITEMS = [
       </template>
 
       <template #body>
-        <div class="mx-auto w-full max-w-2xl p-4 pb-6 sm:p-6 lg:max-w-[672px]">
+        <!-- ⚠ Колонка НЕ капается по ширине (10.08.2026, та же правка, что на `/app`). В слайдере
+             720 ничего не изменилось: 720 − 48 отступов = ровно те же 672 px, из которых ширина
+             слайдера и выведена. Изменилось поведение НА ШИРОКОМ окне — раньше там оставался узкий
+             столбик посередине с заголовком где-то слева от него. -->
+        <div :class="[PORTAL_CONTENT_X, 'w-full py-4 pb-6 sm:py-6']">
           <p class="mb-4 text-sm text-(--ui-color-base-3)">
             Здесь вы задаёте, куда приложение вносит товары из документов и как ищет их в вашем каталоге.
           </p>

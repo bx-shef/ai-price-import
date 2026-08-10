@@ -9,6 +9,7 @@ import { useB24 } from '~/composables/useB24'
 import { APP_SLIDER_PLACE_METRICS } from '~/config/b24'
 import { formatMinutes } from '~/utils/savings'
 import { formatRate, summarizeMetrics } from '~/utils/metricsView'
+import { PORTAL_CONTENT_X, PORTAL_NAVBAR_X } from '~/config/portalShell'
 
 // Detailed metrics page (P8 UI, second level). The motivating figures live on /app; this is the
 // full per-portal breakdown: savings estimate + success rate + every counter with a label.
@@ -107,9 +108,13 @@ async function doReset(): Promise<void> {
       <template #header>
         <!-- Шапка — навбар каркаса (#259). Кнопка закрытия слайдера осталась той же: механику
              закрытия страница по-прежнему решает сама (closeOrBack), навбар несёт только хром. -->
+        <!-- ⚠ Отступы навбара выровнены с колонкой контента (`px-4 sm:px-6`): родные `ps-2 lg:ps-4`
+             ставили заголовок левее карточек, и на широком экране шапка читалась отдельно от
+             страницы. Та же правка, что на `/app` (10.08.2026). -->
         <B24DashboardNavbar
           :toggle="false"
           title="Метрики импорта"
+          :b24ui="{ root: PORTAL_NAVBAR_X }"
         >
           <template #leading>
             <B24Button
@@ -124,7 +129,11 @@ async function doReset(): Promise<void> {
       </template>
 
       <template #body>
-        <div class="mx-auto w-full max-w-2xl p-4 pb-6 sm:p-6">
+        <!-- ⚠ Колонка НЕ капается по ширине (10.08.2026, та же правка, что на `/app`). В слайдере
+             720 ничего не изменилось: 720 − 48 отступов = ровно те же 672 px, из которых ширина
+             слайдера и выведена. Изменилось поведение НА ШИРОКОМ окне — раньше там оставался узкий
+             столбик посередине с заголовком где-то слева от него. -->
+        <div :class="[PORTAL_CONTENT_X, 'w-full py-4 pb-6 sm:py-6']">
           <p class="mb-4 text-sm text-(--ui-color-base-3)">
             Сколько документов приложение обработало и сколько времени вам сэкономило.
           </p>
