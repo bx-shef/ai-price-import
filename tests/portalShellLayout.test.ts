@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { PORTAL_CONTENT_X, PORTAL_NAVBAR_X } from '../app/config/portalShell'
+import { PORTAL_CONTENT_X, PORTAL_NAVBAR_CLASS, PORTAL_NAVBAR_X } from '../app/config/portalShell'
 
 /**
  * Оболочка in-portal экранов: подложка, выравнивание шапки с контентом, раскладка в две колонки.
@@ -104,7 +104,7 @@ describe('оболочка in-portal экранов', () => {
       // Пока это были литералы в трёх шаблонах, четвёртый экран набрали бы руками и разошлись бы
       // молча. Проверяем именно использование констант, а не совпадение строк.
       const t = template(page)
-      expect(t, 'навбар обязан брать отступ из PORTAL_NAVBAR_X').toMatch(/<B24DashboardNavbar[\s\S]{0,400}?PORTAL_NAVBAR_X/)
+      expect(t, 'навбар обязан брать класс из PORTAL_NAVBAR_CLASS').toMatch(/<B24DashboardNavbar[\s\S]{0,400}?PORTAL_NAVBAR_CLASS/)
       expect(t, 'колонка контента обязана брать отступ из PORTAL_CONTENT_X').toMatch(/PORTAL_CONTENT_X/)
     })
   }
@@ -127,6 +127,16 @@ describe('оболочка in-portal экранов', () => {
     }
   })
 
+  it('шапка прилипает к верху и не просвечивает', () => {
+    // Заголовок и вход в настройки уезжали вверх вместе со страницей, и на длинном журнале человек
+    // терял единственную кнопку «Настройки». ⚠ Своя подложка обязательна: без неё прилипшая шапка
+    // просвечивает прокручиваемым под ней содержимым — дефект, который видно только в движении.
+    expect(PORTAL_NAVBAR_CLASS).toMatch(/\bsticky\b/)
+    expect(PORTAL_NAVBAR_CLASS).toMatch(/\btop-0\b/)
+    expect(PORTAL_NAVBAR_CLASS, 'прилипшей шапке нужна своя подложка').toMatch(/bg-\(--air-theme-bg-color\)/)
+    expect(PORTAL_NAVBAR_CLASS, 'отступы обязаны остаться теми же').toContain(PORTAL_NAVBAR_X)
+  })
+
   it('/app: две колонки включаются НЕ РАНЬШЕ lg', () => {
     // Слайдер приложения — 720 px, это НИЖЕ `lg` (1024). Порог ниже сделал бы боковую колонку в
     // слайдере, где ширины на неё нет: две колонки по ~330 px вместо одной читаемой.
@@ -140,19 +150,47 @@ describe('оболочка in-portal экранов', () => {
     expect(layoutGrid![1], 'колонки не должны включаться на sm/md').not.toMatch(/(?:sm|md):grid-cols-/)
   })
 
-  it('/app: порядок в разметке — как на телефоне, местами колонки меняет только lg:order-*', () => {
-    // Программа чтения и Tab идут по РАЗМЕТКЕ. Если поменять местами сами блоки, а не их `order`,
-    // то на телефоне человек получит журнал раньше экономии — ровно ту раскладку, которую владелец
-    // забраковал, и заметно это будет только с телефона.
+  it('/app: порядок в разметке — как на телефоне, места колонок заданы отдельно', () => {
+    // Программа чтения и Tab идут по РАЗМЕТКЕ. На телефоне сетка схлопывается в одну колонку, и
+    // порядок разметки становится порядком экрана — поэтому первой стоит ЗАГРУЗКА: это главное
+    // действие, и человек должен упереться в неё сразу, а не листать до неё цифры и историю.
     // ⚠ Проверяем ФИЗИЧЕСКИЙ порядок блоков, а не только наличие классов: перестановка блоков
-    // ВМЕСТЕ с их `order` сохраняет обе подписи и прошла бы мимо проверки «класс на месте».
+    // ВМЕСТЕ с их `col-start`/`row-start` сохраняет все подписи и прошла бы мимо проверки
+    // «класс на месте», а на телефоне сломала бы ровно то, ради чего порядок и выбран.
     const t = template('app/pages/app.vue')
-    const aside = t.indexOf('<aside')
-    const mainCol = t.search(/<div class="min-w-0 lg:order-1/)
-    expect(aside, 'боковая колонка не найдена — гард сторожит несуществующий блок').toBeGreaterThan(-1)
-    expect(mainCol, 'колонка журнала не найдена').toBeGreaterThan(-1)
-    expect(aside, 'боковая колонка обязана идти в разметке ПЕРВОЙ — это порядок на телефоне').toBeLessThan(mainCol)
-    expect(t).toMatch(/<aside[^>]*lg:order-2/)
+    const upload = t.indexOf('<ImportStaging')
+    const metrics = t.indexOf('Сэкономлено времени')
+    const promo = t.indexOf('<SelfHostedPromo')
+    const journal = t.indexOf('<ImportJournal')
+    for (const [name, at] of [['загрузка', upload], ['экономия', metrics], ['баннер', promo], ['журнал', journal]] as const) {
+      expect(at, `блок «${name}» не найден — гард сторожит несуществующий блок`).toBeGreaterThan(-1)
+    }
+    expect(upload, 'загрузка обязана идти в разметке первой — это порядок на телефоне').toBeLessThan(metrics)
+    expect(metrics, 'экономия идёт до баннера').toBeLessThan(promo)
+    expect(promo, 'баннер идёт до журнала').toBeLessThan(journal)
+  })
+
+  it('/app: загрузка стоит СПРАВА и прилипает, остальное — слева одной стопкой', () => {
+    // Места заданы явно (`lg:col-start-*`/`lg:row-start-*`) именно чтобы разметку можно было держать
+    // удобной для телефона. Поэтому проверяем сами места: без них порядок разметки стал бы и
+    // порядком широкого экрана — загрузка уехала бы наверх во всю ширину, как было до правки.
+    const t = template('app/pages/app.vue')
+    const around = (marker: string) => {
+      const at = t.indexOf(marker)
+      expect(at, `${marker} не найден`).toBeGreaterThan(-1)
+      return t.slice(Math.max(0, at - 300), at)
+    }
+    expect(around('<ImportStaging'), 'загрузка — правая колонка').toMatch(/lg:col-start-3[^"]*lg:row-start-1/)
+    expect(around('<ImportStaging'), 'загрузка обязана прилипать').toMatch(/lg:sticky/)
+    // ⚠ Журнал ищем не «в окне перед ним»: между его обёрткой и самим списком стоит шапка ленты,
+    // и узкое окно ловило бы её, а не колонку. Проверяем, что обёртка второго ряда объявлена ВЫШЕ
+    // журнала и что после неё других мест не объявляется до самого списка.
+    const wrap = t.indexOf('lg:col-start-1 lg:col-span-2 lg:row-start-1')
+    expect(wrap, 'левая колонка (экономия, баннер, журнал) не найдена').toBeGreaterThan(-1)
+    expect(wrap, 'обёртка обязана стоять перед списком').toBeLessThan(t.indexOf('<ImportJournal'))
+    // ⚠ Ячеек ровно ДВЕ. Разложив экономию и баннер отдельными ячейками верхнего ряда, получаем
+    // ряд высотой с баннер и дыру под короткой карточкой экономии — это уже было и было откачено.
+    expect(t.match(/lg:col-start-\d/g)?.length, 'ячеек сетки должно быть две').toBe(2)
   })
 
   it('/app: метрики и баннер стоят ВЫШЕ журнала', () => {
