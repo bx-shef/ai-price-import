@@ -1,0 +1,195 @@
+import { describe, expect, it } from 'vitest'
+import { classifyPipelineFailure, describePipelineFailure } from '../server/utils/pipelineFailure'
+import { MIN_READABLE_CHARS, sanitizeExtractedText } from '../server/utils/textSanitize'
+import { extractText } from '../server/utils/textExtract'
+import { createFailJob } from '../server/queue/failJob'
+
+/**
+ * Отказ на НАШЕЙ стороне конвейера (#506): к кому отправляем человека и что показываем.
+ *
+ * Найдено живым прогоном с намеренно битым `.txt`. На экране стояло «покажите это сообщение
+ * АДМИНИСТРАТОРУ» плюс дословный ответ Postgres — то есть человека отправляли к тому, кто заведомо
+ * не поможет, и заодно выносили наружу внутреннее устройство.
+ */
+
+describe('#506: адресат отказа', () => {
+  it('НИ ОДИН исход не зовёт администратора портала', () => {
+    // Несущее утверждение файла. Администратор не может сделать ничего: файл не разобрался у нас,
+    // до портала дело не дошло. Правило: наш отказ → к разработчику, отказ портала → к админу.
+    const cases = [
+      'invalid byte sequence for encoding "UTF8": 0x00',
+      'неподдерживаемый формат файла: смета.zip',
+      'ECONNRESET',
+      '',
+      undefined
+    ]
+    for (const raw of cases) {
+      expect(describePipelineFailure(raw).message.toLowerCase(), `«${raw}» зовёт администратора`).not.toContain('администратор')
+    }
+  })
+
+  it('ведёт ПО ШАГАМ: сперва проверь файл сам, и только потом — разработчику', () => {
+    // Свалив оба шага в одну фразу, мы гарантированно получаем письмо там, где хватило бы повторной
+    // выгрузки из 1С.
+    const m = describePipelineFailure('ECONNRESET').message
+    const check = m.indexOf('откройте этот файл')
+    const dev = m.indexOf('разработчику')
+    expect(check).toBeGreaterThan(-1)
+    expect(dev).toBeGreaterThan(-1)
+    expect(check, 'сначала проверить файл, потом звать разработчика').toBeLessThan(dev)
+  })
+})
+
+describe('#506: внутренности наружу не идут', () => {
+  it('ответ базы не показывается дословно, но узнаётся как «файл битый»', () => {
+    const r = describePipelineFailure('invalid byte sequence for encoding "UTF8": 0x00')
+    expect(r.kind).toBe('unreadable')
+    expect(r.message).not.toContain('UTF8')
+    expect(r.message).not.toContain('0x00')
+    expect(r.message).not.toContain('byte')
+    // Человеку сказано то, что он может проверить сам.
+    expect(r.message).toContain('повреждён')
+  })
+
+  it('чужой технический текст не просачивается ни в каком виде', () => {
+    for (const raw of ['ECONNRESET', 'relation "import_result" does not exist', 'undici socket hang up']) {
+      const m = describePipelineFailure(raw).message
+      expect(m, `«${raw}» просочился наружу`).not.toContain(raw)
+      expect(describePipelineFailure(raw).kind).toBe('internal')
+    }
+  })
+
+  it('НАШ собственный текст доезжает целиком — он написан для человека', () => {
+    // Прятать его было бы вредно: «неподдерживаемый формат файла: смета.zip» отвечает на вопрос
+    // «что делать», а общий текст — нет.
+    const r = describePipelineFailure('неподдерживаемый формат файла: смета.zip')
+    expect(r.kind).toBe('own')
+    expect(r.message).toContain('смета.zip')
+  })
+
+  it('белый список закрытый: похожий на человеческий текст сам по себе не пропускается', () => {
+    // «Покажем, если выглядит по-русски» пропустило бы наружу любое сообщение библиотеки.
+    expect(classifyPipelineFailure('Внутренняя ошибка сервиса очередей')).toBe('internal')
+  })
+})
+
+describe('#506: битый байт не доезжает до базы', () => {
+  it('нулевой байт и управляющие символы вычищаются', () => {
+    const r = sanitizeExtractedText('Накладная\u0000 №5\u0007 ООО «Ромашка»')
+    expect(r.text).not.toContain('\u0000')
+    expect(r.removed).toBe(2)
+    expect(r.text).toContain('Накладная')
+  })
+
+  it('переводы строк и табуляция СОХРАНЯЮТСЯ — в них держится таблица', () => {
+    // Вычистив их «заодно», мы превратили бы накладную в кашу: это выглядело бы как «нейросеть
+    // стала хуже разбирать», а причина была бы здесь.
+    const src = 'Товар\tКол-во\nГвозди\t10\r\nШурупы\t5'
+    expect(sanitizeExtractedText(src).text).toBe(src)
+  })
+
+  it('от мусорного файла не остаётся читаемого — и это видно вызывающему', () => {
+    expect(sanitizeExtractedText('\u0000\u0001\u0002\u0003').readable).toBe(false)
+    expect(sanitizeExtractedText('   \n\t  ').readable).toBe(false)
+    expect(sanitizeExtractedText('А'.repeat(MIN_READABLE_CHARS)).readable).toBe(true)
+  })
+
+  it('почти пустой документ НЕ отвергается сгоряча', () => {
+    // Скан, где OCR нашёл три строки, — законный случай. Порог мягкий намеренно.
+    expect(sanitizeExtractedText('Счёт №1 от 10.08.2026 на 500 BYN').readable).toBe(true)
+  })
+
+  it('чистка стоит в извлечении — проверяется ПОВЕДЕНИЕМ, а не упоминанием', async () => {
+    // ⚠ Первая редакция этой проверки искала слово `sanitizeExtractedText` в исходнике — и мутация
+    // «звать извлечение в обход очистки» прошла мимо неё: функция осталась в файле, просто перестала
+    // вызываться. Гард, сторожащий упоминание, не сторожит ничего. Теперь гоняем сам `extractText`.
+    const runners = {
+      readText: async () => 'Накладная \u0000 №5 ООО «Ромашка», позиций 3',
+      pdfToText: async () => '',
+      officeToText: async () => '',
+      ocr: async () => ''
+    }
+    const out = await extractText('/tmp/x.txt', 'x.txt', runners)
+    expect(out).not.toContain('\u0000')
+    expect(out).toContain('Накладная')
+  })
+
+  it('мусорный файл отвергается СВОИМИ словами, а не уезжает дальше', async () => {
+    const runners = {
+      readText: async () => '\u0000\u0000\u0000',
+      pdfToText: async () => '',
+      officeToText: async () => '',
+      ocr: async () => ''
+    }
+    await expect(extractText('/tmp/x.txt', 'x.txt', runners)).rejects.toThrow(/читаемого текста/)
+  })
+
+  it('технический маркер стадии не мешает узнать НАШ отказ', () => {
+    // ⚠ Дефект, найденный проверяющими: конвейер приписывает к причине маркер стадии
+    // («извлечение текста: …») для своего журнала, и белый список переставал совпадать — человеку
+    // вместо внятной причины уезжал общий текст. Снаружи это не видно: общий текст правдоподобен.
+    const r = describePipelineFailure('извлечение текста: неподдерживаемый формат файла: смета.zip')
+    expect(r.kind).toBe('own')
+    expect(r.message).toContain('смета.zip')
+    expect(r.message, 'внутренний маркер стадии наружу не идёт').not.toContain('извлечение текста')
+  })
+
+  it('белый список не зависит от регистра', () => {
+    // Наши тексты пишутся руками в разных местах; заглавная буква в начале не должна превращать
+    // внятную причину в общий текст.
+    expect(classifyPipelineFailure('Неподдерживаемый формат файла: X.ZIP')).toBe('own')
+  })
+
+  it('наши собственные отказы конвейера ВСЕ есть в белом списке', () => {
+    // Иначе список читается как документация путей, а на деле сторожит мёртвый код: три префикса из
+    // четырёх в первой редакции не бросались нигде, а реальные сообщения в него не входили.
+    const ours = [
+      'пустой текст документа (файл не распознан)',
+      'документ слишком большой (>100000 символов) — разбейте на части',
+      'не удалось прочитать документ: в файле нет читаемого текста',
+      'неподдерживаемый формат файла: смета.zip'
+    ]
+    for (const raw of ours) {
+      expect(classifyPipelineFailure(raw), `«${raw}» обязан узнаваться как наш`).toBe('own')
+    }
+  })
+})
+
+describe('#506: отказ становится видимым только через классификацию', () => {
+  const spy = () => {
+    const seen: { status: string[], notified: string[] } = { status: [], notified: [] }
+    const failJob = createFailJob({
+      setStatus: async (_m, _j, reason) => {
+        seen.status.push(reason)
+      },
+      notify: async (_m, _j, reason) => {
+        seen.notified.push(reason)
+      }
+    })
+    return { seen, failJob }
+  }
+
+  it('сырая причина не доезжает НИ до экрана, НИ до чата', async () => {
+    // ⚠ Несущая проверка. Прежний гард грепал исходник воркера на подстроку — и мутация «склеить
+    // сырую ошибку иначе» прошла бы мимо него: функция всё ещё вызывается, старой строки нет, тест
+    // зелёный, а внутренности снова наружу. Проверяем ПОВЕДЕНИЕ: что реально ушло получателям.
+    const { seen, failJob } = spy()
+    await failJob('m', 'j', 'извлечение текста: pdftotext: /srv/uploads/abc123/def.bin: Syntax Error')
+    for (const text of [...seen.status, ...seen.notified]) {
+      expect(text, 'внутренний путь наружу').not.toContain('/srv/uploads')
+      expect(text).not.toContain('pdftotext')
+      expect(text).not.toContain('Syntax Error')
+    }
+    expect(seen.status).toHaveLength(1)
+    expect(seen.notified).toHaveLength(1)
+  })
+
+  it('экран и чат получают ОДИН И ТОТ ЖЕ текст', async () => {
+    // Два описания одной поломки заставляют человека искать между ними разницу; а главное, сырая
+    // причина утекла бы туда, где классификацию забыли применить.
+    const { seen, failJob } = spy()
+    await failJob('m', 'j', 'извлечение текста: неподдерживаемый формат файла: смета.zip')
+    expect(seen.status[0]).toBe(seen.notified[0])
+    expect(seen.status[0]).toContain('смета.zip')
+  })
+})

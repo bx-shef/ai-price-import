@@ -126,7 +126,21 @@ export async function runDemoAiExtract(
   let path = ''
   try {
     path = await deps.writeTemp(bytes, extOf(fileName))
-    const text = await deps.extractText(path, fileName)
+    // ⚠ Нечитаемый файл теперь БРОСАЕТ, а не возвращает пустую строку (#506): очистка текста стоит
+    // в самом извлечении. Без этой ветки такой файл падал бы в общий `catch` ниже и демо на лендинге
+    // показывало бы «Ошибка обработки документа» вместо внятного «это пустой или нечитаемый скан» —
+    // регресс на публичной странице, который нашли проверяющие. Проверка на пустоту оставлена: она
+    // ловит раннер, вернувший пустую строку без исключения.
+    let text: string
+    try {
+      text = await deps.extractText(path, fileName)
+    } catch (e) {
+      const m = e instanceof Error ? e.message : ''
+      if (/читаемого текста/.test(m)) {
+        return { error: 'Не удалось извлечь текст из документа (возможно, это пустой или нечитаемый скан).' }
+      }
+      throw e
+    }
     if (!text || !text.trim()) {
       return { error: 'Не удалось извлечь текст из документа (возможно, это пустой или нечитаемый скан).' }
     }
