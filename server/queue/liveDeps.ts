@@ -12,6 +12,7 @@ import { purgePortalFiles } from '../utils/nodeFileIO'
 import { decryptSecret, encryptSecret } from '../utils/secretCrypto'
 import { claimJobErrorChat, claimJobFailNotify, claimJobNotify, getJob, getManualOverride, getUploaderId, setJobStatus } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
+import { createFailJob } from './failJob'
 import { getText, saveText, deleteText } from '../utils/textStore'
 import { getDocument, saveDocument, deleteDocument } from '../utils/docStore'
 import { findExistingItemId } from '../utils/originLookup'
@@ -373,10 +374,12 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
     extractText: (m, j, fileId) => extractText(uploadPath(m, j), fileId, infra.runners),
     saveText: (m, j, text) => saveText(m, j, text, infra.query),
     enqueueAgentRun: (m, j, manualTarget) => enqueueAgent({ memberId: m, jobId: j, ...(manualTarget ? { manualTarget } : {}) }),
-    failJob: async (m, j, reason) => {
-      await setJobStatus(m, j, 'error', reason, jobRedis)
-      await notifyImportFailure(infra, m, j, reason, { rest: sharedRest })
-    },
+    // ⚠ Классификация отказа живёт в `createFailJob` (#506), а не здесь: две одинаковые строки
+    // внутри проводки были недоступны тестам — их не смонтировать без Redis и портала.
+    failJob: createFailJob({
+      setStatus: (m, j, reason) => setJobStatus(m, j, 'error', reason, jobRedis),
+      notify: (m, j, reason) => notifyImportFailure(infra, m, j, reason, { rest: sharedRest })
+    }),
     markExtracting: (m, j) => setJobStatus(m, j, 'extracting', '', jobRedis)
     // ⚠ Архивной копии на Диске БОЛЬШЕ НЕТ (#458, решение владельца): документ вкладывается в
     // само дело таймлайна, поэтому вторая копия по второму адресу — лишнее хранилище чужих
@@ -401,10 +404,12 @@ export function liveAgentRunDeps(infra: LiveInfra): AgentRunDeps {
     },
     saveDocument: (m, j, stored) => saveDocument(m, j, stored, infra.query),
     enqueueCrmSync: (m, j) => enqueueCrmSync({ memberId: m, jobId: j }),
-    failJob: async (m, j, reason) => {
-      await setJobStatus(m, j, 'error', reason, jobRedis)
-      await notifyImportFailure(infra, m, j, reason, { rest: sharedRest })
-    },
+    // ⚠ Классификация отказа живёт в `createFailJob` (#506), а не здесь: две одинаковые строки
+    // внутри проводки были недоступны тестам — их не смонтировать без Redis и портала.
+    failJob: createFailJob({
+      setStatus: (m, j, reason) => setJobStatus(m, j, 'error', reason, jobRedis),
+      notify: (m, j, reason) => notifyImportFailure(infra, m, j, reason, { rest: sharedRest })
+    }),
     // Operator's manual import target (set at upload) → RoutingSignals.manualOverride, which
     // resolveTarget applies with top priority over the routing rules (#135 routing slice 2).
     getManualOverride: (m, j) => getManualOverride(m, j, jobRedis),
