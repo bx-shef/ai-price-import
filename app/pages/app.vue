@@ -354,14 +354,32 @@ watch(jobs, (list) => {
                  ⚠ Подпись меняется вместе с состоянием: отключённая кнопка без объяснения читается
                  как поломка. Программе чтения объяснение нужно тем более — визуальной подсказки
                  (приглушённая карточка рядом) она не передаёт. -->
+            <!-- ⚠ Кнопка С ПОДПИСЬЮ, а не голая шестерёнка (решение владельца 10.08.2026): иконка
+                 без слова опознаётся только теми, кто уже знает, что за ней. Подпись видна всегда —
+                 навбар в мобильном приложении не рисуется вовсе (`isBitrixMobile`), места хватает.
+                 ⚠ `aria-label` ОСТАЁТСЯ и говорит «Настройки импорта»: подпись на кнопке короткая
+                 («Настройки»), а голосом нужно назвать, настройки ЧЕГО, — на экране есть и настройки
+                 портала, о которых приложение не знает.
+                 ⚠ Роль `air-secondary-accent` = `--style-outline`, кнопка с рамкой. Первая редакция
+                 стояла на `air-secondary` (`--style-tinted`), и на серой подложке заливка почти не
+                 отличалась от фона — получалась синяя надпись с иконкой, читавшаяся как ссылка, а не
+                 как кнопка. Разница видна только на скриншоте, в разметке обе выглядят одинаково.
+                 ⚠ Подпись прячется НИЖЕ `sm` (`hidden sm:inline`), и это то самое исключение из
+                 правила «скрывать условным рендером, а не по ширине»: правило про ДЕЙСТВИЯ, которые
+                 остаются в дереве и читаются голосом, а здесь прячется только подпись — само
+                 действие никуда не девается, а имя ему всё равно даёт `aria-label`. Без этого на
+                 узком экране кнопка съедала место у заголовка, и название приложения обрезалось на
+                 «AI-импорт прайсо» (видно на скриншоте 375 px). -->
             <B24Button
               :icon="SettingsIcon"
-              color="air-tertiary-no-accent"
+              color="air-secondary-accent"
               size="sm"
               :disabled="busy"
               :aria-label="busy ? 'Настройки импорта недоступны, пока идёт загрузка' : 'Настройки импорта'"
               @click="openSettings"
-            />
+            >
+              <span class="hidden sm:inline">Настройки</span>
+            </B24Button>
           </template>
         </B24DashboardNavbar>
       </template>
@@ -527,175 +545,193 @@ watch(jobs, (list) => {
               :title="error"
             />
 
-            <!-- ⚠ Шапка ЛЕНТЫ (#494). Список теперь ОДИН — журнал, — а здесь остаются счётчики и
-                 «Обновить». Показываем, лишь когда есть о чём: на свежем портале человек видит
-                 дропзону и экономию, а не пустую строку со словом «готово: 0».
-                 ⚠ Заголовок «Загрузки в этой вкладке», а НЕ «текущая загрузка» (разбор): убирать
-                 строки больше нечем, поэтому счёт идёт по всем загрузкам открытой вкладки и после
-                 окончания пачки не обнуляется. Слово «текущая» обещало бы обратное — человек читал
-                 бы «готово: 12» как результат последней пачки из двух файлов. -->
-            <div
-              v-if="jobs.length || uploading || listError || listWarning"
-              class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
-              :class="busy ? 'opacity-60' : ''"
-            >
-              <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h2 class="text-base font-semibold">
-                  Загрузки в этой вкладке
-                </h2>
-                <span
-                  v-if="jobs.length"
-                  class="flex items-center gap-2 text-xs"
+            <!-- РАСКЛАДКА В ДВЕ КОЛОНКИ на широком экране (решение владельца 10.08.2026).
+                 Раньше всё шло одной лентой сверху вниз, и это плохо работало в обе стороны: журнал
+                 (единственный неограниченно длинный блок) отталкивал вниз всё, что под ним, а рядом
+                 с ним оставалась пустая половина экрана.
+                 ⚠ Порог — `lg`, и это НЕ произвольный брейкпоинт: слайдер приложения шириной 720
+                 остаётся НИЖЕ него, то есть в основном размере раскладка по-прежнему одноколоночная,
+                 а две колонки включаются только там, где ширина действительно есть.
+                 ⚠ Порядок в разметке — тот же, что на телефоне (экономия и баннер, затем журнал):
+                 программа чтения и клавиатура идут по разметке, а не по колонкам. Местами их меняет
+                 `lg:order-*`, то есть ТОЛЬКО визуально.
+                 ⚠ Боковая колонка липкая (`lg:sticky`): она короткая, и без этого при прокрутке
+                 длинного журнала половина экрана оставалась бы пустой. -->
+            <div class="mt-4 grid gap-4 lg:grid-cols-3 lg:items-start">
+              <aside class="space-y-4 lg:sticky lg:top-4 lg:order-2 lg:col-span-1">
+                <!-- Экономия: две крупные цифры в строку, справа — ссылка на подробные метрики и
+                 сброс; счётчики отдельной тихой строкой ПОД карточкой. -->
+                <!-- ⚠ `opacity` остаётся ОФОРМЛЕНИЕМ, а блокируют настоящие `:disabled` на самих
+                     кнопках (#443). Прежде замок держался на `pointer-events-none`, и это была
+                     блокировка ТОЛЬКО ДЛЯ МЫШИ: кнопки внутри такого контейнера остаются в порядке
+                     обхода по Tab и срабатывают по Enter — то есть посреди пачки счётчики можно было
+                     обнулить с клавиатуры. `select-none` убран вместе с ним: он запрещал выделять
+                     текст, что к блокировке действий отношения не имеет и мешало скопировать число. -->
+                <B24Card
+                  variant="outline"
+                  class="transition-opacity"
+                  :class="busy ? 'opacity-60' : ''"
                 >
-                  <span class="text-(--ui-color-accent-main-success)">готово: {{ stats.done }}</span>
-                  <span class="text-(--ui-color-accent-main-primary)">в работе: {{ stats.running }}</span>
-                  <span class="text-(--ui-color-accent-main-alert)">ошибки: {{ stats.error }}</span>
-                </span>
-                <span
-                  v-if="hasActive"
-                  class="flex items-center gap-1 text-xs text-(--ui-color-accent-main-primary)"
-                  role="status"
-                >
-                  <span class="inline-block size-1.5 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-                  обновляется
-                </span>
-              </div>
-              <div class="flex items-center gap-2">
-                <B24Button
-                  :icon="RefreshIcon"
-                  color="air-tertiary-no-accent"
-                  size="xs"
-                  :loading="loading"
-                  :disabled="loading"
-                  :label="loading ? 'Обновляем…' : 'Обновить'"
-                  @click="refreshNow"
-                />
-              </div>
-            </div>
-
-            <!-- Экономия: две крупные цифры в строку, справа — ссылка на подробные метрики и
-             сброс; счётчики отдельной тихой строкой ПОД карточкой. -->
-            <!-- ⚠ `opacity` остаётся ОФОРМЛЕНИЕМ, а блокируют настоящие `:disabled` на самих
-                 кнопках (#443). Прежде замок держался на `pointer-events-none`, и это была
-                 блокировка ТОЛЬКО ДЛЯ МЫШИ: кнопки внутри такого контейнера остаются в порядке
-                 обхода по Tab и срабатывают по Enter — то есть посреди пачки счётчики можно было
-                 обнулить с клавиатуры. `select-none` убран вместе с ним: он запрещал выделять
-                 текст, что к блокировке действий отношения не имеет и мешало скопировать число. -->
-            <B24Card
-              variant="outline"
-              class="mt-4 transition-opacity"
-              :class="busy ? 'opacity-60' : ''"
-            >
-              <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
-                <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
-                <B24PageGrid :class="hasMoneyTile ? 'flex-1 sm:grid-cols-2 lg:grid-cols-2' : 'flex-1 sm:grid-cols-1 lg:grid-cols-1'">
-                  <B24PageCard
-                    variant="tinted-no-accent"
-                    title="Сэкономлено времени"
-                    :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-                  >
-                    <p class="text-[22px] leading-tight font-semibold">
-                      {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-                    </p>
-                  </B24PageCard>
-                  <!-- Деньги показываем, только если админ задал стоимость часа: валюта берётся
-                     из самого портала, выдумывать её нельзя (#270). Не задана — плитки просто нет. -->
-                  <B24PageCard
-                    v-if="hasMoneyTile"
-                    variant="tinted-no-accent"
-                    title="Сэкономлено денег (примерно)"
-                    :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-                  >
-                    <p class="text-[22px] leading-tight font-semibold">
-                      {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
-                    </p>
-                  </B24PageCard>
-                  <!-- Плитки нет — говорим, чего не хватает, вместо пустого места. -->
-                  <p
-                    v-else-if="moneyHint"
-                    class="self-center text-xs text-(--ui-color-base-3)"
-                  >
-                    {{ moneyHint }}
-                  </p>
-                </B24PageGrid>
-                <div class="ml-auto flex flex-col items-end gap-2 text-xs">
-                  <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
-                  <button
-                    v-if="!isBitrixMobile"
-                    type="button"
-                    :disabled="busy"
-                    class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
-                    @click="openMetrics"
-                  >
-                    Подробные метрики →
-                  </button>
-                  <!-- Сброс — только администратору (#411). Признак здесь СЕРВЕРНЫЙ (`useSettings`,
-                       свой запрос за настройками всё равно идёт) — правило выбора источника см. в
-                       `useSettings.ts`. ⚠ Это вторая точка входа в то же разрушительное действие:
-                       первая правка закрыла её только на `/metrics`, и на самом посещаемом экране
-                       сотрудник по-прежнему соглашался «Да, обнулить» и получал 403 после согласия.
-                       Подсказки тут нет намеренно: карточка узкая, а объяснение живёт на странице
-                       подробных метрик, куда ведёт соседняя ссылка. -->
-                  <B24Button
-                    v-if="isAdmin && !confirmReset"
-                    label="Сбросить"
-                    color="air-tertiary-no-accent"
-                    size="xs"
-                    :disabled="busy"
-                    @click="() => { confirmReset = true }"
+                  <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
+                    <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
+                    <B24PageGrid :class="hasMoneyTile ? 'flex-1 sm:grid-cols-2 lg:grid-cols-2' : 'flex-1 sm:grid-cols-1 lg:grid-cols-1'">
+                      <B24PageCard
+                        variant="tinted-no-accent"
+                        title="Сэкономлено времени"
+                        :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+                      >
+                        <p class="text-[22px] leading-tight font-semibold">
+                          {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
+                        </p>
+                      </B24PageCard>
+                      <!-- Деньги показываем, только если админ задал стоимость часа: валюта берётся
+                         из самого портала, выдумывать её нельзя (#270). Не задана — плитки просто нет. -->
+                      <B24PageCard
+                        v-if="hasMoneyTile"
+                        variant="tinted-no-accent"
+                        title="Сэкономлено денег (примерно)"
+                        :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
+                      >
+                        <p class="text-[22px] leading-tight font-semibold">
+                          {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
+                        </p>
+                      </B24PageCard>
+                      <!-- Плитки нет — говорим, чего не хватает, вместо пустого места. -->
+                      <p
+                        v-else-if="moneyHint"
+                        class="self-center text-xs text-(--ui-color-base-3)"
+                      >
+                        {{ moneyHint }}
+                      </p>
+                    </B24PageGrid>
+                    <div class="ml-auto flex flex-col items-end gap-2 text-xs">
+                      <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
+                      <button
+                        v-if="!isBitrixMobile"
+                        type="button"
+                        :disabled="busy"
+                        class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
+                        @click="openMetrics"
+                      >
+                        Подробные метрики →
+                      </button>
+                      <!-- Сброс — только администратору (#411). Признак здесь СЕРВЕРНЫЙ (`useSettings`,
+                           свой запрос за настройками всё равно идёт) — правило выбора источника см. в
+                           `useSettings.ts`. ⚠ Это вторая точка входа в то же разрушительное действие:
+                           первая правка закрыла её только на `/metrics`, и на самом посещаемом экране
+                           сотрудник по-прежнему соглашался «Да, обнулить» и получал 403 после согласия.
+                           Подсказки тут нет намеренно: карточка узкая, а объяснение живёт на странице
+                           подробных метрик, куда ведёт соседняя ссылка. -->
+                      <B24Button
+                        v-if="isAdmin && !confirmReset"
+                        label="Сбросить"
+                        color="air-tertiary-no-accent"
+                        size="xs"
+                        :disabled="busy"
+                        @click="() => { confirmReset = true }"
+                      />
+                      <div
+                        v-else-if="isAdmin"
+                        class="flex flex-wrap items-center justify-end gap-2"
+                      >
+                        <span class="text-(--ui-color-base-3)">Обнулить счётчики экономии? Документы в CRM останутся.</span>
+                        <B24Button
+                          color="air-primary-alert"
+                          size="xs"
+                          :loading="resetting"
+                          :disabled="resetting || busy"
+                          :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
+                          @click="doReset"
+                        />
+                        <B24Button
+                          label="Отмена"
+                          color="air-tertiary-no-accent"
+                          size="xs"
+                          @click="() => { confirmReset = false }"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <B24Alert
+                    v-if="metricsError"
+                    class="mt-3"
+                    color="air-primary-warning"
+                    size="sm"
+                    :title="metricsError"
                   />
-                  <div
-                    v-else-if="isAdmin"
-                    class="flex flex-wrap items-center justify-end gap-2"
+                  <p
+                    class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
+                    :class="busy ? 'opacity-60' : ''"
                   >
-                    <span class="text-(--ui-color-base-3)">Обнулить счётчики экономии? Документы в CRM останутся.</span>
+                    <span>Документов: {{ counters.docs || 0 }}</span>
+                    <span>Создано в CRM: {{ counters.created || 0 }}</span>
+                    <span>Позиций: {{ counters.lines || 0 }}</span>
+                  </p>
+                </B24Card>
+
+                <!-- Маркетинг: работа на своём сервере — «по запросу», не готовая услуга с ценой (#96). -->
+                <SelfHostedPromo />
+              </aside>
+
+              <div class="min-w-0 lg:order-1 lg:col-span-2">
+                <!-- ⚠ Шапка ЛЕНТЫ (#494). Список теперь ОДИН — журнал, — а здесь остаются счётчики и
+                     «Обновить». Показываем, лишь когда есть о чём: на свежем портале человек видит
+                     дропзону и экономию, а не пустую строку со словом «готово: 0».
+                     ⚠ Заголовок «Загрузки в этой вкладке», а НЕ «текущая загрузка» (разбор): убирать
+                     строки больше нечем, поэтому счёт идёт по всем загрузкам открытой вкладки и после
+                     окончания пачки не обнуляется. Слово «текущая» обещало бы обратное — человек читал
+                     бы «готово: 12» как результат последней пачки из двух файлов. -->
+                <div
+                  v-if="jobs.length || uploading || listError || listWarning"
+                  class="mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
+                  :class="busy ? 'opacity-60' : ''"
+                >
+                  <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <h2 class="text-base font-semibold">
+                      Загрузки в этой вкладке
+                    </h2>
+                    <span
+                      v-if="jobs.length"
+                      class="flex items-center gap-2 text-xs"
+                    >
+                      <span class="text-(--ui-color-accent-main-success)">готово: {{ stats.done }}</span>
+                      <span class="text-(--ui-color-accent-main-primary)">в работе: {{ stats.running }}</span>
+                      <span class="text-(--ui-color-accent-main-alert)">ошибки: {{ stats.error }}</span>
+                    </span>
+                    <span
+                      v-if="hasActive"
+                      class="flex items-center gap-1 text-xs text-(--ui-color-accent-main-primary)"
+                      role="status"
+                    >
+                      <span class="inline-block size-1.5 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+                      обновляется
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-2">
                     <B24Button
-                      color="air-primary-alert"
-                      size="xs"
-                      :loading="resetting"
-                      :disabled="resetting || busy"
-                      :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
-                      @click="doReset"
-                    />
-                    <B24Button
-                      label="Отмена"
+                      :icon="RefreshIcon"
                       color="air-tertiary-no-accent"
                       size="xs"
-                      @click="() => { confirmReset = false }"
+                      :loading="loading"
+                      :disabled="loading"
+                      :label="loading ? 'Обновляем…' : 'Обновить'"
+                      @click="refreshNow"
                     />
                   </div>
                 </div>
-              </div>
-              <B24Alert
-                v-if="metricsError"
-                class="mt-3"
-                color="air-primary-warning"
-                size="sm"
-                :title="metricsError"
-              />
-              <p
-                class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
-                :class="busy ? 'opacity-60' : ''"
-              >
-                <span>Документов: {{ counters.docs || 0 }}</span>
-                <span>Создано в CRM: {{ counters.created || 0 }}</span>
-                <span>Позиций: {{ counters.lines || 0 }}</span>
-              </p>
-            </B24Card>
 
-            <!-- Маркетинг: работа на своём сервере — «по запросу», не готовая услуга с ценой (#96). -->
-            <SelfHostedPromo />
-            <!-- ЕДИНАЯ ЛЕНТА (#458 + #494): история живёт в делах CRM, а не у нас, и идущий импорт
-                 показывается ТУТ ЖЕ — той же строкой, только с индикатором вместо даты. Двух списков
-                 об одном и том же больше нет: «Последние операции» устарели и слиты сюда. -->
-            <ImportJournal
-              ref="journalRef"
-              class="mt-4"
-              :live="jobs"
-              :uploading="uploading"
-              :live-warning="listWarning"
-              :live-error="listError"
-            />
+                <!-- ЕДИНАЯ ЛЕНТА (#458 + #494): история живёт в делах CRM, а не у нас, и идущий импорт
+                     показывается ТУТ ЖЕ — той же строкой, только с индикатором вместо даты. Двух списков
+                     об одном и том же больше нет: «Последние операции» устарели и слиты сюда. -->
+                <ImportJournal
+                  ref="journalRef"
+                  :live="jobs"
+                  :uploading="uploading"
+                  :live-warning="listWarning"
+                  :live-error="listError"
+                />
+              </div>
+            </div>
           </template>
 
           <!-- «Оцените приложение»: всплывает после успешного импорта (когда польза очевидна). Показ/
