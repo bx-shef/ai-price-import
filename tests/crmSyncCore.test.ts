@@ -1197,3 +1197,54 @@ describe('#459: документ не разобрался — след в CRM �
     expect(notifySuccess).not.toHaveBeenCalled()
   })
 })
+
+describe('#488: не удалось создать выбранную сущность → сделка в направлении 0', () => {
+  // ⚠ Решение владельца 09.08.2026. «Не удалось создать выбранную сущность» и «документ пропал» —
+  // РАЗНЫЕ исходы, а раньше они совпадали: отключённый на портале тип давал жёсткий отказ, и
+  // документ не попадал в CRM вообще. Карточка не по плану лучше отсутствия карточки.
+  const invoiceMapping = (): PortalMapping => {
+    const m = mapping()
+    m.defaultTarget = { entityTypeId: 31 } // смарт-счёт
+    return m
+  }
+
+  it('запись уходит в сделку, человек предупреждён', async () => {
+    const createTarget = vi.fn(async (t: { entityTypeId: number }) => {
+      if (t.entityTypeId === 31) throw new Error('ENTITY_TYPE_NOT_SUPPORTED')
+      return 777
+    })
+    const deps = baseDeps({ createTarget })
+    const r = await runCrmSync('job-fb', doc, invoiceMapping(), {}, deps)
+
+    expect(r.entityId).toBe(777)
+    expect(r.entityTypeId, 'сущность результата осталась исходной — дальше по коду её читают').toBe(2)
+    expect(r.errors).toEqual([])
+    expect(r.warnings.join(' ')).toContain('не удалось')
+    // Строки уходят В ТУ ЖЕ запись, что создана: иначе позиции лягут в несуществующую сущность.
+    expect(deps.setRows).toHaveBeenCalledWith(2, 777, expect.anything())
+  })
+
+  it('перед запасным созданием ищется маркер ПОД ЗАПАСНЫМ ТИПОМ — иначе повтор задания задвоит сделку', async () => {
+    // ⚠ Маркер у разных типов лежит в разных полях. Без этого поиска повтор искал бы под исходным
+    // типом, не находил ничего и создавал ВТОРУЮ сделку на каждую попытку.
+    const createTarget = vi.fn(async (t: { entityTypeId: number }) => {
+      if (t.entityTypeId === 31) throw new Error('ENTITY_TYPE_NOT_SUPPORTED')
+      return 888
+    })
+    const findExisting = vi.fn(async (etid: number) => (etid === 2 ? 999 : null))
+    const deps = baseDeps({ createTarget, findExisting })
+    const r = await runCrmSync('job-fb2', doc, invoiceMapping(), {}, deps)
+
+    expect(findExisting).toHaveBeenCalledWith(2, expect.anything())
+    expect(r.entityId, 'нашли прежнюю запись — вторую не создаём').toBe(999)
+    expect(createTarget).toHaveBeenCalledTimes(1) // только упавшая попытка по исходному типу
+  })
+
+  it('упала САМА запасная цель ⇒ отказ настоящий, подменять больше нечем', async () => {
+    const createTarget = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    const deps = baseDeps({ createTarget })
+    await expect(runCrmSync('job-fb3', doc, mapping(), {}, deps)).rejects.toThrow('boom')
+  })
+})

@@ -13,6 +13,10 @@ const types = ref<SmartProcessOption[]>([])
 // or on a failed load we keep offering the option, exactly as before the probe existed.
 const smartInvoiceEnabled = ref(true)
 let loaded = false
+// ⚠ Отдельный РЕАКТИВНЫЙ признак «список получен» (#488): проверять выбранный тип на
+// существование можно ТОЛЬКО после загрузки. До неё список пуст, и смарт-процесс выглядел бы
+// отключённым на портале — экран уводил бы человека в «Авто» на ровном месте, на каждом открытии.
+const typesLoaded = ref(false)
 let inFlight: Promise<void> | null = null
 
 export function useCrmTypes() {
@@ -31,6 +35,7 @@ export function useCrmTypes() {
         types.value = Array.isArray(res?.types) ? res.types : []
         smartInvoiceEnabled.value = res?.smartInvoice !== false
         loaded = true
+        typesLoaded.value = true
       } catch {
         /* keep [] — no SPA options on a transient failure */
       }
@@ -42,5 +47,5 @@ export function useCrmTypes() {
     }
   }
 
-  return { types, smartInvoiceEnabled, load }
+  return { types, smartInvoiceEnabled, typesLoaded, load }
 }
