@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import CrossMIcon from '@bitrix24/b24icons-vue/outline/CrossMIcon'
 import type { ImportJobView } from '~/composables/useImport'
 import { jobStatusMeta, parseJobResult, pluralRu } from '~/utils/jobStatus'
 import { jobProgress } from '~/utils/jobStages'
@@ -14,9 +13,7 @@ import { useB24 } from '~/composables/useB24'
 const props = defineProps<{
   job: ImportJobView
 }>()
-// «Убрать из списка» — forgets just THIS row (page memory) in the parent; server keeps only ephemeral
 // status, so this is purely the employee tidying their own history. Emitted with the jobId.
-const emit = defineEmits<{ remove: [jobId: string] }>()
 
 /** Сколько предупреждений печатать на СТРОКЕ С ОШИБКОЙ (#373). В ветке успеха их всё так же
  *  показываем целиком: там это редкие штучные замечания, а здесь — по одному на каждую позицию
@@ -111,16 +108,6 @@ const stepDot: Record<string, string> = {
           :label="meta.label"
           :color="badgeColor[meta.tone]"
           size="sm"
-        />
-        <!-- Убрать эту строку из «Последних операций» (только локальная история сотрудника). Пока задание
-             в работе — не показываем (нельзя «потерять» строку активного импорта); доступно по завершении. -->
-        <B24Button
-          v-if="meta.terminal"
-          :icon="CrossMIcon"
-          color="air-tertiary-no-accent"
-          size="xs"
-          :aria-label="`Убрать из списка: ${job.fileName || 'документ'}`"
-          @click="() => emit('remove', job.jobId)"
         />
       </div>
     </div>

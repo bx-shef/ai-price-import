@@ -47,11 +47,22 @@ export interface JobRedis {
   claim: (key: string, field: string, ttlMs: number) => Promise<boolean>
 }
 
-/** Job TTL (ms). A job lives for minutes; the generous default keeps a finished result pollable well
- *  past the client's window, then Redis evicts it — nothing accumulates. Env-overridable. */
+/** Job TTL (ms). Env-overridable.
+ *
+ * ⚠ Было 48 часов, стало 6 (решение владельца 10.08.2026: «зачем он 48 часов живёт — пусть много не
+ * живёт»). Долгий срок задумывался как «результат можно опросить и потом», но опрашивать его
+ * НЕКОМУ: списка заданий не существует ни на сервере, ни в браузере — он живёт в памяти открытой
+ * страницы и умирает вместе с ней. История импортов теперь целиком в ДЕЛАХ портала, и это
+ * единственный источник, который переживает вкладку.
+ *
+ * ⚠ Шесть часов, а не минуты: запись в задании нужна ровно пока задание в работе, но очередь может
+ * стоять (лимитер портала, ретраи с растущей паузой, скопившийся backlog), и слишком короткий срок
+ * стёр бы задание ПОД идущей обработкой — вместе с однократным клеймом уведомления (#164), то есть
+ * человек получил бы второе сообщение об одном импорте. Шести часов хватает с многократным запасом,
+ * а данные клиента при этом лежат у нас в шесть раз меньше прежнего. */
 export const JOB_TTL_MS = (() => {
   const h = Number(process.env.IMPORT_JOB_TTL_HOURS)
-  const hours = Number.isFinite(h) && h > 0 ? Math.min(h, 720) : 48
+  const hours = Number.isFinite(h) && h > 0 ? Math.min(h, 720) : 6
   return hours * 60 * 60 * 1000
 })()
 
@@ -100,7 +111,7 @@ export async function setJobStatus(memberId: string, jobId: string, status: JobS
  * double post» (the accepted trade in #164).
  *
  * NB (TTL-bounded, #B): the claim now lives on the job hash, so the once-only memory lasts JOB_TTL_MS
- * (default 48h), not 30 days as the old Postgres row did. This is safe because BullMQ's own job
+ * (default 6h), not 30 days as the old Postgres row did. This is safe because BullMQ's own job
  * retention window is far shorter than the TTL — a redelivery arrives (and re-claims) only while the
  * hash is still alive. A redelivery AFTER the hash expired (astronomically rare — the BullMQ job is
  * long gone by then) would re-claim and re-post; bump IMPORT_JOB_TTL_HOURS if you configure unusually

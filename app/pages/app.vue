@@ -29,13 +29,12 @@ definePageMeta({ layout: 'clear' })
 // a blocked page is never fetched, so its noindex is never read (see server/utils/seoFiles.ts).
 useHead({ title: APP_NAME, meta: [{ name: 'robots', content: 'noindex' }] })
 
-const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob } = useImport()
-// Two-step clear (no window.confirm), same pattern as the metrics reset.
-const confirmClear = ref(false)
-function doClearList(): void {
-  clearList()
-  confirmClear.value = false
-}
+// ⚠ Ни «Очистить список», ни крестика у строки больше НЕТ (решение владельца 10.08.2026): историю
+// импортов смотрят в журнале, то есть в делах портала, а лента текущей сессии живёт в памяти
+// открытой страницы и умирает вместе с ней — прятать из неё отдельные строки незачем. Заодно этим
+// закрыт #479: ключ ожидания мог остаться навсегда только если строку убрали из списка, а убрать её
+// больше нечем.
+const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll } = useImport()
 const { counters, savings, moneyBlocker, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
@@ -553,32 +552,6 @@ watch(jobs, (list) => {
                 </span>
               </div>
               <div class="flex items-center gap-2">
-                <template v-if="jobs.length && !confirmClear">
-                  <B24Button
-                    label="Очистить список"
-                    color="air-tertiary-no-accent"
-                    size="xs"
-                    :disabled="busy"
-                    @click="() => { confirmClear = true }"
-                  />
-                </template>
-                <template v-else-if="confirmClear">
-                  <span class="text-xs text-(--ui-color-base-3)">Убрать завершённые строки из списка? Ещё обрабатываемые останутся, документы в CRM — тоже.</span>
-                  <B24Button
-                    label="Да, очистить"
-                    color="air-primary-alert"
-                    size="xs"
-                    :disabled="busy"
-                    @click="doClearList"
-                  />
-                  <B24Button
-                    label="Отмена"
-                    color="air-tertiary-no-accent"
-                    size="xs"
-                    :disabled="busy"
-                    @click="() => { confirmClear = false }"
-                  />
-                </template>
                 <B24Button
                   :icon="RefreshIcon"
                   color="air-tertiary-no-accent"
@@ -612,7 +585,6 @@ watch(jobs, (list) => {
                   v-for="job in jobs"
                   :key="job.jobId"
                   :job="job"
-                  @remove="removeJob"
                 />
                 <!-- Сервер ответил, но не по всем заданиям (#260): не ошибка — предупреждение, поэтому
                  показываем и при непустом списке. -->

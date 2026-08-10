@@ -136,16 +136,32 @@ async function openOwner(path: string): Promise<void> {
             :key="row.activityId"
             class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
           >
-            <!-- Плитка даты. ⚠ `aria-hidden`: то же время объявлено словами в подписи ниже, и без
-                 этого программа чтения произносила бы «7 августа 20:28» дважды подряд. -->
+            <!-- Плитка даты. ⚠ Она же ЕДИНСТВЕННЫЙ носитель даты: строка «10 августа 2026, 08:15»
+                 под заголовком убрана (решение владельца 10.08.2026 — дата уже видна в плитке, а
+                 повтор словами занимал строку в каждой записи). Поэтому дата объявляется программе
+                 чтения ЗДЕСЬ: без `aria-label` плитка из трёх обрывков («10», «авг», «08:15»)
+                 читалась бы вслух как три бессвязных числа, а с прежним `aria-hidden` дата исчезла
+                 бы для незрячих вовсе. -->
             <div
               v-if="tile"
               class="flex w-14 shrink-0 flex-col items-center justify-center rounded-md bg-(--ui-color-base-7) py-1.5 text-center"
-              aria-hidden="true"
+              role="img"
+              :aria-label="`Загружено ${tile.day} ${tile.month} ${tile.year}, ${tile.time}`"
             >
               <span class="text-lg leading-none font-semibold">{{ tile.day }}</span>
               <span class="mt-0.5 text-[10px] leading-tight text-(--ui-color-base-3)">{{ tile.month }}</span>
               <span class="mt-0.5 text-[10px] leading-none text-(--ui-color-base-3)">{{ tile.time }}</span>
+            </div>
+
+            <!-- ⚠ Дата не разобралась ⇒ плитки нет, и строка обязана сказать об этом словами:
+                 иначе запись выглядит как все остальные, только без даты, и человек читает это как
+                 «сегодня». Заодно это страховка от мутации `v-if="tile"` → `v-if="true"`, которая
+                 обращается к полям `null` и роняет весь список на первой такой строке. -->
+            <div
+              v-else
+              class="flex w-14 shrink-0 items-center justify-center rounded-md bg-(--ui-color-base-7) px-1 py-1.5 text-center text-[10px] leading-tight text-(--ui-color-base-3)"
+            >
+              дата неизвестна
             </div>
 
             <div class="min-w-0 flex-1">
@@ -163,9 +179,6 @@ async function openOwner(path: string): Promise<void> {
                   :label="journalOutcomeLabel(row.clean)"
                 />
               </div>
-              <p class="mt-0.5 text-xs text-(--ui-color-base-3)">
-                <span class="sr-only">Загружено </span>{{ tile ? `${tile.day} ${tile.month} ${tile.year}, ${tile.time}` : 'дата неизвестна' }}
-              </p>
               <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
                    каждой строке спорила бы за внимание с «Показать ещё» внизу списка.
                    ⚠ Своя рамка фокуса обязательна: у голого `<button>` её нет, а `B24Button`, у
