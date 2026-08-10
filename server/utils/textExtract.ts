@@ -3,6 +3,8 @@
 // subprocess/IO is INJECTED (ExtractRunners) → this core is unit-tested with fakes.
 // docs/PROCESS.md §4 (file-extract) + §9 (OCR rus+bel+kaz+eng).
 
+import { sanitizeExtractedText } from './textSanitize'
+
 export type ExtractKind = 'text' | 'pdf' | 'office' | 'image' | 'unsupported'
 
 export interface ExtractPlan { kind: ExtractKind, ext: string }
@@ -46,6 +48,26 @@ export interface ExtractRunners {
  * unsupported format (caller fails the job with the message).
  */
 export async function extractText(path: string, fileName: string, runners: ExtractRunners): Promise<string> {
+  return finishText(await extractRaw(path, fileName, runners))
+}
+
+/**
+ * Единая точка очистки (#506).
+ *
+ * ⚠ Мусор из файла клиента раньше ехал по конвейеру до самой записи в базу и падал там ответом
+ * Postgres про нулевой байт — то есть в месте, где о документе уже никто не думает. Чистим ЗДЕСЬ,
+ * сразу после извлечения: защита у каждого приёмника (база, очередь, спаны, отзыв) означала бы
+ * четыре копии правила, а забытый приёмник нашёлся бы ровно тогда, когда о нём забыли.
+ * ⚠ Файл, от которого после чистки не осталось читаемого, — это битый файл, и говорим об этом
+ * СВОИМИ словами: иначе он уедет дальше и вернётся невнятным отказом с чужой стороны.
+ */
+function finishText(raw: string): string {
+  const { text, readable } = sanitizeExtractedText(raw)
+  if (!readable) throw new Error('не удалось прочитать документ: в файле нет читаемого текста')
+  return text
+}
+
+async function extractRaw(path: string, fileName: string, runners: ExtractRunners): Promise<string> {
   const { kind } = planExtraction(fileName)
   switch (kind) {
     case 'text':

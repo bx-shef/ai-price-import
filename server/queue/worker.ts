@@ -7,6 +7,7 @@ import { handleAgentRunJob, handleCrmSyncJob, handleEventJob, handleFileExtractJ
 import { liveAgentRunDeps, liveCrmSyncHandlerDeps, liveEventDeps, liveFileExtractDeps, notifyImportFailure, type LiveInfra } from './liveDeps'
 import { getManualOverride, setJobStatus } from '../utils/jobStore'
 import { jobRedis } from '../utils/jobStoreRedis'
+import { describePipelineFailure } from '../utils/pipelineFailure'
 import { describeImportFailure } from '~/utils/importFailure'
 import { query } from '../db/client'
 import { resolveLlmConfig } from '../agent/llmConfig'
@@ -249,7 +250,14 @@ function onExhausted(
       const target = await getManualOverride(data.memberId, data.jobId, jobRedis).catch(() => undefined)
       reason = describeImportFailure(raw, target ? { entityTypeId: target.entityTypeId } : null)
     } else {
-      reason = `Не удалось обработать документ. Попробуйте загрузить файл снова; если повторится — покажите это сообщение администратору. Подробности: ${raw}`
+      // ⚠ АДРЕСАТ — РАЗРАБОТЧИК, а не администратор портала (#506). Это ветка не-CRM стадий: файл
+      // не разобрался у НАС, до портала дело не дошло, и администратор не может ничего — у него нет
+      // ни файла, ни журналов, ни доступа к конвейеру. Прежний текст отправлял человека к тому, кто
+      // заведомо не поможет, и сигнал до нас не доходил вовсе.
+      // ⚠ Сырой текст ошибки НАРУЖУ НЕ ИДЁТ: на снимке владельца в него попал ответ Postgres
+      // («invalid byte sequence… 0x00»). Тот же запрет, что у строки поставщика модели (#416) —
+      // наружу уходит только наш текст. Свои собственные отказы доезжают целиком, по белому списку.
+      reason = describePipelineFailure(raw).message
     }
     await setJobStatus(data.memberId, data.jobId, 'error', reason, jobRedis).catch(() => {})
     // Tell the person who uploaded it + the error chat (бэклог §1). Retries are spent; nothing else
