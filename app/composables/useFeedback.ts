@@ -51,7 +51,9 @@ export function useFeedback() {
     kind: 'up' | 'down',
     comment?: string,
     context?: FeedbackSubmitContext,
-    attachFile?: boolean
+    attachFile?: boolean,
+    /** Документ, выбранный человеком с диска — ТОЛЬКО когда дела нет (#506 п.3). */
+    fileUpload?: { name: string, contentBase64: string } | null
   ): Promise<{ ok: boolean, notice?: string }> {
     await init()
     const headers = buildFrameHeaders(await ensureAuth())
@@ -60,7 +62,7 @@ export function useFeedback() {
       method: 'POST',
       headers,
       // Уходит только СОГЛАСИЕ; документ по нему найдёт и приложит сервер (#461).
-      body: { kind, comment, context, attachFile: attachFile === true }
+      body: { kind, comment, context, attachFile: attachFile === true, ...(fileUpload ? { fileUpload } : {}) }
     })
     // `notice` — отзыв принят, но файл приложить не вышло (общий предел приёмника, #354). Молча
     // выбросить вложение нельзя: человек будет уверен, что документ ушёл.

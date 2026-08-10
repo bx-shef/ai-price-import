@@ -193,3 +193,41 @@ describe('FeedbackWidget', () => {
     expect(w.text()).toContain('документ приложить не удалось')
   })
 })
+
+describe('#506 п.3: у упавшей загрузки документ выбирает человек', () => {
+  // Импорт, упавший на извлечении, до CRM не дошёл: дела нет, вложения нет, и документ взять
+  // неоткуда. Проп `pickFile` включает выбор с диска ТОЛЬКО в этом случае.
+
+  it('без pickFile форма обещает документ ИЗ ДЕЛА и файл не спрашивает', async () => {
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'j1' } })
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(w.text()).toContain('берётся из дела')
+    expect(w.find('input[type=file]').exists()).toBe(false)
+  })
+
+  it('с pickFile форма ЧЕСТНО говорит, что копии нет, и просит файл', async () => {
+    // Молчаливое «выберите файл» после обещания «берётся из дела» читалось бы как поломка.
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'j1', pickFile: true } })
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    expect(w.text()).toContain('копии у нас нет')
+    expect(w.find('input[type=file]').exists()).toBe(true)
+  })
+
+  it('пока файл не выбран, отправка с файлом НЕДОСТУПНА', async () => {
+    // Иначе «Отправить с файлом» отправит БЕЗ файла, и человек будет уверен, что документ ушёл.
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'j1', pickFile: true } })
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    const btn = w.findAll('button').find(b => /Сначала выберите файл/.test(b.text()))
+    expect(btn, 'кнопка обязана объяснять, чего ждём').toBeTruthy()
+    expect(btn!.attributes('disabled')).toBeDefined()
+  })
+})

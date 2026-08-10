@@ -17,6 +17,7 @@ import { feedbackIntakeGate } from '../utils/feedbackIntake'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import { downloadAttachment } from '../utils/activityFileFetch'
 import { resolveFeedbackAttachment } from '../utils/feedbackAttachment'
+import { attachUploadedDoc, type UploadedDoc } from '../utils/feedbackUpload'
 import { originatorCode } from '../utils/originMarker'
 import { sdkPortalDeps, makePortalSdkCall } from '../utils/b24Sdk'
 import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
@@ -82,7 +83,7 @@ export default defineEventHandler(async (event) => {
       }
 
       const raw = await readBody(event).catch(() => null) as
-        { kind?: unknown, comment?: unknown, attachFile?: unknown, context?: Record<string, unknown> } | null
+        { kind?: unknown, comment?: unknown, attachFile?: unknown, fileUpload?: UploadedDoc, context?: Record<string, unknown> } | null
       const kind = normalizeKind(raw?.kind)
       if (!kind) {
         span.outcome = 'bad_request'
@@ -171,6 +172,34 @@ export default defineEventHandler(async (event) => {
       // байт не прислала, архива на Диске нет или приёмник не подтверждён приватным. Причины разные,
       // исход для человека один, и он обязан быть назван. Ставится ПОСЛЕ всей ветки: раньше здесь
       // молчали везде, кроме исчерпанного предела.
+      // ДОКУМЕНТ ИЗ БРАУЗЕРА — только когда дела нет (#506 п.3). Импорт, упавший на извлечении, до
+      // CRM не доходит: дела нет, вложения нет, и взять документ неоткуда — а он нужен именно тогда,
+      // когда без него воспроизвести нечего. ⚠ Путь через дело остаётся ОСНОВНЫМ и проверяется
+      // первым: там источник проверяет сервер, здесь — тело запроса, которое контролирует клиент.
+      // ⚠ Пределы те же самые: кап размера, общий предел приёмника (#354) и обязательная проба
+      // приватности (#200) — они внутри `attachUploadedDoc`, а не переписаны сюда.
+      if (attachFile && !fileUrl && raw?.fileUpload) {
+        const up = await attachUploadedDoc(raw.fileUpload, {
+          uploadAllowed: () => feedbackUploadAllowed(config, fetchImpl),
+          checkBudget: () => checkAttachBudget(memberId, Date.now()),
+          commit: async (name, base64) => {
+            const c2 = await commitFeedbackFile(
+              config, feedbackFilePath(portalTag, jobId || 'no-job', name), base64,
+              `feedback file (uploaded) for job ${jobId || 'n/a'}`, fetchImpl
+            )
+            return c2.ok && c2.htmlUrl ? c2.htmlUrl : null
+          },
+          maxBytes: MAX_FEEDBACK_FILE_BYTES,
+          missingNotice: ATTACH_MISSING_NOTICE,
+          logMiss: miss => console.warn(`[feedback] uploaded attachment miss: ${miss}`)
+        })
+        if (up.fileUrl) {
+          fileUrl = up.fileUrl
+          attachNotice = undefined
+        } else {
+          attachNotice = up.notice
+        }
+      }
       if (attachFile && !fileUrl && !attachNotice) attachNotice = ATTACH_MISSING_NOTICE
       const payload = buildFeedbackIssue(kind, raw?.comment, {
         jobId: c.jobId,

@@ -76,10 +76,15 @@ const notice = ref('')
  * Помощник `setNotice` делает так, что забыть вид попросту негде — текст без вида не поставить.
  */
 const noticeKind = ref<NoticeKind>('info')
+/** Человек закрыл полосу руками. Сбрасывается на каждом новом сообщении — см. `setNotice`. */
+const noticeClosed = ref(false)
 const noticeColorRole = computed(() => noticeColor(noticeKind.value))
 function setNotice(text: string, kind: NoticeKind = 'info') {
   notice.value = text
   noticeKind.value = kind
+  // Новое сообщение обязано показаться, даже если предыдущее закрыли: иначе человек, закрывший
+  // «Готово» прошлой пачки, не увидел бы отказ следующей.
+  noticeClosed.value = false
 }
 // ONE target for the whole batch (owner ask — per-file pickers dropped): chosen while staging,
 // frozen for the duration of the run.
@@ -506,14 +511,23 @@ function cancelImport(): void {
       />
     </div>
 
-    <!-- Notice when there is NO staged list to host it (the list renders its own footer line). -->
+    <!-- Notice when there is NO staged list to host it (the list renders its own footer line).
+         ⚠ ЗАКРЫВАЕТСЯ ЯВНО (#506 п.5). Полоса висела вверху экрана и после того, как человек её
+         прочитал: результат каждой загрузки виден в самой ленте, а эта строка — про ПАЧКУ, и, не
+         имея крестика, читалась как постоянное состояние экрана («у меня всё сломано»), а не как
+         сообщение о том, что уже закончилось.
+         ⚠ Закрытие живёт до следующего сообщения: `setNotice` ставит текст и снимает отметку, то
+         есть новая пачка снова показывает свой итог. Персистентности нет намеренно — иначе человек
+         однажды закрыл бы её навсегда и перестал видеть исходы. -->
     <B24Alert
-      v-if="notice && !staged.length && !importing"
+      v-if="notice && !noticeClosed && !staged.length && !importing"
       class="mt-3"
       :color="noticeColorRole"
       size="sm"
       :title="notice"
       role="status"
+      close
+      @update:open="noticeClosed = true"
     />
   </div>
 </template>
