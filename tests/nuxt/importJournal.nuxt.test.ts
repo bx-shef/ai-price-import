@@ -37,12 +37,22 @@ const row = (over: Partial<JournalRow> = {}): JournalRow => ({
   ...over
 })
 
-async function render(rows: JournalRow[]) {
+async function render(rows: JournalRow[], props: Record<string, unknown> = {}, loaded = true) {
   vi.resetModules()
-  mountWith(rows)
+  const { state } = mountWith(rows)
+  state.loaded.value = loaded
   const ImportJournal = (await import('~/components/ImportJournal.vue')).default
-  return mountSuspended(ImportJournal)
+  return mountSuspended(ImportJournal, { props })
 }
+
+/** Живая строка идущего импорта — то, что раньше жило в отдельном списке «Последние операции». */
+const live = (over: Record<string, unknown> = {}) => ({
+  jobId: 'job-1',
+  status: 'extracting',
+  fileName: 'Накладная №5.pdf',
+  result: '',
+  ...over
+})
 
 describe('#462: строка журнала как дело Битрикс24', () => {
   it('дата живёт ТОЛЬКО в плитке, и она объявлена программе чтения — с годом', async () => {
@@ -88,5 +98,40 @@ describe('#462: строка журнала как дело Битрикс24', (
     const w = await render([row()])
     const btn = w.findAll('button').find(b => b.text().includes('Открыть карточку'))
     expect(btn?.classes().some(c => c.startsWith('focus-visible:'))).toBe(true)
+  })
+})
+
+// #494. Двух списков об одном и том же больше нет: идущий импорт показывается В ЖУРНАЛЕ той же
+// строкой, только с индикатором вместо даты, а по завершении уступает место записи о деле.
+describe('#494: одна лента вместо двух списков', () => {
+  it('идущий импорт виден в журнале', async () => {
+    const w = await render([], { live: [live()] })
+    expect(w.text()).toContain('Накладная №5.pdf')
+    expect(w.text()).toContain('идёт')
+  })
+
+  it('запись журнала ВЫТЕСНЯЕТ живую строку того же задания — дубля нет', async () => {
+    // ⚠ Несущее утверждение слияния. Как только импорт завершился, журнал перечитывается и та же
+    // загрузка появляется в нём делом. Без отсева по идентификатору задания один документ висел бы
+    // в ленте дважды — сверху «готово», ниже дело о нём же, — и это читалось бы как два импорта.
+    const w = await render([row({ jobId: 'job-1', title: 'Дело по накладной' })], {
+      live: [live({ jobId: 'job-1', status: 'done', result: 'ok' })]
+    })
+    expect(w.text()).toContain('Дело по накладной')
+    expect(w.text()).not.toContain('в журнал') // подпись плитки живой строки
+  })
+
+  it('живая строка НЕ прячется под заглушкой ещё не загруженного журнала', async () => {
+    // ⚠ Иначе человек нажал «Импортировать» и вместо своих строк видит серые прямоугольники, пока
+    // портал отвечает на запрос журнала: загрузка истории не вправе прятать происходящее сейчас.
+    const w = await render([], { live: [live()] }, false)
+    expect(w.text()).toContain('Накладная №5.pdf')
+  })
+
+  it('пустое состояние молчит, пока идёт загрузка файла', async () => {
+    // «Вы ещё ничего не импортировали» поверх собственной загрузки — прямая ложь о состоянии.
+    const w = await render([], { uploading: true })
+    expect(w.text()).not.toContain('Вы ещё ничего не импортировали')
+    expect(w.text()).toContain('Отправляем файл…')
   })
 })

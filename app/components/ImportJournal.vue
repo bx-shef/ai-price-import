@@ -14,8 +14,33 @@
 import { computed, onMounted, useTemplateRef } from 'vue'
 import { useInfiniteScroll } from '@vueuse/core'
 import { journalDateTile, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
+import type { ImportJobView } from '~/composables/useImport'
+
+// ⚠ ЖИВЫЕ строки приходят пропом, а не читаются здесь (#494). Источника два и они разной природы:
+// идущий импорт живёт в статусе задания (Redis, часы), запись журнала — в ДЕЛЕ портала (сколько его
+// там держат). Смешивать их в одном загрузчике значило бы связать сроки жизни двух хранилищ; здесь
+// они только показываются вместе.
+const props = withDefaults(defineProps<{ live?: ImportJobView[], uploading?: boolean }>(), {
+  live: () => [],
+  uploading: false
+})
 
 const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, reload } = useImportJournal()
+
+/**
+ * Живые строки, которых журнал ещё не показывает.
+ *
+ * ⚠ ОТСЕВ ПО `jobId` ОБЯЗАТЕЛЕН, и это несущая часть слияния: как только импорт завершился, журнал
+ * перечитывается и та же загрузка появляется в нём записью о деле. Без отсева один документ висел бы
+ * в ленте ДВАЖДЫ — сверху «готово» из статуса задания, ниже дело о нём же, — и человек читал бы это
+ * как два импорта одного файла.
+ * ⚠ Отсев идёт от журнала к живым, а не наоборот: дело — источник, который переживает вкладку, а
+ * живая строка временная. Значит побеждает запись журнала, и переключение происходит само.
+ */
+const liveVisible = computed(() => {
+  const known = new Set(rows.value.map(r => r.jobId))
+  return props.live.filter(j => !known.has(j.jobId))
+})
 
 /**
  * Перечитать журнал с начала — зовёт страница после завершения импорта.
@@ -85,8 +110,12 @@ async function openOwner(path: string): Promise<void> {
   >
     <!-- ⚠ До завершения первой попытки экран НЕ утверждает ничего: ни «пусто», ни список.
          Иначе человек с месяцем импортов на долю секунды читает «загрузок не было» (#408). -->
+    <!-- ⚠ Заглушка ТОЛЬКО когда показывать реально нечего. Прежде она зависела лишь от журнала, и
+         после слияния (#494) это скрыло бы идущий импорт: человек нажал «Импортировать», а вместо
+         своих строк видит серые прямоугольники, пока портал отвечает на запрос журнала. Загрузка
+         журнала не должна прятать то, что происходит прямо сейчас. -->
     <div
-      v-if="!loaded"
+      v-if="!loaded && !liveVisible.length && !uploading"
       class="space-y-2"
       aria-hidden="true"
     >
@@ -98,7 +127,7 @@ async function openOwner(path: string): Promise<void> {
     </div>
 
     <B24Alert
-      v-else-if="loadError && rows.length === 0"
+      v-else-if="loadError && rows.length === 0 && !liveVisible.length && !uploading"
       color="air-primary-alert"
       role="alert"
       :title="loadError"
@@ -114,7 +143,7 @@ async function openOwner(path: string): Promise<void> {
     </B24Alert>
 
     <p
-      v-else-if="rows.length === 0"
+      v-else-if="rows.length === 0 && !liveVisible.length && !uploading"
       class="py-6 text-center text-sm text-(--ui-color-base-3)"
     >
       Вы ещё ничего не импортировали. Загрузите документ — он появится здесь.
@@ -126,6 +155,22 @@ async function openOwner(path: string): Promise<void> {
         class="max-h-[28rem]"
       >
         <ul class="space-y-3">
+          <!-- Мгновенный отклик, пока POST в полёте и строки задания ещё нет вовсе. -->
+          <li
+            v-if="uploading"
+            class="flex items-center gap-2 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
+          >
+            <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+            Отправляем файл…
+          </li>
+          <!-- ЖИВЫЕ строки — та же оболочка, что у записей журнала: слева индикатор вместо даты,
+               справа шаги импорта. Завершилось и попало в журнал — строка исчезает отсюда и
+               появляется ниже уже как дело (см. `liveVisible`). -->
+          <ImportJobItem
+            v-for="j in liveVisible"
+            :key="j.jobId"
+            :job="j"
+          />
           <!-- ⚠ Строка списка сделана ПО МОТИВАМ дела в таймлайне Битрикс24 (решение владельца,
                скриншот 08.08.2026): плитка-календарь слева, цветная метка исхода, поля подписанными
                блоками, действие ссылкой внизу. Копия «один в один» не нужна и была бы вредна —
