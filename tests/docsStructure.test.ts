@@ -11,25 +11,29 @@ const ROOT = new URL('..', import.meta.url).pathname
 const abs = (p: string) => resolve(ROOT, p)
 
 /**
- * Files allowed in docs/. Three project documents + five hand-off materials for third parties.
+ * Files allowed in docs/. Three project documents + the hand-off materials for third parties.
  *
  * The list is a whitelist, not a cap: a new file needs a decision, not just a `git add`. `PRICING.md`
  * was added by an explicit owner decision (#301) — it is a commercial document (revenue model, rates,
- * packages), addressed outward like `ui-spec.md` and `privacy-policy.md`, and merging it into any of
+ * packages), addressed outward like `privacy-policy.md`, and merging it into any of
  * the three project documents would put price negotiation into engineering notes. `eula.md` was added the same way (#297): the
  * Market requires a licence agreement at a permanent public address, the project had none, and it is
  * the SOURCE the `/eula` page renders — merging it into another document would break that page.
  * `market-graphics.md` is the third such decision (owner, 2026-08-03, #387): the Market listing
- * artwork is commissioned from an outside designer, so the brief leaves the project the way
- * `ui-spec.md` does — and it is deliberately NOT part of `ui-spec.md`, whose scope note now names
- * the listing as a separate job (that note was extended in the same change; before it, only the
- * public site was excluded, so this justification pointed at a line that did not exist).
+ * artwork is commissioned from an outside designer, so the brief leaves the project whole.
+ *
+ * ⚠ `ui-spec.md` стоял в этом списке первым — и был удалён (#490). Урок записан здесь, потому что
+ * список читают ровно тогда, когда собираются его пополнить: файл «для внешнего исполнителя»
+ * оправдан, пока исполнителю его действительно отдают. Дизайн-проход не начался (#407), отдавать
+ * было некому, а документ полтора месяца правился вместе с кодом — и к удалению нёс ПЯТЬ
+ * утверждений о снятых механизмах при штампе сегодняшним днём. Заводя такой файл, договорись,
+ * когда он уходит наружу; иначе получится внутренняя документация, которую никто не сверяет,
+ * потому что формально она внутренней не считается.
  */
 const ALLOWED_DOCS = [
   'PROCESS.md', // как работает продукт
   'PROJECT_MAP.md', // что в каком состоянии
   'BACKLOG.md', // что делаем потом
-  'ui-spec.md', // дизайнеру
   'privacy-policy.md', // юристу и на публикацию
   'PRICING.md', // модель заработка + калькулятор кастомной работы (#301)
   'eula.md', // лицензионное соглашение — публикуется на лендинге (#297, решение владельца)
