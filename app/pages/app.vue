@@ -17,6 +17,7 @@ import { appScreenState } from '~/utils/appScreenState'
 import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMode } from '~/utils/appLaunchMode'
 import { formatMinutes } from '~/utils/savings'
 import { APP_NAME } from '~/config/appIdentity'
+import { PORTAL_CONTENT_X, PORTAL_NAVBAR_X } from '~/config/portalShell'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
 // primary flow (open → drop/snap a document) is one step, on desktop and in the B24 mobile app. The
@@ -341,7 +342,7 @@ watch(jobs, (list) => {
           v-if="!isBitrixMobile && screen !== 'launcher'"
           :toggle="false"
           :title="APP_NAME"
-          :b24ui="{ root: 'px-4 sm:px-6' }"
+          :b24ui="{ root: PORTAL_NAVBAR_X }"
         >
           <template #right>
             <!-- ⚠ Шестерёнка блокируется на время пачки, как карточка «Экономия» (#443). Прежде
@@ -393,7 +394,7 @@ watch(jobs, (list) => {
              ⚠ Длинную строку капаем ТОЧЕЧНО (`max-w-3xl` у абзаца-подводки): без кепа на широком
              экране она растягивается на всю ширину и читается тяжело. Карточкам кеп не нужен — у них
              своя внутренняя раскладка. -->
-        <div class="w-full px-4 py-4 sm:px-6 sm:py-6">
+        <div :class="[PORTAL_CONTENT_X, 'w-full py-4 sm:py-6']">
           <p
             v-if="screen === 'work'"
             class="mb-4 max-w-3xl text-base text-(--ui-color-base-3)"

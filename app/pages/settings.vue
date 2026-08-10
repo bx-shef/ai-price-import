@@ -17,6 +17,7 @@ import type { TargetRef } from '~/types/mapping'
 import { APP_SLIDER_PLACE_SETTINGS } from '~/config/b24'
 import { ON_MISSING_FIELD_LABEL, ON_MISSING_ITEMS } from '~/config/onMissing'
 import { portalCurrencySettingsUrl } from '~/utils/entityLink'
+import { PORTAL_CONTENT_X, PORTAL_NAVBAR_X } from '~/config/portalShell'
 
 // In-portal settings: per-portal mapping (P3 UI). Core fields — target entity, file
 // saving, supplier-article field, product strategy. Layout `clear`, prerendered.
@@ -375,7 +376,7 @@ const ARTICLE_KIND_ITEMS = [
         <B24DashboardNavbar
           :toggle="false"
           title="Настройки импорта"
-          :b24ui="{ root: 'px-4 sm:px-6' }"
+          :b24ui="{ root: PORTAL_NAVBAR_X }"
         >
           <template #leading>
             <B24Button
@@ -405,7 +406,7 @@ const ARTICLE_KIND_ITEMS = [
              720 ничего не изменилось: 720 − 48 отступов = ровно те же 672 px, из которых ширина
              слайдера и выведена. Изменилось поведение НА ШИРОКОМ окне — раньше там оставался узкий
              столбик посередине с заголовком где-то слева от него. -->
-        <div class="w-full px-4 py-4 pb-6 sm:px-6 sm:py-6">
+        <div :class="[PORTAL_CONTENT_X, 'w-full py-4 pb-6 sm:py-6']">
           <p class="mb-4 text-sm text-(--ui-color-base-3)">
             Здесь вы задаёте, куда приложение вносит товары из документов и как ищет их в вашем каталоге.
           </p>
