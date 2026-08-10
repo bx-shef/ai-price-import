@@ -10,11 +10,23 @@ import {
   toFailedView
 } from '../server/queue/failedJobs'
 import { QUEUES } from '../server/queue/topology'
+import { portalHash } from '../server/utils/telemetryAttributes'
 
 describe('toFailedView', () => {
   it('переносит причину, время и число попыток', () => {
     expect(toFailedView('crm-sync', { id: 7, failedReason: 'портал отверг', finishedOn: 1000, attemptsMade: 3 }))
-      .toEqual({ queue: 'crm-sync', id: '7', reason: 'портал отверг', failedAt: 1000, attempts: 3 })
+      .toEqual({ queue: 'crm-sync', id: '7', reason: 'портал отверг', failedAt: 1000, attempts: 3, portal: 'unknown' })
+  })
+
+  it('несёт ОТПЕЧАТОК портала, а не его идентификатор (#498)', () => {
+    // Без портала в строке «сорок отказов подряд» нельзя было связать с конкретным клиентом, и
+    // ручной разбор упирался в отдельную раскопку по логам. ⚠ Именно отпечаток: экран оператора
+    // открывается с обычного рабочего места, складывать туда member_id порталов клиентов незачем.
+    const v = toFailedView('crm-sync', { id: '9', data: { memberId: 'member-A' } })!
+    expect(v.portal).toBe(portalHash('member-A'))
+    expect(v.portal).not.toBe('member-A')
+    // Задание без портала в пакете различимо от настоящего — иначе они слились бы в одну строку.
+    expect(toFailedView('crm-sync', { id: '9' })!.portal).toBe('unknown')
   })
 
   it('строка без идентификатора отбрасывается — по ней всё равно нечего нажать', () => {

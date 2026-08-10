@@ -1,4 +1,5 @@
 import { QUEUES, type QueueName } from './topology'
+import { portalHash } from '../utils/telemetryAttributes'
 
 // Список упавших задач для операторской консоли (#271-B). Раньше на экране было только число
 // «ошибки: N», провалиться в которое было нельзя: ни причины, ни времени, ни возможности повторить.
@@ -17,6 +18,14 @@ export interface FailedJobView {
   failedAt: number | null
   /** Сколько попыток было сделано. */
   attempts: number
+  /**
+   * Необратимый отпечаток портала, чьё это задание (#498).
+   *
+   * ⚠ Именно ОТПЕЧАТОК, а не домен и не member_id: экран оператора открывается с обычного рабочего
+   * места, и складывать туда идентификаторы порталов клиентов незачем — для «сорок отказов у одного
+   * и того же» достаточно различимости. `unknown` — задание без портала в пакете.
+   */
+  portal: string
 }
 
 /** Сырая строка BullMQ, из которой мы берём только нужное. */
@@ -26,6 +35,8 @@ export interface RawFailedJob {
   finishedOn?: number | null
   processedOn?: number | null
   attemptsMade?: number | null
+  /** Пакет задачи. Нужен ровно ради `memberId` — по нему считается отпечаток портала. */
+  data?: { memberId?: unknown } | null
 }
 
 /** Прочитать упавшие задачи одной очереди (или пусто, если очередь недоступна). */
@@ -52,7 +63,8 @@ export function toFailedView(queue: string, raw: RawFailedJob): FailedJobView | 
     id,
     reason: reason || 'Причина не сохранилась',
     failedAt: num(raw.finishedOn) ?? num(raw.processedOn),
-    attempts: num(raw.attemptsMade) ?? 0
+    attempts: num(raw.attemptsMade) ?? 0,
+    portal: portalHash(typeof raw?.data?.memberId === 'string' ? raw.data.memberId : '')
   }
 }
 

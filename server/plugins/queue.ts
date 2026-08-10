@@ -1,5 +1,5 @@
 import type { Worker } from 'bullmq'
-import { getQueue, queueEnabled } from '../queue/connection'
+import { getQueue, queueEnabled, connectionOptions } from '../queue/connection'
 import type { QueueName } from '../queue/topology'
 import { evaluateQueueHealth } from '../utils/queueAlert'
 import { MAX_FAILED_SCAN, readQueueHealth } from '../utils/queueHealthRead'
@@ -10,6 +10,8 @@ import { buildLiveInfra, startEventWorker, startThroughputWorkers } from '../que
 import { liveKeepAliveDeps } from '../queue/liveDeps'
 import { queueRuntimeConfig } from '../queue/runtime'
 import { keepAliveIntervalMs, runTokenKeepAlive } from '../utils/tokenKeepAlive'
+import { PORTAL_NOTICE_TTL_SEC, createPortalFailureRunner } from '../utils/portalFailureRun'
+import { windowCounterStore } from '../utils/windowCounterRedis'
 
 /** How often the queue health check reads counts. Also the window each alert speaks about. */
 const QUEUE_HEALTH_INTERVAL_MS = 5 * 60 * 1000
@@ -165,7 +167,67 @@ export default defineNitroPlugin((nitroApp) => {
       for (const key of recovered) {
         if (await push(recoveryMessage(key))) delivery = markRecovered(delivery, key)
       }
+
+      // Порталы считаем ПОСЛЕ тревог и вне guarded-секции — по той же причине, что и отправку:
+      // медленный Телеграм не должен задерживать саму проверку здоровья.
+      if (runPortalWatch) {
+        try {
+          const r = await runPortalWatch()
+          if (r.sent) console.warn(`[portal-fail] сообщено о порталах: ${r.announced.length}`)
+        } catch (err) {
+          console.error('[portal-fail] сбой наблюдения:', (err as Error)?.message)
+        }
+      }
     }
+    // Наблюдение за порталами, у которых падают ВСЕ импорты (#498). Идёт тем же тиком, но это
+    // ОТДЕЛЬНЫЙ механизм и ОТДЕЛЬНЫЙ канал: тревога значит «сервис сломан, разбуди меня», а здесь
+    // сервис исправен — у клиента отозвано право или протухла авторизация. Смешать их значит
+    // приучить читать канал вполглаза, и тогда он не сработает в тот раз, ради которого заведён.
+    //
+    // ⚠ Канал — СВОДКА (`TELEGRAM_DIGEST_*`), тот же, что у еженедельной сводки по отзывам: оба
+    // сообщения про «накопилось», а не про «горит».
+    const portalTelegram = resolveTelegramConfig(process.env, {
+      token: 'TELEGRAM_DIGEST_BOT_TOKEN',
+      chatId: 'TELEGRAM_DIGEST_CHAT_ID'
+    })
+    const noticeCounter = windowCounterStore(connectionOptions())
+    if (portalTelegram && !noticeCounter) {
+      // ⚠ Без Redis отсечка «один портал в сутки» держится только памятью процесса, а её тут нет
+      // вовсе — значит сообщение придёт на каждом перезапуске. Говорим вслух: молчаливая
+      // деградация читалась бы как исправная работа.
+      console.warn('[portal-fail] нет Redis: отсечки «один портал в сутки» нет — сообщение придёт после каждого перезапуска')
+    }
+    const runPortalWatch = portalTelegram
+      ? createPortalFailureRunner({
+          listFailed: async () => {
+            const q = getQueue('crm-sync')
+            if (!q) return null
+            try {
+              return await q.getFailed(0, MAX_FAILED_SCAN - 1)
+            } catch {
+            // Нечитаемая очередь — НЕ «отказов нет»: см. разбор в `portalFailureRun`.
+              return null
+            }
+          },
+          send: async (text) => {
+            try {
+              const r = await sendTelegramAlert(portalTelegram, text, fetch)
+              if (!r.ok) console.warn(`[portal-fail] сообщение не доставлено: status=${r.status}`)
+              return r.ok
+            } catch {
+              return false // наблюдение не имеет права ронять cron-инстанс
+            }
+          },
+          claimNotice: key => noticeCounter ? noticeCounter.incrWithTtl(key, PORTAL_NOTICE_TTL_SEC).catch(() => null) : Promise.resolve(null),
+          ...(queuesUrl ? { queuesUrl } : {}),
+          now: () => Date.now(),
+          log: m => console.warn(`[portal-fail] ${m}`)
+        })
+      : null
+    if (!portalTelegram) {
+      console.info('[portal-fail] канал сводки не настроен — о падающих порталах сообщать некуда (TELEGRAM_DIGEST_BOT_TOKEN + TELEGRAM_DIGEST_CHAT_ID)')
+    }
+
     healthTimer = setInterval(() => void runHealthCheck(), QUEUE_HEALTH_INTERVAL_MS)
     void runHealthCheck()
     console.info('[queue] health check scheduled (every %d min)', QUEUE_HEALTH_INTERVAL_MS / 60_000)
