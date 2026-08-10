@@ -15,6 +15,7 @@ import { computed, onMounted } from 'vue'
 import { journalDateTile, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
 import { activityOutcome } from '~/utils/activityBody'
 import type { ImportJobView } from '~/composables/useImport'
+import { PROMO_AFTER_ROW } from '~/config/journal'
 
 // ⚠ ЖИВЫЕ строки приходят пропом, а не читаются здесь (#494). Источника два и они разной природы:
 // идущий импорт живёт в статусе задания (Redis, часы), запись журнала — в ДЕЛЕ портала (сколько его
@@ -194,59 +195,68 @@ async function openOwner(path: string): Promise<void> {
                блоками, действие ссылкой внизу. Копия «один в один» не нужна и была бы вредна —
                у нас нет ни чекбокса «выполнено», ни кнопок дела, и рисовать их значило бы обещать
                действия, которых здесь нет. -->
-        <li
-          v-for="{ row, tile, ownerPath, summary, outcome } in view"
+        <template
+          v-for="({ row, tile, ownerPath, summary, outcome }, idx) in view"
           :key="row.activityId"
-          class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
         >
-          <!-- Плитка даты. ⚠ Она же ЕДИНСТВЕННЫЙ носитель даты: строка «10 августа 2026, 08:15»
+          <li
+            class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
+          >
+            <!-- Плитка даты. ⚠ Она же ЕДИНСТВЕННЫЙ носитель даты: строка «10 августа 2026, 08:15»
                  под заголовком убрана (решение владельца 10.08.2026 — дата уже видна в плитке, а
                  повтор словами занимал строку в каждой записи). Поэтому дата объявляется программе
                  чтения ЗДЕСЬ: без `aria-label` плитка из трёх обрывков («10», «авг», «08:15»)
                  читалась бы вслух как три бессвязных числа, а с прежним `aria-hidden` дата исчезла
                  бы для незрячих вовсе. -->
-          <div
-            v-if="tile"
-            class="flex w-14 shrink-0 flex-col items-center justify-center rounded-md bg-(--ui-color-base-7) py-1.5 text-center"
-            role="img"
-            :aria-label="`Загружено ${tile.day} ${tile.month} ${tile.year}, ${tile.time}`"
-          >
-            <span class="text-lg leading-none font-semibold">{{ tile.day }}</span>
-            <span class="mt-0.5 text-[10px] leading-tight text-(--ui-color-base-3)">{{ tile.month }}</span>
-            <span class="mt-0.5 text-[10px] leading-none text-(--ui-color-base-3)">{{ tile.time }}</span>
-          </div>
+            <div
+              v-if="tile"
+              class="flex w-14 shrink-0 flex-col items-center justify-center rounded-md bg-(--ui-color-base-7) py-1.5 text-center"
+              role="img"
+              :aria-label="`Загружено ${tile.day} ${tile.month} ${tile.year}, ${tile.time}`"
+            >
+              <span class="text-lg leading-none font-semibold">{{ tile.day }}</span>
+              <span class="mt-0.5 text-[10px] leading-tight text-(--ui-color-base-3)">{{ tile.month }}</span>
+              <span class="mt-0.5 text-[10px] leading-none text-(--ui-color-base-3)">{{ tile.time }}</span>
+            </div>
 
-          <!-- ⚠ Дата не разобралась ⇒ плитки нет, и строка обязана сказать об этом словами:
+            <!-- ⚠ Дата не разобралась ⇒ плитки нет, и строка обязана сказать об этом словами:
                  иначе запись выглядит как все остальные, только без даты, и человек читает это как
                  «сегодня». Заодно это страховка от мутации `v-if="tile"` → `v-if="true"`, которая
                  обращается к полям `null` и роняет весь список на первой такой строке. -->
-          <div
-            v-else
-            class="flex w-14 shrink-0 items-center justify-center rounded-md bg-(--ui-color-base-7) px-1 py-1.5 text-center text-[10px] leading-tight text-(--ui-color-base-3)"
-          >
-            дата неизвестна
-          </div>
+            <div
+              v-else
+              class="flex w-14 shrink-0 items-center justify-center rounded-md bg-(--ui-color-base-7) px-1 py-1.5 text-center text-[10px] leading-tight text-(--ui-color-base-3)"
+            >
+              дата неизвестна
+            </div>
 
-          <div class="min-w-0 flex-1">
-            <div class="flex items-start justify-between gap-2">
-              <p class="min-w-0 flex-1 truncate text-sm font-medium">
-                {{ row.title }}
-              </p>
-              <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-2">
+                <!-- ⚠ ПЕРЕНОС, а не `truncate` (#507). На телефоне обрезалось ровно то, ради чего в
+                     журнал заходят: название поставщика уходило в многоточие, и узнать его было
+                     негде — строка не разворачивается по нажатию. Действующее правило проекта прямо
+                     требует переносить, а не обрезать в никуда.
+                     ⚠ `break-words` обязателен вместе с переносом: длинное слово без пробелов
+                     (номер документа, склеенное название) иначе распирает строку и возвращает
+                     горизонтальную прокрутку, которой быть не должно. -->
+                <p class="min-w-0 flex-1 text-sm font-medium break-words">
+                  {{ row.title }}
+                </p>
+                <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
                      чтения и не различается при дальтонизме. Цвета те же, что у самого дела в
                      портале, — человек видит на двух экранах одно и то же. -->
-              <!-- ⚠ Цвет берётся из САМОГО дела, а не из признака «дело закрыто»: связь была
+                <!-- ⚠ Цвет берётся из САМОГО дела, а не из признака «дело закрыто»: связь была
                      односторонней, и перекрашенное в портале дело выглядело в журнале иначе, чем в
                      карточке. Неизвестный цвет — отдельный, НЕЙТРАЛЬНЫЙ исход: выдавать его за
                      успех значило бы утверждать о чужом документе непроверенное. -->
-              <B24Badge
-                class="shrink-0"
-                size="xs"
-                :color="outcome === 'clean' ? 'air-primary-success' : (outcome === 'issues' ? 'air-primary-alert' : 'air-secondary')"
-                :label="journalOutcomeLabel(outcome)"
-              />
-            </div>
-            <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
+                <B24Badge
+                  class="shrink-0"
+                  size="xs"
+                  :color="outcome === 'clean' ? 'air-primary-success' : (outcome === 'issues' ? 'air-primary-alert' : 'air-secondary')"
+                  :label="journalOutcomeLabel(outcome)"
+                />
+              </div>
+              <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
                    каждой строке спорила бы за внимание с «Показать ещё» внизу списка.
                    ⚠ Своя рамка фокуса обязательна: у голого `<button>` её нет, а `B24Button`, у
                    которого она была, здесь не подходит по виду — без этого до ссылки нельзя
@@ -254,58 +264,73 @@ async function openOwner(path: string): Promise<void> {
                    ⚠ Отступы (`-mx-1 px-1 py-1`) — тач-таргет: строка текста в 20 px на телефоне
                    промахивается пальцем; отрицательный внешний отступ возвращает текст на прежнее
                    место по левому краю. -->
-            <!-- РЕЗУЛЬТАТ импорта — из тела дела (#495). Пустых подписей не печатаем: блок,
+              <!-- РЕЗУЛЬТАТ импорта — из тела дела (#495). Пустых подписей не печатаем: блок,
                    который иногда пуст, читается как «данных нет», а не «поле не заполнено». -->
-            <p
-              v-if="summary.rows != null || summary.amount || summary.supplier"
-              class="mt-1 text-xs text-(--ui-color-base-2)"
-            >
-              <span v-if="summary.supplier">{{ summary.supplier }}</span>
-              <span v-if="summary.supplier && (summary.rows != null || summary.amount)"> · </span>
-              <span v-if="summary.rows != null">позиций: {{ summary.rows }}<template v-if="summary.matched != null"> (сопоставлено {{ summary.matched }})</template></span>
-              <span v-if="summary.rows != null && summary.amount"> · </span>
-              <span v-if="summary.amount">{{ summary.amount }}</span>
-            </p>
-            <p
-              v-if="summary.problems"
-              class="mt-0.5 text-xs text-(--ui-color-accent-main-alert)"
-            >
-              проблем: {{ summary.problems }} — подробности в карточке
-            </p>
-
-            <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <button
-                v-if="ownerPath"
-                type="button"
-                class="-mx-1 mt-1 rounded px-1 py-1 text-sm text-(--ui-color-accent-main-link) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-color-accent-main-primary)"
-                @click="openOwner(ownerPath)"
+              <p
+                v-if="summary.rows != null || summary.amount || summary.supplier"
+                class="mt-1 text-xs break-words text-(--ui-color-base-2)"
               >
-                Открыть карточку
-              </button>
-              <!-- ИСХОДНЫЙ ФАЙЛ — вложение дела (#495). ⚠ Новой вкладкой (решение владельца): это
+                <span v-if="summary.supplier">{{ summary.supplier }}</span>
+                <span v-if="summary.supplier && (summary.rows != null || summary.amount)"> · </span>
+                <span v-if="summary.rows != null">позиций: {{ summary.rows }}<template v-if="summary.matched != null"> (сопоставлено {{ summary.matched }})</template></span>
+                <span v-if="summary.rows != null && summary.amount"> · </span>
+                <span v-if="summary.amount">{{ summary.amount }}</span>
+              </p>
+              <p
+                v-if="summary.problems"
+                class="mt-0.5 text-xs break-words text-(--ui-color-accent-main-alert)"
+              >
+                проблем: {{ summary.problems }} — подробности в карточке
+              </p>
+
+              <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <button
+                  v-if="ownerPath"
+                  type="button"
+                  class="-mx-1 mt-1 rounded px-1 py-1 text-sm text-(--ui-color-accent-main-link) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-color-accent-main-primary)"
+                  @click="openOwner(ownerPath)"
+                >
+                  Открыть карточку
+                </button>
+                <!-- ИСХОДНЫЙ ФАЙЛ — вложение дела (#495). ⚠ Новой вкладкой (решение владельца): это
                      адрес ПОРТАЛА, а не наш, и открытие его в нашем фрейме увело бы человека с
                      рабочего экрана. `noopener` обязателен — иначе открытая страница получает
                      ссылку на наше окно. -->
-              <a
-                v-if="row.fileUrl"
-                :href="row.fileUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="-mx-1 rounded px-1 py-1 text-sm text-(--ui-color-accent-main-link) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-color-accent-main-primary)"
-              >
-                Исходный файл
-              </a>
-            </div>
+                <a
+                  v-if="row.fileUrl"
+                  :href="row.fileUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="-mx-1 rounded px-1 py-1 text-sm text-(--ui-color-accent-main-link) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-color-accent-main-primary)"
+                >
+                  Исходный файл
+                </a>
+              </div>
 
-            <!-- Отзыв — у КАЖДОЙ записи журнала (решение владельца 10.08.2026). Документ к отзыву
+              <!-- Отзыв — у КАЖДОЙ записи журнала (решение владельца 10.08.2026). Документ к отзыву
                    сервер читает из вложения дела (#461), а не из памяти страницы, поэтому это
                    работает и по вчерашним записям. -->
-            <FeedbackWidget
-              :job-id="row.jobId"
-              :file-name="row.title"
-            />
-          </div>
-        </li>
+              <FeedbackWidget
+                :job-id="row.jobId"
+                :file-name="row.title"
+              />
+            </div>
+          </li>
+          <!-- ВРЕЗКА ПОСЛЕ N-Й ЗАПИСИ (#507, решение владельца). Баннер про будущее не должен стоять
+               выше того, ради чего человек открыл приложение: на телефоне до журнала приходилось
+               проскроллить пять экранов подряд, и один из них занимал промо во весь экран.
+               ⚠ Врезка идёт ПОСЛЕ записи, а не вместо неё, и не считается записью: `<li>` у неё
+               свой, потому что вложить блок внутрь чужой строки значило бы отдать его программе
+               чтения как часть этого импорта.
+               ⚠ Если записей меньше `PROMO_AFTER_ROW`, врезка встаёт после последней — иначе на
+               свежем портале она не появилась бы вовсе. -->
+          <li
+            v-if="$slots.promo && (idx + 1 === PROMO_AFTER_ROW || (view.length < PROMO_AFTER_ROW && idx + 1 === view.length))"
+            class="list-none"
+          >
+            <slot name="promo" />
+          </li>
+        </template>
       </ul>
 
       <!-- ⚠ Отказ ПОДКАЧКИ показывается под уже загруженным списком, а не вместо него: строки,
