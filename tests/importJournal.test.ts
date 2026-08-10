@@ -20,11 +20,14 @@ describe('#458: журнал импортов — выборка', () => {
     expect(buildJournalQuery('X', 1).order).toEqual({ ID: 'DESC' })
   })
 
-  it('поля запрашиваются явно — тело документа в список не тянем', () => {
+  it('поля перечислены ЯВНО — и именно поэтому список отдаёт тело, вложение и цвет', () => {
+    // ⚠ Живая проверка 10.08.2026 (b24-hrbvzq): `crm.activity.list` отдаёт `DESCRIPTION`, `FILES` и
+    // `SETTINGS` при ЯВНОМ перечислении — прежняя запись «list не отдаёт FILES даже со `select:['*']`»
+    // была неполной, разница именно в явном списке. Отсюда следствие: страница журнала это
+    // по-прежнему ОДИН запрос к порталу, батч по строкам не нужен.
     const q = buildJournalQuery('X', 1)
-    expect(q.select).not.toContain('*')
-    expect(q.select).not.toContain('DESCRIPTION')
-    expect(q.select).toContain('ORIGIN_ID')
+    expect(q.select).not.toContain('*') // звёздочка тянет ещё три десятка служебных полей
+    for (const f of ['ORIGIN_ID', 'DESCRIPTION', 'FILES', 'SETTINGS']) expect(q.select).toContain(f)
   })
 
   it('битый или отрицательный start не уводит выборку', () => {
@@ -42,7 +45,8 @@ describe('#458: журнал импортов — разбор ответа', ()
   it('строки портала (всё строками) превращаются в числа и флаги', () => {
     expect(mapJournalRows([row()])).toEqual([{
       activityId: 55, jobId: 'job-1', title: 'Импорт: ООО Ромашка', clean: true,
-      createdAt: '2026-08-08T10:00:00+03:00', ownerTypeId: 2, ownerId: 341
+      createdAt: '2026-08-08T10:00:00+03:00', ownerTypeId: 2, ownerId: 341,
+      summary: {}, fileUrl: '', colorId: ''
     }])
   })
 
@@ -65,5 +69,24 @@ describe('#458: журнал импортов — разбор ответа', ()
 
   it('размер страницы задан числом и используется как признак «есть ещё»', () => {
     expect(JOURNAL_PAGE_SIZE).toBeGreaterThan(0)
+  })
+})
+
+describe('#495: вложение и цвет из дела', () => {
+  const base = { ID: '7', ORIGIN_ID: 'job-7', CREATED: '2026-08-10T08:00:00+03:00' }
+
+  it('адрес вложения берётся из FILES, но только портальный https', () => {
+    // ⚠ Дело мог править человек в портале. Чужой адрес ушёл бы сотруднику под нашей подписью
+    // «Исходный файл» — то есть мы бы поручились за ссылку, которую не выдавали.
+    const ok = mapJournalRows([{ ...base, FILES: [{ id: 1, url: 'https://p.bitrix24.by/f?id=1' }] }])
+    expect(ok[0]!.fileUrl).toBe('https://p.bitrix24.by/f?id=1')
+    for (const bad of [[{ url: 'http://p/f' }], [{ url: 'javascript:alert(1)' }], [{}], [], 'нет']) {
+      expect(mapJournalRows([{ ...base, FILES: bad }])[0]!.fileUrl, JSON.stringify(bad)).toBe('')
+    }
+  })
+
+  it('цвет лежит ВНУТРИ SETTINGS — отдельного поля COLOR у дела нет', () => {
+    expect(mapJournalRows([{ ...base, SETTINGS: { COLOR: '7' } }])[0]!.colorId).toBe('7')
+    expect(mapJournalRows([{ ...base, SETTINGS: null }])[0]!.colorId).toBe('')
   })
 })

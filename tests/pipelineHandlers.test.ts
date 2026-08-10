@@ -22,7 +22,7 @@ describe('handleFileExtractJob', () => {
     expect(r.ok).toBe(true)
     expect(d.markExtracting).toHaveBeenCalledWith('m', 'j')
     expect(d.saveText).toHaveBeenCalledWith('m', 'j', 'DOCUMENT TEXT')
-    expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j')
+    expect(d.enqueueAgentRun).toHaveBeenCalledWith('m', 'j', undefined)
     expect(d.failJob).not.toHaveBeenCalled()
   })
   it('#458: стадия извлечения БОЛЬШЕ НЕ трогает Диск и не удаляет байты', async () => {

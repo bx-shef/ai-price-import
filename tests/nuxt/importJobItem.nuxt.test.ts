@@ -105,13 +105,14 @@ describe('ImportJobItem', () => {
     framed.value = false
   })
 
-  it('terminal job → «убрать из списка» button emits remove with the jobId', async () => {
-    const w = await mountSuspended(ImportJobItem, { props: { job: job('done', '{"entityId":5,"warnings":[],"errors":[]}') } })
-    const btn = w.findAll('button').find(b => (b.attributes('aria-label') || '').startsWith('Убрать из списка'))
-    expect(btn).toBeTruthy()
-    await btn!.trigger('click')
-    expect(w.emitted('remove')).toBeTruthy()
-    expect(w.emitted('remove')![0]).toEqual(['j1'])
+  it('кнопки «убрать из списка» НЕТ — историю смотрят в журнале', async () => {
+    // ⚠ Решение владельца 10.08.2026: отдельная кнопка «спрятать одну строку» не нужна — лента
+    // текущей сессии живёт в памяти открытой страницы и умирает вместе с ней, а история импортов
+    // целиком в делах портала. Этим же закрыт #479: ключ ожидания мог зависнуть навсегда только
+    // если строку убрали из списка, а убрать её больше нечем.
+    const w = await mountSuspended(ImportJobItem, { props: { job: job('done') } })
+    expect(w.html()).not.toContain('Убрать из списка')
+    expect(w.emitted('remove')).toBeUndefined()
   })
 
   it('in-flight job → no «убрать из списка» button (can\'t drop an active row)', async () => {
@@ -148,8 +149,10 @@ describe('ImportJobItem: истёкший статус (#268)', () => {
     expect(text).not.toContain('Извлечение текста') // степпер только у незавершённых
   })
 
-  it('кнопка «Убрать из списка» доступна — строку можно самому почистить', async () => {
+  it('кнопки «Убрать из списка» нет и у истёкшей строки', async () => {
+    // ⚠ Прежде тут была обратная проверка: у потерянного статуса кнопка была ЕДИНСТВЕННЫМ способом
+    // убрать строку. Теперь убирать нечего — лента умирает вместе с вкладкой, а история в делах.
     const w = await mountSuspended(ImportJobItem, { props: { job: job('expired', EXPIRED) } })
-    expect(w.find('button[aria-label^="Убрать из списка"]').exists()).toBe(true)
+    expect(w.find('button[aria-label^="Убрать из списка"]').exists()).toBe(false)
   })
 })

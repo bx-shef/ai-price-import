@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
-import { appendPage, nextStart, shouldLoadMore, type JournalRow } from '~/utils/journalView'
+import type { JournalRow } from '~/utils/journalView'
+import { JOURNAL_PAGE_SIZE } from '~/config/journal'
 import { buildFrameHeaders, fetchErrorMessage, frameAuthMessage } from '~/utils/frameHeaders'
 
 // Журнал импортов: загрузка страниц с сервера (#458). Реактивная обёртка над чистыми правилами
@@ -7,6 +8,8 @@ import { buildFrameHeaders, fetchErrorMessage, frameAuthMessage } from '~/utils/
 
 export function useImportJournal() {
   const rows = ref<JournalRow[]>([])
+  /** Номер показанной страницы, с нуля. Постранично, а не подкачкой (#495). */
+  const page = ref(0)
   const loading = ref(false)
   const hasMore = ref(true)
   /** Отказ загрузки. ОТДЕЛЬНО от пустого списка: «импортов не было» и «не смогли посмотреть» —
@@ -16,7 +19,9 @@ export function useImportJournal() {
    *  ничего — ни «пусто», ни «вот список». */
   const loaded = ref(false)
 
-  const canLoadMore = computed(() => shouldLoadMore({ hasMore: hasMore.value, loading: loading.value, failed: !!loadError.value }))
+  /** Есть ли предыдущая/следующая страница — этим и живут кнопки навигации. */
+  const canPrev = computed(() => page.value > 0 && !loading.value)
+  const canNext = computed(() => hasMore.value && !loading.value && !loadError.value)
 
   async function load(): Promise<void> {
     // ⚠ Проверка ЗДЕСЬ, а не только у наблюдателя прокрутки: кнопку «Показать ещё» человек может
@@ -36,11 +41,18 @@ export function useImportJournal() {
         return
       }
       const res = await $fetch<{ rows: JournalRow[], hasMore: boolean }>('/api/import/journal', {
-        query: { start: nextStart(rows.value) },
+        // При перечитывании берём ПЕРВУЮ страницу, не продолжение: список замещается целиком.
+        // Страница адресуется НОМЕРОМ, а не длиной показанного списка: при постраничной навигации
+        // список каждый раз замещается, и «сколько уже показано» перестало отвечать на вопрос «где
+        // мы находимся» — на второй странице оно снова равно нулю.
+        query: { start: page.value * JOURNAL_PAGE_SIZE },
         headers,
         retry: 0
       })
-      rows.value = appendPage(rows.value, res.rows ?? [])
+      // Страница ЗАМЕЩАЕТ прежнюю — но ровно в момент, когда она уже пришла: обнуление до запроса
+      // на мгновение опустошало множество известных заданий, по которому отсеиваются живые строки
+      // (#494), и уже вытесненная строка вспыхивала обратно.
+      rows.value = res.rows ?? []
       hasMore.value = !!res.hasMore
     } catch (e) {
       loadError.value = fetchErrorMessage(e, 'Не удалось загрузить журнал импортов.')
@@ -56,13 +68,28 @@ export function useImportJournal() {
     await load()
   }
 
+  /** Соседняя страница. Отрицательный номер невозможен — кнопка выключена, но правило здесь. */
+  async function goto(next: number): Promise<void> {
+    if (loading.value) return
+    page.value = Math.max(0, next)
+    await load()
+  }
+
   /** Перечитать с начала — например, после нового импорта. */
   async function reload(): Promise<void> {
-    rows.value = []
+    // ⚠ Прежние строки НЕ стираются до прихода новых (разбор #493). Обнуление списка перед запросом
+    // на мгновение опустошало множество известных заданий, а живые строки отсеиваются именно по
+    // нему (#494) — уже вытесненная строка вспыхивала обратно, и человек видел свой документ
+    // дважды ровно в тот момент, когда пачка завершилась и журнал перечитывался.
+    // ⚠ Перечитываем ТОЛЬКО первую страницу. Человек, читающий третью (то есть старые импорты),
+    // не должен телепортироваться в начало из-за того, что где-то доработалась пачка: новой записи
+    // на его странице всё равно нет, а место чтения он теряет (разбор #495). На первой странице
+    // перечитывание обязательно — иначе только что законченный импорт не появится вовсе.
+    if (page.value !== 0) return
     hasMore.value = true
     loadError.value = ''
     await load()
   }
 
-  return { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, reload }
+  return { rows, loading, hasMore, loadError, loaded, page, canPrev, canNext, load, goto, retry, reload }
 }

@@ -295,10 +295,10 @@ async function startImport(): Promise<void> {
       }
     } else {
       notice.value = failed
-        ? `Готово: успешно ${doneOk}, с ошибкой ${failed}. Подробности — ниже, в «Последних операциях», и на строках выше.`
+        ? `Готово: успешно ${doneOk}, с ошибкой ${failed}. Подробности — ниже, в журнале, и на строках выше.`
         : sentTotal === 1
-          ? 'Готово: файл обработан. Результат — ниже, в «Последних операциях».'
-          : `Готово: все ${sentTotal} ${pluralRu(sentTotal, ['файл', 'файла', 'файлов'])} обработаны. Результаты — ниже, в «Последних операциях».`
+          ? 'Готово: файл обработан. Результат — ниже, в журнале.'
+          : `Готово: все ${sentTotal} ${pluralRu(sentTotal, ['файл', 'файла', 'файлов'])} обработаны. Результаты — ниже, в журнале.`
     }
   } catch {
     // `upload()` handles its own errors today, so reaching here means something unexpected broke.

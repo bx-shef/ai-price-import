@@ -372,7 +372,7 @@ export function liveFileExtractDeps(infra: LiveInfra): FileExtractDeps {
     // only for extension-based format routing (planExtraction).
     extractText: (m, j, fileId) => extractText(uploadPath(m, j), fileId, infra.runners),
     saveText: (m, j, text) => saveText(m, j, text, infra.query),
-    enqueueAgentRun: (m, j) => enqueueAgent({ memberId: m, jobId: j }),
+    enqueueAgentRun: (m, j, manualTarget) => enqueueAgent({ memberId: m, jobId: j, ...(manualTarget ? { manualTarget } : {}) }),
     failJob: async (m, j, reason) => {
       await setJobStatus(m, j, 'error', reason, jobRedis)
       await notifyImportFailure(infra, m, j, reason, { rest: sharedRest })

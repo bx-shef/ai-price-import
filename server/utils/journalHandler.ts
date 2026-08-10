@@ -72,11 +72,17 @@ export async function journalRequest(rawStart: unknown, deps: JournalDeps): Prom
     const res = await call('crm.activity.list', params)
     // Транспорт SDK разворачивает `result` сам, но список может прийти и объектом с `items` —
     // принимаем обе формы, потому что молчаливо пустой журнал неотличим от «импортов не было».
-    const rows = mapJournalRows(Array.isArray(res) ? res : (res as { items?: unknown } | null)?.items)
+    const raw = Array.isArray(res) ? res : (res as { items?: unknown } | null)?.items
+    const rows = mapJournalRows(raw)
     // ⚠ «Есть ещё» считается по РАЗМЕРУ ПОЛУЧЕННОЙ страницы, а не по `total` портала: выборка
     // сужена нашим маркером и сотрудником, и `total` описывает не то множество, которое видит
     // человек. Сравнение нестрогое: портал вправе вернуть ровно страницу и иметь продолжение.
-    return { status: 200, outcome: 'ok', body: { rows, hasMore: rows.length >= JOURNAL_PAGE_SIZE, start: params.start } }
+    // ⚠ «Есть ещё» считается по СЫРОЙ странице портала, а не по отфильтрованной (разбор #495):
+    // `mapJournalRows` выбрасывает дела без нашего маркера (его могли стереть руками), и по
+    // отфильтрованной длине полная страница выглядела бы неполной — кнопка «Дальше» гасла, и
+    // остаток журнала становился недостижим НАВСЕГДА, без единого сообщения.
+    const pageSize = Array.isArray(raw) ? raw.length : 0
+    return { status: 200, outcome: 'ok', body: { rows, hasMore: pageSize >= JOURNAL_PAGE_SIZE, start: params.start } }
   } catch {
     return { status: 502, outcome: 'upstream_error', body: { error: 'journal unavailable' } }
   }

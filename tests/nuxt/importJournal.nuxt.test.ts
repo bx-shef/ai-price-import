@@ -34,25 +34,43 @@ const row = (over: Partial<JournalRow> = {}): JournalRow => ({
   createdAt: '2024-08-07T20:28:00+03:00',
   ownerTypeId: 4,
   ownerId: 55,
+  summary: { supplier: 'ООО Ромашка', rows: 14, amount: '1 200,00 BYN' },
+  fileUrl: 'https://portal.bitrix24.by/bitrix/tools/crm_show_file.php?fileId=1',
+  colorId: '4',
   ...over
 })
 
-async function render(rows: JournalRow[]) {
+async function render(rows: JournalRow[], props: Record<string, unknown> = {}, loaded = true) {
   vi.resetModules()
-  mountWith(rows)
+  const { state } = mountWith(rows)
+  state.loaded.value = loaded
   const ImportJournal = (await import('~/components/ImportJournal.vue')).default
-  return mountSuspended(ImportJournal)
+  return mountSuspended(ImportJournal, { props })
 }
 
+/** Живая строка идущего импорта — то, что раньше жило в отдельном списке «Последние операции». */
+const live = (over: Record<string, unknown> = {}) => ({
+  jobId: 'job-1',
+  status: 'extracting',
+  fileName: 'Накладная №5.pdf',
+  result: '',
+  ...over
+})
+
 describe('#462: строка журнала как дело Битрикс24', () => {
-  it('плитка даты СКРЫТА от программ чтения, а дата объявлена словами и С ГОДОМ', async () => {
-    // ⚠ Без `aria-hidden` то же время произносится дважды подряд («7 августа 20:28» и следом
-    // подпись). ⚠ Год обязан быть в подписи: журнал строится из дел портала, которые ничем не
-    // чистятся, и через год «7 августа» не отвечает на вопрос, когда это было.
+  it('дата живёт ТОЛЬКО в плитке, и она объявлена программе чтения — с годом', async () => {
+    // ⚠ Строка «7 августа 2024, 20:28» под заголовком убрана (решение владельца 10.08.2026): дата
+    // уже видна в плитке, а повтор словами занимал строку в каждой записи. Но плитка — три обрывка
+    // («7», «авг», «20:28»), и вслух они читаются как три бессвязных числа; прежний `aria-hidden`
+    // теперь означал бы, что даты для незрячих нет вовсе. Поэтому подпись переехала в `aria-label`.
+    // ⚠ Год обязан быть: журнал строится из дел портала, которые ничем не чистятся, и через год
+    // «7 августа» не отвечает на вопрос, когда это было.
     const w = await render([row()])
-    const tile = w.find('[aria-hidden="true"] span')
+    const tile = w.find('[role="img"]')
     expect(tile.exists()).toBe(true)
-    expect(w.text()).toContain('7 августа 2024, 20:28')
+    expect(tile.attributes('aria-label')).toContain('7 августа 2024, 20:28')
+    // Видимого дубля больше нет — иначе правка не сделала бы ничего.
+    expect(w.text()).not.toContain('7 августа 2024, 20:28')
   })
 
   it('нераспознанная дата → плитки НЕТ и страница не падает', async () => {
@@ -66,7 +84,7 @@ describe('#462: строка журнала как дело Битрикс24', (
   it('исход подписан СЛОВАМИ, а не только цветом', async () => {
     const clean = await render([row()])
     expect(clean.text()).toContain('Без замечаний')
-    const dirty = await render([row({ clean: false })])
+    const dirty = await render([row({ colorId: '7' })])
     expect(dirty.text()).toContain('С замечаниями')
   })
 
@@ -83,5 +101,61 @@ describe('#462: строка журнала как дело Битрикс24', (
     const w = await render([row()])
     const btn = w.findAll('button').find(b => b.text().includes('Открыть карточку'))
     expect(btn?.classes().some(c => c.startsWith('focus-visible:'))).toBe(true)
+  })
+})
+
+// #494. Двух списков об одном и том же больше нет: идущий импорт показывается В ЖУРНАЛЕ той же
+// строкой, только с индикатором вместо даты, а по завершении уступает место записи о деле.
+describe('#494: одна лента вместо двух списков', () => {
+  it('идущий импорт виден в журнале', async () => {
+    const w = await render([], { live: [live()] })
+    expect(w.text()).toContain('Накладная №5.pdf')
+    expect(w.text()).toContain('идёт')
+  })
+
+  it('запись журнала ВЫТЕСНЯЕТ живую строку того же задания — дубля нет', async () => {
+    // ⚠ Несущее утверждение слияния. Как только импорт завершился, журнал перечитывается и та же
+    // загрузка появляется в нём делом. Без отсева по идентификатору задания один документ висел бы
+    // в ленте дважды — сверху «готово», ниже дело о нём же, — и это читалось бы как два импорта.
+    const w = await render([row({ jobId: 'job-1', title: 'Дело по накладной' })], {
+      live: [live({ jobId: 'job-1', status: 'done', result: 'ok' })]
+    })
+    expect(w.text()).toContain('Дело по накладной')
+    expect(w.text()).not.toContain('в журнал') // подпись плитки живой строки
+  })
+
+  it('живая строка НЕ прячется под заглушкой ещё не загруженного журнала', async () => {
+    // ⚠ Иначе человек нажал «Импортировать» и вместо своих строк видит серые прямоугольники, пока
+    // портал отвечает на запрос журнала: загрузка истории не вправе прятать происходящее сейчас.
+    const w = await render([], { live: [live()] }, false)
+    expect(w.text()).toContain('Накладная №5.pdf')
+  })
+
+  it('пустое состояние молчит, пока идёт загрузка файла', async () => {
+    // «Вы ещё ничего не импортировали» поверх собственной загрузки — прямая ложь о состоянии.
+    const w = await render([], { uploading: true })
+    expect(w.text()).not.toContain('Вы ещё ничего не импортировали')
+    expect(w.text()).toContain('Отправляем файл…')
+  })
+})
+
+// Разбор мутациями показал две дыры: обе «проходили бесследно», то есть возврат дефекта не ронял
+// ни одного теста. Обе закрыты здесь.
+describe('#495: гарантии строки журнала', () => {
+  it('ссылка на файл открывается безопасно — target и rel вместе', async () => {
+    // ⚠ Без `rel` открытая вкладка получает ссылку на наше окно (`window.opener`) и может им
+    // управлять. Адрес портальный, но страница по нему — не наша, а `target="_blank"` без `rel`
+    // это классическая дыра, которую видно только в разметке.
+    const w = await render([row()])
+    const a = w.findAll('a').find(x => x.text().includes('Исходный файл'))
+    expect(a, 'ссылки на файл нет вовсе').toBeTruthy()
+    expect(a!.attributes('target')).toBe('_blank')
+    expect(a!.attributes('rel')).toContain('noopener')
+    expect(a!.attributes('rel')).toContain('noreferrer')
+  })
+
+  it('файла нет — ссылки нет, а не пустая кнопка', async () => {
+    const w = await render([row({ fileUrl: '' })])
+    expect(w.findAll('a').some(x => x.text().includes('Исходный файл'))).toBe(false)
   })
 })

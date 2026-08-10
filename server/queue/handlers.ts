@@ -158,7 +158,7 @@ export interface FileExtractDeps {
   extractText: (memberId: string, jobId: string, fileId: string) => Promise<string>
   /** Persist the raw text for agent-run (scoped by job). */
   saveText: (memberId: string, jobId: string, text: string) => Promise<void>
-  enqueueAgentRun: (memberId: string, jobId: string) => Promise<void>
+  enqueueAgentRun: (memberId: string, jobId: string, manualTarget?: TargetRef | null) => Promise<void>
   /** Mark the job failed (records an error status the operator sees). */
   failJob: (memberId: string, jobId: string, reason: string) => Promise<void>
   /** Optional progress: mark the job 'extracting' at entry (UI stage indicator). */
@@ -188,7 +188,8 @@ export async function handleFileExtractJob(job: ExtractJob, deps: FileExtractDep
   // ⚠ Архивирования на Диск здесь БОЛЬШЕ НЕТ (#458): документ вкладывается в дело таймлайна на
   // стадии crm-sync, поэтому вторая копия на Диске портала стала лишней. Байты остаются на месте
   // до конца конвейера — их удаляет терминальная стадия, а не эта.
-  await deps.enqueueAgentRun(job.memberId, job.jobId)
+  // Выбор цели передаётся дальше вместе с задачей (см. `ExtractJob`), а не перечитывается из стора.
+  await deps.enqueueAgentRun(job.memberId, job.jobId, job.manualTarget)
   return { ok: true }
 }
 
@@ -270,7 +271,12 @@ export async function handleAgentRunJob(job: AgentJob, deps: AgentRunDeps): Prom
     // всего — разбирать нечего, человек открывает оригинал.
     return { ok: false, handedOn: true }
   }
-  const manualOverride = deps.getManualOverride ? await deps.getManualOverride(job.memberId, job.jobId) : undefined
+  // ⚠ Сначала — то, что приехало С ЗАДАЧЕЙ, и только потом запись задания. Порядок именно такой:
+  // запись живёт ограниченный срок и при долгом ожидании в очереди могла истечь, а «ничего не
+  // вернулось» неотличимо от «человек ничего не выбирал» — документ ушёл бы по правилам, молча и
+  // не туда, куда его отправляли. Чтение из стора оставлено для задач, поставленных ДО этой правки
+  // (они уже лежат в очереди без нового поля) и для путей, где полезная нагрузка её не несёт.
+  const manualOverride = job.manualTarget ?? (deps.getManualOverride ? await deps.getManualOverride(job.memberId, job.jobId) : undefined)
   const signals: RoutingSignals = {
     ...(document.documentType ? { documentType: document.documentType } : {}),
     text: text.slice(0, MAX_ROUTING_TEXT),

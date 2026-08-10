@@ -29,13 +29,12 @@ definePageMeta({ layout: 'clear' })
 // a blocked page is never fetched, so its noindex is never read (see server/utils/seoFiles.ts).
 useHead({ title: APP_NAME, meta: [{ name: 'robots', content: 'noindex' }] })
 
-const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob } = useImport()
-// Two-step clear (no window.confirm), same pattern as the metrics reset.
-const confirmClear = ref(false)
-function doClearList(): void {
-  clearList()
-  confirmClear.value = false
-}
+// ⚠ Ни «Очистить список», ни крестика у строки больше НЕТ (решение владельца 10.08.2026): историю
+// импортов смотрят в журнале, то есть в делах портала, а лента текущей сессии живёт в памяти
+// открытой страницы и умирает вместе с ней — прятать из неё отдельные строки незачем. Заодно этим
+// закрыт #479: ключ ожидания мог остаться навсегда только если строку убрали из списка, а убрать её
+// больше нечем.
+const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll } = useImport()
 const { counters, savings, moneyBlocker, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
@@ -523,9 +522,13 @@ watch(jobs, (list) => {
               :title="error"
             />
 
-            <!-- STATUS: recent operations with compact inline counts. Shown only once there's history to show
-           (or a file is uploading) — a brand-new operator on first open sees just the dropzone + savings,
-           not an empty «Последние операции» block. -->
+            <!-- ⚠ Шапка ЛЕНТЫ (#494). Список теперь ОДИН — журнал, — а здесь остаются счётчики и
+                 «Обновить». Показываем, лишь когда есть о чём: на свежем портале человек видит
+                 дропзону и экономию, а не пустую строку со словом «готово: 0».
+                 ⚠ Заголовок «Загрузки в этой вкладке», а НЕ «текущая загрузка» (разбор): убирать
+                 строки больше нечем, поэтому счёт идёт по всем загрузкам открытой вкладки и после
+                 окончания пачки не обнуляется. Слово «текущая» обещало бы обратное — человек читал
+                 бы «готово: 12» как результат последней пачки из двух файлов. -->
             <div
               v-if="jobs.length || uploading || listError || listWarning"
               class="mt-6 mb-2 flex flex-wrap items-center justify-between gap-2 transition-opacity"
@@ -533,7 +536,7 @@ watch(jobs, (list) => {
             >
               <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h2 class="text-base font-semibold">
-                  Последние операции
+                  Загрузки в этой вкладке
                 </h2>
                 <span
                   v-if="jobs.length"
@@ -553,32 +556,6 @@ watch(jobs, (list) => {
                 </span>
               </div>
               <div class="flex items-center gap-2">
-                <template v-if="jobs.length && !confirmClear">
-                  <B24Button
-                    label="Очистить список"
-                    color="air-tertiary-no-accent"
-                    size="xs"
-                    :disabled="busy"
-                    @click="() => { confirmClear = true }"
-                  />
-                </template>
-                <template v-else-if="confirmClear">
-                  <span class="text-xs text-(--ui-color-base-3)">Убрать завершённые строки из списка? Ещё обрабатываемые останутся, документы в CRM — тоже.</span>
-                  <B24Button
-                    label="Да, очистить"
-                    color="air-primary-alert"
-                    size="xs"
-                    :disabled="busy"
-                    @click="doClearList"
-                  />
-                  <B24Button
-                    label="Отмена"
-                    color="air-tertiary-no-accent"
-                    size="xs"
-                    :disabled="busy"
-                    @click="() => { confirmClear = false }"
-                  />
-                </template>
                 <B24Button
                   :icon="RefreshIcon"
                   color="air-tertiary-no-accent"
@@ -591,55 +568,16 @@ watch(jobs, (list) => {
               </div>
             </div>
 
-            <!-- НЕ блокируется на время прогона: результаты обязаны читаться по ходу импорта — ради
-               этого страница и ждёт. Блокировка остаётся на настройках/метриках ниже. -->
-            <B24Card
-              v-if="jobs.length || uploading || listError || listWarning"
-              variant="outline"
-              class="transition-opacity"
-              :b24ui="{ body: 'p-0 sm:p-0' }"
-            >
-              <ul class="divide-y divide-(--ui-color-base-5)">
-                <!-- Immediate feedback while the POST is in flight, before the job row appears. -->
-                <li
-                  v-if="uploading"
-                  class="flex items-center gap-2 p-3 text-sm text-(--ui-color-base-3)"
-                >
-                  <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-                  Отправляем файл…
-                </li>
-                <ImportJobItem
-                  v-for="job in jobs"
-                  :key="job.jobId"
-                  :job="job"
-                  @remove="removeJob"
-                />
-                <!-- Сервер ответил, но не по всем заданиям (#260): не ошибка — предупреждение, поэтому
-                 показываем и при непустом списке. -->
-                <li
-                  v-if="listWarning"
-                  class="p-3 text-sm text-(--ui-color-base-3)"
-                >
-                  {{ listWarning }}
-                </li>
-                <!-- Пустое состояние с причиной: «историю не удалось получить» и «истории нет» больше не
-                 выглядят одинаково (#268). Кнопка «Обновить» в шапке блока теперь тоже видна. -->
-                <li
-                  v-if="!jobs.length && !uploading && listError"
-                  class="p-3 text-sm text-(--ui-color-base-3)"
-                >
-                  Статус загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
-                  откройте приложение заново.
-                </li>
-              </ul>
-            </B24Card>
-
-            <!-- Журнал импортов (#458): история живёт в делах CRM, а не у нас. Стоит ПОД списком
-                 текущей пачки и НАД экономией: сначала «что происходит сейчас», потом «что было»,
-                 и только потом сводные числа. -->
+            <!-- ЕДИНАЯ ЛЕНТА (#458 + #494): история живёт в делах CRM, а не у нас, и идущий импорт
+                 показывается ТУТ ЖЕ — той же строкой, только с индикатором вместо даты. Двух списков
+                 об одном и том же больше нет: «Последние операции» устарели и слиты сюда. -->
             <ImportJournal
               ref="journalRef"
               class="mt-4"
+              :live="jobs"
+              :uploading="uploading"
+              :live-warning="listWarning"
+              :live-error="listError"
             />
 
             <!-- Экономия: две крупные цифры в строку, справа — ссылка на подробные метрики и

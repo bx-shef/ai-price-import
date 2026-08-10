@@ -174,13 +174,26 @@ export function useImport() {
       // A network error (no status) keeps it: the server may well have committed.
       const status = e as { statusCode?: number, status?: number, response?: { status?: number } }
       const code = status?.statusCode ?? status?.status ?? status?.response?.status
-      if (jobId && typeof code === 'number' && code >= 400) removeJob(jobId)
+      if (jobId && typeof code === 'number' && code >= 400) dropJob(jobId)
       // The staging loop needs more than «не вышло»: on a rate-limit refusal it must stop the batch
       // and show the server's own wording (it says how long to wait), not «проверьте связь».
       return classifyUploadError(e, msg)
     } finally {
       uploading.value = false
     }
+  }
+
+  /**
+   * Убрать строку из ленты — ВНУТРЕННЕЕ, наружу не отдаётся.
+   *
+   * ⚠ Единственное применение: фантомная строка после ОПРЕДЕЛЁННОГО отказа загрузки (сервер ответил
+   * кодом — задания не существует). Наружу этой ручки больше нет (решение владельца 10.08.2026):
+   * крестик у строки и «Очистить список» убраны, историю смотрят в журнале. Это же закрывает #479 —
+   * ключ ожидания мог зависнуть навсегда только если строку убрали из списка, а отказавшая загрузка
+   * в ожидание и не попадает: туда идут только принятые сервером задания.
+   */
+  function dropJob(jobId: string): void {
+    jobs.value = jobs.value.filter(j => j.jobId !== jobId)
   }
 
   /** Add a job row to the in-memory list (newest first). Idempotent by jobId — a retried upload of
@@ -222,16 +235,5 @@ export function useImport() {
     scheduleNext()
   }
 
-  /** Drop every finished row from the visible list (page memory only — nothing persists anywhere). */
-  function clearList(): void {
-    jobs.value = jobs.value.filter(j => !jobStatusMeta(j.status).terminal)
-  }
-
-  /** Forget a single row (page memory only). The server keeps only ephemeral status; this just stops
-   *  the page polling/showing that jobId. */
-  function removeJob(jobId: string): void {
-    jobs.value = jobs.value.filter(j => j.jobId !== jobId)
-  }
-
-  return { jobs, loading, uploading, error, listError, listWarning, hasActive, refresh, refreshNow, upload, track, jobDone, startAutoPoll, stopAutoPoll, clearList, removeJob }
+  return { jobs, loading, uploading, error, listError, listWarning, hasActive, refresh, refreshNow, upload, track, jobDone, startAutoPoll, stopAutoPoll }
 }
