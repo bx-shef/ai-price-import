@@ -115,7 +115,9 @@ const stepDot: Record<string, string> = {
 
     <div class="flex min-w-0 flex-1 flex-col gap-2.5">
       <div class="flex items-center justify-between gap-3">
-        <p class="min-w-0 flex-1 truncate text-sm font-medium">
+        <!-- ⚠ Перенос, а не `truncate` (#507): имя файла на телефоне обрезалось, и понять, о каком
+               документе строка, было нельзя. То же правило, что у строки журнала. -->
+        <p class="min-w-0 flex-1 text-sm font-medium break-words">
           {{ job.fileName || 'документ' }}
         </p>
         <div class="flex shrink-0 items-center gap-2">

@@ -5,6 +5,7 @@ import AttachIcon from '@bitrix24/b24icons-vue/outline/AttachIcon'
 import { MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_GENERIC_ERROR, formatBytes, validateUploadFile, type UploadOutcome } from '~/utils/importUpload'
 import { FORMATS_HUMAN } from '~/config/uploadFormats'
 import { MAX_ITEMS } from '~/utils/extractedDocument'
+import { noticeColor, runNoticeKind, type NoticeKind } from '~/utils/importNotice'
 import { pluralRu, type JobStatus } from '~/utils/jobStatus'
 import type { TargetRef } from '~/types/mapping'
 import { readTarget, targetMemoryKey, writeTarget } from '~/utils/targetMemory'
@@ -67,6 +68,19 @@ let nextId = 1
 const importing = ref(false)
 watch(importing, v => emit('update:busy', v)) // notify the parent to lock/unlock the rest of the UI
 const notice = ref('')
+/**
+ * Вид сообщения — заводится ВМЕСТЕ с текстом (#507).
+ *
+ * ⚠ Отдельного присваивания `notice.value` в коде быть не должно: цвет полосы выбирался единственным
+ * условием «идёт импорт», и законченная пачка была зелёной даже когда не прошло НИ ОДНОГО файла.
+ * Помощник `setNotice` делает так, что забыть вид попросту негде — текст без вида не поставить.
+ */
+const noticeKind = ref<NoticeKind>('info')
+const noticeColorRole = computed(() => noticeColor(noticeKind.value))
+function setNotice(text: string, kind: NoticeKind = 'info') {
+  notice.value = text
+  noticeKind.value = kind
+}
 // ONE target for the whole batch (owner ask — per-file pickers dropped): chosen while staging,
 // frozen for the duration of the run.
 //
@@ -129,7 +143,7 @@ function onPicked(files: File[] | null | undefined): void {
   // doesn't build an unbounded run. Excess is dropped with a notice — never silently.
   const room = MAX_UPLOAD_FILES - staged.value.length
   if (room <= 0) {
-    notice.value = `В списке уже ${MAX_UPLOAD_FILES} файлов — это максимум. Нажмите «Импортировать» или уберите лишние файлы, чтобы добавить новые.`
+    setNotice(`В списке уже ${MAX_UPLOAD_FILES} файлов — это максимум. Нажмите «Импортировать» или уберите лишние файлы, чтобы добавить новые.`)
     return
   }
   const known = new Set(staged.value.map(s => sig(s.file)))
@@ -155,13 +169,13 @@ function onPicked(files: File[] | null | undefined): void {
   const notes: string[] = []
   if (dupes) notes.push(`${dupes} уже в списке — пропущено`)
   if (added < files.length - dupes) notes.push(`за раз можно не больше ${MAX_UPLOAD_FILES} файлов`)
-  notice.value = notes.length ? `Добавлено ${added} из ${files.length}: ${notes.join('; ')}.` : ''
+  setNotice(notes.length ? `Добавлено ${added} из ${files.length}: ${notes.join('; ')}.` : '')
 }
 // Dropping rows invalidates the notice — once the list the notice talks about is gone, keeping it
 // would show a stale message over an unrelated, freshly staged batch.
 function remove(id: number): void {
   staged.value = staged.value.filter(s => s.id !== id)
-  if (!staged.value.length) notice.value = ''
+  if (!staged.value.length) setNotice('')
 }
 // Uploadable rows: queued, or a retryable error (a network failure) — but NOT a pre-validation
 // failure (invalid), which can never succeed and must not be re-sent.
@@ -226,7 +240,7 @@ async function startImport(): Promise<void> {
       if (!staged.value.includes(s)) continue
       s.status = 'uploading'
       s.error = undefined
-      notice.value = `Отправляем «${s.file.name}»…`
+      setNotice(`Отправляем «${s.file.name}»…`, 'running')
       // The row's stable key is the desired jobId → a retry of THIS row reuses it and can't create a
       // duplicate CRM entity (server keys the job on it; crm-sync marker dedups).
       const outcome = await props.upload(s.file, runTarget, s.key)
@@ -270,7 +284,7 @@ async function startImport(): Promise<void> {
       const line = props.listError
         ? `Связь с порталом потеряна — пробуем восстановить… (${props.listError})`
         : `Обрабатываем: осталось ${waitingFor} из ${sentTotal}. Результаты появляются ниже.`
-      if (notice.value !== line) notice.value = line
+      if (notice.value !== line) setNotice(line, 'running')
       // The parent's poll self-stops after a streak of failures; the wait phase would then hang in
       // silence. While the run is active we own the retry: every ~5 s poke refreshNow(), which
       // resets the streak and re-arms the loop (or refreshes the error text if still down).
@@ -286,25 +300,28 @@ async function startImport(): Promise<void> {
       const inFlight = awaiting.size
       // Honesty over comfort: the server HAS the sent files and will finish them — a cancel cannot
       // recall a job already accepted. What it does stop: uploading the rest and holding the page.
-      notice.value = inFlight
+      setNotice(inFlight
         ? `Импорт отменён. Уже отправленные (${inFlight} ${pluralRu(inFlight, ['файл', 'файла', 'файлов'])}) сервер дообработает — их результат появится ниже. Остальные остались в списке.`
-        : 'Импорт отменён. Неотправленные файлы остались в списке.'
+        : 'Импорт отменён. Неотправленные файлы остались в списке.', 'cancelled')
       // Sent rows are already gone from the list; a row caught mid-upload goes back to «в очереди».
       for (const s of staged.value) {
         if (s.status === 'uploading') s.status = 'queued'
       }
     } else {
-      notice.value = failed
+      // ⚠ Вид считается ПО ЧИСЛАМ, а не по признаку «импорт закончился»: именно это и было
+      // дефектом — «успешно 0, с ошибкой 1» показывалось зелёным.
+      setNotice(failed
         ? `Готово: успешно ${doneOk}, с ошибкой ${failed}. Подробности — ниже, в журнале, и на строках выше.`
         : sentTotal === 1
           ? 'Готово: файл обработан. Результат — ниже, в журнале.'
-          : `Готово: все ${sentTotal} ${pluralRu(sentTotal, ['файл', 'файла', 'файлов'])} обработаны. Результаты — ниже, в журнале.`
+          : `Готово: все ${sentTotal} ${pluralRu(sentTotal, ['файл', 'файла', 'файлов'])} обработаны. Результаты — ниже, в журнале.`,
+      runNoticeKind({ ok: doneOk, failed }))
     }
   } catch {
     // `upload()` handles its own errors today, so reaching here means something unexpected broke.
     // Swallow it into a visible notice instead of letting it escape the click handler as an
     // unhandled rejection — the rows below are reset to a retryable state either way.
-    notice.value = 'Импорт прервался. Проверьте связь и нажмите «Импортировать» ещё раз.'
+    setNotice('Импорт прервался. Проверьте связь и нажмите «Импортировать» ещё раз.', 'failed')
   } finally {
     importing.value = false // never leave the page locked, whatever happened above
     if (typeof window !== 'undefined') window.removeEventListener('beforeunload', beforeUnload)
@@ -493,7 +510,7 @@ function cancelImport(): void {
     <B24Alert
       v-if="notice && !staged.length && !importing"
       class="mt-3"
-      :color="importing ? 'air-primary' : 'air-primary-success'"
+      :color="noticeColorRole"
       size="sm"
       :title="notice"
       role="status"
