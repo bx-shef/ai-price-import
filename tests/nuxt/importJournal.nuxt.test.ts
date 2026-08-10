@@ -34,6 +34,9 @@ const row = (over: Partial<JournalRow> = {}): JournalRow => ({
   createdAt: '2024-08-07T20:28:00+03:00',
   ownerTypeId: 4,
   ownerId: 55,
+  description: '[B]Поставщик:[/B] ООО Ромашка\n[B]Позиций:[/B] 14\n[B]Сумма:[/B] 1 200,00 BYN',
+  fileUrl: 'https://portal.bitrix24.by/bitrix/tools/crm_show_file.php?fileId=1',
+  colorId: '4',
   ...over
 })
 
@@ -81,7 +84,7 @@ describe('#462: строка журнала как дело Битрикс24', (
   it('исход подписан СЛОВАМИ, а не только цветом', async () => {
     const clean = await render([row()])
     expect(clean.text()).toContain('Без замечаний')
-    const dirty = await render([row({ clean: false })])
+    const dirty = await render([row({ colorId: '7' })])
     expect(dirty.text()).toContain('С замечаниями')
   })
 

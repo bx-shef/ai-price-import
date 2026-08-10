@@ -17,12 +17,28 @@ import { activityMarkerFilter } from './todoActivity'
 // поставщиков — на портале, где отдел кадров и склад работают в одной CRM, общий список выдал бы
 // одним сотрудникам содержимое работы других. Ответственный у дела — тот, кто загрузил документ.
 
-/** Сколько дел отдаём за раз. Журнал — это «что я грузил недавно», а не архив за всё время. */
-export const JOURNAL_PAGE_SIZE = 20
+/** Сколько дел на СТРАНИЦЕ. Решение владельца 10.08.2026 — по 50 и постраничная навигация вместо
+ *  бесконечной прокрутки: она предсказуема, работает с клавиатуры и не требует своего контейнера
+ *  прокрутки, который во фрейме портала мешал. ⚠ Портал отдаёт страницами по 50, так что это ещё и
+ *  ровно один запрос на страницу. */
+export const JOURNAL_PAGE_SIZE = 50
 
 /** Поля дела, которых хватает списку. Просим ЯВНО: `select:['*']` тянет и описание с телом
  *  документа, а оно в журнале не нужно и раздувает ответ на каждую строку. */
-export const JOURNAL_SELECT = ['ID', 'SUBJECT', 'COMPLETED', 'CREATED', 'ORIGIN_ID', 'OWNER_TYPE_ID', 'OWNER_ID'] as const
+/**
+ * ⚠ `DESCRIPTION`, `FILES` и `SETTINGS` добавлены по ЖИВОЙ ПРОВЕРКЕ 10.08.2026 (портал b24-hrbvzq):
+ * `crm.activity.list` отдаёт их при ЯВНОМ `select` — описание целиком, вложение парой `id`+`url`,
+ * цвет в `SETTINGS.COLOR`. Это переворачивает прежнюю запись в `probe-activity-files`, где значилось
+ * «list не отдаёт FILES даже с `select:['*']`»: разница именно в явном перечислении полей, а не в
+ * контексте вызова. Отдельного поля `COLOR` не существует — только внутри `SETTINGS`.
+ * ⚠ Следствие: батч по строкам НЕ НУЖЕН — страница журнала это по-прежнему ОДИН запрос к порталу.
+ * ⚠ `select:['*']` не берём: он тянет ещё три десятка полей, включая служебные, а описание у нас и
+ * так самое тяжёлое поле строки.
+ */
+export const JOURNAL_SELECT = [
+  'ID', 'SUBJECT', 'COMPLETED', 'CREATED', 'ORIGIN_ID', 'OWNER_TYPE_ID', 'OWNER_ID',
+  'DESCRIPTION', 'FILES', 'SETTINGS'
+] as const
 
 /** Параметры вызова портала. Индексная сигнатура — чтобы тип подходил транспорту `RestCall`,
  *  который принимает свободный набор параметров. */
@@ -75,6 +91,12 @@ export interface JournalRow {
    */
   ownerTypeId: number
   ownerId: number
+  /** Тело дела как есть — разбирается на клиенте (`parseActivityBody`). */
+  description: string
+  /** Адрес вложенного документа в портале; пусто — файла у дела нет. */
+  fileUrl: string
+  /** Цвет САМОГО дела (`SETTINGS.COLOR`) — по нему журнал и красит исход. */
+  colorId: string
 }
 
 /** Строка `crm.activity.list`, из которой мы читаем. Поля портала приходят строками. */
@@ -86,6 +108,28 @@ interface RawActivity {
   ORIGIN_ID?: unknown
   OWNER_TYPE_ID?: unknown
   OWNER_ID?: unknown
+  DESCRIPTION?: unknown
+  FILES?: unknown
+  SETTINGS?: unknown
+}
+
+/**
+ * Адрес вложения из `FILES`.
+ *
+ * ⚠ Берём ПЕРВЫЙ файл: дело импорта несёт ровно один документ, а гадать, какой из нескольких
+ * «исходный», значило бы однажды дать ссылку не на тот. ⚠ Адрес обязан быть портальным `https://`:
+ * дело могли править руками, и чужой адрес ушёл бы человеку под нашей подписью «исходный файл».
+ */
+function fileUrlOf(files: unknown): string {
+  if (!Array.isArray(files) || !files.length) return ''
+  const url = (files[0] as { url?: unknown })?.url
+  return typeof url === 'string' && url.startsWith('https://') ? url : ''
+}
+
+/** Цвет дела лежит ВНУТРИ `SETTINGS` — отдельного поля `COLOR` у дела нет (живая проверка). */
+function colorOf(settings: unknown): string {
+  const c = (settings as { COLOR?: unknown } | null)?.COLOR
+  return typeof c === 'string' ? c.trim().slice(0, 8) : ''
 }
 
 function num(v: unknown): number {
@@ -117,7 +161,12 @@ export function mapJournalRows(rows: unknown): JournalRow[] {
       clean: raw?.COMPLETED === 'Y',
       createdAt: String(raw?.CREATED ?? ''),
       ownerTypeId: num(raw?.OWNER_TYPE_ID),
-      ownerId: num(raw?.OWNER_ID)
+      ownerId: num(raw?.OWNER_ID),
+      // Тело уходит в браузер как есть и печатается через `{{ }}`: разметка нейтрализована ещё при
+      // записи, а разбор — чистая функция на клиенте, ей нужен исходный текст.
+      description: typeof raw?.DESCRIPTION === 'string' ? raw.DESCRIPTION.slice(0, 4000) : '',
+      fileUrl: fileUrlOf(raw?.FILES),
+      colorId: colorOf(raw?.SETTINGS)
     })
   }
   return out

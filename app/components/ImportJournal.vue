@@ -11,9 +11,9 @@
 // ⚠ Кнопка «Показать ещё» остаётся ВСЕГДА, а не только как запасной путь: автоподкачка не
 // доступна с клавиатуры и не объявляется программами чтения — человек, не пользующийся мышью,
 // иначе не смог бы добраться до второй страницы вовсе.
-import { computed, onMounted, useTemplateRef } from 'vue'
-import { useInfiniteScroll } from '@vueuse/core'
+import { computed, onMounted } from 'vue'
 import { journalDateTile, journalOutcomeLabel, ownerOpenPath } from '~/utils/journalView'
+import { activityOutcome, parseActivityBody } from '~/utils/activityBody'
 import type { ImportJobView } from '~/composables/useImport'
 
 // ⚠ ЖИВЫЕ строки приходят пропом, а не читаются здесь (#494). Источника два и они разной природы:
@@ -34,7 +34,7 @@ const props = withDefaults(defineProps<{
   liveError: ''
 })
 
-const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, reload } = useImportJournal()
+const { rows, loadError, loaded, page, canPrev, canNext, load, goto, retry, reload } = useImportJournal()
 
 /**
  * Живые строки, которых журнал ещё не показывает.
@@ -73,23 +73,15 @@ defineExpose({ reload })
 const view = computed(() => rows.value.map(row => ({
   row,
   tile: journalDateTile(row.createdAt),
-  ownerPath: ownerOpenPath(row.ownerTypeId, row.ownerId)
+  ownerPath: ownerOpenPath(row.ownerTypeId, row.ownerId),
+  // Результат берётся ИЗ ДЕЛА (#495): те же числа, что человек видит в карточке портала, потому
+  // что источник буквально один. Прежде «результат» жил в статусе задания и совпасть не мог.
+  summary: parseActivityBody(row.description),
+  outcome: activityOutcome(row.colorId)
 })))
-
-const scroller = useTemplateRef<{ $el?: HTMLElement }>('scroller')
 
 onMounted(() => {
   void load()
-  // ⚠ `distance` с запасом: подкачка должна начаться ДО того, как человек упрётся в конец, иначе
-  // на медленной сети список замирает под пальцем. Само решение «пора ли» — в чистой
-  // `shouldLoadMore`, здесь только повод спросить.
-  useInfiniteScroll(
-    () => scroller.value?.$el ?? null,
-    () => {
-      if (canLoadMore.value) void load()
-    },
-    { distance: 200 }
-  )
 })
 
 /**
@@ -159,99 +151,102 @@ async function openOwner(path: string): Promise<void> {
     </p>
 
     <template v-else>
-      <B24ScrollArea
-        ref="scroller"
-        class="max-h-[28rem]"
-      >
-        <ul class="space-y-3">
-          <!-- ⚠ Предупреждение и отказ ПО ЖИВЫМ строкам печатаются здесь. При слиянии списков
+      <!-- ⚠ Своего контейнера прокрутки больше НЕТ (#495): постраничная навигация сделала его
+           лишним, а во фрейме портала он мешал — приложение живёт в рамке, высоту которой Битрикс24
+           подгоняет под содержимое, и вложенная прокрутка отбирала у человека привычную. -->
+      <ul class="space-y-3">
+        <!-- ⚠ Предупреждение и отказ ПО ЖИВЫМ строкам печатаются здесь. При слиянии списков
                (#494) блок, который их показывал, был удалён вместе со старым списком, и разбор это
                поймал: значения по-прежнему считались и даже управляли показом шапки, но САМ ТЕКСТ
                не выводился нигде — «ответ не покрыл все задания» молча исчезало, и человек считал
                список полным. Это про текущие загрузки, а не про журнал, поэтому стоит НАД ними. -->
-          <li
-            v-if="liveWarning"
-            class="rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
-          >
-            {{ liveWarning }}
-          </li>
-          <li
-            v-else-if="liveError && !live.length && !uploading"
-            class="rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
-          >
-            Статус загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
-            откройте приложение заново.
-          </li>
-          <!-- Мгновенный отклик, пока POST в полёте и строки задания ещё нет вовсе. -->
-          <li
-            v-if="uploading"
-            class="flex items-center gap-2 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
-          >
-            <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
-            Отправляем файл…
-          </li>
-          <!-- ЖИВЫЕ строки — та же оболочка, что у записей журнала: слева индикатор вместо даты,
+        <li
+          v-if="liveWarning"
+          class="rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
+        >
+          {{ liveWarning }}
+        </li>
+        <li
+          v-else-if="liveError && !live.length && !uploading"
+          class="rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
+        >
+          Статус загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
+          откройте приложение заново.
+        </li>
+        <!-- Мгновенный отклик, пока POST в полёте и строки задания ещё нет вовсе. -->
+        <li
+          v-if="uploading"
+          class="flex items-center gap-2 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
+        >
+          <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-(--ui-color-accent-main-primary)" />
+          Отправляем файл…
+        </li>
+        <!-- ЖИВЫЕ строки — та же оболочка, что у записей журнала: слева индикатор вместо даты,
                справа шаги импорта. Завершилось и попало в журнал — строка исчезает отсюда и
                появляется ниже уже как дело (см. `liveVisible`). -->
-          <ImportJobItem
-            v-for="j in liveVisible"
-            :key="j.jobId"
-            :job="j"
-          />
-          <!-- ⚠ Строка списка сделана ПО МОТИВАМ дела в таймлайне Битрикс24 (решение владельца,
+        <ImportJobItem
+          v-for="j in liveVisible"
+          :key="j.jobId"
+          :job="j"
+        />
+        <!-- ⚠ Строка списка сделана ПО МОТИВАМ дела в таймлайне Битрикс24 (решение владельца,
                скриншот 08.08.2026): плитка-календарь слева, цветная метка исхода, поля подписанными
                блоками, действие ссылкой внизу. Копия «один в один» не нужна и была бы вредна —
                у нас нет ни чекбокса «выполнено», ни кнопок дела, и рисовать их значило бы обещать
                действия, которых здесь нет. -->
-          <li
-            v-for="{ row, tile, ownerPath } in view"
-            :key="row.activityId"
-            class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
-          >
-            <!-- Плитка даты. ⚠ Она же ЕДИНСТВЕННЫЙ носитель даты: строка «10 августа 2026, 08:15»
+        <li
+          v-for="{ row, tile, ownerPath, summary, outcome } in view"
+          :key="row.activityId"
+          class="flex gap-3 rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-8) p-3"
+        >
+          <!-- Плитка даты. ⚠ Она же ЕДИНСТВЕННЫЙ носитель даты: строка «10 августа 2026, 08:15»
                  под заголовком убрана (решение владельца 10.08.2026 — дата уже видна в плитке, а
                  повтор словами занимал строку в каждой записи). Поэтому дата объявляется программе
                  чтения ЗДЕСЬ: без `aria-label` плитка из трёх обрывков («10», «авг», «08:15»)
                  читалась бы вслух как три бессвязных числа, а с прежним `aria-hidden` дата исчезла
                  бы для незрячих вовсе. -->
-            <div
-              v-if="tile"
-              class="flex w-14 shrink-0 flex-col items-center justify-center rounded-md bg-(--ui-color-base-7) py-1.5 text-center"
-              role="img"
-              :aria-label="`Загружено ${tile.day} ${tile.month} ${tile.year}, ${tile.time}`"
-            >
-              <span class="text-lg leading-none font-semibold">{{ tile.day }}</span>
-              <span class="mt-0.5 text-[10px] leading-tight text-(--ui-color-base-3)">{{ tile.month }}</span>
-              <span class="mt-0.5 text-[10px] leading-none text-(--ui-color-base-3)">{{ tile.time }}</span>
-            </div>
+          <div
+            v-if="tile"
+            class="flex w-14 shrink-0 flex-col items-center justify-center rounded-md bg-(--ui-color-base-7) py-1.5 text-center"
+            role="img"
+            :aria-label="`Загружено ${tile.day} ${tile.month} ${tile.year}, ${tile.time}`"
+          >
+            <span class="text-lg leading-none font-semibold">{{ tile.day }}</span>
+            <span class="mt-0.5 text-[10px] leading-tight text-(--ui-color-base-3)">{{ tile.month }}</span>
+            <span class="mt-0.5 text-[10px] leading-none text-(--ui-color-base-3)">{{ tile.time }}</span>
+          </div>
 
-            <!-- ⚠ Дата не разобралась ⇒ плитки нет, и строка обязана сказать об этом словами:
+          <!-- ⚠ Дата не разобралась ⇒ плитки нет, и строка обязана сказать об этом словами:
                  иначе запись выглядит как все остальные, только без даты, и человек читает это как
                  «сегодня». Заодно это страховка от мутации `v-if="tile"` → `v-if="true"`, которая
                  обращается к полям `null` и роняет весь список на первой такой строке. -->
-            <div
-              v-else
-              class="flex w-14 shrink-0 items-center justify-center rounded-md bg-(--ui-color-base-7) px-1 py-1.5 text-center text-[10px] leading-tight text-(--ui-color-base-3)"
-            >
-              дата неизвестна
-            </div>
+          <div
+            v-else
+            class="flex w-14 shrink-0 items-center justify-center rounded-md bg-(--ui-color-base-7) px-1 py-1.5 text-center text-[10px] leading-tight text-(--ui-color-base-3)"
+          >
+            дата неизвестна
+          </div>
 
-            <div class="min-w-0 flex-1">
-              <div class="flex items-start justify-between gap-2">
-                <p class="min-w-0 flex-1 truncate text-sm font-medium">
-                  {{ row.title }}
-                </p>
-                <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
+          <div class="min-w-0 flex-1">
+            <div class="flex items-start justify-between gap-2">
+              <p class="min-w-0 flex-1 truncate text-sm font-medium">
+                {{ row.title }}
+              </p>
+              <!-- ⚠ Исход подписан СЛОВАМИ, а не только цветом: цвет один не читается программой
                      чтения и не различается при дальтонизме. Цвета те же, что у самого дела в
                      портале, — человек видит на двух экранах одно и то же. -->
-                <B24Badge
-                  class="shrink-0"
-                  size="xs"
-                  :color="row.clean ? 'air-primary-success' : 'air-primary-alert'"
-                  :label="journalOutcomeLabel(row.clean)"
-                />
-              </div>
-              <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
+              <!-- ⚠ Цвет берётся из САМОГО дела, а не из признака «дело закрыто»: связь была
+                     односторонней, и перекрашенное в портале дело выглядело в журнале иначе, чем в
+                     карточке. Неизвестный цвет — отдельный, НЕЙТРАЛЬНЫЙ исход: выдавать его за
+                     успех значило бы утверждать о чужом документе непроверенное. -->
+              <B24Badge
+                class="shrink-0"
+                size="xs"
+                :color="outcome === 'clean' ? 'air-primary-success' : (outcome === 'issues' ? 'air-primary-alert' : 'air-secondary')"
+                :label="journalOutcomeLabel(outcome)"
+              />
+            </div>
+            <!-- Действие ссылкой, а не кнопкой: в деле портала оно выглядит так же, а кнопка в
                    каждой строке спорила бы за внимание с «Показать ещё» внизу списка.
                    ⚠ Своя рамка фокуса обязательна: у голого `<button>` её нет, а `B24Button`, у
                    которого она была, здесь не подходит по виду — без этого до ссылки нельзя
@@ -259,6 +254,26 @@ async function openOwner(path: string): Promise<void> {
                    ⚠ Отступы (`-mx-1 px-1 py-1`) — тач-таргет: строка текста в 20 px на телефоне
                    промахивается пальцем; отрицательный внешний отступ возвращает текст на прежнее
                    место по левому краю. -->
+            <!-- РЕЗУЛЬТАТ импорта — из тела дела (#495). Пустых подписей не печатаем: блок,
+                   который иногда пуст, читается как «данных нет», а не «поле не заполнено». -->
+            <p
+              v-if="summary.rows != null || summary.amount || summary.supplier"
+              class="mt-1 text-xs text-(--ui-color-base-2)"
+            >
+              <span v-if="summary.supplier">{{ summary.supplier }}</span>
+              <span v-if="summary.supplier && (summary.rows != null || summary.amount)"> · </span>
+              <span v-if="summary.rows != null">позиций: {{ summary.rows }}<template v-if="summary.matched != null"> (сопоставлено {{ summary.matched }})</template></span>
+              <span v-if="summary.rows != null && summary.amount"> · </span>
+              <span v-if="summary.amount">{{ summary.amount }}</span>
+            </p>
+            <p
+              v-if="summary.problems"
+              class="mt-0.5 text-xs text-(--ui-color-accent-main-alert)"
+            >
+              проблем: {{ summary.problems }} — подробности в карточке
+            </p>
+
+            <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
               <button
                 v-if="ownerPath"
                 type="button"
@@ -267,10 +282,31 @@ async function openOwner(path: string): Promise<void> {
               >
                 Открыть карточку
               </button>
+              <!-- ИСХОДНЫЙ ФАЙЛ — вложение дела (#495). ⚠ Новой вкладкой (решение владельца): это
+                     адрес ПОРТАЛА, а не наш, и открытие его в нашем фрейме увело бы человека с
+                     рабочего экрана. `noopener` обязателен — иначе открытая страница получает
+                     ссылку на наше окно. -->
+              <a
+                v-if="row.fileUrl"
+                :href="row.fileUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="-mx-1 rounded px-1 py-1 text-sm text-(--ui-color-accent-main-link) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-color-accent-main-primary)"
+              >
+                Исходный файл
+              </a>
             </div>
-          </li>
-        </ul>
-      </B24ScrollArea>
+
+            <!-- Отзыв — у КАЖДОЙ записи журнала (решение владельца 10.08.2026). Документ к отзыву
+                   сервер читает из вложения дела (#461), а не из памяти страницы, поэтому это
+                   работает и по вчерашним записям. -->
+            <FeedbackWidget
+              :job-id="row.jobId"
+              :file-name="row.title"
+            />
+          </div>
+        </li>
+      </ul>
 
       <!-- ⚠ Отказ ПОДКАЧКИ показывается под уже загруженным списком, а не вместо него: строки,
            которые человек читает, не должны исчезать из-за сбоя следующей страницы. -->
@@ -291,16 +327,29 @@ async function openOwner(path: string): Promise<void> {
         </template>
       </B24Alert>
 
-      <B24Button
-        v-else-if="hasMore"
-        class="mt-2"
-        block
-        size="sm"
-        color="air-secondary-no-accent"
-        :loading="loading"
-        label="Показать ещё"
-        @click="() => load()"
-      />
+      <!-- Постраничная навигация: предсказуема, работает с клавиатуры и не требует прокрутки. -->
+      <div
+        v-else-if="canPrev || canNext"
+        class="mt-3 flex items-center justify-between gap-2"
+      >
+        <B24Button
+          size="sm"
+          color="air-secondary-no-accent"
+          label="Назад"
+          :disabled="!canPrev"
+          @click="() => goto(page - 1)"
+        />
+        <!-- Номер страницы, а не «N из M»: сколько всего записей, портал в этом ответе не говорит,
+             и выдуманный итог был бы утверждением, которого мы не проверяли. -->
+        <span class="text-xs text-(--ui-color-base-3)">Страница {{ page + 1 }}</span>
+        <B24Button
+          size="sm"
+          color="air-secondary-no-accent"
+          label="Дальше"
+          :disabled="!canNext"
+          @click="() => goto(page + 1)"
+        />
+      </div>
     </template>
   </B24PageCard>
 </template>
