@@ -38,7 +38,7 @@ const emitInvalid = defineEmits<{ invalid: [reason: TargetInvalidReason] }>()
 const { load: loadCrmCategories } = useCrmCategories()
 const { load: loadCrmStages } = useCrmStages()
 const { leadsEnabled, load: loadCrmMode } = useCrmMode()
-const { types: smartProcesses, smartInvoiceEnabled, load: loadCrmTypes } = useCrmTypes()
+const { types: smartProcesses, smartInvoiceEnabled, typesLoaded, load: loadCrmTypes } = useCrmTypes()
 onMounted(() => {
   void loadCrmMode()
   void loadCrmTypes()
@@ -94,7 +94,11 @@ watch([CHOICES, () => etid.value], () => {
   const id = etid.value
   if (id == null) return
   // Smart processes arrive asynchronously — don't drop a valid one just because the list is empty yet.
-  if (id >= 1000 && !smartProcesses.value.length) return
+  // ⚠ Признак — «список получен» (`typesLoaded`), а не «список непустой»: у портала со стёртым
+  // смарт-процессом и без единого другого список ПУСТ и после загрузки, и прежняя проверка защищала
+  // такой id вечно — то есть #269 на этом портале не работал вовсе. Заодно `typesLoaded` перестал
+  // быть мёртвым экспортом: он заводился ради этой проверки (#488), но его никто не читал (#492).
+  if (id >= 1000 && !typesLoaded.value) return
   if (CHOICES.value.some(c => c.id === id)) return
   etid.value = props.includeAuto ? null : ENTITY.deal
   categoryId.value = undefined
@@ -117,11 +121,21 @@ watch([CHOICES, () => etid.value], () => {
  * объяснения, и следующая пачка уходила не туда, куда человек рассчитывал (#488).
  */
 function failToAuto(reason: TargetInvalidReason): void {
-  etid.value = null
+  // ⚠ Тип обнуляем ТОЛЬКО там, где «Авто» вообще предлагается (#492). На `/settings` цели всегда
+  // конкретны, и `null` там означает не «решают правила», а «цель не задана»: сеттер по умолчанию
+  // подставит голую сделку, то есть смарт-счёт или смарт-процесс админа МОЛЧА превратится в
+  // сделку, а правило маршрутизации потеряет цель. Это было бы то же самое молчаливое искажение,
+  // которое #488 объявил дефектом, только перенесённое на экран настроек, где цена выше: там
+  // портится сохранённая конфигурация портала, а не выбор одной пачки.
+  // ⚠ Сообщение (`invalid`) шлём в ОБОИХ случаях: сказать человеку надо всегда, а вот трогать его
+  // сохранённую настройку — нет. Сосед по этому файлу (сторож #269) делает ту же оговорку.
+  if (props.includeAuto) {
+    etid.value = null
+    cats.value = undefined
+    stages.value = undefined
+  }
   categoryId.value = undefined
   stageId.value = undefined
-  cats.value = undefined
-  stages.value = undefined
   emit()
   emitInvalid('invalid', reason)
 }

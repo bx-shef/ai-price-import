@@ -1247,4 +1247,56 @@ describe('#488: не удалось создать выбранную сущно
     const deps = baseDeps({ createTarget })
     await expect(runCrmSync('job-fb3', doc, mapping(), {}, deps)).rejects.toThrow('boom')
   })
+
+  // ⚠⚠ #492, формулировка владельца: «если у Б24 что-то не так — то мы и сделку не создадим».
+  // Проверки НЕ текстовые: они утверждают исход (запись не создана) и то, что второго вызова к
+  // сломанному порталу не было. Прежний код ловил голым `catch`, и мутация «бросить ACCESS_DENIED»
+  // не роняла ни одного теста — отказ прав давал «успешный» импорт с карточкой в чужой воронке.
+  for (const [name, message] of [
+    ['отозванные права', 'ACCESS_DENIED: access denied'],
+    ['протухший токен', 'expired_token'],
+    ['предел частоты', 'QUERY_LIMIT_EXCEEDED'],
+    ['таймаут', 'ETIMEDOUT socket hang up'],
+    ['неузнанный отказ', 'что-то пошло не так']
+  ] as const) {
+    it(`${name} ⇒ задание падает, запись НЕ создана, второго вызова к порталу нет`, async () => {
+      const createTarget = vi.fn(async (t: { entityTypeId: number }) => {
+        if (t.entityTypeId === 31) throw new Error(message)
+        return 777
+      })
+      const findExisting = vi.fn(async () => null)
+      const deps = baseDeps({ createTarget, findExisting })
+
+      await expect(runCrmSync('job-broken', doc, invoiceMapping(), {}, deps)).rejects.toThrow()
+      expect(createTarget, 'к сломанному порталу не ходим второй раз').toHaveBeenCalledTimes(1)
+      expect(deps.setRows, 'строк тоже нет — записи, куда их класть, не существует').not.toHaveBeenCalled()
+    })
+  }
+
+  it('403 вместе с «entity type not supported» читается как ОТКАЗ ПРАВ, а не как «типа нет»', async () => {
+    // Портал вправе отдать обе приметы разом, а советы противоположные: при мёртвых правах
+    // создавать нечего вообще. Поэтому авторизация проверяется первой.
+    const createTarget = vi.fn(async (t: { entityTypeId: number }) => {
+      if (t.entityTypeId === 31) throw new Error('403 Forbidden: entity type not supported')
+      return 777
+    })
+    const deps = baseDeps({ createTarget })
+    await expect(runCrmSync('job-403', doc, invoiceMapping(), {}, deps)).rejects.toThrow()
+    expect(createTarget).toHaveBeenCalledTimes(1)
+  })
+
+  it('найденная под запасным маркером запись — ПОВТОРНАЯ ДОСТАВКА, а не создание', async () => {
+    // Иначе счётчик «внесено» рос бы на каждую редоставку одного документа: `created` уходил
+    // истинным безусловно, а `idempotent` считался по маркеру ИСХОДНОГО типа, который тут пуст.
+    const createTarget = vi.fn(async (t: { entityTypeId: number }) => {
+      if (t.entityTypeId === 31) throw new Error('ENTITY_TYPE_NOT_SUPPORTED')
+      return 888
+    })
+    const findExisting = vi.fn(async (etid: number) => (etid === 2 ? 999 : null))
+    const r = await runCrmSync('job-fb-idem', doc, invoiceMapping(), {}, baseDeps({ createTarget, findExisting }))
+
+    expect(r.entityId).toBe(999)
+    expect(r.created, 'ничего не создавали — запись нашлась по маркеру').toBe(false)
+    expect(r.idempotent, 'это повтор того же задания').toBe(true)
+  })
 })
