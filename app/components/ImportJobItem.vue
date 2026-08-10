@@ -7,13 +7,12 @@ import { entityDetailPath, entityTypeLabel } from '~/utils/entityLink'
 import { isKnownTargetType, targetTypeName } from '~/utils/importFailure'
 import { useB24 } from '~/composables/useB24'
 
-// One row in «Последние операции»: shows the file, a per-STAGE progress stepper while the job runs
+// One row of the feed (#494 — прежде «Последние операции», теперь та же лента, что и журнал): shows the file, a per-STAGE progress stepper while the job runs
 // (Извлечение текста → Распознавание и запись → Готово, driven by the real backend status), and the
 // outcome («разбор») once terminal. Pure presentation over the injected job — no I/O.
 const props = defineProps<{
   job: ImportJobView
 }>()
-// status, so this is purely the employee tidying their own history. Emitted with the jobId.
 
 /** Сколько предупреждений печатать на СТРОКЕ С ОШИБКОЙ (#373). В ветке успеха их всё так же
  *  показываем целиком: там это редкие штучные замечания, а здесь — по одному на каждую позицию

@@ -123,7 +123,10 @@ export default defineEventHandler(async (event) => {
       // from the request body. Never returned to the browser: it is only a chat address.
       await createJob(member.memberId, jobId, file.filename, jobRedis, manualOverride, member.userId)
       await saveUpload(member.memberId, jobId, file.data, nodeFileIO)
-      await enqueueExtract({ memberId: member.memberId, jobId, fileId: file.filename })
+      // ⚠ Выбор цели едет В ЗАДАЧЕ, а не только в записи задания: запись живёт ограниченный срок, и
+      // при долгом ожидании в очереди она может истечь до начала разбора — тогда выбор сотрудника
+      // молча подменился бы правилами маршрутизации (см. `ExtractJob`).
+      await enqueueExtract({ memberId: member.memberId, jobId, fileId: file.filename, manualTarget: manualOverride })
       return { jobId, status: 'queued' }
     }
   )

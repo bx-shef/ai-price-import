@@ -20,9 +20,18 @@ import type { ImportJobView } from '~/composables/useImport'
 // идущий импорт живёт в статусе задания (Redis, часы), запись журнала — в ДЕЛЕ портала (сколько его
 // там держат). Смешивать их в одном загрузчике значило бы связать сроки жизни двух хранилищ; здесь
 // они только показываются вместе.
-const props = withDefaults(defineProps<{ live?: ImportJobView[], uploading?: boolean }>(), {
+const props = withDefaults(defineProps<{
+  live?: ImportJobView[]
+  uploading?: boolean
+  /** Сервер ответил не по всем заданиям (#260) — предупреждение, не ошибка. */
+  liveWarning?: string
+  /** Не удалось получить статус текущих загрузок. */
+  liveError?: string
+}>(), {
   live: () => [],
-  uploading: false
+  uploading: false,
+  liveWarning: '',
+  liveError: ''
 })
 
 const { rows, loading, hasMore, loadError, loaded, canLoadMore, load, retry, reload } = useImportJournal()
@@ -115,7 +124,7 @@ async function openOwner(path: string): Promise<void> {
          своих строк видит серые прямоугольники, пока портал отвечает на запрос журнала. Загрузка
          журнала не должна прятать то, что происходит прямо сейчас. -->
     <div
-      v-if="!loaded && !liveVisible.length && !uploading"
+      v-if="!loaded && !liveVisible.length && !uploading && !liveWarning && !liveError"
       class="space-y-2"
       aria-hidden="true"
     >
@@ -127,7 +136,7 @@ async function openOwner(path: string): Promise<void> {
     </div>
 
     <B24Alert
-      v-else-if="loadError && rows.length === 0 && !liveVisible.length && !uploading"
+      v-else-if="loadError && rows.length === 0 && !liveVisible.length && !uploading && !liveWarning && !liveError"
       color="air-primary-alert"
       role="alert"
       :title="loadError"
@@ -143,7 +152,7 @@ async function openOwner(path: string): Promise<void> {
     </B24Alert>
 
     <p
-      v-else-if="rows.length === 0 && !liveVisible.length && !uploading"
+      v-else-if="rows.length === 0 && !liveVisible.length && !uploading && !liveWarning && !liveError"
       class="py-6 text-center text-sm text-(--ui-color-base-3)"
     >
       Вы ещё ничего не импортировали. Загрузите документ — он появится здесь.
@@ -155,6 +164,24 @@ async function openOwner(path: string): Promise<void> {
         class="max-h-[28rem]"
       >
         <ul class="space-y-3">
+          <!-- ⚠ Предупреждение и отказ ПО ЖИВЫМ строкам печатаются здесь. При слиянии списков
+               (#494) блок, который их показывал, был удалён вместе со старым списком, и разбор это
+               поймал: значения по-прежнему считались и даже управляли показом шапки, но САМ ТЕКСТ
+               не выводился нигде — «ответ не покрыл все задания» молча исчезало, и человек считал
+               список полным. Это про текущие загрузки, а не про журнал, поэтому стоит НАД ними. -->
+          <li
+            v-if="liveWarning"
+            class="rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
+          >
+            {{ liveWarning }}
+          </li>
+          <li
+            v-else-if="liveError && !live.length && !uploading"
+            class="rounded-lg border border-(--ui-color-base-5) bg-(--ui-color-base-7) p-3 text-sm text-(--ui-color-base-3)"
+          >
+            Статус загрузок получить не удалось. Нажмите «Обновить» — если не поможет, закройте и
+            откройте приложение заново.
+          </li>
           <!-- Мгновенный отклик, пока POST в полёте и строки задания ещё нет вовсе. -->
           <li
             v-if="uploading"
@@ -272,7 +299,7 @@ async function openOwner(path: string): Promise<void> {
         color="air-secondary-no-accent"
         :loading="loading"
         label="Показать ещё"
-        @click="load"
+        @click="() => load()"
       />
     </template>
   </B24PageCard>
