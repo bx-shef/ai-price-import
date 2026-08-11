@@ -230,4 +230,37 @@ describe('#506 п.3: у упавшей загрузки документ выб�
     expect(btn, 'кнопка обязана объяснять, чего ждём').toBeTruthy()
     expect(btn!.attributes('disabled')).toBeDefined()
   })
+
+  it('байты уходят на сервер ТОЛЬКО вместе с выбранным файлом', async () => {
+    // ⚠ Прежние проверки этого блока смотрели только на видимость кнопок — мутация «класть файл в
+    // запрос всегда» прошла бы мимо них незамеченной. Проверяем, ЧТО реально уходит.
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-11', pickFile: true } })
+    await w.find('button[aria-label="Плохо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    const input = w.find('input[type="file"]')
+    const file = new File(['номер;цена\n1;2'], 'накладная.csv', { type: 'text/csv' })
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    await tick()
+    await clickText(w, 'Отправить с файлом')
+    await tick()
+    const args = h.submit.mock.calls.at(-1) as unknown[]
+    expect(args[3], 'согласие на передачу документа').toBe(true)
+    const upload = args[4] as { name?: string, contentBase64?: string }
+    expect(upload?.name).toBe('накладная.csv')
+    expect(upload?.contentBase64, 'байты обязаны быть закодированы').toBeTruthy()
+  })
+
+  it('без выбора файла пятого поля в запросе НЕТ', async () => {
+    const w = await mountSuspended(FeedbackWidget, { props: { jobId: 'job-12' } })
+    await w.find('button[aria-label="Хорошо"]').trigger('click')
+    await tick()
+    await clickText(w, 'Отправить')
+    await tick()
+    await clickText(w, 'Отправить с файлом')
+    await tick()
+    expect(h.submit.mock.calls.at(-1)).toHaveLength(4)
+  })
 })

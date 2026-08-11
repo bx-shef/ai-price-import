@@ -13,7 +13,7 @@
 // НАМЕРЕНИЕ вместо расхода — шестьдесят пустых запросов «с файлом» выключали бы вложения всем
 // клиентам, ничего не стоив отправителю.
 
-import { fetchActivityFile, type ActivityFileDeps } from './activityFileFetch'
+import { fetchActivityFile, type ActivityFileDeps, type ActivityFileMiss } from './activityFileFetch'
 
 export interface AttachmentDeps {
   /** REST к порталу под его OAuth-токеном; `null` — приложение не установлено. */
@@ -40,6 +40,16 @@ export interface AttachmentResult {
   fileUrl?: string
   /** Что сказать человеку, если документ НЕ доехал. */
   notice?: string
+  /**
+   * КЛАСС промаха — наружу, а не только в журнал (#506 п.3, находка проверяющих).
+   *
+   * ⚠ Несущее различение: «дела нет вовсе» (`no-activity`) и «дело есть, но прочитать не вышло»
+   * (`download-failed`, `login-page`, `too-big`, отказ приёмника) — РАЗНЫЕ исходы. Второй источник
+   * документа (байты из тела запроса) законен только у первого: там сервер физически не может
+   * ничего прочитать. Без этого поля роут судил по `!fileUrl`, а тот истинен при ЛЮБОЙ причине —
+   * то есть заявленная граница существовала только в комментарии.
+   */
+  miss?: ActivityFileMiss | 'no-portal' | 'receiver-not-private' | 'budget' | 'commit-failed' | 'error'
 }
 
 /**
@@ -59,8 +69,8 @@ export async function resolveFeedbackAttachment(
 ): Promise<AttachmentResult> {
   try {
     const call = await deps.resolveCall()
-    if (!call) return { notice: deps.missingNotice }
-    if (!await deps.uploadAllowed()) return { notice: deps.missingNotice }
+    if (!call) return { notice: deps.missingNotice, miss: 'no-portal' }
+    if (!await deps.uploadAllowed()) return { notice: deps.missingNotice, miss: 'receiver-not-private' }
 
     const got = await fetchActivityFile(jobId, userId, {
       call,
@@ -71,17 +81,17 @@ export async function resolveFeedbackAttachment(
     })
     if (!got.ok) {
       deps.logMiss?.(got.miss)
-      return { notice: deps.missingNotice }
+      return { notice: deps.missingNotice, miss: got.miss }
     }
 
     // Предел приёмника тратится ПОСЛЕ того, как документ реально прочитан (см. шапку модуля).
     const budget = await deps.checkBudget()
     // ⚠ Своя причина, если она названа; иначе общий текст — но МОЛЧАНИЯ быть не должно.
-    if (!budget.allowed) return { notice: budget.notice || deps.missingNotice }
+    if (!budget.allowed) return { notice: budget.notice || deps.missingNotice, miss: 'budget' }
 
     const url = await deps.commit(got.file.name, got.file.base64)
-    return url ? { fileUrl: url } : { notice: deps.missingNotice }
+    return url ? { fileUrl: url } : { notice: deps.missingNotice, miss: 'commit-failed' }
   } catch {
-    return { notice: deps.missingNotice }
+    return { notice: deps.missingNotice, miss: 'error' }
   }
 }

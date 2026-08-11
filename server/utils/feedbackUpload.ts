@@ -16,7 +16,13 @@
  * опубликовала бы реальный счёт клиента.
  */
 
-/** Что прислал браузер. Имя — для человека в приёмнике, байты — base64 внутри JSON. */
+/**
+ * Что прислал браузер. Имя — для человека в приёмнике, байты — base64 внутри JSON.
+ *
+ * ⚠ Поля намеренно `unknown`: форму тела запроса роут не валидирует, и это осознанно — проверка
+ * живёт ЗДЕСЬ, в одном месте с пределами. Пришедшее не объектом даёт `undefined` и обычный промах,
+ * а не исключение.
+ */
 export interface UploadedDoc {
   name?: unknown
   contentBase64?: unknown
@@ -41,6 +47,27 @@ export interface UploadAttachResult {
   notice?: string
 }
 
+/**
+ * Законен ли второй источник документа — байты из тела запроса (#506 п.3).
+ *
+ * ⚠ Вынесено в чистую функцию НЕ ради красоты: внутри `defineEventHandler` это условие было
+ * недостижимо тестом, и сторожил его грep по исходнику — а такой гард ловит только удаление строки.
+ * Проверяющие показали, что первая редакция условия (`!fileUrl`) вообще не была границей: она
+ * истинна и когда дело есть, но не скачалось, и когда `jobId` не прислали вовсе. Теперь решение
+ * проверяется поведением.
+ *
+ * ⚠ Несущее: `miss === 'no-activity'` — это вердикт СЕРВЕРА, сходившего в портал и не нашедшего
+ * дела. Любой другой промах значит «дело, возможно, есть» и байтам из тела хода не даёт.
+ */
+export function shouldAcceptUploadedDoc(state: {
+  attachFile: boolean
+  fileUrl?: string
+  miss?: string
+  hasUpload: boolean
+}): boolean {
+  return state.attachFile && !state.fileUrl && state.miss === 'no-activity' && state.hasUpload
+}
+
 /** Сколько знаков имени переносим в приёмник. Длинное имя ничего не добавляет к разбору. */
 export const MAX_UPLOAD_NAME = 120
 
@@ -56,7 +83,9 @@ export function safeUploadName(raw: unknown): string {
   if (!name) return 'document.bin'
   const flat = name.replace(/[\\/]+/g, '_').replace(/\.{2,}/g, '.')
   const cleaned = flat.replace(/[^\p{L}\p{N}._-]+/gu, '_').replace(/^[._]+/, '')
-  return (cleaned || 'document.bin').slice(0, MAX_UPLOAD_NAME)
+  // ⚠ Режем ПО СИМВОЛАМ, а не `slice` по единицам UTF-16 (урок #346): срез посреди суррогатной пары
+  // даёт битую строку, которая дальше молча ломает кодирование пути в приёмнике.
+  return [...(cleaned || 'document.bin')].slice(0, MAX_UPLOAD_NAME).join('')
 }
 
 /**

@@ -41,6 +41,29 @@ describe('#461: вложение к отзыву', () => {
     expect(params.filter.ORIGIN_ID).toBe('job-1')
   })
 
+  it('КЛАСС промаха отдаётся наружу — им решается судьба второго источника (#506 п.3)', async () => {
+    // ⚠ Несущее различение. «Дела нет вовсе» и «дело есть, но прочитать не вышло» — разные исходы, и
+    // только у первого законны байты из тела запроса. Пока промах был виден лишь как «нет ссылки»,
+    // роут не мог их различить, и заявленная граница существовала только в комментарии.
+    const noActivity = await resolveFeedbackAttachment('job-1', 17, deps({
+      resolveCall: async () => vi.fn(async () => [])
+    }))
+    expect(noActivity.miss, 'дела в портале не нашлось').toBe('no-activity')
+
+    const brokenDownload = await resolveFeedbackAttachment('job-1', 17, deps({
+      download: async () => ({ status: 500, contentType: 'application/pdf', bytes: new Uint8Array() })
+    }))
+    expect(brokenDownload.miss, 'дело ЕСТЬ, сорвалось скачивание').not.toBe('no-activity')
+
+    const noPrivacy = await resolveFeedbackAttachment('job-1', 17, deps({ uploadAllowed: async () => false }))
+    expect(noPrivacy.miss, 'про дело мы ничего не узнали').not.toBe('no-activity')
+
+    const budget = await resolveFeedbackAttachment('job-1', 17, deps({
+      checkBudget: async () => ({ allowed: false, notice: 'предел' })
+    }))
+    expect(budget.miss, 'предел исчерпан — обходить его вторым путём нельзя').not.toBe('no-activity')
+  })
+
   it('предел приёмника тратится ПОСЛЕ чтения документа, а не до', async () => {
     // ⚠ Обратный порядок мерил бы НАМЕРЕНИЕ вместо расхода: шестьдесят запросов «с файлом», у
     // которых документа нет вовсе, выключали бы вложения всем клиентам, ничего не стоив
