@@ -15,19 +15,26 @@ const CATS: Record<number, Array<{ id: number, name: string }>> = {
 const STAGES: Array<{ id: string, name: string }> = [{ id: 'NEW', name: 'Новая' }, { id: 'WON', name: 'Успех' }]
 // Управляемый флаг доступности смарт-счетов — по умолчанию доступны (как на обычном портале).
 const smartInvoiceEnabled = ref(true)
+// «Список типов ПОЛУЧЕН». Управляемый, потому что fail-open проверяется именно на `false`: пока
+// список не пришёл, ни один смарт-процесс не вправе быть объявлен исчезнувшим.
+const typesLoaded = ref(true)
+// 1044 = СП без направлений, но со стадиями («Договоры»); 1050 = СП с направлениями.
+// ⚠ Список УПРАВЛЯЕМЫЙ: пока портал не ответил, он ПУСТ — и именно в этом состоянии проверяется
+// fail-open. С вечно заполненным списком проверка была бы бутафорией: «исчезнувших» типов в нём
+// не бывает, поэтому и тревоги нет независимо от гарда.
+const smartTypes = ref([
+  { entityTypeId: 1044, title: 'Договоры', hasCategories: false, hasStages: true },
+  { entityTypeId: 1050, title: 'Заявки', hasCategories: true, hasStages: true }
+])
 
 mockNuxtImport('useCrmCategories', () => () => ({ load: async (etid: number) => CATS[etid] ?? [] }))
 mockNuxtImport('useCrmStages', () => () => ({ load: async () => STAGES }))
 mockNuxtImport('useCrmMode', () => () => ({ leadsEnabled: ref(true), load: async () => {} }))
 mockNuxtImport('useCrmTypes', () => () => ({
-  // 1044 = category-less SPA WITH stages («Договоры»); 1050 = SPA WITH categories.
-  types: ref([
-    { entityTypeId: 1044, title: 'Договоры', hasCategories: false, hasStages: true },
-    { entityTypeId: 1050, title: 'Заявки', hasCategories: true, hasStages: true }
-  ]),
+  types: smartTypes,
   smartInvoiceEnabled,
   // Список типов ПОЛУЧЕН: сторож #269 без этого признака ничего не роняет (#492).
-  typesLoaded: ref(true),
+  typesLoaded,
   load: async () => {}
 }))
 
@@ -103,7 +110,7 @@ describe('TargetPicker: недоступный тип на портале (#269)
     try {
       await tick()
       await tick()
-      expect(w.text()).toContain('Прежняя цель больше недоступна')
+      expect(w.text()).toContain('Выбранный тип записи больше не доступен')
       // Наружу больше не эмитится исчезнувший тип 31.
       expect(lastTarget(w)?.entityTypeId).not.toBe(31)
     } finally {
@@ -159,6 +166,77 @@ describe('TargetPicker: на /settings негодный маршрут не об
     expect(w.emitted('invalid')?.[0]?.[0], 'сказать человеку надо и здесь').toBe('category')
     expect(lastTarget(w), 'тип обнулять нельзя — иначе настройка портала испорчена молча')
       .toMatchObject({ entityTypeId: 31 })
+  })
+
+  it('пока список типов НЕ получен, смарт-процесс не объявляется исчезнувшим (#500)', async () => {
+    // ⚠ Самая дорогая ошибка этого механизма и самая незаметная. Она несимметрична: задержка стоит
+    // секунд, а ложная тревога уводит исправный маршрут в «Авто» на ровном месте — и человек об
+    // этом узнаёт сообщением, то есть верит. На портале, где список ещё едет, `CHOICES` не содержит
+    // ни одного смарт-процесса, и без гарда КАЖДЫЙ сохранённый маршрут в СП объявлялся бы негодным.
+    typesLoaded.value = false
+    smartTypes.value = []
+    try {
+      const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 1044 } } })
+      await tick()
+      // ⚠ Список ДОЛЖЕН измениться, иначе проверка бутафорская: сторож висит на изменении `CHOICES`,
+      // и при неподвижном списке он не срабатывает вовсе — тест проходил бы и со снятым гардом.
+      // Здесь портал успел ответить про смарт-счета, а список смарт-процессов ещё едет.
+      smartInvoiceEnabled.value = false
+      await tick()
+      await tick()
+      expect(w.emitted('invalid'), 'незагруженное прочитано как «не существует»').toBeUndefined()
+      expect(w.text()).not.toContain('больше не доступен')
+    } finally {
+      smartInvoiceEnabled.value = true
+      typesLoaded.value = true
+      smartTypes.value = [
+        { entityTypeId: 1044, title: 'Договоры', hasCategories: false, hasStages: true },
+        { entityTypeId: 1050, title: 'Заявки', hasCategories: true, hasStages: true }
+      ]
+    }
+  })
+
+  it('человек выбрал сам — жалоба уходит с экрана (#500)', async () => {
+    // Строка описывает ПРОШЛОЕ состояние выбора. Оставшись после нового выбора, она заявляет, что
+    // недоступна цель, которую человек только что поставил, — и он идёт чинить исправное.
+    const w = await mountSuspended(TargetPicker, { props: { target: { entityTypeId: 2, categoryId: 42 } } })
+    await tick()
+    await tick()
+    expect(w.text()).toContain('удалено в CRM')
+    await clickLabel(w, 'Лид')
+    expect(w.text(), 'жалоба на прежний выбор пережила новый').not.toContain('удалено в CRM')
+  })
+
+  it('в настройках постоянная строка НЕ обещает «Авто» (#500)', async () => {
+    // Строка стоит у самого места выбора, и обещание, которого экран не выполняет, здесь читается
+    // как «уже почищено, делать нечего».
+    const w = await mountSuspended(TargetPicker, {
+      props: { target: { entityTypeId: 31, categoryId: 42 }, includeAuto: false }
+    })
+    await tick()
+    await tick()
+    expect(w.text()).toContain('удалено в CRM')
+    expect(w.text(), 'в настройках цель сохраняется — переключения на «Авто» не было').not.toContain('Авто')
+  })
+
+  it('удалённая СУЩНОСТЬ: причина объявлена, ТИП сохранён (#500)', async () => {
+    // ⚠ Половина, которой у механизма не было. Прежний сторож исчезнувшей сущности жил отдельно и
+    // на этом экране МОЛЧА подменял смарт-счёт админа сделкой — ровно то искажение сохранённой
+    // настройки, которое #492 объявил дефектом для направления. Теперь правило одно на все причины.
+    const w = await mountSuspended(TargetPicker, {
+      props: { target: { entityTypeId: 31 }, includeAuto: false }
+    })
+    await tick()
+    smartInvoiceEnabled.value = false
+    try {
+      await tick()
+      await tick()
+      expect(w.emitted('invalid')?.[0]?.[0], 'исчезнувшая сущность обязана объявляться так же, как направление').toBe('entity')
+      expect(lastTarget(w), 'тип обнулять нельзя — настройка портала испортится молча')
+        .toMatchObject({ entityTypeId: 31 })
+    } finally {
+      smartInvoiceEnabled.value = true
+    }
   })
 
   it('на экране импорта поведение прежнее — выбор уходит в «Авто»', async () => {

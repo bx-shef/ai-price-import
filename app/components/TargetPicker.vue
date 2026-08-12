@@ -6,11 +6,11 @@ import { useCrmMode } from '~/composables/useCrmMode'
 import { useCrmTypes } from '~/composables/useCrmTypes'
 import * as catPicker from '~/utils/categoryPicker'
 import * as stagePicker from '~/utils/stagePicker'
-import { ENTITY, autoPickSingleCategory, buildEntityChoices, directionApplies, smartProcessByEtid, stageApplies } from '~/utils/targetOptions'
+import { autoPickSingleCategory, buildEntityChoices, directionApplies, smartProcessByEtid, stageApplies } from '~/utils/targetOptions'
 import type { CrmCategoryOption } from '~/utils/categoryPicker'
 import type { CrmStageOption } from '~/utils/stagePicker'
 import type { TargetRef } from '~/types/mapping'
-import { targetInvalidReason, type TargetInvalidReason } from '~/utils/targetValidity'
+import { targetInvalidMessage, targetInvalidReason, type TargetInvalidReason } from '~/utils/targetValidity'
 
 // Compact «куда импортировать» picker — reusable PER FILE and shared with /settings (via the same pure
 // rules in ~/utils/targetOptions). Default «Авто (по правилам)» (null target = follow routing rules).
@@ -83,39 +83,46 @@ async function reloadStages(token: number): Promise<void> {
 // Load the direction/stage lists for an ALREADY-set target (e.g. a saved routing rule opened in
 // settings) WITHOUT clearing the stored categoryId/stageId — so the pickers show the current values
 // instead of appearing empty until the user re-picks the entity.
-/** Показать сотруднику, что прежняя цель больше недоступна на портале, а не молча её подменить. */
-const unavailableTarget = ref(false)
+/**
+ * Что у выбранного маршрута перестало существовать — `null`, пока всё в порядке.
+ *
+ * ⚠ Это ЕДИНСТВЕННЫЙ детектор (#500). Раньше их было два: сторож исчезнувшей СУЩНОСТИ (#269) и
+ * правило про направление и стадию (#488). Они расходились в том, что делают (#269 на `/settings`
+ * молча превращал смарт-счёт админа в сделку, #488 цель берёг) и в том, чем сообщают (постоянная
+ * строка против всплывающего сообщения), а ветка `'entity'` общего правила была НЕДОСТИЖИМА — оба
+ * вызова передавали `entityIds: undefined`. Мёртвая ветка с комментарием про работающую проверку
+ * читается как действующий механизм, и это опаснее её отсутствия.
+ */
+const invalidReason = ref<TargetInvalidReason | null>(null)
 
 // A target saved earlier can point at a type the portal no longer offers (smart invoices switched off,
 // smart process deleted). Hiding it from CHOICES is not enough: `etid` would keep the stale id, the
 // select would look empty, and the same id would still be emitted and saved — the import would fail
-// exactly as before the fix (#269). So drop it explicitly once the portal metadata has loaded.
+// exactly as before the fix (#269).
 watch([CHOICES, () => etid.value], () => {
   const id = etid.value
   if (id == null) return
   // Smart processes arrive asynchronously — don't drop a valid one just because the list is empty yet.
   // ⚠ Признак — «список получен» (`typesLoaded`), а не «список непустой»: у портала со стёртым
   // смарт-процессом и без единого другого список ПУСТ и после загрузки, и прежняя проверка защищала
-  // такой id вечно — то есть #269 на этом портале не работал вовсе. Заодно `typesLoaded` перестал
-  // быть мёртвым экспортом: он заводился ради этой проверки (#488), но его никто не читал (#492).
-  if (id >= 1000 && !typesLoaded.value) return
-  if (CHOICES.value.some(c => c.id === id)) return
-  etid.value = props.includeAuto ? null : ENTITY.deal
-  categoryId.value = undefined
-  stageId.value = undefined
-  stages.value = undefined
-  cats.value = undefined
-  unavailableTarget.value = true
-  emit()
+  // такой id вечно — то есть #269 на этом портале не работал вовсе.
+  // ⚠ Отсюда же и `entityIds: undefined` до загрузки: незагруженное НИКОГДА не читается как «не
+  // существует» — иначе на медленной сети исправный маршрут объявлялся бы негодным. Fail-open здесь
+  // несущий, и при сведении механизмов его легче всего было потерять.
+  // ⚠ «Авто» (`id: null`) — не тип записи, и в список доступных типов не входит: иначе `null` попал
+  // бы в сравнение и «Авто» считалось бы существующей сущностью.
+  const entityIds = typesLoaded.value
+    ? CHOICES.value.map(c => c.id).filter((v): v is number => v != null)
+    : undefined
+  if (targetInvalidReason({ entityTypeId: id }, { entityIds, categoryIds: undefined, stageIds: undefined }) !== 'entity') return
+  failToAuto('entity')
 })
 /**
  * Увести выбор в «Авто» и объявить причину. Порядок важен: сначала состояние, потом сообщение —
  * обработчик наверху вправе смотреть на модель.
  *
- * ⚠ Сюда идут ТОЛЬКО направление и стадия. Исчезнувшая СУЩНОСТЬ разбирается отдельным сторожем
- * выше (#269) и объясняется постоянной строкой прямо под кнопками — она стоит у места выбора и не
- * исчезает через несколько секунд. Слать по ней ещё и всплывающее сообщение значило бы сказать
- * человеку одно и то же дважды.
+ * ⚠ Сюда идут ВСЕ три причины, включая исчезнувшую сущность (#500). Прежде у неё был свой путь со
+ * своим поведением и своим носителем сообщения.
  *
  * ⚠ А направление и стадию до этой правки дочищали МОЛЧА: поле показывало другое значение без
  * объяснения, и следующая пачка уходила не туда, куда человек рассчитывал (#488).
@@ -129,10 +136,8 @@ function failToAuto(reason: TargetInvalidReason): void {
   // портится сохранённая конфигурация портала, а не выбор одной пачки.
   // ⚠ Сообщение (`invalid`) шлём в ОБОИХ случаях: сказать человеку надо всегда, а вот трогать его
   // сохранённую настройку — нет.
-  // ⚠ Сосед по файлу (сторож #269, исчезнувшая СУЩНОСТЬ) устроен ИНАЧЕ и тип на `/settings` всё-таки
-  // подменяет на сделку — но он же единственный, кто показывает постоянную строку под кнопками
-  // (`unavailableTarget`), то есть молчаливым не является. Не «та же оговорка»: два механизма, и
-  // сводить их — отдельная работа (#500).
+  // ⚠ Оговорка распространена и на исчезнувшую СУЩНОСТЬ (#500): прежний сторож подменял её сделкой
+  // даже в настройках, то есть делал ровно то молчаливое искажение, которое запрещено абзацем выше.
   if (props.includeAuto) {
     etid.value = null
     cats.value = undefined
@@ -144,6 +149,7 @@ function failToAuto(reason: TargetInvalidReason): void {
     categoryId.value = undefined
   }
   stageId.value = undefined
+  invalidReason.value = reason
   emit()
   emitInvalid('invalid', reason)
 }
@@ -191,6 +197,8 @@ async function initCascade(): Promise<void> {
 }
 async function chooseEntity(id: number | null): Promise<void> {
   const my = ++seq
+  // Человек выбрал сам — прежняя жалоба перестала описывать то, что на экране.
+  invalidReason.value = null
   etid.value = id
   categoryId.value = undefined
   stageId.value = undefined
@@ -252,14 +260,20 @@ function onStage(v: unknown): void {
       :disabled="props.disabled"
       @click="() => chooseEntity(c.id)"
     />
-    <!-- Прежняя цель исчезла с портала (смарт-счета выключили, смарт-процесс удалили). Молча
-         подменить её нельзя — сотрудник должен понимать, почему выбор изменился (#269). -->
+    <!-- ⚠ ДВА носителя одного сообщения, и это решение, а не случайность (#500). Всплывающее
+         сообщение (событие `invalid` → тост у родителя) ловит внимание в момент, когда цель
+         сменилась; эта строка остаётся после того, как тост погас, и стоит у самого места выбора —
+         без неё человек, отошедший от компьютера, возвращался бы к изменившемуся выбору без
+         единого объяснения. Прежде носитель зависел от ПРИЧИНЫ: у исчезнувшей сущности была строка,
+         у направления и стадии — тост, то есть одна и та же беда выглядела по-разному.
+         ⚠ Частокол пустых мест форме не грозит: строка рисуется по `v-if` и только у того пикера,
+         чей маршрут действительно сломался. -->
     <p
-      v-if="unavailableTarget"
+      v-if="invalidReason"
       class="w-full text-xs text-(--ui-color-accent-main-warning)"
       role="status"
     >
-      Прежняя цель больше недоступна на портале — выберите другую.
+      {{ targetInvalidMessage(invalidReason, props.includeAuto) }}
     </p>
     <B24Select
       v-if="showDirection"
