@@ -46,6 +46,10 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 const isPreview = computed(() => !!props.preview)
 
+// ⚠ Композабл берётся и в предпросмотре, и это НЕ недосмотр: он не ходит в сеть и не читает
+// `localStorage` при создании — только заводит `ref`. Гейтить его вызов нельзя, потому что он
+// singleton, а условный вызов композабла в setup запрещён самим Vue. Побочные эффекты (`check`,
+// подписка, отметка «видел») гейтятся поимённо ниже — именно они, а не сам композабл, опасны.
 const live = useAnnouncement()
 const announcement = computed(() => props.preview ?? live.announcement.value)
 const open = computed(() => (isPreview.value ? true : live.open.value))

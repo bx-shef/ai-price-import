@@ -85,6 +85,52 @@ describe('#473 п.4: предпросмотр — это САМО объявле
   })
 })
 
+describe('#473 п.6: разметка в объявлении не становится дырой в CRM клиента', () => {
+  // ⚠ Проверка НА УРОВНЕ КОМПОНЕНТА, отдельно от тестов самого рендера и отдельно от юридических
+  // страниц. У них разные источники (файл в репозитории против поля в консоли) и разные каналы
+  // (страница против широковещательной рассылки во все порталы), поэтому «рендер покрыт» — не то же
+  // самое, что «это место покрыто»: между рендером и экраном стоит `v-html`, и ошибиться можно
+  // именно там, подставив в него не то.
+  it('сырой HTML из текста объявления доезжает ТЕКСТОМ, а не разметкой', async () => {
+    const w = await mountSuspended(AnnouncementDialog, {
+      props: { preview: sample({ text: 'Скидка <script>alert(1)</script> и <b>жирный</b> тег' }) }
+    })
+    await tick()
+    const host = document.querySelector('.announcement-text')
+    expect(host, 'блок текста объявления не отрисован').toBeTruthy()
+    expect(host!.querySelector('script'), 'скрипт стал элементом').toBeNull()
+    expect(host!.querySelector('b'), 'чужой тег стал разметкой').toBeNull()
+    expect(host!.textContent, 'текст обязан быть виден целиком').toContain('<script>alert(1)</script>')
+    w.unmount()
+  })
+
+  it('своя разметка работает, а ссылка уходит новой вкладкой', async () => {
+    const w = await mountSuspended(AnnouncementDialog, {
+      props: { preview: sample({ text: '**важно**\n\n- один\n\n[сайт](https://example.com)' }) }
+    })
+    await tick()
+    const host = document.querySelector('.announcement-text')!
+    expect(host.querySelector('strong')?.textContent).toBe('важно')
+    expect(host.querySelector('li')?.textContent).toBe('один')
+    const a = host.querySelector('a')
+    // ⚠ Обычная ссылка увела бы САМ ФРЕЙМ приложения на чужой сайт внутри CRM, откуда человеку
+    // некуда вернуться: кнопку «назад» фрейму никто не рисует.
+    expect(a?.getAttribute('target')).toBe('_blank')
+    expect(a?.getAttribute('rel')).toBe('noopener noreferrer')
+    w.unmount()
+  })
+
+  it('javascript: в тексте не становится ссылкой', async () => {
+    const w = await mountSuspended(AnnouncementDialog, {
+      props: { preview: sample({ text: '[жми](javascript:alert(1))' }) }
+    })
+    await tick()
+    const host = document.querySelector('.announcement-text')!
+    expect(host.querySelector('a'), 'опасная схема стала ссылкой').toBeNull()
+    w.unmount()
+  })
+})
+
 describe('#473 п.3: носитель выбирает УСТРОЙСТВО, а не ширина окна', () => {
   const media = (matches: boolean) => {
     // Широкое окно: медиазапрос «уже 640» не срабатывает.
