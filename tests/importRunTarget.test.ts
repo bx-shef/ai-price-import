@@ -28,7 +28,7 @@ describe('#488: событие настроек НЕ трогает выбор �
   it('единственная смена цели — негодный маршрут, и она ОБЪЯВЛЯЕТСЯ', () => {
     // Молчаливая замена запрещена: человек увидел бы в поле другое значение и не понял, почему.
     const vue = read('app/components/ImportStaging.vue')
-    expect(vue).toContain('targetInvalidMessage(reason)')
+    expect(vue).toContain('targetInvalidMessage(reason, true)')
     expect(vue).toContain('@invalid="onTargetInvalid"')
   })
 })

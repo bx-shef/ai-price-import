@@ -42,7 +42,7 @@ describe('#488: годность выбранного маршрута', () => {
   })
 
   it('у каждой причины свой текст, и он говорит, что теперь будет', () => {
-    const texts = (['entity', 'category', 'stage'] as const).map(r => targetInvalidMessage(r))
+    const texts = (['entity', 'category', 'stage'] as const).map(r => targetInvalidMessage(r, true))
     expect(new Set(texts).size, 'причины пересказаны одним текстом — человек не поймёт, что именно пропало').toBe(3)
     for (const t of texts) expect(t).toContain('Авто')
   })

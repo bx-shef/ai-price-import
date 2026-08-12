@@ -64,7 +64,7 @@ const LOST: Record<TargetInvalidReason, string> = {
  * было бы прямой неправдой о том, что сейчас записано в правиле. Раньше текст был один на оба
  * экрана и в настройках врал.
  */
-export function targetInvalidMessage(reason: TargetInvalidReason, switchedToAuto = true): string {
+export function targetInvalidMessage(reason: TargetInvalidReason, switchedToAuto: boolean): string {
   return switchedToAuto
     ? `${LOST[reason]} Импорт переключён на «Авто (по правилам)» — выберите цель заново.`
     : `${LOST[reason]} Выберите другую цель и сохраните настройки.`
