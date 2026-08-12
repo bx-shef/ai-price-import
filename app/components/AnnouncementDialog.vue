@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { createReusableTemplate, useMediaQuery } from '@vueuse/core'
 import { useAnnouncement } from '~/composables/useAnnouncement'
+import type { Announcement } from '~/utils/announcement'
+import { renderMarkdown } from '~/utils/markdownLite'
 import { useSettingsSync } from '~/composables/useSettingsSync'
 import { ANNOUNCEMENT_CHECK_JITTER_MS } from '~/utils/announcementPull'
 
@@ -13,11 +16,47 @@ import { ANNOUNCEMENT_CHECK_JITTER_MS } from '~/utils/announcementPull'
 // ⚠ Показ РЕШАЕТ композабл, а не разметка: отметка «видел» живёт в браузере, срок проверяется и на
 // сервере, и здесь. Разметка знает только «открыть/закрыть».
 //
-// ⚠ Текст, заголовок и подпись кнопки печатаются через `{{ }}` — их пишет владелец в консоли
-// оператора, но идут они в чужой портал, и разметке в них делать нечего. Картинка вставляется
+// ⚠ ЗАГОЛОВОК и ПОДПИСЬ КНОПКИ печатаются через `{{ }}` — разметке в них делать нечего. А ТЕКСТ с
+// 12.08.2026 проходит через мини-рендер `markdownLite` (#473 п.6, решение владельца): владельцу
+// нужны абзацы, списки и выделение, иначе объявление на два экрана не читается.
+// ⚠ Это ВТОРОЕ и последнее место в проекте с `v-html`, и оно намеренно того же вида, что первое:
+// не «включили разметку», а взяли ТОТ ЖЕ мини-рендер, который уже держит юридические страницы. Он
+// экранирует ДО разбора конструкций, поэтому сырой HTML в тексте выводится ВИДИМЫМ ТЕКСТОМ, а не
+// исполняется; ссылки пропускаются только на `#`, `/` и http(s) — `javascript:` и `data:` остаются
+// строкой. Полный HTML отклонён: канал широковещательный, и цена ошибки — исполнение скрипта
+// внутри CRM всех клиентов сразу.
+// ⚠ Ссылки открываются НОВОЙ ВКЛАДКОЙ (`newTab`): обычная увела бы сам фрейм приложения на чужой
+// сайт внутри портала, откуда человеку некуда вернуться. Картинка вставляется
 // `:src` из `data:`-адреса, тип которого проверен на сервере закрытым списком растровых форматов
 // (SVG отвергается — это документ со скриптами).
-const { announcement, open, check, dismiss } = useAnnouncement()
+// ⚠ ПРЕДПРОСМОТР ИДЁТ ЧЕРЕЗ ЭТОТ ЖЕ КОМПОНЕНТ (#473 п.4), а не через свою карточку в консоли.
+// Прежде консоль рисовала пересказ — заголовок, картинку и строку «Кнопка «…» → https://…», — то
+// есть проверить можно было ДАННЫЕ, но не ВИД: помещается ли заголовок в шапку, не разъезжается ли
+// картинка, где встанут кнопки. А вид тут и есть предмет проверки. Занятно, что рядом в консоли уже
+// было написано, почему свой рендер недопустим, — и сделан был именно он.
+// ⚠ В режиме предпросмотра компонент ИНЕРТЕН: не спрашивает сервер, не подписывается на живой
+// сигнал и не ставит отметку «видел». Иначе оператор, посмотрев объявление, лишил бы себя же его
+// показа как сотрудника.
+const props = defineProps<{
+  /** Объявление ОТ СЕРВЕРА для предпросмотра. Не задано — обычный боевой режим. */
+  preview?: Announcement | null
+  /** Чем показать в предпросмотре: шторкой или окном. В боевом режиме решает устройство. */
+  previewAs?: 'sheet' | 'modal'
+}>()
+const emit = defineEmits<{ close: [] }>()
+const isPreview = computed(() => !!props.preview)
+
+const live = useAnnouncement()
+const announcement = computed(() => props.preview ?? live.announcement.value)
+const open = computed(() => (isPreview.value ? true : live.open.value))
+
+function dismiss(): void {
+  if (isPreview.value) {
+    emit('close')
+    return
+  }
+  live.dismiss()
+}
 
 // Общее тело и кнопки — один шаблон на оба носителя.
 // ⚠ Кнопка «Закрыть» зовёт НАШ `dismiss`, а не `close` из слота подвала: закрытие обязано ставить
@@ -27,7 +66,7 @@ const [DefineActions, ReuseActions] = createReusableTemplate()
 
 // Спрашиваем сразу при монтировании: объявление редкое, и человек должен увидеть его в тот заход,
 // когда оно уже опубликовано, а не следующим.
-void check()
+if (!props.preview) void live.check()
 
 // ⚠ И ЖИВОЙ СИГНАЛ (#478). Одного вопроса при монтировании мало: вкладку рабочего экрана в портале
 // не перезагружают сутками, поэтому у сотрудника с уже открытым экраном объявление не появилось бы
@@ -43,17 +82,44 @@ void check()
 // ⚠ Запасной путь остаётся: если pull на портале выключен, объявление по-прежнему появится при
 // следующем открытии экрана. Живой сигнал ускоряет доставку, а не заменяет её.
 const { subscribeAnnouncement } = useSettingsSync()
-subscribeAnnouncement(() => {
+if (!props.preview) {
+  subscribeAnnouncement(() => {
   // ⚠ СЛУЧАЙНАЯ ЗАДЕРЖКА перед запросом, и это не украшение. Сигнал получают ВСЕ сотрудники ВСЕХ
   // порталов одновременно — момент выбирает издатель, — а запрос за объявлением не бесплатный: он
   // проверяет фрейм-токен, то есть идёт в базу и делает исходящий вызов к порталу. Без разброса
   // штатная публикация сама себе устраивала бы всплеск на самом дорогом пути ровно в одну секунду.
   // Объявление — не срочность: несколько секунд разницы человек не заметит, а всплеска не будет.
-  setTimeout(() => void check(), Math.floor(Math.random() * ANNOUNCEMENT_CHECK_JITTER_MS))
-})
+    setTimeout(() => void live.check(), Math.floor(Math.random() * ANNOUNCEMENT_CHECK_JITTER_MS))
+  })
+}
 
-/** Ниже `sm` (640px) — телефон и мобильное приложение портала. */
-const isPhone = useMediaQuery('(max-width: 639px)')
+/**
+ * Носитель: шторка или окно.
+ *
+ * ⚠ **Решает `isBitrixMobile`, а не ширина вьюпорта** (#473 п.3). Прежняя редакция спрашивала
+ * `max-width: 639px` и объявляла телефоном всё, что уже 640 — а мобильное приложение Битрикс24
+ * бывает и шире (планшет, крупный телефон в альбомной, фрейм побольше). Там открывалось модальное
+ * окно, хотя и компонент, и консоль оператора обещают сотруднику шторку. Это тот же класс дефекта,
+ * что разобран в #472: ширина — свойство ОКНА, а не устройства, и признаком клиента быть не может.
+ * Верный признак даёт b24ui (`useDevice`, по User-Agent) и он уже применяется на `/app`.
+ *
+ * ⚠ Медиазапрос ОСТАЁТСЯ, но вторым слагаемым и только для узкого браузера: на телефоне вне портала
+ * (демо, открытая ссылка) `isBitrixMobile` ложен, а модальное окно там так же неудобно.
+ */
+const { isBitrixMobile } = useDevice()
+const isNarrow = useMediaQuery('(max-width: 639px)')
+const asSheet = computed(() => (props.previewAs
+  ? props.previewAs === 'sheet'
+  : isBitrixMobile.value || isNarrow.value))
+
+/**
+ * Текст объявления в разметке.
+ *
+ * ⚠ Считается ЗДЕСЬ, а не на сервере, и это важно: сервер хранит ИСХОДНЫЙ текст, поэтому правка
+ * рендера действует на уже опубликованное объявление, а не только на будущее. Хранить готовый HTML
+ * значило бы законсервировать сегодняшнюю версию правил экранирования в Redis.
+ */
+const textHtml = computed(() => renderMarkdown(announcement.value?.text ?? '', { newTab: true }))
 
 function onOpenChange(next: boolean): void {
   if (!next) dismiss()
@@ -61,8 +127,10 @@ function onOpenChange(next: boolean): void {
 
 /** Кнопка со ссылкой: уводим в новую вкладку и отмечаем прочитанным. */
 function openLink(): void {
+  // ⚠ В предпросмотре кнопка НЕ уводит: оператор проверяет вид, а не ходит по ссылке. Открывать
+  // вкладку значило бы менять то, что проверяют, самим актом проверки.
   const url = announcement.value?.linkUrl
-  if (url) window.open(url, '_blank', 'noopener,noreferrer')
+  if (url && !isPreview.value) window.open(url, '_blank', 'noopener,noreferrer')
   dismiss()
 }
 </script>
@@ -81,10 +149,14 @@ function openLink(): void {
         :alt="announcement.title"
         class="max-h-60 w-full rounded-lg object-contain"
       >
-      <!-- `whitespace-pre-line`: владелец пишет абзацы переводами строк, а не разметкой. -->
-      <p class="whitespace-pre-line text-sm text-(--ui-color-base-2)">
-        {{ announcement?.text }}
-      </p>
+      <!-- ⚠ `v-html` здесь допустим ровно потому, что источник — наш мини-рендер, а не текст: он
+           экранирует ДО разбора, и сырой HTML из поля владельца выводится видимым текстом. Класс
+           `announcement-text` красит списки и ссылки — у мини-рендера своих стилей нет. -->
+      <!-- eslint-disable-next-line vue/no-v-html -- источник — markdownLite, экранирует до разбора -->
+      <div
+        class="announcement-text text-sm text-(--ui-color-base-2)"
+        v-html="textHtml"
+      />
     </div>
   </DefineContent>
 
@@ -106,7 +178,7 @@ function openLink(): void {
 
   <template v-if="announcement">
     <B24Slideover
-      v-if="isPhone"
+      v-if="asSheet"
       :open="open"
       side="bottom"
       :title="announcement.title"
@@ -137,3 +209,27 @@ function openLink(): void {
     </B24Modal>
   </template>
 </template>
+
+<style scoped>
+/* У мини-рендера своих стилей нет — задаём минимум, чтобы списки и ссылки читались. Скоуплено на
+   компонент: класс общий с юридическими страницами, но там своё оформление. */
+.announcement-text :deep(p + p) {
+  margin-top: 0.5rem;
+}
+.announcement-text :deep(ul),
+.announcement-text :deep(ol) {
+  margin: 0.5rem 0;
+  padding-inline-start: 1.25rem;
+  list-style: disc;
+}
+.announcement-text :deep(ol) {
+  list-style: decimal;
+}
+.announcement-text :deep(a) {
+  color: var(--ui-color-accent-main-link);
+  text-decoration: underline;
+}
+.announcement-text :deep(strong) {
+  font-weight: 600;
+}
+</style>

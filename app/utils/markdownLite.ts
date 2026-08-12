@@ -62,7 +62,22 @@ function safeHref(href: string): string | null {
  * of the quoted text, not markup, and running the other rules over them turned a literal `**` in a
  * code sample into bold.
  */
-function inline(escaped: string): string {
+/**
+ * Ссылка уводит В НОВУЮ ВКЛАДКУ.
+ *
+ * ⚠ Нужно там, где текст рисуется ВНУТРИ ФРЕЙМА ПОРТАЛА (объявление издателя, #473 п.6): обычная
+ * ссылка увела бы сам фрейм приложения на чужой сайт, и человек оказался бы на нём внутри своей
+ * CRM, без кнопки «назад» — фрейму её никто не рисует. У юридических страниц такой беды нет: они
+ * открываются верхним уровнем, и там ссылка обязана вести в той же вкладке.
+ * ⚠ `rel` обязателен вместе с `target`: без `noopener` открытая страница получает ссылку на наше
+ * окно через `window.opener`.
+ */
+export interface MarkdownOptions {
+  /** Внешние ссылки открывать новой вкладкой (нужно во фрейме портала). */
+  newTab?: boolean
+}
+
+function inline(escaped: string, opts: MarkdownOptions = {}): string {
   // Плейсхолдер — символ из приватной зоны Unicode: он не может встретиться в юридическом тексте
   // и, в отличие от \u0000, не считается управляющим (правило no-control-regex).
   const codes: string[] = []
@@ -74,7 +89,11 @@ function inline(escaped: string): string {
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (whole, text: string, href: string) => {
       const safe = safeHref(href)
-      return safe ? `<a href="${safe}">${text}</a>` : whole
+      if (!safe) return whole
+      // Якорь на этом же документе новой вкладкой не открывают — это переход внутри текста.
+      const external = opts.newTab && !safe.startsWith('#')
+      const attrs = external ? ' target="_blank" rel="noopener noreferrer"' : ''
+      return `<a href="${safe}"${attrs}>${text}</a>`
     })
   return marked.replace(/\uE000(\d+)\uE000/g, (_m, i: string) => `<code>${codes[Number(i)]}</code>`)
 }
@@ -105,7 +124,7 @@ export function stripInternalPreamble(md: string): string {
  * The H1 is dropped on purpose: the page renders its own heading (and it must be exactly one), so
  * keeping the file's would produce two.
  */
-export function renderMarkdown(md: string): string {
+export function renderMarkdown(md: string, opts: MarkdownOptions = {}): string {
   const lines = escapeMarkup(stripInternalPreamble(md.replace(/\r\n/g, '\n'))).split('\n')
   const out: string[] = []
   let para: string[] = []
@@ -114,15 +133,15 @@ export function renderMarkdown(md: string): string {
   let quote: string[] = []
 
   const flushPara = () => {
-    if (para.length) out.push(`<p>${inline(para.join(' '))}</p>`)
+    if (para.length) out.push(`<p>${inline(para.join(' '), opts)}</p>`)
     para = []
   }
   const flushList = () => {
-    if (list.length) out.push(`<${listTag}>${list.map(i => `<li>${inline(i)}</li>`).join('')}</${listTag}>`)
+    if (list.length) out.push(`<${listTag}>${list.map(i => `<li>${inline(i, opts)}</li>`).join('')}</${listTag}>`)
     list = []
   }
   const flushQuote = () => {
-    if (quote.length) out.push(`<blockquote>${inline(quote.join(' '))}</blockquote>`)
+    if (quote.length) out.push(`<blockquote>${inline(quote.join(' '), opts)}</blockquote>`)
     quote = []
   }
   const flushAll = () => {
@@ -144,7 +163,7 @@ export function renderMarkdown(md: string): string {
       const level = (line.match(/^#+/)?.[0].length ?? 1)
       if (level === 1) continue // the page owns the H1
       const tag = level === 2 ? 'h2' : 'h3'
-      out.push(`<${tag}>${inline(line.replace(/^#+\s*/, ''))}</${tag}>`)
+      out.push(`<${tag}>${inline(line.replace(/^#+\s*/, ''), opts)}</${tag}>`)
       continue
     }
     if (/^(-{3,}|\*{3,})$/.test(line)) {
@@ -169,8 +188,8 @@ export function renderMarkdown(md: string): string {
       }
       i-- // the loop's own i++ consumes the terminating line
       out.push(
-        `<table><thead><tr>${head.map(h => `<th>${inline(h)}</th>`).join('')}</tr></thead>`
-        + `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+        `<table><thead><tr>${head.map(h => `<th>${inline(h, opts)}</th>`).join('')}</tr></thead>`
+        + `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${inline(c, opts)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
       )
       continue
     }
