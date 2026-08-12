@@ -350,7 +350,7 @@ async function startImport(): Promise<void> {
  * не понял, почему, а следующая пачка ушла бы не туда, куда он рассчитывал.
  */
 function onTargetInvalid(reason: TargetInvalidReason): void {
-  toast.add({ title: 'Цель импорта изменена', description: targetInvalidMessage(reason), color: 'warning' })
+  toast.add({ title: 'Цель импорта изменена', description: targetInvalidMessage(reason, true), color: 'warning' })
 }
 
 function cancelImport(): void {
