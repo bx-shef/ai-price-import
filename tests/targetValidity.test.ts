@@ -42,8 +42,19 @@ describe('#488: годность выбранного маршрута', () => {
   })
 
   it('у каждой причины свой текст, и он говорит, что теперь будет', () => {
-    const texts = (['entity', 'category', 'stage'] as const).map(targetInvalidMessage)
+    const texts = (['entity', 'category', 'stage'] as const).map(r => targetInvalidMessage(r, true))
     expect(new Set(texts).size, 'причины пересказаны одним текстом — человек не поймёт, что именно пропало').toBe(3)
     for (const t of texts) expect(t).toContain('Авто')
+  })
+
+  it('в настройках текст НЕ обещает переключения на «Авто» — там цель сохраняется (#500)', () => {
+    // ⚠ Прежде текст был один на оба экрана и в настройках врал: цель по #492 сохраняется, а
+    // сообщение уверяло, что импорт переключён на «Авто». Соврать человеку о том, что записано в
+    // правиле, хуже, чем промолчать: он не пойдёт чинить то, что считает уже почининым.
+    for (const r of ['entity', 'category', 'stage'] as const) {
+      const t = targetInvalidMessage(r, false)
+      expect(t, `«${r}»: в настройках «Авто» не обещаем`).not.toContain('Авто')
+      expect(t, 'следующий шаг обязан быть назван').toContain('сохраните настройки')
+    }
   })
 })

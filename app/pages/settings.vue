@@ -339,8 +339,10 @@ const toast = useToast()
  */
 function onTargetInvalid(reason: 'entity' | 'category' | 'stage'): void {
   toast.add({
-    title: targetInvalidMessage(reason),
-    description: 'Значение убрано из формы. Выберите новое и сохраните настройки.',
+    // ⚠ `false` — «в «Авто» НЕ переключали»: в настройках цель сохраняется (#492), и общий текст про
+    // «переключён на Авто» здесь был прямой неправдой о том, что записано в правиле (#500).
+    title: targetInvalidMessage(reason, false),
+    description: 'Негодное значение убрано из формы. Выберите новое и сохраните настройки.',
     color: 'air-primary-warning'
   })
 }
