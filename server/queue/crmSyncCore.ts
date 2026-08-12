@@ -15,7 +15,7 @@ import { isMissingTargetError } from '../utils/targetFallback'
 
 // Pure crm-sync orchestration with injected dependencies (no I/O here).
 // Deps are abstract async fns → wired to the isolated MCP tools (not direct REST):
-// docs/PROCESS.md §6 «Запись в CRM».
+// docs/PROCESS.md §6 «Запись в CRM»; свод инвариантов для правки этого файла — §15.1.
 
 /** The portal's own measure catalogue, as crm-sync needs it: does this code exist, and does this
  *  unit name a measure already in the portal? Loaded once per job by the live deps. */
