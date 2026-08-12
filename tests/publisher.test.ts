@@ -19,7 +19,11 @@ import { LANDING_PUBLISHER } from '../app/utils/landing'
 const ROOT = new URL('../', import.meta.url).pathname
 const CODE_ROOTS = ['app', 'server']
 const SOURCE_FILE = 'app/config/publisher.ts'
-const LEGAL_DOCS = ['docs/privacy-policy.md', 'docs/PRICING.md', 'docs/eula.md']
+// ⚠ `contracts.md` добавлен 12.08.2026 (#419) по разбору проверяющих: это документ, уходящий
+// клиенту и юристу, и он цитирует реквизиты гуще остальных — имя, УНП, адрес, счета. Первая
+// редакция уже успела ввести четвёртое написание («ИП Шевчик Игорь Сергеевич» — гибрид короткой и
+// полной формы, которого в `publisher.ts` нет), и поймал его человек, а не гард.
+const LEGAL_DOCS = ['docs/privacy-policy.md', 'docs/PRICING.md', 'docs/eula.md', 'docs/contracts.md']
 
 /** Все .ts/.vue в коде приложения и сервера, кроме самого источника. */
 function codeSources(dir: string, acc: string[] = []): string[] {

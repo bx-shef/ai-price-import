@@ -16,7 +16,9 @@
  *
  * ⚠ Bank details are deliberately NOT here: the licence is free of charge and the previous agreement
  * carried none, so putting an account number into a public page would publish more than the document
- * needs. They stay on the owner's own requisites page.
+ * needs. They stay on the owner's own requisites page (https://offer.bx-shef.by/legal), откуда их и
+ * берут договорные формы — `docs/contracts.md` §0.3 (#419). Секретом они не являются; отсутствие
+ * здесь — про то, что страницам приложения и юридическим документам счёт не нужен.
  */
 export const PUBLISHER = {
   /** Short legal name. ONE spelling — «И. С.» with a space, per Russian typography. */
