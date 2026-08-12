@@ -66,27 +66,39 @@ export const LEGAL_ARCHIVE: LegalArchiveDoc[] = [
     noRetroactivity: true,
     title: 'Лицензионное соглашение',
     sourceFile: 'eula',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '58e7477471c12d59f408a501fe6751ff93c2fd3f7967ad1b40ab6e547fe95703' }]
+    editions: [
+      { date: '2026-08-12', effective: '22.08.2026', supersededAt: null, sha256: 'e090fad60d9c47073fbe4ec3dfdf5237f48f9111de17277b4402fa2751de682b' },
+      { date: '2026-08-08', effective: '20.08.2026', supersededAt: '22.08.2026', sha256: '58e7477471c12d59f408a501fe6751ff93c2fd3f7967ad1b40ab6e547fe95703' }
+    ]
   },
   {
     slug: 'privacy',
     noRetroactivity: true,
     title: 'Политика конфиденциальности приложения',
     sourceFile: 'privacy-policy',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '251fcd67617db296dc5793fccecf46fc2e8fc0f0ae721e2f3936d6cd8521d59a' }]
+    editions: [
+      { date: '2026-08-12', effective: '22.08.2026', supersededAt: null, sha256: 'f4bcc41eae25c3b1444a539e5bf4d288d26aed3b308b5932b4e57c76ada938fe' },
+      { date: '2026-08-08', effective: '20.08.2026', supersededAt: '22.08.2026', sha256: '251fcd67617db296dc5793fccecf46fc2e8fc0f0ae721e2f3936d6cd8521d59a' }
+    ]
   },
   {
     slug: 'site-terms',
     noRetroactivity: false,
     title: 'Условия использования сайта',
     sourceFile: 'site-terms',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: 'e417f2a2e0b57f24adf2b4429741211fd948fc683e7a08b12072dbafa6f25b44' }]
+    editions: [
+      { date: '2026-08-12', effective: '22.08.2026', supersededAt: null, sha256: '35a0dbfd4d3523684b934c3cfaed0653aaa5f9c847f2e8350505f04b710f486e' },
+      { date: '2026-08-08', effective: '20.08.2026', supersededAt: '22.08.2026', sha256: 'e417f2a2e0b57f24adf2b4429741211fd948fc683e7a08b12072dbafa6f25b44' }
+    ]
   },
   {
     slug: 'site-privacy',
     noRetroactivity: false,
     title: 'Политика конфиденциальности сайта',
     sourceFile: 'site-privacy',
-    editions: [{ date: '2026-08-08', effective: '20.08.2026', supersededAt: null, sha256: '5c224ac270b1d85ad2cff0a14838703bfe37f0adf1d53fff4eec285fffd0f11a' }]
+    editions: [
+      { date: '2026-08-12', effective: '22.08.2026', supersededAt: null, sha256: '5e241af7c6c073b938738fca90cdcace1c71b4872c69f5fb9d19740296008522' },
+      { date: '2026-08-08', effective: '20.08.2026', supersededAt: '22.08.2026', sha256: '5c224ac270b1d85ad2cff0a14838703bfe37f0adf1d53fff4eec285fffd0f11a' }
+    ]
   }
 ]
