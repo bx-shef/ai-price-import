@@ -647,6 +647,7 @@ watch(jobs, (list) => {
                         v-if="!isBitrixMobile"
                         type="button"
                         :disabled="busy"
+                        :aria-label="busy ? 'Подробные метрики недоступны, пока идёт загрузка' : undefined"
                         class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
                         @click="openMetrics"
                       >
@@ -665,8 +666,21 @@ watch(jobs, (list) => {
                         color="air-tertiary-no-accent"
                         size="xs"
                         :disabled="busy"
+                        :aria-label="busy ? 'Сброс счётчиков недоступен, пока идёт загрузка' : undefined"
                         @click="() => { confirmReset = true }"
                       />
+                      <!-- ⚠ Причина — СЛОВАМИ, а не только приглушением (#475). Выключенная кнопка без
+                           объяснения неотличима от сломанной, и человек начинает жать её сильнее.
+                           Строка одна на всю карточку: подпись у каждой кнопки читалась бы как три
+                           разные поломки вместо одного временного состояния. Место — под кнопками,
+                           чтобы объяснение стояло там, куда человек уже смотрит. -->
+                      <p
+                        v-if="busy"
+                        class="text-xs text-(--ui-color-base-3)"
+                        role="status"
+                      >
+                        Пока идёт загрузка, счётчики не меняем
+                      </p>
                       <div
                         v-else-if="isAdmin"
                         class="flex flex-wrap items-center justify-end gap-2"
