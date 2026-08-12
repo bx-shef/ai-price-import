@@ -17,6 +17,7 @@ import { feedbackIntakeGate } from '../utils/feedbackIntake'
 import { withFrameRouteSpan } from '../utils/frameRouteSpan'
 import { downloadAttachment } from '../utils/activityFileFetch'
 import { resolveFeedbackAttachment } from '../utils/feedbackAttachment'
+import { attachUploadedDoc, shouldAcceptUploadedDoc, type UploadedDoc } from '../utils/feedbackUpload'
 import { originatorCode } from '../utils/originMarker'
 import { sdkPortalDeps, makePortalSdkCall } from '../utils/b24Sdk'
 import { MAX_FEEDBACK_FILE_BYTES } from '~/config/uploadFormats'
@@ -82,7 +83,7 @@ export default defineEventHandler(async (event) => {
       }
 
       const raw = await readBody(event).catch(() => null) as
-        { kind?: unknown, comment?: unknown, attachFile?: unknown, context?: Record<string, unknown> } | null
+        { kind?: unknown, comment?: unknown, attachFile?: unknown, fileUpload?: UploadedDoc, context?: Record<string, unknown> } | null
       const kind = normalizeKind(raw?.kind)
       if (!kind) {
         span.outcome = 'bad_request'
@@ -122,6 +123,8 @@ export default defineEventHandler(async (event) => {
       /** Told to the employee whenever the file did NOT go out (#354) — «принято» без оговорки
        *  прочиталось бы как «документ ушёл». */
       let attachNotice: string | undefined
+      // Класс промаха пути «из дела» — им решается, законен ли второй источник документа (#506 п.3).
+      let attachMiss: import('~~/server/utils/feedbackAttachment').AttachmentResult['miss']
       if (jobId) {
         try {
           const job = await getJob(member.memberId, jobId, jobRedis)
@@ -166,11 +169,48 @@ export default defineEventHandler(async (event) => {
         })
         fileUrl = res.fileUrl
         attachNotice = res.notice
+        attachMiss = res.miss
       }
       // Просили приложить файл, а ссылки на него нет — значит он не ушёл: задание истекло, страница
       // байт не прислала, архива на Диске нет или приёмник не подтверждён приватным. Причины разные,
       // исход для человека один, и он обязан быть назван. Ставится ПОСЛЕ всей ветки: раньше здесь
       // молчали везде, кроме исчерпанного предела.
+      // ДОКУМЕНТ ИЗ БРАУЗЕРА — только когда ДЕЛА НЕТ (#506 п.3). Импорт, упавший на извлечении, до
+      // CRM не доходит: дела нет, вложения нет, и взять документ неоткуда — а он нужен именно тогда,
+      // когда без него воспроизвести нечего. ⚠ Путь через дело остаётся ОСНОВНЫМ и проверяется
+      // первым: там источник проверяет сервер, здесь — тело запроса, которое контролирует клиент.
+      // ⚠ Граница — `miss === 'no-activity'`, а НЕ `!fileUrl` (находка трёх проверяющих). `!fileUrl`
+      // истинен при любой причине промаха: `jobId` не прислали вовсе, дело есть, но не скачалось,
+      // предел приёмника исчерпан. То есть заявленное «только когда дела нет» жило в комментарии, а
+      // на деле байты из тела принимались почти всегда — и хуже: их было достаточно НЕ ПРИСЫЛАТЬ
+      // `jobId`, чтобы путь через дело даже не запускался. Ровно тот класс, ради которого #461
+      // убирал байты из тела. Теперь фолбэк требует, чтобы сервер СХОДИЛ в портал и не нашёл дела.
+      // ⚠ Пределы те же самые: кап размера, общий предел приёмника (#354) и обязательная проба
+      // приватности (#200) — они внутри `attachUploadedDoc`, а не переписаны сюда.
+      if (shouldAcceptUploadedDoc({ attachFile, fileUrl, miss: attachMiss, hasUpload: !!raw?.fileUpload })) {
+        const up = await attachUploadedDoc(raw?.fileUpload, {
+          // Проба приватности уже сделана выше по этому же запросу и её вердикт не мог измениться —
+          // повтор стоил бы лишнего обращения к GitHub на каждый такой отзыв.
+          uploadAllowed: async () => true,
+          checkBudget: () => checkAttachBudget(memberId, Date.now()),
+          commit: async (name, base64) => {
+            const c2 = await commitFeedbackFile(
+              config, feedbackFilePath(portalTag, jobId, name), base64,
+              `feedback file (uploaded) for job ${jobId}`, fetchImpl
+            )
+            return c2.ok && c2.htmlUrl ? c2.htmlUrl : null
+          },
+          maxBytes: MAX_FEEDBACK_FILE_BYTES,
+          missingNotice: ATTACH_MISSING_NOTICE,
+          logMiss: miss => console.warn(`[feedback] uploaded attachment miss: ${miss}`)
+        })
+        if (up.fileUrl) {
+          fileUrl = up.fileUrl
+          attachNotice = undefined
+        } else {
+          attachNotice = up.notice
+        }
+      }
       if (attachFile && !fileUrl && !attachNotice) attachNotice = ATTACH_MISSING_NOTICE
       const payload = buildFeedbackIssue(kind, raw?.comment, {
         jobId: c.jobId,
