@@ -31,16 +31,21 @@ registerEndpoint('/api/ops/queues', () => {
   // только на успехе своего запроса. Без него сценарий «очереди упали, соседние блоки — нет»
   // недостижим, и мутация «эмитить `updated` заодно из catch» проходила бы зелёной.
   if (fail.queues) throw new Error('boom')
+  if (holdQueues) return new Promise<never>(() => {}) // висит: тест смотрит на соседние блоки
   return {
     queues: QUEUES,
     totals: totalsMode === 'ok' ? { docs: 12, created: 11, lines: 340, errors: 1 } : null,
     totalsFailed: totalsMode === 'failed'
   }
 })
+// Управляемая задержка очередей — ею проверяется, что блоки грузятся ПАРАЛЛЕЛЬНО.
+let holdQueues: (() => void) | null = null
 registerEndpoint('/api/ops/tokens', () => {
   if (fail.tokens) throw new Error('boom')
+  tokensCalled = true
   return { portals: empty ? [] : PORTALS }
 })
+let tokensCalled = false
 const FAILED = [
   { queue: 'crm-sync', id: '42', reason: 'портал отверг запись', failedAt: 1700000000000, attempts: 3 }
 ]
@@ -70,6 +75,8 @@ beforeEach(() => {
   failedActions.length = 0
   unavailable = []
   totalsMode = 'ok'
+  holdQueues = null
+  tokensCalled = false
 })
 
 /**
@@ -138,6 +145,17 @@ describe('Операторская консоль (#271)', () => {
     const w = await mountSuspended(QueuesPage)
     await flush(w, 'обновлено в')
     expect(w.text()).toMatch(/обновлено в \d{2}:\d{2}:\d{2}/)
+  })
+
+  it('A: блоки грузятся параллельно — зависшие очереди не держат остальные', async () => {
+    // Заявленное свойство разбора: у каждого блока свой эндпоинт, и упавший (или медленный) запрос
+    // одного не задерживает отрисовку соседних. Без этой проверки переписывание `Promise.all` на
+    // последовательный `for … await` не роняет ни один тест, а консоль открывается заметно дольше.
+    holdQueues = () => {}
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'a.bitrix24.by') // порталы дорисовались, хотя очереди ещё висят
+    expect(tokensCalled, 'запрос за порталами ждал ответа очередей').toBe(true)
+    expect(w.text()).toContain('zzz.bitrix24.ru')
   })
 
   it('A: очереди упали, а соседние блоки нет — отметки обновления НЕ появляется', async () => {
