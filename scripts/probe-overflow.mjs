@@ -19,7 +19,7 @@
 import { chromium } from 'playwright-core'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveChromium } from './lib/chromium.mjs'
 
@@ -41,16 +41,30 @@ const ROUTES = routes.length ? routes : ['/settings', '/metrics']
 const server = createServer(async (req, res) => {
   let path = decodeURIComponent((req.url || '/').split('?')[0])
   if (path.endsWith('/')) path += 'index.html'
+  // ⚠ Никогда не отдаём файл ЗА пределами каталога сборки, даже если в адресе есть `../`. Первая
+  // редакция скрипта клала `req.url` прямо в `join()`: `path.join` выход за базу не запрещает, и
+  // `/%2e%2e/%2e%2e/etc/passwd` читался как обычный файл (буквальный `../` схлопывает сам curl, а
+  // закодированный доезжает). Тот же приём и та же защита — в `screenshot.mjs`; там она стояла с
+  // самого начала, здесь её просто забыли повторить.
+  const filePath = join(PUBLIC_DIR, normalize(path))
+  if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + sep)) {
+    res.writeHead(403)
+    res.end('forbidden')
+    return
+  }
   try {
-    const body = await readFile(join(PUBLIC_DIR, path))
-    res.writeHead(200, { 'content-type': TYPES[extname(path)] || 'application/octet-stream' })
+    const body = await readFile(filePath)
+    res.writeHead(200, { 'content-type': TYPES[extname(filePath)] || 'application/octet-stream' })
     res.end(body)
   } catch {
     res.writeHead(404)
     res.end('not found')
   }
 })
-await new Promise(resolve => server.listen(0, resolve))
+// ⚠ Только петлевой адрес. Без хоста Node слушает 0.0.0.0, то есть на время прогона порт виден с
+// любой машины, которая видит эту по сети (соседний контейнер, другая джоба раннера) — а отдаёт
+// сервер файлы, доступные процессу. Порт эфемерный и в консоль не печатается, но это не защита.
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const port = server.address().port
 
 const browser = await chromium.launch({ executablePath: await resolveChromium() })

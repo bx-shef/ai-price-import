@@ -19,18 +19,24 @@ const PORTALS = [
 ]
 const RATINGS = [{ memberId: 'm1', domain: 'a.bitrix24.by', state: 'prompted', promptedAtMs: 1, openedAtMs: null }]
 
-let fail = { tokens: false, ratings: false }
+let fail = { queues: false, tokens: false, ratings: false }
 let empty = false
 const posted: string[] = []
 
 // Перехватываем сетевой слой, а не глобальный $fetch: в Nuxt он резолвится через ofetch, и подмена
 // globalThis до страницы не доходит.
 let totalsMode: 'ok' | 'empty' | 'failed' = 'ok'
-registerEndpoint('/api/ops/queues', () => ({
-  queues: QUEUES,
-  totals: totalsMode === 'ok' ? { docs: 12, created: 11, lines: 340, errors: 1 } : null,
-  totalsFailed: totalsMode === 'failed'
-}))
+registerEndpoint('/api/ops/queues', () => {
+  // ⚠ Переключатель отказа нужен именно здесь: отметку «обновлено в» ставит ТОЛЬКО этот блок и
+  // только на успехе своего запроса. Без него сценарий «очереди упали, соседние блоки — нет»
+  // недостижим, и мутация «эмитить `updated` заодно из catch» проходила бы зелёной.
+  if (fail.queues) throw new Error('boom')
+  return {
+    queues: QUEUES,
+    totals: totalsMode === 'ok' ? { docs: 12, created: 11, lines: 340, errors: 1 } : null,
+    totalsFailed: totalsMode === 'failed'
+  }
+})
 registerEndpoint('/api/ops/tokens', () => {
   if (fail.tokens) throw new Error('boom')
   return { portals: empty ? [] : PORTALS }
@@ -58,7 +64,7 @@ registerEndpoint('/api/ops/app-rating', (event) => {
 })
 
 beforeEach(() => {
-  fail = { tokens: false, ratings: false }
+  fail = { queues: false, tokens: false, ratings: false }
   empty = false
   posted.length = 0
   failedActions.length = 0
@@ -98,7 +104,7 @@ describe('Операторская консоль (#271)', () => {
   })
 
   it('E: блок с упавшим запросом показывает ошибку, а не исчезает молча', async () => {
-    fail = { tokens: true, ratings: true }
+    fail = { ...fail, tokens: true, ratings: true }
     const w = await mountSuspended(QueuesPage)
     await flush(w, 'Не удалось получить состояние порталов')
     expect(w.text()).toContain('Не удалось получить состояние порталов')
@@ -132,6 +138,17 @@ describe('Операторская консоль (#271)', () => {
     const w = await mountSuspended(QueuesPage)
     await flush(w, 'обновлено в')
     expect(w.text()).toMatch(/обновлено в \d{2}:\d{2}:\d{2}/)
+  })
+
+  it('A: очереди упали, а соседние блоки нет — отметки обновления НЕ появляется', async () => {
+    // Отметка говорит о свежести цифр ОЧЕРЕДЕЙ. Поставить её по факту попытки или по успеху
+    // соседнего блока значит показать свежее время над старыми числами — ровно тот случай, ради
+    // которого признак «данные устарели» и заводился.
+    fail = { ...fail, queues: true }
+    const w = await mountSuspended(QueuesPage)
+    await flush(w, 'a.bitrix24.by') // дождались успеха блока порталов
+    expect(w.text(), 'отметка обновления появилась, хотя очереди не ответили').not.toMatch(/обновлено в \d{2}:\d{2}:\d{2}/)
+    expect(w.text(), 'об отказе очередей не сказано').toContain('Сервис недоступен')
   })
 })
 

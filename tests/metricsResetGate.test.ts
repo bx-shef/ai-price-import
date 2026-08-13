@@ -33,7 +33,11 @@ describe('#411: кнопку сброса видит только админис
       const page = readFileSync(new URL(`../${file}`, import.meta.url).pathname, 'utf8')
       // Обе ветки: сама кнопка и состояние подтверждения. Прикрыть только первую мало — сотрудник
       // остался бы в подтверждении, если бы признак изменился уже после нажатия.
-      expect(page, `${file}: кнопка сброса не гейтится`).toMatch(new RegExp(`v-if="${flag} &&[^"]*confirmReset"`))
+      // ⚠ Требуем именно `!confirmReset`, а не «что-нибудь и потом confirmReset»: прежний
+      // `&&[^"]*confirmReset` пропускал `v-if="isAdmin && confirmReset"` — условие, обратное по
+      // смыслу. Гейт прав от этого не падал (сотрудник по-прежнему ничего не видит), но кнопка
+      // «Сбросить» не появлялась бы НИКОГДА: `confirmReset` стартует `false`.
+      expect(page, `${file}: кнопка сброса не гейтится`).toMatch(new RegExp(`v-if="${flag} && !confirmReset"`))
       expect(page, `${file}: состояние подтверждения не гейтится`).toContain(`v-else-if="${confirm}"`)
     })
   }

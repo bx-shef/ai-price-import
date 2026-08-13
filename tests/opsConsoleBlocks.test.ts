@@ -25,6 +25,30 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8')
 /** Комментарии режем: гард, краснеющий на разборе дефекта, подталкивает удалить разбор, а не дефект. */
 const strip = (sfc: string) => sfc.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
 
+/**
+ * Тела всех `catch (e) {…}` файла — по одному на разбор отказа.
+ *
+ * Границу ищем по вложенности фигурных скобок, а не по «до следующей `}`»: внутри `catch` стоят
+ * свои `if {…}`, и наивная нарезка обрубала бы блок на первой же из них — то есть проверка смотрела
+ * бы на огрызок и пропускала как раз то, что в нём написано дальше.
+ */
+function catchBodies(src: string): string[] {
+  const out: string[] = []
+  const re = /catch\s*\(\s*e\s*\)\s*\{/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src))) {
+    let depth = 1
+    let i = m.index + m[0].length
+    while (i < src.length && depth > 0) {
+      if (src[i] === '{') depth++
+      else if (src[i] === '}') depth--
+      i++
+    }
+    out.push(src.slice(m.index + m[0].length, i - 1))
+  }
+  return out
+}
+
 /** Блоки консоли, которые ходят в сеть сами. `OpsAnnouncementCard` в список не входит: он не
  *  участвует в автообновлении и о состоянии сессии узнаёт из своей отправки. */
 const BLOCKS = [
@@ -39,13 +63,21 @@ describe('#523: служебная консоль разобрана на бло
       expect(strip(read(block)), 'блок не умеет сообщить, что сессия истекла').toMatch(/defineEmits<\{[\s\S]*?unauthorized/)
     })
 
-    it(`${block}: каждый разбор 401 заканчивается этим событием, а не своей ошибкой`, () => {
-      const src = strip(read(block))
-      // Сколько раз блок узнаёт просроченную сессию — столько раз он обязан сказать об этом наверх.
-      const detects = (src.match(/isExpired\(e\)/g) || []).length
-      const emits = (src.match(/emit\('unauthorized'\)/g) || []).length
-      expect(detects, 'блок нигде не отличает просроченную сессию от отказа сервиса').toBeGreaterThan(0)
-      expect(emits, `${detects} мест распознают 401, а наверх сообщают ${emits}`).toBe(detects)
+    it(`${block}: КАЖДЫЙ разбор отказа проверяет просроченную сессию и сообщает наверх`, () => {
+      // ⚠ Первая редакция считала пары ПО ВСЕМУ ФАЙЛУ и сравнивала суммы. Это ловило только «забыли
+      // везде»: у блока три-пять `catch`, и потеря проверки в ОДНОМ из них суммы не меняла. Обе
+      // мутации проходили гард зелёным — удалить `if (isExpired(e))` целиком из `toggleFailed` и
+      // перевернуть условие на `!isExpired(e)` в `load` (второе хуже: реальный 401 показывает
+      // «сервис недоступен» и не уводит на вход, а любой ДРУГОЙ отказ насильно разлогинивает).
+      // Поэтому смотрим каждый `catch` отдельно.
+      const bodies = catchBodies(strip(read(block)))
+      expect(bodies.length, 'в блоке нет ни одного разбора отказа').toBeGreaterThan(0)
+      for (const body of bodies) {
+        // ⚠ Требуем не «слово встречается», а связку «распознали → сразу сообщили и вышли»: именно
+        // порядок и делает разбор правильным, а инверсию условия ловит буквальное `if (isExpired(e))`.
+        expect(body, `есть catch без разбора просроченной сессии:\n${body.trim().slice(0, 160)}`)
+          .toMatch(/if \(isExpired\(e\)\) \{\s*emit\('unauthorized'\)\s*return\s*\}/)
+      }
     })
 
     it(`${block}: сравнение с 401 живёт ровно в одном месте — в самом isExpired`, () => {
@@ -70,12 +102,20 @@ describe('#523: служебная консоль разобрана на бло
     // Блоки грузятся ПАРАЛЛЕЛЬНО, поэтому о просроченной сессии сообщат все три разом. Без замка это
     // три навигации подряд, а без `stopAuto()` вкладка успевает послать ещё круг запросов заведомо
     // просроченной сессией — ровно то, чем был плох прежний «схлопнутый» разбор 401.
+    // ⚠ Первая редакция искала СЛОВА в теле функции, и обе снимающие защиту мутации проходили
+    // зелёными: убрать саму защёлку `if (leaving) return`, оставив присваивание `leaving = true`
+    // (слово-то на месте), и переставить `stopAuto()` ПОСЛЕ ухода — то есть ровно то, что соседний
+    // комментарий объявляет несущим требованием. Проверяем структуру и порядок, а не присутствие.
     const page = strip(read('app/pages/queues.vue'))
     const handler = page.slice(page.indexOf('async function onUnauthorized'))
     const body = handler.slice(0, handler.indexOf('\n}') + 2)
-    expect(body, 'нет замка от повторного ухода').toMatch(/leaving/)
-    expect(body, 'автообновление не остановлено перед уходом').toMatch(/stopAuto\(\)/)
-    expect(body).toMatch(/router\.push\('\/login'\)/)
+    expect(body, 'замок не ЧИТАЕТСЯ первым делом — три блока уведут на вход трижды').toMatch(/^\s*if \(leaving\) return$/m)
+    expect(body, 'замок не взводится — он сработает ровно ноль раз').toMatch(/^\s*leaving = true$/m)
+    const stop = body.indexOf('stopAuto()')
+    const push = body.indexOf('router.push(\'/login\')')
+    expect(stop, 'автообновление не остановлено').toBeGreaterThan(-1)
+    expect(push, 'ухода на вход нет').toBeGreaterThan(-1)
+    expect(stop, 'автообновление гасится ПОСЛЕ ухода — вкладка успевает послать ещё круг запросов').toBeLessThan(push)
   })
 
   it('страница больше не держит запросы блоков у себя', () => {
