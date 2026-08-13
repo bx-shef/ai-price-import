@@ -82,8 +82,10 @@ describe('проводка на странице настроек (#311)', () =>
   // Замечание ревью: nuxt-тест монтирует b24ui-компонент со СВОИМИ пропсами и о странице не знает
   // ничего. Опечатка прямо в `settings.vue` (`:format-optoins`) прошла бы и его, и typecheck —
   // Vue уносит неизвестный проп в fallthrough-атрибуты, и поле просто осталось бы без валюты.
-  // Поэтому бьём по ИСХОДНИКУ страницы, как `tests/publisher.test.ts` бьёт по литералам.
-  const PAGE = readFileSync(new URL('../app/pages/settings.vue', import.meta.url).pathname, 'utf8')
+  // Поэтому бьём по ИСХОДНИКУ, как `tests/publisher.test.ts` бьёт по литералам.
+  // ⚠ Форма уехала из `app/pages/settings.vue` в свой компонент (#523) — проверка сторожит
+  // проводку поля, а не место, поэтому читает тот файл, где поле теперь живёт.
+  const PAGE = readFileSync(new URL('../app/components/SettingsForm.vue', import.meta.url).pathname, 'utf8')
 
   it('поле ставки получает валютный формат, сотые и русскую локаль', () => {
     expect(PAGE).toContain(':format-options="rateFormatOptions"')
@@ -118,7 +120,7 @@ describe('проводка на странице настроек (#311)', () =>
     // в поле, та, что стоит за shouldPrefillRate (комментарии режем — иначе черновик, «убранный»
     // в комментарий, считался бы за живой код).
     const code = PAGE.split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
-    expect(code.match(/watch\(\[loaded, baseCurrency\]/g) ?? []).toHaveLength(1)
+    expect(code.match(/watch\(\[\(\) => props\.loaded, \(\) => props\.baseCurrency\]/g) ?? []).toHaveLength(1)
     const writes = code.match(/savingsRate\.value = [^\n]+/g) ?? []
     expect(writes).toEqual(['savingsRate.value = rateHint.value!.rate'])
   })
