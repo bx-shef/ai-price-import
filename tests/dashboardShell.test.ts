@@ -95,7 +95,12 @@ describe('#259: каркас шаблона на in-portal экранах', () =
     expect(s).toContain('B24DashboardToolbar')
     expect(s).toContain('B24NavigationMenu')
     // Блоки-пары шаблона: тонированная шапка + тело со склеенными скруглениями (§1.3 issue).
-    expect(s).toMatch(/variant="tinted"[\s\S]{0,200}sm:rounded-t-3xl/)
+    // ⚠ Проверяется ПАРА, а не конкретный оттенок: 12.08.2026 (#523) шапки переведены с акцентной
+    // `tinted` на нейтральную `tinted-no-accent` — синим были покрашены все шапки разом, и акцент
+    // перестал что-либо выделять. Требование «шапка тонирована и склеена с телом» не изменилось,
+    // поэтому гард ослаблен ровно на оттенок; запрет на возврат акцента держит
+    // `tests/portalSliderChrome.test.ts`.
+    expect(s).toMatch(/variant="tinted[^"]*"[\s\S]{0,200}sm:rounded-t-3xl/)
     expect(s).toMatch(/sm:rounded-b-3xl/)
   })
 

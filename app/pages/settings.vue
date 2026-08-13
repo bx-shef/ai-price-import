@@ -457,7 +457,7 @@ const ARTICLE_KIND_ITEMS = [
                 class="scroll-mt-16"
               >
                 <B24PageCard
-                  variant="tinted"
+                  variant="tinted-no-accent"
                   :title="SECTIONS[0].label"
                   :description="SECTIONS[0].description"
                   :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
@@ -532,7 +532,7 @@ const ARTICLE_KIND_ITEMS = [
                 class="scroll-mt-16"
               >
                 <B24PageCard
-                  variant="tinted"
+                  variant="tinted-no-accent"
                   :title="SECTIONS[1].label"
                   :description="SECTIONS[1].description"
                   :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
@@ -689,7 +689,7 @@ const ARTICLE_KIND_ITEMS = [
                 class="scroll-mt-16"
               >
                 <B24PageCard
-                  variant="tinted"
+                  variant="tinted-no-accent"
                   :title="SECTIONS[2].label"
                   :description="SECTIONS[2].description"
                   :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
@@ -739,7 +739,7 @@ const ARTICLE_KIND_ITEMS = [
                 class="scroll-mt-16"
               >
                 <B24PageCard
-                  variant="tinted"
+                  variant="tinted-no-accent"
                   :title="SECTIONS[3].label"
                   :description="SECTIONS[3].description"
                   :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
@@ -814,10 +814,12 @@ const ARTICLE_KIND_ITEMS = [
               </section>
             </div>
 
-            <div
-              v-if="!showReadOnly"
-              class="mt-8 flex items-center gap-3"
-            >
+            <!-- Действия — в нижней панели окна, как у штатного слайдера b24ui (#523). Прежде они
+                 стояли в конце содержимого: на этом экране до них было около двух тысяч пикселей
+                 прокрутки, и правивший первое поле до «Сохранить» не доходил. -->
+            <BuildFooter />
+
+            <SliderActions v-if="!showReadOnly">
               <B24Button
                 color="air-primary-success"
                 :loading="saving"
@@ -837,10 +839,8 @@ const ARTICLE_KIND_ITEMS = [
                 role="status"
                 aria-live="polite"
               >Настройки сохранены ✓</span>
-            </div>
+            </SliderActions>
           </ScreenState>
-
-          <BuildFooter />
         </div>
       </template>
     </B24DashboardPanel>

@@ -194,7 +194,7 @@ async function doReset(): Promise<void> {
             <!-- Детальная разбивка — пара «тонированная шапка + тело», как блоки настроек (#259 §1.3). -->
             <div class="mt-3">
               <B24PageCard
-                variant="tinted"
+                variant="tinted-no-accent"
                 title="Счётчики"
                 :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
               />
@@ -236,8 +236,12 @@ async function doReset(): Promise<void> {
           />
 
           <!-- Сброс — ВНЕ состояния загрузки: «Обновить» это способ повторить попытку, и он обязан
-               быть доступен как раз тогда, когда данные не пришли. -->
-          <div class="mt-4 flex items-center gap-2">
+               быть доступен как раз тогда, когда данные не пришли.
+               ⚠ Действия живут в нижней панели окна (#523): экран открывается слайдером, и у
+               штатного слайдера b24ui действия стоят внизу, а не в конце содержимого. -->
+          <BuildFooter />
+
+          <SliderActions>
             <B24Button
               :icon="RefreshIcon"
               color="air-tertiary-no-accent"
@@ -300,9 +304,7 @@ async function doReset(): Promise<void> {
                 />
               </template>
             </div>
-          </div>
-
-          <BuildFooter />
+          </SliderActions>
         </div>
       </template>
     </B24DashboardPanel>
