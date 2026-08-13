@@ -3,6 +3,7 @@ import { extractFrameAuth } from '../utils/frameAuth'
 import { verifyFrameToken } from '../utils/resolveFrameMember'
 import { readMapping } from '../utils/appSettings'
 import { fetchBaseCurrency } from '../utils/portalCurrency'
+import { cachedBaseCurrency } from '../utils/baseCurrencyCache'
 import { withSpan } from '../utils/telemetrySpan'
 import { portalHash } from '../utils/telemetryAttributes'
 
@@ -46,9 +47,14 @@ export default defineEventHandler(async (event) => {
         // a currency read must not turn the settings page into a 502 — but collapsing the two states
         // would have the page assert «в портале нет базовой валюты» on a timeout and send the admin
         // to create a currency that already exists.
+        // ⚠ Валюта берётся ИЗ КЭША на короткий срок (#480): она нужна для подписи к ставке часа и
+        // меняется на портале примерно никогда, а спрашивалась при каждом перечитывании — то есть
+        // умножалась на число открытых вкладок вместе с нужными вызовами. Отказ чтения не
+        // кэшируется: «валюты нет» и «не смогли прочитать» — разные исходы, и первый экран заявляет
+        // как факт.
         const [mapping, currency] = await Promise.all([
           readMapping(call),
-          fetchBaseCurrency(call).then(c => ({ code: c, failed: false })).catch(() => ({ code: null, failed: true }))
+          cachedBaseCurrency(auth.domain, () => fetchBaseCurrency(call))
         ])
         currencyFailed = currency.failed
         return { mapping, admin: verified.admin === true, baseCurrency: currency.code, currencyUnknown: currency.failed }

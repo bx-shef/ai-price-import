@@ -53,9 +53,11 @@ describe('#478: диалог реагирует на сигнал', () => {
   it('подписка заведена и ВЫЗЫВАЕТ повторную проверку', () => {
     // ⚠ Мутация «забыть скобки» (`void check` вместо `void check()`) внешне неотличима: событие
     // придёт, подписка жива, а проверки не будет.
+    // ⚠ Имя стало `live.check()` (#473 п.4): композабл берётся целиком, чтобы предпросмотр мог его
+    // НЕ трогать. Проверяем вызов, а не прежнее написание.
     const src = dialog()
     expect(src).toContain('subscribeAnnouncement(')
-    expect(src).toMatch(/void check\(\)/)
+    expect(src).toMatch(/void live\.check\(\)/)
   })
 
   it('запрос идёт с разбросом, а не мгновенно у всех разом', () => {
@@ -70,6 +72,6 @@ describe('#478: диалог реагирует на сигнал', () => {
     // поведение обязано остаться ровно прежним.
     const src = dialog()
     const beforeSubscribe = src.split('subscribeAnnouncement(')[0] ?? ''
-    expect(beforeSubscribe, 'проверка при монтировании исчезла').toMatch(/void check\(\)/)
+    expect(beforeSubscribe, 'проверка при монтировании исчезла').toMatch(/void live\.check\(\)/)
   })
 })

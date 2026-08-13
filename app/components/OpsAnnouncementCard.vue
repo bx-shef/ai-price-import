@@ -3,8 +3,8 @@ import { computed, ref } from 'vue'
 import type { Announcement } from '~/utils/announcement'
 import { deliveryNote } from '~/utils/announcementDelivery'
 import {
-  DEFAULT_ANNOUNCEMENT_DAYS, MAX_ANNOUNCEMENT_CTA, MAX_ANNOUNCEMENT_IMAGE_BYTES,
-  MAX_ANNOUNCEMENT_TEXT, MAX_ANNOUNCEMENT_TITLE
+  DEFAULT_ANNOUNCEMENT_DAYS, MAX_ANNOUNCEMENT_CTA, MAX_ANNOUNCEMENT_DAYS,
+  MAX_ANNOUNCEMENT_IMAGE_BYTES, MAX_ANNOUNCEMENT_TEXT, MAX_ANNOUNCEMENT_TITLE
 } from '~/config/announcement'
 
 // Консоль оператора: объявление клиентам (#469).
@@ -34,6 +34,21 @@ const busy = ref(false)
 const imageName = ref('')
 
 const canSend = computed(() => !!preview.value && !busy.value)
+
+// ⚠ Работа с объявлением живёт в ПАНЕЛИ (#473 п.7): форма из шести полей, предпросмотр и три кнопки
+// занимали страницу, которая нужна для наблюдения за очередями. На самой странице остаётся строка
+// состояния и кнопка — чтобы видеть, что сейчас показывается, не открывая ничего.
+const panel = ref(false)
+
+/** Каким носителем показать предпросмотр: оба вида проверяются, а не тот, что достался по ширине. */
+const previewAs = ref<'modal' | 'sheet'>('modal')
+/** Предпросмотр показан поверх панели. Закрывается кнопкой самого объявления. */
+const showPreview = ref(false)
+
+/** Сколько знаков осталось. Показываем только когда предел близко — иначе это шум. */
+function left(value: string, max: number): number {
+  return max - value.length
+}
 
 async function loadCurrent(): Promise<void> {
   try {
@@ -109,125 +124,210 @@ async function send(action: 'preview' | 'publish' | 'clear'): Promise<void> {
       с первого раза.
     </p>
 
-    <B24Alert
-      v-if="current"
-      class="mb-3"
-      color="air-primary-success"
-      size="sm"
-      :title="`Сейчас показывается: ${current.title}`"
-      :description="`До ${new Date(current.expiresAt).toLocaleDateString('ru-RU')}`"
-    />
-
-    <div class="space-y-3 rounded-xl border border-(--ui-color-base-5) p-3">
-      <B24Input
-        v-model="draft.title"
-        placeholder="Заголовок"
-        :maxlength="MAX_ANNOUNCEMENT_TITLE"
+    <!-- На странице — только состояние и вход. Всё остальное в панели (#473 п.7). -->
+    <div class="flex flex-wrap items-center gap-3">
+      <B24Alert
+        v-if="current"
+        class="flex-1"
+        color="air-primary-success"
+        size="sm"
+        :title="`Сейчас показывается: ${current.title}`"
+        :description="`До ${new Date(current.expiresAt).toLocaleDateString('ru-RU')}`"
       />
-      <B24Textarea
-        v-model="draft.text"
-        placeholder="Текст объявления"
-        :rows="4"
-        :maxlength="MAX_ANNOUNCEMENT_TEXT"
-      />
-      <div class="flex flex-wrap items-center gap-2">
-        <input
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          class="text-xs"
-          @change="onImage"
-        >
-        <span
-          v-if="imageName"
-          class="text-xs text-(--ui-color-base-4)"
-        >{{ imageName }}</span>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <B24Input
-          v-model="draft.linkUrl"
-          class="min-w-60 flex-1"
-          placeholder="Ссылка кнопки (https://…), необязательно"
-        />
-        <B24Input
-          v-model="draft.linkLabel"
-          class="min-w-40"
-          placeholder="Подпись кнопки"
-          :maxlength="MAX_ANNOUNCEMENT_CTA"
-        />
-        <B24Input
-          v-model.number="draft.days"
-          class="w-28"
-          type="number"
-          placeholder="Дней"
-        />
-      </div>
-
-      <ul
-        v-if="problems.length"
-        class="list-inside list-disc text-xs text-(--ui-color-accent-main-alert)"
-      >
-        <li
-          v-for="p in problems"
-          :key="p"
-        >
-          {{ p }}
-        </li>
-      </ul>
       <p
-        v-if="message"
-        class="text-xs text-(--ui-color-base-3)"
-        role="status"
+        v-else
+        class="flex-1 text-xs text-(--ui-color-base-4)"
       >
-        {{ message }}
+        Сейчас объявления нет.
       </p>
-
-      <!-- Предпросмотр строит СЕРВЕР той же функцией, что и публикация: свой рендер здесь показал бы
-           не то, что уедет клиентам, — а это ровно та ошибка, которую два шага и должны исключить. -->
-      <div
-        v-if="preview"
-        class="rounded-lg bg-(--ui-color-base-8) p-3"
-      >
-        <p class="text-sm font-semibold">
-          {{ preview.title }}
-        </p>
-        <img
-          v-if="preview.image"
-          :src="preview.image"
-          alt=""
-          class="my-2 max-h-40 rounded"
-        >
-        <p class="whitespace-pre-line text-xs text-(--ui-color-base-3)">
-          {{ preview.text }}
-        </p>
-        <p
-          v-if="preview.linkUrl"
-          class="mt-2 text-xs text-(--ui-color-base-4)"
-        >
-          Кнопка «{{ preview.linkLabel }}» → {{ preview.linkUrl }}
-        </p>
-      </div>
-
-      <div class="flex flex-wrap gap-2">
-        <B24Button
-          label="Проверить"
-          color="air-secondary"
-          :disabled="busy"
-          @click="send('preview')"
-        />
-        <B24Button
-          label="Отправить всем"
-          color="air-primary"
-          :disabled="!canSend"
-          @click="send('publish')"
-        />
-        <B24Button
-          v-if="current"
-          label="Снять объявление"
-          color="air-tertiary-no-accent"
-          :disabled="busy"
-          @click="send('clear')"
-        />
-      </div>
+      <B24Button
+        label="Объявление"
+        color="air-secondary"
+        @click="() => { panel = true }"
+      />
     </div>
+
+    <B24Slideover
+      :open="panel"
+      title="Объявление клиентам"
+      description="Уходит всем порталам сразу и показывается каждому сотруднику один раз."
+      @update:open="v => panel = v"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <!-- ⚠ У КАЖДОГО поля своё НАЗВАНИЕ и подсказка (#473 п.5). Прежде подписью служил
+               `placeholder`, а он исчезает, как только в поле что-то введено: назначение поля
+               пропадало вместе с ним. Хуже всех было узкое поле «Дней» — увидев в нём `14`,
+               догадаться, что это срок показа, нельзя. Placeholder остался, но как ПРИМЕР
+               значения, а не имя поля. -->
+          <B24FormField
+            label="Заголовок"
+            description="Его читают первым и целиком — он же становится шапкой окна."
+            required
+          >
+            <B24Input
+              v-model="draft.title"
+              class="w-full"
+              placeholder="Например: Плановые работы 15 августа"
+              :maxlength="MAX_ANNOUNCEMENT_TITLE"
+            />
+            <template
+              v-if="left(draft.title, MAX_ANNOUNCEMENT_TITLE) <= 20"
+              #hint
+            >
+              осталось {{ left(draft.title, MAX_ANNOUNCEMENT_TITLE) }}
+            </template>
+          </B24FormField>
+
+          <B24FormField
+            label="Текст объявления"
+            description="Абзацы — пустой строкой. Можно **жирный**, списки через «- » и ссылки [текст](https://…) — остальная разметка выводится текстом. Проверьте кнопкой «Проверить»."
+            required
+          >
+            <B24Textarea
+              v-model="draft.text"
+              class="w-full"
+              placeholder="Что произошло и что человеку с этим делать"
+              :rows="5"
+              :maxlength="MAX_ANNOUNCEMENT_TEXT"
+            />
+            <template
+              v-if="left(draft.text, MAX_ANNOUNCEMENT_TEXT) <= 80"
+              #hint
+            >
+              осталось {{ left(draft.text, MAX_ANNOUNCEMENT_TEXT) }}
+            </template>
+          </B24FormField>
+
+          <B24FormField
+            label="Картинка"
+            :description="`Необязательно. Только png, jpeg, webp или gif, не больше ${Math.round(MAX_ANNOUNCEMENT_IMAGE_BYTES / 1024)} КБ. SVG не принимаем — это документ со скриптами.`"
+          >
+            <div class="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                class="text-xs"
+                aria-label="Картинка объявления"
+                @change="onImage"
+              >
+              <span
+                v-if="imageName"
+                class="text-xs text-(--ui-color-base-4)"
+              >{{ imageName }}</span>
+            </div>
+          </B24FormField>
+
+          <B24FormField
+            label="Ссылка кнопки"
+            description="Необязательно, только https://. Без подписи кнопки объявление не опубликуется."
+          >
+            <B24Input
+              v-model="draft.linkUrl"
+              class="w-full"
+              placeholder="https://example.com/акция"
+            />
+          </B24FormField>
+
+          <B24FormField
+            label="Подпись кнопки"
+            description="Что написано на кнопке. Нужна, если задана ссылка."
+          >
+            <B24Input
+              v-model="draft.linkLabel"
+              class="w-full"
+              placeholder="Например: Посмотреть"
+              :maxlength="MAX_ANNOUNCEMENT_CTA"
+            />
+          </B24FormField>
+
+          <B24FormField
+            label="Сколько дней показывать"
+            :description="`Не больше ${MAX_ANNOUNCEMENT_DAYS} дней: объявление — это новость, а не постоянная часть интерфейса.`"
+          >
+            <B24Input
+              v-model.number="draft.days"
+              class="w-32"
+              type="number"
+              :placeholder="String(DEFAULT_ANNOUNCEMENT_DAYS)"
+            />
+          </B24FormField>
+
+          <ul
+            v-if="problems.length"
+            class="list-inside list-disc text-xs text-(--ui-color-accent-main-alert)"
+          >
+            <li
+              v-for="p in problems"
+              :key="p"
+            >
+              {{ p }}
+            </li>
+          </ul>
+          <p
+            v-if="message"
+            class="text-xs text-(--ui-color-base-3)"
+            role="status"
+          >
+            {{ message }}
+          </p>
+
+          <!-- ⚠ Предпросмотр — НАСТОЯЩЕЕ объявление тем же компонентом, что увидит сотрудник
+               (#473 п.4), с данными, собранными СЕРВЕРОМ той же функцией, что и публикация. Свой
+               рендер здесь показывал бы не то, что уедет клиентам, — а это ровно та ошибка, которую
+               два шага и должны исключить. Носитель выбирается руками, потому что оператор сидит за
+               компьютером, а половина адресатов увидит шторку, и проверить её иначе негде. -->
+          <div
+            v-if="preview"
+            class="flex flex-wrap items-center gap-2 rounded-lg bg-(--ui-color-base-8) p-3"
+          >
+            <span class="text-xs text-(--ui-color-base-3)">Посмотреть, как увидит сотрудник:</span>
+            <B24Button
+              label="Окном (компьютер)"
+              color="air-tertiary-no-accent"
+              size="xs"
+              @click="() => { previewAs = 'modal'; showPreview = true }"
+            />
+            <B24Button
+              label="Шторкой (телефон)"
+              color="air-tertiary-no-accent"
+              size="xs"
+              @click="() => { previewAs = 'sheet'; showPreview = true }"
+            />
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <div class="flex flex-wrap gap-2">
+          <B24Button
+            label="Проверить"
+            color="air-secondary"
+            :disabled="busy"
+            @click="send('preview')"
+          />
+          <B24Button
+            label="Отправить всем"
+            color="air-primary-alert"
+            :disabled="!canSend"
+            @click="send('publish')"
+          />
+          <B24Button
+            v-if="current"
+            label="Снять объявление"
+            color="air-tertiary-no-accent"
+            :disabled="busy"
+            @click="send('clear')"
+          />
+        </div>
+      </template>
+    </B24Slideover>
+
+    <AnnouncementDialog
+      v-if="showPreview && preview"
+      :preview="preview"
+      :preview-as="previewAs"
+      @close="showPreview = false"
+    />
   </div>
 </template>
