@@ -394,12 +394,18 @@ const ARTICLE_KIND_ITEMS = [
         <!-- Тулбар каркаса: навигация по разделам вместо схлопывания (#259). Аккордеон прятал
              настройки — «что вообще можно настроить» было видно только по заголовкам секций. -->
         <B24DashboardToolbar v-if="!showReadOnly">
-          <!-- Без `highlight`: vue-router не учитывает hash при сравнении активного маршрута,
+          <!-- ⚠ Полоса разделов прокручивается ВНУТРИ СЕБЯ: четыре пункта на телефоне занимают
+               597 px при экране 375, и без этого страница обрезала бы их молча (замерено). Своя
+               прокрутка у полосы — не нарушение правила «никакой горизонтальной прокрутки»:
+               оно про страницу, а не про ленту вкладок. -->
+          <div class="-mx-1 min-w-0 overflow-x-auto px-1">
+            <!-- Без `highlight`: vue-router не учитывает hash при сравнении активного маршрута,
                поэтому подсветка горела бы на всех четырёх пунктах разом. -->
-          <B24NavigationMenu
-            :items="sectionNav"
-            orientation="horizontal"
-          />
+            <B24NavigationMenu
+              :items="sectionNav"
+              orientation="horizontal"
+            />
+          </div>
         </B24DashboardToolbar>
       </template>
 
@@ -408,7 +414,7 @@ const ARTICLE_KIND_ITEMS = [
              720 ничего не изменилось: 720 − 48 отступов = ровно те же 672 px, из которых ширина
              слайдера и выведена. Изменилось поведение НА ШИРОКОМ окне — раньше там оставался узкий
              столбик посередине с заголовком где-то слева от него. -->
-        <div :class="[PORTAL_CONTENT_X, 'w-full py-4 pb-6 sm:py-6']">
+        <div :class="[PORTAL_CONTENT_X, 'flex min-h-dvh w-full flex-col py-4 pb-0 sm:py-6']">
           <p class="mb-4 text-sm text-(--ui-color-base-3)">
             Здесь вы задаёте, куда приложение вносит товары из документов и как ищет их в вашем каталоге.
           </p>
@@ -590,6 +596,7 @@ const ARTICLE_KIND_ITEMS = [
                     <B24FormField :label="ON_MISSING_FIELD_LABEL">
                       <B24Select
                         v-model="mapping.product.onMissing"
+                        :b24ui="{ root: 'min-w-0 max-w-full' }"
                         :items="ON_MISSING_ITEMS"
                         class="w-full"
                       />
@@ -614,6 +621,7 @@ const ARTICLE_KIND_ITEMS = [
                         <span class="text-xs text-(--ui-color-base-3)">Какую единицу подставить, если в документе встретилась незнакомая:</span>
                         <B24Select
                           v-model="defaultMeasure"
+                          :b24ui="{ root: 'min-w-0 max-w-full' }"
                           :items="measureItems"
                           placeholder="единица в Б24"
                           class="w-56"
@@ -634,15 +642,19 @@ const ARTICLE_KIND_ITEMS = [
                         Как называется единица в документе и какой единице Битрикс24 она соответствует:
                       </p>
                       <div class="space-y-2">
+                        <!-- ⚠ `flex-wrap` и `min-w-0` обязательны: без них строка «поле 10rem + поле
+                             14rem + кнопка» шире телефона, а карточка не может стать уже своего
+                             содержимого — на 375 px обрезался ВЕСЬ блок, включая соседние абзацы.
+                             Наше же правило: никакой горизонтальной прокрутки. -->
                         <div
                           v-for="(row, i) in unitRows"
                           :key="row.id"
-                          class="flex items-center gap-2"
+                          class="flex min-w-0 flex-wrap items-center gap-2"
                         >
                           <B24Input
                             v-model="row.unit"
                             placeholder="как в документе, напр. м"
-                            class="w-40"
+                            class="w-full sm:w-40"
                             :aria-label="`Единица ${i + 1}: из документа`"
                           />
                           <span
@@ -650,10 +662,11 @@ const ARTICLE_KIND_ITEMS = [
                             aria-hidden="true"
                           >→</span>
                           <B24Select
+                            :b24ui="{ root: 'min-w-0 max-w-full' }"
                             :model-value="row.code != null ? String(row.code) : undefined"
                             :items="measureItems"
                             placeholder="единица в Б24"
-                            class="w-56"
+                            class="w-full sm:w-56"
                             :aria-label="`Единица ${i + 1}: соответствие Б24`"
                             @update:model-value="(v) => { row.code = v ? Number(v) : null }"
                           />
@@ -817,8 +830,6 @@ const ARTICLE_KIND_ITEMS = [
             <!-- Действия — в нижней панели окна, как у штатного слайдера b24ui (#523). Прежде они
                  стояли в конце содержимого: на этом экране до них было около двух тысяч пикселей
                  прокрутки, и правивший первое поле до «Сохранить» не доходил. -->
-            <BuildFooter />
-
             <SliderActions v-if="!showReadOnly">
               <B24Button
                 color="air-primary-success"
@@ -839,6 +850,10 @@ const ARTICLE_KIND_ITEMS = [
                 role="status"
                 aria-live="polite"
               >Настройки сохранены ✓</span>
+              <!-- Сборка — служебная подпись у правого края панели, чтобы кнопки остались по центру. -->
+              <template #end>
+                <BuildFooter bare />
+              </template>
             </SliderActions>
           </ScreenState>
         </div>

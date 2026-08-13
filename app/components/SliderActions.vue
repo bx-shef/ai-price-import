@@ -11,6 +11,11 @@
 // на глаз: поверхность `--ui-color-bg-content-primary`, граница `--ui-color-divider-less`, тень
 // `shadow-top-md`. Своей палитры здесь нет намеренно — панель обязана выглядеть частью портала.
 //
+// ⚠ ПРИБИТА ДВУМЯ СПОСОБАМИ СРАЗУ, и оба нужны. `sticky bottom-0` держит панель при ДЛИННОМ
+// содержимом (настройки), `mt-auto` — при КОРОТКОМ (метрики на свежем портале): без него панель
+// вставала сразу под содержимым, то есть посреди пустого экрана. Второе работает лишь потому, что
+// страница объявлена колонкой во всю высоту окна (`flex min-h-dvh flex-col` у обёртки контента).
+//
 // ⚠ `sticky`, а НЕ `absolute inset-x-0 bottom-0`, как в самом слайдере. Разница вынужденная: у
 // `B24Slideover` есть собственная высота (`h-full`) и позиционированный предок, а наш экран — это
 // отдельный документ во фрейме, высоту которого портал подбирает по содержимому. `absolute bottom-0`
@@ -20,13 +25,21 @@
 //
 // ⚠ Отрицательные горизонтальные отступы отменяют отступ колонки контента: панель обязана идти во
 // всю ширину слайдера, иначе она читается как ещё одна карточка, а не как дно окна.
+//
+// ⚠ Кнопки по ЦЕНТРУ (как в теме слайдера), а служебная подпись в слоте `end` — абсолютом у правого
+// края. Поставить её обычным элементом в тот же ряд нельзя: она сдвинула бы кнопки влево от центра.
 </script>
 
 <template>
   <div
-    class="sticky bottom-0 z-30 -mx-4 mt-6 flex flex-wrap items-center justify-center gap-2.5 border-t border-(--ui-color-divider-less) bg-(--ui-color-bg-content-primary) px-4 py-[13px] shadow-top-md sm:-mx-6 sm:px-6"
+    class="sticky bottom-0 z-30 mt-auto -mx-4 border-t border-(--ui-color-divider-less) bg-(--ui-color-bg-content-primary) shadow-top-md sm:-mx-6"
     data-slot="slider-actions"
   >
-    <slot />
+    <div class="relative flex flex-wrap items-center justify-center gap-2.5 px-4 py-[13px] sm:px-6">
+      <slot />
+      <div class="absolute end-4 top-1/2 -translate-y-1/2 sm:end-6">
+        <slot name="end" />
+      </div>
+    </div>
   </div>
 </template>

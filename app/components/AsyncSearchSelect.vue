@@ -159,7 +159,13 @@ defineExpose({ refresh })
 <template>
   <!-- ⚠ Обёртка нужна только когда кнопка есть: у голого поля лишний flex-контейнер ломал бы
        ширину в местах, где компонент лежит в своей сетке. -->
-  <div :class="clearable ? 'flex items-start gap-2' : undefined">
+  <!-- ⚠ `min-w-0` в ДВУХ местах, и оба обязательны (замерено браузером на 375 px). На строке — чтобы
+       флекс-элемент мог стать уже своего содержимого. И на КОРНЕ самого `B24SelectMenu` через проп
+       `b24ui`, а не через `class`: `class` уезжает не в корень, корень остаётся `inline-flex` и
+       растягивается до длины подсказки («Нажмите и выберите свойство каталога…» — 382 px). Тогда
+       карточка становится шире экрана, и обрезается ВЕСЬ блок, включая соседние абзацы; `truncate`
+       у подписи при этом не срабатывает, потому что обрезать нечего — ширину задаёт она сама. -->
+  <div :class="clearable ? 'flex min-w-0 items-start gap-2' : undefined">
     <B24SelectMenu
       v-bind="$attrs"
       v-model="model"
@@ -172,6 +178,7 @@ defineExpose({ refresh })
       :placeholder="placeholder"
       :disabled="disabled"
       class="w-full"
+      :b24ui="{ root: clearable ? 'min-w-0 flex-1' : 'min-w-0 w-full' }"
       @update:open="onOpenChange"
     >
       <!-- Forward SelectMenu item slots so consumers can render avatars/subtitles. -->
