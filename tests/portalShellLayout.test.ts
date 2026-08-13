@@ -159,7 +159,7 @@ describe('оболочка in-portal экранов', () => {
     // «класс на месте», а на телефоне сломала бы ровно то, ради чего порядок и выбран.
     const t = template('app/pages/app.vue')
     const upload = t.indexOf('<ImportStaging')
-    const metrics = t.indexOf('Сэкономлено времени')
+    const metrics = t.indexOf('<SavingsCard')
     const promo = t.indexOf('<SelfHostedPromo')
     const journal = t.indexOf('<ImportJournal')
     for (const [name, at] of [['загрузка', upload], ['экономия', metrics], ['баннер', promo], ['журнал', journal]] as const) {
@@ -202,7 +202,7 @@ describe('оболочка in-portal экранов', () => {
     // окажется под ним, человек не увидит: именно так пропала из виду карточка экономии. Порядок —
     // часть требования владельца, а не вкусовая раскладка. Баннер решён иначе — см. ниже.
     const t = template('app/pages/app.vue')
-    const metrics = t.indexOf('Сэкономлено времени')
+    const metrics = t.indexOf('<SavingsCard')
     const promo = t.indexOf('<SelfHostedPromo')
     const journal = t.indexOf('<ImportJournal')
     expect(metrics, 'карточка экономии не найдена — гард сторожит несуществующий блок').toBeGreaterThan(-1)

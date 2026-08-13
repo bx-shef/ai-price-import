@@ -108,9 +108,13 @@ describe('#507: баннер издателя не загораживает ра
   it('карточка экономии скрыта в мобильном приложении условным рендером', () => {
     // ⚠ Именно `v-if`, а не скрытие по ширине: спрятанное CSS-ом остаётся в дереве и читается
     // программой чтения — правило проекта.
-    const t = template('app/pages/app.vue')
-    const at = t.indexOf('Сэкономлено времени')
-    expect(at).toBeGreaterThan(-1)
-    expect(t.slice(Math.max(0, at - 900), at)).toMatch(/v-if="!isBitrixMobile"/)
+    // ⚠ Карточка уехала в свой компонент (#523), и признак ей передаёт страница: проверяем обе
+    // половины шва — иначе «скрыто» осталось бы верным при отвалившемся пропе.
+    const card = template('app/components/SavingsCard.vue')
+    const at = card.indexOf('Сэкономлено времени')
+    expect(at, 'плитки экономии нет — гард сторожит несуществующий блок').toBeGreaterThan(-1)
+    expect(card.slice(0, at), 'карточка обязана скрываться условным рендером').toMatch(/v-if="!mobile"/)
+    expect(template('app/pages/app.vue'), 'страница не передаёт признак мобильного клиента')
+      .toMatch(/:mobile="isBitrixMobile"/)
   })
 })
