@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { buildB24FormSrc } from '~/utils/b24Form'
+import { B24_FORM_FALLBACK, firstFilled } from '~/config/runtimeDefaults'
 
 // Embedded Bitrix24 CRM web-form. The form itself lives in a dedicated
 // same-origin document (`/public/b24-form.html`) served with a form-scoped CSP;
@@ -8,9 +9,14 @@ import { buildB24FormSrc } from '~/utils/b24Form'
 const config = useRuntimeConfig()
 
 const src = computed(() => buildB24FormSrc(
-  config.public.b24FormScriptUrl as string,
-  config.public.b24FormId as string,
-  config.public.b24FormSecret as string
+  // ⚠ Пустое значение читается как «не задано» и уступает умолчанию (#305). Прямо `config.public.*`
+  // брать нельзя: `docker compose` материализует строку `KEY=` как ЗАДАННОЕ пустое значение, оно
+  // перебивает умолчание в рантайме, и лендинг остаётся без формы заявки — молча, у того, кто просто
+  // скопировал `.env.example` в `.env`. Умолчания в `nuxt.config.ts` этого не ловят: там `||`
+  // читается на СБОРКЕ, а перебивает переменная на ЗАПУСКЕ.
+  firstFilled(config.public.b24FormScriptUrl, B24_FORM_FALLBACK.scriptUrl),
+  firstFilled(config.public.b24FormId, B24_FORM_FALLBACK.id),
+  firstFilled(config.public.b24FormSecret, B24_FORM_FALLBACK.secret)
 ))
 
 // b24:form:submit is relayed from the iframe document via postMessage. The
