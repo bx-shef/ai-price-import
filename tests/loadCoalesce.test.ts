@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createSingleFlight, reloadDelayMs, SETTINGS_RELOAD_JITTER_MS } from '../app/utils/loadCoalesce'
-import { BASE_CURRENCY_TTL_MS, cachedBaseCurrency, forgetBaseCurrency } from '../server/utils/baseCurrencyCache'
+import { BASE_CURRENCY_MAX_PORTALS, BASE_CURRENCY_TTL_MS, cachedBaseCurrency, forgetBaseCurrency } from '../server/utils/baseCurrencyCache'
 
 /**
  * Веер запросов и гонка при сохранении настроек (#480).
@@ -87,11 +87,39 @@ describe('#480: одновременные загрузки склеиваютс
       calls++
       throw new Error('сеть')
     })).rejects.toThrow()
-    expect(flight.inFlight(), 'полёт завис после отказа').toBe(false)
     await flight.run(async () => {
       calls++
     })
-    expect(calls).toBe(2)
+    expect(calls, 'полёт завис после отказа').toBe(2)
+  })
+
+  it('ОТКАЗ снимает хвост, а не оставляет его следующему вызову', async () => {
+    // ⚠ Настоящий дефект, найденный проверяющим. Исключение уходит из функции сразу после `finally`,
+    // минуя код ниже, — значит флаг «есть кто ждёт» оставался взведённым НАВСЕГДА. Дальше он
+    // дожидался следующего, НИКАК НЕ СВЯЗАННОГО вызова и заставлял его сделать лишний запрос,
+    // которого никто не просил. Своими тестами я это не поймал: единственный сегодняшний вызывающий
+    // ошибки глотает сам, то есть дефект жил в утилите и ждал её второго потребителя.
+    const d = deferred()
+    const flight = createSingleFlight()
+    let calls = 0
+    const failing = () => {
+      calls++
+      return d.promise.then(() => {
+        throw new Error('сеть')
+      })
+    }
+    const first = flight.run(failing)
+    void flight.run(failing).catch(() => {}) // кто-то присоединился во время неудачного полёта
+    d.resolve(1)
+    await expect(first).rejects.toThrow()
+    expect(calls, 'на отказе хвост запускать не надо — это удвоило бы нагрузку на упавшем портале').toBe(1)
+
+    // И, главное, взведённый флаг не должен утечь в следующий вызов.
+    let later = 0
+    await flight.run(async () => {
+      later++
+    })
+    expect(later, 'паразитный повтор: флаг ожидания пережил отказ').toBe(1)
   })
 })
 
@@ -171,6 +199,27 @@ describe('#480: базовая валюта не спрашивается на �
     expect(reads).toBe(1)
   })
 
+  it('карта не растёт без предела — приложение мультитенантное', async () => {
+    // ⚠ Истечение срока память НЕ освобождает: просроченная запись просто перестаёт использоваться и
+    // лежит дальше. Без потолка карта растёт по числу порталов, когда-либо открывавших настройки, и
+    // живёт всё время работы процесса — утечка, которая ничем не проявляется и растёт молча.
+    forgetBaseCurrency()
+    const read = async () => 'BYN'
+    for (let i = 0; i < BASE_CURRENCY_MAX_PORTALS + 50; i++) {
+      await cachedBaseCurrency(`p${i}.bitrix24.by`, read)
+    }
+    // Последний записанный обязан быть на месте: вытесняем старое, а не только что положенное.
+    const last = await cachedBaseCurrency(`p${BASE_CURRENCY_MAX_PORTALS + 49}.bitrix24.by`, read)
+    expect(last.cached, 'вытеснили только что записанное').toBe(true)
+    // А самый первый — уже нет.
+    let firstRead = 0
+    await cachedBaseCurrency('p0.bitrix24.by', async () => {
+      firstRead++
+      return 'BYN'
+    })
+    expect(firstRead, 'карта не вытесняет старое и растёт без предела').toBe(1)
+  })
+
   it('срок истекает, и портал спрашивают снова', async () => {
     forgetBaseCurrency()
     let now = 1_000_000
@@ -188,6 +237,10 @@ describe('#480: базовая валюта не спрашивается на �
 
 describe('#480: проводка', () => {
   it('перечитывание по чужому событию идёт с задержкой', async () => {
+    // ⚠ Единственная оставшаяся текстовая проверка, и она сторожит то, что поведением закрыть нечем:
+    // `/app` не монтируется в тестах без фрейм-токена и портала. Сама склейка проверяется ПОВЕДЕНИЕМ
+    // в `tests/nuxt/settingsCoalesce.nuxt.test.ts` — там считается число сетевых запросов; прежняя
+    // грепалка по `flight.run(loadOnce)` оттуда убрана как заведомо слабая.
     const { readFileSync } = await import('node:fs')
     const { resolve } = await import('node:path')
     const page = readFileSync(resolve(new URL('..', import.meta.url).pathname, 'app/pages/app.vue'), 'utf8')
@@ -195,12 +248,5 @@ describe('#480: проводка', () => {
     expect(at).toBeGreaterThan(-1)
     const handler = page.slice(at, page.indexOf('loadSettings()', at))
     expect(handler, 'разброс потерян — событие снова бьёт всплеском').toMatch(/reloadDelayMs\(\)/)
-  })
-
-  it('загрузка настроек идёт через склейку', async () => {
-    const { readFileSync } = await import('node:fs')
-    const { resolve } = await import('node:path')
-    const src = readFileSync(resolve(new URL('..', import.meta.url).pathname, 'app/composables/useSettings.ts'), 'utf8')
-    expect(src).toMatch(/flight\.run\(loadOnce\)/)
   })
 })
