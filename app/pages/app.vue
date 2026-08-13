@@ -18,6 +18,7 @@ import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMod
 import { formatMinutes } from '~/utils/savings'
 import { APP_NAME } from '~/config/appIdentity'
 import { PORTAL_CONTENT_X, PORTAL_NAVBAR_CLASS } from '~/config/portalShell'
+import { reloadDelayMs } from '~/utils/loadCoalesce'
 
 // In-portal home — ACTION-FIRST (owner decision): the upload dropzone is the hero at the top so the
 // primary flow (open → drop/snap a document) is one step, on desktop and in the B24 mobile app. The
@@ -143,6 +144,14 @@ const unsubscribeReload = subscribeReload(async () => {
   // потому, что `loadSettings` глотает свои ошибки сама; это свойство ВЫЗЫВАЕМОГО кода, а не наша
   // гарантия, и держаться на нём нельзя.
   try {
+    // ⚠ СЛУЧАЙНАЯ ЗАДЕРЖКА перед перечитыванием (#480). Событие широковещательное: его получают ВСЕ
+    // вкладки ВСЕХ сотрудников портала одновременно, момент выбирает админ, а каждый ответ стоит нам
+    // трёх обращений к Битрикс24. Без разброса штатное сохранение настроек само себе устраивало
+    // всплеск на самом дорогом пути, и часть сотрудников получала отказ по частоте — то есть правку
+    // админа не получала вовсе, молча. Правка настроек редка, секунда задержки не стоит ничего.
+    // ⚠ Задержка ТОЛЬКО здесь, на чужом событии. Свой вызов (открыли экран, нажали «Обновить») ждать
+    // не должен — там момент выбрал человек.
+    await new Promise(r => setTimeout(r, reloadDelayMs()))
     // ⚠ Перечитываем настройки и ЖДЁМ их: раньше здесь стоял голый `void loadSettings()`, и цель по
     // умолчанию бралась бы из ещё не обновлённого `mapping` — экран показал бы прежнее значение и
     // остался бы с ним до следующего события. Тихо и правдоподобно.

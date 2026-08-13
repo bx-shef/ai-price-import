@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { useB24 } from './useB24'
 import { buildFrameHeaders, fetchErrorMessage, frameAuthMessage } from '~/utils/frameHeaders'
 import { defaultMapping } from '~/utils/portalSettings'
+import { createSingleFlight } from '~/utils/loadCoalesce'
 import type { PortalMapping } from '~/types/mapping'
 
 // In-portal settings client: load/save the portal mapping via the frame-token authenticated
@@ -49,12 +50,32 @@ export function useSettings() {
   const loaded = ref(false)
   const snapshot = (): string => JSON.stringify(mapping.value)
 
+  /**
+   * Склейка одновременных загрузок (#480).
+   *
+   * ⚠ Заводится ВНУТРИ композабла, а не в модуле: у каждого экрана своё состояние, и общий на
+   * приложение полёт склеил бы загрузки разных экранов, отдав одному чужой ответ.
+   */
+  const flight = createSingleFlight()
+
   async function headers(): Promise<Record<string, string> | null> {
     await init()
     return buildFrameHeaders(await ensureAuth())
   }
 
+  /**
+   * Прочитать настройки с сервера.
+   *
+   * ⚠ Одновременные вызовы СКЛЕИВАЮТСЯ, и по завершении делается один хвостовой повтор (#480).
+   * Хвост несущий: запрос, начатый ДО сохранения, вернёт настройки ДО сохранения, и присоединить к
+   * нему пришедшего ПОСЛЕ значило бы отдать заведомо устаревший ответ. Ни веер, ни эта гонка не
+   * видны на одной вкладке — рассылка будит все открытые экраны портала разом.
+   */
   async function load(): Promise<void> {
+    return flight.run(loadOnce)
+  }
+
+  async function loadOnce(): Promise<void> {
     const h = await headers()
     if (!h) {
       // ⚠ Попытка ЗАВЕРШИЛАСЬ, пусть и ничем — `loaded` обязан стать true, иначе экран остаётся в
