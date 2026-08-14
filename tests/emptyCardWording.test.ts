@@ -11,7 +11,9 @@ import { allLinesSkippedError } from '../app/utils/importOutcome'
 //
 //   • `app/utils/importOutcome.ts` — текст отказа, уходит в чат и в результат;
 //   • `app/pages/app.vue`          — предупреждение о выбранной настройке на рабочем экране;
-//   • `app/pages/settings.vue`     — подсказка под тем же полем в настройках.
+//   • `app/components/SettingsForm.vue` — подсказка под тем же полем в настройках (форма уехала
+//     из `app/pages/settings.vue` в #523; проверка сторожит ТЕКСТ, а не место, поэтому просто
+//     читает тот файл, где он теперь живёт).
 //
 // ⚠ Первые два нашёл владелец на живом портале, ТРЕТЬЕ — только сплошной обход: точечная правка «по
 // указанию» закрыла два и оставила третье, а оно дало бы четвёртый заход. Отсюда этот гард: он
@@ -24,7 +26,7 @@ import { allLinesSkippedError } from '../app/utils/importOutcome'
 const SOURCES = [
   'app/utils/importOutcome.ts',
   'app/pages/app.vue',
-  'app/pages/settings.vue'
+  'app/components/SettingsForm.vue'
 ] as const
 
 /** Текст без комментариев: закомментированный разбор законно цитирует прежнюю неправду. */

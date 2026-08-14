@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "screenshot": "node scripts/screenshot.mjs",
+    "probe:overflow": "node scripts/probe-overflow.mjs",
     "demo:pdfs": "node scripts/make-demo-pdfs.mjs",
     "live:crm": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/live-crm-sync.mjs",
     "verify:chat": "node --experimental-strip-types --import ./scripts/lib/alias-register.mjs scripts/verify-chat.mjs",

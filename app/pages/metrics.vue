@@ -133,7 +133,7 @@ async function doReset(): Promise<void> {
              720 ничего не изменилось: 720 − 48 отступов = ровно те же 672 px, из которых ширина
              слайдера и выведена. Изменилось поведение НА ШИРОКОМ окне — раньше там оставался узкий
              столбик посередине с заголовком где-то слева от него. -->
-        <div :class="[PORTAL_CONTENT_X, 'w-full py-4 pb-6 sm:py-6']">
+        <div :class="[PORTAL_CONTENT_X, 'flex min-h-dvh w-full flex-col py-4 pb-0 sm:py-6']">
           <p class="mb-4 text-sm text-(--ui-color-base-3)">
             Сколько документов приложение обработало и сколько времени вам сэкономило.
           </p>
@@ -194,7 +194,7 @@ async function doReset(): Promise<void> {
             <!-- Детальная разбивка — пара «тонированная шапка + тело», как блоки настроек (#259 §1.3). -->
             <div class="mt-3">
               <B24PageCard
-                variant="tinted"
+                variant="tinted-no-accent"
                 title="Счётчики"
                 :b24ui="{ root: 'rounded-none sm:rounded-t-3xl' }"
               />
@@ -236,8 +236,13 @@ async function doReset(): Promise<void> {
           />
 
           <!-- Сброс — ВНЕ состояния загрузки: «Обновить» это способ повторить попытку, и он обязан
-               быть доступен как раз тогда, когда данные не пришли. -->
-          <div class="mt-4 flex items-center gap-2">
+               быть доступен как раз тогда, когда данные не пришли.
+               ⚠ Действия живут в нижней панели окна (#523): экран открывается слайдером, и у
+               штатного слайдера b24ui действия стоят внизу, а не в конце содержимого. -->
+          <SliderActions>
+            <!-- ⚠ Кнопки идут ПРЯМЫМИ детьми панели, без своей обёртки-строки: обёртка занимала бы
+                 всю ширину, и центрирование панели на неё не действовало — «Обновить» прижималось
+                 бы к левому краю, а подсказка к правому, где стоит подпись сборки. -->
             <B24Button
               :icon="RefreshIcon"
               color="air-tertiary-no-accent"
@@ -245,64 +250,63 @@ async function doReset(): Promise<void> {
               :label="'Обновить'"
               @click="reload"
             />
-            <div class="ml-auto flex items-center gap-2">
-              <!-- Не-админу: на месте кнопки подсказка, КТО может обнулить, а не «недостаточно
+            <!-- Не-админу: на месте кнопки подсказка, КТО может обнулить, а не «недостаточно
                    прав» — второе не подсказывает следующего шага. На телефоне тултипа нет вовсе
                    (решение владельца): наведения там нет, а тултип-по-нажатию это отдельный
                    паттерн со своими правилами закрытия. Следствие принято осознанно — на телефоне
                    не-админ видит просто отсутствие действия, и отсутствующее действие не требует
                    оправдания. -->
-              <B24Tooltip
-                v-if="!admin"
-                :delay-duration="100"
-                :content="{ side: 'left' }"
-                text="Обнулить счётчики может администратор портала — попросите его."
-                class="hidden sm:inline-flex"
-                :b24ui="{ content: 'max-w-xs' }"
-              >
-                <!-- ⚠ Носитель подсказки — КНОПКА, а не сама иконка. `b24icons` ставит на svg
+            <B24Tooltip
+              v-if="!admin"
+              :delay-duration="100"
+              :content="{ side: 'left' }"
+              text="Обнулить счётчики может администратор портала — попросите его."
+              class="hidden sm:inline-flex"
+              :b24ui="{ content: 'max-w-xs' }"
+            >
+              <!-- ⚠ Носитель подсказки — КНОПКА, а не сама иконка. `b24icons` ставит на svg
                      `aria-hidden="true"`, и в порядок фокуса он не попадает: подсказка, видимая
                      мышью, для клавиатуры и программы чтения с экрана не существовала бы вовсе
                      (WCAG 2.1.1). `aria-label` повторяет текст — он и есть всё содержание.
                      ⚠ Цвет — `base-3`, а не `base-4`: второй даёт 2,26:1 на белом, ниже планки
                      3:1 для несущего смысл элемента (WCAG 1.4.11), и в светлой теме иконка
                      сливалась с фоном. -->
-                <button
-                  type="button"
-                  class="cursor-help items-center text-(--ui-color-base-3)"
-                  aria-label="Обнулить счётчики может администратор портала — попросите его."
-                >
-                  <HelpIcon class="size-5" />
-                </button>
-              </B24Tooltip>
+              <button
+                type="button"
+                class="cursor-help items-center text-(--ui-color-base-3)"
+                aria-label="Обнулить счётчики может администратор портала — попросите его."
+              >
+                <HelpIcon class="size-5" />
+              </button>
+            </B24Tooltip>
+            <B24Button
+              v-if="admin && !confirmReset"
+              label="Обнулить счётчики"
+              color="air-tertiary-no-accent"
+              size="sm"
+              @click="() => { confirmReset = true }"
+            />
+            <template v-else-if="admin">
+              <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
               <B24Button
-                v-if="admin && !confirmReset"
-                label="Обнулить счётчики"
+                color="air-primary-alert"
+                size="sm"
+                :loading="resetting"
+                :disabled="resetting"
+                :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
+                @click="doReset"
+              />
+              <B24Button
+                label="Отмена"
                 color="air-tertiary-no-accent"
                 size="sm"
-                @click="() => { confirmReset = true }"
+                @click="() => { confirmReset = false }"
               />
-              <template v-else-if="admin">
-                <span class="text-sm text-(--ui-color-base-3)">Обнулить счётчики? Документы в CRM останутся.</span>
-                <B24Button
-                  color="air-primary-alert"
-                  size="sm"
-                  :loading="resetting"
-                  :disabled="resetting"
-                  :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
-                  @click="doReset"
-                />
-                <B24Button
-                  label="Отмена"
-                  color="air-tertiary-no-accent"
-                  size="sm"
-                  @click="() => { confirmReset = false }"
-                />
-              </template>
-            </div>
-          </div>
-
-          <BuildFooter />
+            </template>
+            <template #end>
+              <BuildFooter bare />
+            </template>
+          </SliderActions>
         </div>
       </template>
     </B24DashboardPanel>

@@ -90,12 +90,20 @@ describe('#259: каркас шаблона на in-portal экранах', () =
   })
 
   it('аккордеон настроек ушёл — все блоки видны, навигация в тулбаре', () => {
-    const s = strip(read('app/pages/settings.vue'))
+    // ⚠ Экран разобран на оболочку и форму (#523): тулбар с навигацией остался на странице, а
+    // блоки-пары переехали в `SettingsForm.vue`. Инвариант не изменился — проверка читает оба файла.
+    const page = strip(read('app/pages/settings.vue'))
+    const s = `${page}\n${strip(read('app/components/SettingsForm.vue'))}`
     expect(s).not.toContain('B24Accordion')
-    expect(s).toContain('B24DashboardToolbar')
-    expect(s).toContain('B24NavigationMenu')
+    expect(page).toContain('B24DashboardToolbar')
+    expect(page).toContain('B24NavigationMenu')
     // Блоки-пары шаблона: тонированная шапка + тело со склеенными скруглениями (§1.3 issue).
-    expect(s).toMatch(/variant="tinted"[\s\S]{0,200}sm:rounded-t-3xl/)
+    // ⚠ Проверяется ПАРА, а не конкретный оттенок: 12.08.2026 (#523) шапки переведены с акцентной
+    // `tinted` на нейтральную `tinted-no-accent` — синим были покрашены все шапки разом, и акцент
+    // перестал что-либо выделять. Требование «шапка тонирована и склеена с телом» не изменилось,
+    // поэтому гард ослаблен ровно на оттенок; запрет на возврат акцента держит
+    // `tests/portalSliderChrome.test.ts`.
+    expect(s).toMatch(/variant="tinted[^"]*"[\s\S]{0,200}sm:rounded-t-3xl/)
     expect(s).toMatch(/sm:rounded-b-3xl/)
   })
 

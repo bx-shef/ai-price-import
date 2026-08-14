@@ -11,10 +11,11 @@
 // playwright-core (no bundled browser download) and point it at that build.
 import { createServer } from 'node:http'
 import { readFile, mkdir, stat } from 'node:fs/promises'
-import { join, extname, normalize, sep } from 'node:path'
+import { join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { resolveChromium } from './lib/chromium.mjs'
+import { resolveSafePath } from './lib/staticPath.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PUBLIC_DIR = join(ROOT, '.output', 'public')
@@ -49,11 +50,10 @@ async function ensurePublic() {
 function startServer() {
   const server = createServer(async (req, res) => {
     try {
-      const urlPath = decodeURIComponent((req.url || '/').split('?')[0])
-      let filePath = join(PUBLIC_DIR, normalize(urlPath))
-      // Defence-in-depth: never serve outside PUBLIC_DIR even if the path
-      // contains `../` traversal (the server is local-only, but keep it tight).
-      if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + sep)) {
+      // Замок общий с `probe-overflow.mjs` (`lib/staticPath.mjs`): копия жила здесь, во втором
+      // скрипте её забыли повторить, и там открылся обход каталога. Теперь место одно.
+      let filePath = resolveSafePath(PUBLIC_DIR, req.url || '/')
+      if (filePath === null) {
         res.writeHead(403)
         res.end('Forbidden')
         return

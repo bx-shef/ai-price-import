@@ -126,10 +126,13 @@ describe('проводка роута (#318 п.2)', () => {
   })
 
   it('кнопка отмены требует подтверждения — одним кликом отметку не снять', () => {
-    const page = readFileSync(new URL('../app/pages/queues.vue', import.meta.url), 'utf8')
-    expect(page).toMatch(/confirmUnreview !== r\.memberId/) // первый клик только открывает вопрос
-    expect(page).toMatch(/setRating\(r\.memberId, 'unreview'\)/)
+    // ⚠ Блок оценок уехал из `pages/queues.vue` в свой компонент (#523) — консоль разобрана на
+    // блоки. Проверка сторожит ПОВЕДЕНИЕ (два шага у необратимого действия), поэтому переезд её не
+    // отменяет: она просто читает теперь тот файл, где это поведение живёт.
+    const card = readFileSync(new URL('../app/components/OpsRatingsCard.vue', import.meta.url), 'utf8')
+    expect(card).toMatch(/confirmUnreview !== r\.memberId/) // первый клик только открывает вопрос
+    expect(card).toMatch(/setRating\(r\.memberId, 'unreview'\)/)
     // И подсказка обязана назвать второй шаг: без «Сбросить» попап не вернётся (см. выше).
-    expect(page).toMatch(/чтобы попап показался снова, после этого нажмите «Сбросить»/)
+    expect(card).toMatch(/чтобы попап показался снова, после этого нажмите «Сбросить»/)
   })
 })

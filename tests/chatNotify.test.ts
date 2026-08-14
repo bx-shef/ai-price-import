@@ -1,6 +1,9 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   MAX_CHAT_REASON,
+  bbToPlainText,
   buildErrorMessage,
   buildSuccessMessage,
   entityChatLink,
@@ -214,5 +217,89 @@ describe('внешний текст в сообщениях crm-sync обезв�
     })
     expect(msg).not.toContain('www.evil')
     expect(msg).not.toContain('/srv/uploads')
+  })
+})
+
+// Текст для внешнего канала уведомления (почта, пуш) — без BB-разметки.
+//
+// ЗАЧЕМ. `im.notify.system.add` принимает `MESSAGE` (BB поддерживается — так сказано в документации
+// метода) и `MESSAGE_OUT` — «текст уведомления для внешних каналов, например, почты». Пока второе не
+// задано, портал берёт для письма сам `MESSAGE`, и человек читает буквальное
+// `[URL=https://…]открыть приложение[/URL]`. Раньше поле не заполнялось, и весь путь числился в
+// карте как «никем не проверенный».
+describe('bbToPlainText: текст уведомления для внешнего канала', () => {
+  it('ссылка превращается в подпись с адресом, а не теряется', () => {
+    // Письмо без адреса бесполезно, а «открыть приложение» без ссылки — обещание без выхода.
+    expect(bbToPlainText('Можно поправить: [URL=https://p.bitrix24.by/app/1/]открыть приложение[/URL]'))
+      .toBe('Можно поправить: открыть приложение: https://p.bitrix24.by/app/1/')
+  })
+
+  it('ссылка без подписи печатается адресом', () => {
+    expect(bbToPlainText('[URL=https://example.com][/URL]')).toBe('https://example.com')
+  })
+
+  it('прочие теги снимаются, содержимое остаётся', () => {
+    expect(bbToPlainText('[B]Импорт[/B] не удался')).toBe('Импорт не удался')
+  })
+
+  it('⚠ ОБЕЗВРЕЖЕННЫЙ внешний текст не восстанавливается в разметку', () => {
+    // Несущая проверка. Имя файла и причина проходят `neutralizeBb` и несут ПОЛНОШИРИННЫЕ ［］.
+    // Сними их заодно с нашими — и ссылка из чужого документа ожила бы ровно в том канале, где её
+    // никто не смотрит. Снимаем только настоящие скобки, то есть свою разметку.
+    const external = neutralizeBb('［URL=https://evil.example］оплатите тут［/URL］')
+    const message = `⛔ не удалось внести «${external}».`
+    expect(bbToPlainText(message)).toContain('［URL=')
+    expect(bbToPlainText(message)).not.toContain('[URL=')
+  })
+
+  it('обычный текст не меняется', () => {
+    expect(bbToPlainText('Не удалось прочитать файл — возможно, он повреждён.'))
+      .toBe('Не удалось прочитать файл — возможно, он повреждён.')
+  })
+
+  it('незакрытый тег не съедает адрес вместе с разметкой', () => {
+    // Общее правило чистки тегов принимало `[URL=адрес]` без пары за одиночный тег и выбрасывало
+    // его целиком — вместе с адресом. Документация функции при этом обещала обратное. Вживую не
+    // воспроизводилось (наш сборщик шлёт только парные), но обещание в комментарии, которого код
+    // не выполняет, хуже отсутствия комментария.
+    const out = bbToPlainText('Текст [URL=https://a.example]откройте это')
+    // Утверждается ровно инвариант: адрес уцелел, разметки не осталось. Точный пробел вокруг
+    // склейки не фиксируем — на битой разметке аккуратность вывода не то, что мы обещаем.
+    expect(out, 'адрес выброшен вместе с разметкой').toContain('https://a.example')
+    expect(out, 'разметка осталась в тексте письма').not.toContain('[URL=')
+    expect(out).toContain('откройте это')
+  })
+})
+
+describe('bbToPlainText: у функции РОВНО ОДИН вызывающий вне тестов', () => {
+  it('новый вызывающий обязан пройти ревью, а не проскользнуть импортом', () => {
+    // ⚠ Гард, а не обещание в комментарии. Функция НЕ санитайзер: на сырой чужой строке она СОБЕРЁТ
+    // угрозу — `[URL=https://evil]Оплатите здесь[/URL]` превратится в «Оплатите здесь: https://evil»,
+    // то есть в чистый текст, который почтовые и пуш-клиенты автолинкуют сами. Это убедительнее
+    // сырых скобок, ради которых и живёт `neutralizeBb`. Безопасно ровно потому, что единственный
+    // вызывающий получает уже собранное и обезвреженное сообщение; второй вызывающий на несанированном
+    // входе воскресил бы ровно тот фишинг, от которого защищались.
+    const root = new URL('..', import.meta.url).pathname
+    const callers: string[] = []
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name === '.git' || name === 'legacy') continue
+        const full = join(dir, name)
+        if (statSync(full).isDirectory()) {
+          walk(full)
+          continue
+        }
+        if (!/\.(ts|vue|mjs)$/.test(name)) continue
+        if (full.includes(`${root}tests`)) continue
+        const src = readFileSync(full, 'utf8').replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+        // Само объявление не считаем — ищем ВЫЗОВЫ.
+        if (/(?<!function )bbToPlainText\(/.test(src)) callers.push(full.slice(root.length))
+      }
+    }
+    walk(join(root, 'server'))
+    walk(join(root, 'app'))
+    walk(join(root, 'scripts'))
+    expect(callers, `вызывающих стало ${callers.length}: ${callers.join(', ')}`)
+      .toEqual(['server/queue/liveDeps.ts'])
   })
 })

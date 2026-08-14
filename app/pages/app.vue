@@ -5,7 +5,6 @@ import WarningAlarmIcon from '@bitrix24/b24icons-vue/main/WarningAlarmIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import { navigateTo } from '#app'
 import { useImport } from '~/composables/useImport'
-import { useMetrics } from '~/composables/useMetrics'
 import { ON_MISSING_LABEL } from '~/config/onMissing'
 import { useSettings } from '~/composables/useSettings'
 import { useSettingsSync } from '~/composables/useSettingsSync'
@@ -15,7 +14,6 @@ import { isPortalConfigured } from '~/utils/portalSettings'
 import { jobStatusMeta } from '~/utils/jobStatus'
 import { appScreenState } from '~/utils/appScreenState'
 import { appLaunchMode, canAutoOpenMain, MAIN_SLIDER_MARK_KEY, type AppLaunchMode } from '~/utils/appLaunchMode'
-import { formatMinutes } from '~/utils/savings'
 import { APP_NAME } from '~/config/appIdentity'
 import { PORTAL_CONTENT_X, PORTAL_NAVBAR_CLASS } from '~/config/portalShell'
 import { reloadDelayMs } from '~/utils/loadCoalesce'
@@ -37,7 +35,8 @@ useHead({ title: APP_NAME, meta: [{ name: 'robots', content: 'noindex' }] })
 // закрыт #479: ключ ожидания мог остаться навсегда только если строку убрали из списка, а убрать её
 // больше нечем.
 const { jobs, loading, uploading, error, listError, listWarning, hasActive, refreshNow, upload, jobDone, startAutoPoll, stopAutoPoll } = useImport()
-const { counters, savings, moneyBlocker, resetting, error: metricsError, load: loadMetrics, reset: resetMetrics } = useMetrics()
+/** Карточка «Экономия» владеет своими метриками сама; странице нужен только повод их перечитать. */
+const savingsCard = ref<{ reload: (opts?: { silent?: boolean }) => void } | null>(null)
 
 // Setup gate: the app works on defaults, but before the first import an admin should configure it
 // (article field, target, chats). On load we read the portal settings; if nothing has been touched
@@ -239,7 +238,6 @@ onMounted(async () => {
     launch.value = 'work'
   }
   startAutoPoll() // initial status load + follow in-flight jobs (self-stops when all terminal)
-  loadMetrics()
   void loadChatBotStatus() // фоном: баннер не должен задерживать рабочий экран
   await loadSettings()
   // Loaded successfully inside the portal (a frame error means standalone/no-auth → don't nudge).
@@ -255,31 +253,6 @@ onBeforeUnmount(stopAutoPoll) // don't keep polling after leaving the page
 // ⚠ Отписка идемпотентна (снятие уже снятой подписки — no-op), поэтому ветка лаунчера, снявшая её
 // раньше, ничего не ломает.
 onBeforeUnmount(unsubscribeReload)
-
-// Two-step reset (no window.confirm): click «Сбросить» → confirm inline. Keep the
-// confirm visible (so «Да» shows «Сброс…»/disabled) until the request resolves.
-const confirmReset = ref(false)
-async function doReset(): Promise<void> {
-  try {
-    await resetMetrics()
-  } finally {
-    confirmReset.value = false
-  }
-}
-
-// Деньги показываем, только если админ портала задал стоимость часа (#270): валюту берём из самого
-// портала и не выдумываем. Нет ставки — плитки нет, и сетка схлопывается в одну колонку, иначе
-// одинокая плитка «Сэкономлено времени» висела бы на половине ширины с пустотой рядом.
-const hasMoneyTile = computed(() => !!savings.value && savings.value.moneySaved !== null)
-// Plain-Russian reason the money tile is absent. Silence here was the reported bug: an admin who
-// had entered the hourly rate saw nothing and could not tell «не сработало» from «не хватает ещё
-// одной настройки». `null` — nothing to explain (the tile is there, or nothing imported yet).
-const moneyHint = computed(() => {
-  if (moneyBlocker.value === 'no-rate') return 'Чтобы видеть экономию в деньгах, укажите стоимость часа работы сотрудника в настройках приложения.'
-  if (moneyBlocker.value === 'no-currency') return 'Стоимость часа задана, но в портале нет базовой валюты — сумму не в чем считать. Задайте базовую валюту в настройках валют Битрикс24.'
-  return ''
-})
-const moneySavedText = computed(() => (savings.value?.moneySaved ?? 0).toLocaleString('ru-RU'))
 
 // Compact status counts (inline in the «Последние операции» header instead of big dashboard tiles —
 // keeps the upload above the fold).
@@ -312,7 +285,7 @@ const seenActive = new Set<string>()
 // уже показанные), отказ не выводится (прежние числа верны, они лишь на импорт устарели, а ошибка
 // поверх успешного импорта сообщала бы о поломке, которой нет).
 watch(busy, (now, was) => {
-  if (was && !now) void loadMetrics({ silent: true })
+  if (was && !now) savingsCard.value?.reload({ silent: true })
 })
 
 const freshImportSuccess = ref(false)
@@ -598,136 +571,16 @@ watch(jobs, (list) => {
               </div>
 
               <div class="min-w-0 space-y-4 lg:col-start-1 lg:col-span-2 lg:row-start-1">
-                <!-- Экономия: две крупные цифры в строку, справа — ссылка на подробные метрики и
-                 сброс; счётчики отдельной тихой строкой ПОД карточкой. -->
-                <!-- ⚠ `opacity` остаётся ОФОРМЛЕНИЕМ, а блокируют настоящие `:disabled` на самих
-                     кнопках (#443). Прежде замок держался на `pointer-events-none`, и это была
-                     блокировка ТОЛЬКО ДЛЯ МЫШИ: кнопки внутри такого контейнера остаются в порядке
-                     обхода по Tab и срабатывают по Enter — то есть посреди пачки счётчики можно было
-                     обнулить с клавиатуры. `select-none` убран вместе с ним: он запрещал выделять
-                     текст, что к блокировке действий отношения не имеет и мешало скопировать число. -->
-                <!-- ⚠ В МОБИЛЬНОМ ПРИЛОЖЕНИИ карточки экономии нет (#507). Основание то же, по
-                     которому там уже скрыты шестерёнка и ссылка на подробные метрики: это смотрят и
-                     правят с компьютера. Две крупные цифры и разрушительное «Сбросить» на телефоне
-                     занимали экран перед журналом, ради которого приложение и открывают со склада.
-                     ⚠ Скрыто условным рендером, а не по ширине: спрятанное CSS-ом осталось бы в
-                     дереве и читалось бы программой чтения. -->
-                <B24Card
-                  v-if="!isBitrixMobile"
-                  variant="outline"
-                  class="transition-opacity"
-                  :class="busy ? 'opacity-60' : ''"
-                >
-                  <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
-                    <!-- Плитки — B24PageGrid + B24PageCard каркаса (#259) вместо самодельных цифр. -->
-                    <B24PageGrid :class="hasMoneyTile ? 'flex-1 sm:grid-cols-2 lg:grid-cols-2' : 'flex-1 sm:grid-cols-1 lg:grid-cols-1'">
-                      <B24PageCard
-                        variant="tinted-no-accent"
-                        title="Сэкономлено времени"
-                        :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-                      >
-                        <p class="text-[22px] leading-tight font-semibold">
-                          {{ savings ? formatMinutes(savings.minutesSaved) : '—' }}
-                        </p>
-                      </B24PageCard>
-                      <!-- Деньги показываем, только если админ задал стоимость часа: валюта берётся
-                         из самого портала, выдумывать её нельзя (#270). Не задана — плитки просто нет. -->
-                      <B24PageCard
-                        v-if="hasMoneyTile"
-                        variant="tinted-no-accent"
-                        title="Сэкономлено денег (примерно)"
-                        :b24ui="{ title: 'text-xs uppercase tracking-wide text-(--ui-color-base-3)' }"
-                      >
-                        <p class="text-[22px] leading-tight font-semibold">
-                          {{ moneySavedText }} <CurrencySign :code="savings?.currency ?? undefined" />
-                        </p>
-                      </B24PageCard>
-                      <!-- Плитки нет — говорим, чего не хватает, вместо пустого места. -->
-                      <p
-                        v-else-if="moneyHint"
-                        class="self-center text-xs text-(--ui-color-base-3)"
-                      >
-                        {{ moneyHint }}
-                      </p>
-                    </B24PageGrid>
-                    <div class="ml-auto flex flex-col items-end gap-2 text-xs">
-                      <!-- «Подробные метрики» скрыта в мобильном приложении Б24 (b24ui useDevice) — узкий экран. -->
-                      <button
-                        v-if="!isBitrixMobile"
-                        type="button"
-                        :disabled="busy"
-                        :aria-label="busy ? 'Подробные метрики недоступны, пока идёт загрузка' : undefined"
-                        class="text-sm font-medium text-(--ui-color-accent-main-link) hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
-                        @click="openMetrics"
-                      >
-                        Подробные метрики →
-                      </button>
-                      <!-- Сброс — только администратору (#411). Признак здесь СЕРВЕРНЫЙ (`useSettings`,
-                           свой запрос за настройками всё равно идёт) — правило выбора источника см. в
-                           `useSettings.ts`. ⚠ Это вторая точка входа в то же разрушительное действие:
-                           первая правка закрыла её только на `/metrics`, и на самом посещаемом экране
-                           сотрудник по-прежнему соглашался «Да, обнулить» и получал 403 после согласия.
-                           Подсказки тут нет намеренно: карточка узкая, а объяснение живёт на странице
-                           подробных метрик, куда ведёт соседняя ссылка. -->
-                      <B24Button
-                        v-if="isAdmin && !confirmReset"
-                        label="Сбросить"
-                        color="air-tertiary-no-accent"
-                        size="xs"
-                        :disabled="busy"
-                        :aria-label="busy ? 'Сброс счётчиков недоступен, пока идёт загрузка' : undefined"
-                        @click="() => { confirmReset = true }"
-                      />
-                      <!-- ⚠ Причина — СЛОВАМИ, а не только приглушением (#475). Выключенная кнопка без
-                           объяснения неотличима от сломанной, и человек начинает жать её сильнее.
-                           Строка одна на всю карточку: подпись у каждой кнопки читалась бы как три
-                           разные поломки вместо одного временного состояния. Место — под кнопками,
-                           чтобы объяснение стояло там, куда человек уже смотрит. -->
-                      <p
-                        v-if="busy"
-                        class="text-xs text-(--ui-color-base-3)"
-                        role="status"
-                      >
-                        Пока идёт загрузка, счётчики не меняем
-                      </p>
-                      <div
-                        v-else-if="isAdmin"
-                        class="flex flex-wrap items-center justify-end gap-2"
-                      >
-                        <span class="text-(--ui-color-base-3)">Обнулить счётчики экономии? Документы в CRM останутся.</span>
-                        <B24Button
-                          color="air-primary-alert"
-                          size="xs"
-                          :loading="resetting"
-                          :disabled="resetting || busy"
-                          :label="resetting ? 'Сбрасываем…' : 'Да, обнулить'"
-                          @click="doReset"
-                        />
-                        <B24Button
-                          label="Отмена"
-                          color="air-tertiary-no-accent"
-                          size="xs"
-                          @click="() => { confirmReset = false }"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <B24Alert
-                    v-if="metricsError"
-                    class="mt-3"
-                    color="air-primary-warning"
-                    size="sm"
-                    :title="metricsError"
-                  />
-                  <p
-                    class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-(--ui-color-base-3) transition-opacity"
-                    :class="busy ? 'opacity-60' : ''"
-                  >
-                    <span>Документов: {{ counters.docs || 0 }}</span>
-                    <span>Создано в CRM: {{ counters.created || 0 }}</span>
-                    <span>Позиций: {{ counters.lines || 0 }}</span>
-                  </p>
-                </B24Card>
+                <!-- Экономия — отдельный компонент (#523): в странице блок занимал 130 строк из
+                     808, а её читают гарды по тексту шаблона. Метрики компонент грузит сам и отдаёт
+                     наружу `reload()` — страница зовёт его, когда снимается замок пачки (#444). -->
+                <SavingsCard
+                  ref="savingsCard"
+                  :busy="busy"
+                  :is-admin="isAdmin"
+                  :mobile="isBitrixMobile"
+                  @open-metrics="openMetrics"
+                />
 
                 <!-- ⚠ Шапка ЛЕНТЫ (#494). Список теперь ОДИН — журнал, — а здесь остаются счётчики и
                      «Обновить». Показываем, лишь когда есть о чём: на свежем портале человек видит

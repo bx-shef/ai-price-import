@@ -143,4 +143,23 @@ describe('проводка: отказ личного диалога не тер
     // Фолбэк — только для личного адресата (голый числовой id), чат ошибок им не подменяется.
     expect(src.indexOf('im.notify.system.add')).toBeGreaterThan(src.indexOf('sendChatMessage(m.dialogId'))
   })
+
+  it('уведомление несёт MESSAGE_OUT — во внешний канал уходит текст без BB-разметки', async () => {
+    // ⚠ Это НЕ украшение. `MESSAGE` у `im.notify.system.add` BB-коды поддерживает (документация
+    // метода), а вот внешним каналам — почте и пушу — портал отдаёт `MESSAGE_OUT`; не задан, и
+    // туда уходит тот же `MESSAGE`, то есть человек читает в письме буквальное
+    // `[URL=https://…]открыть приложение[/URL]`. Прежде поле не заполнялось вовсе, и весь путь
+    // числился «никем не проверенным» — вопрос закрыт документацией, а не догадкой.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
+    const call = src.slice(src.indexOf('im.notify.system.add'))
+    const body = call.slice(0, call.indexOf('})') + 2)
+    // ⚠ Голое `toContain('MESSAGE_OUT')` было вхолостую: слово стоит и в комментарии над вызовом,
+    // поэтому удаление самого ключа его не красило. Требуем поле с присваиванием.
+    expect(body, 'MESSAGE_OUT собран не тем же текстом').toMatch(/MESSAGE_OUT:\s*bbToPlainText\(m\.message\)/)
+    // ⚠ И обратное: сам `MESSAGE` обязан остаться СЫРЫМ. Проверка только на `MESSAGE_OUT` пропускала
+    // мутацию `MESSAGE: bbToPlainText(m.message)` — она снимает разметку и внутри портала, то есть
+    // отменяет ровно то, ради чего фолбэк идёт через `im.notify.system.add`: там ссылка кликабельна.
+    expect(body, 'MESSAGE тоже очищен — в портале пропала кликабельная ссылка').toMatch(/MESSAGE:\s*m\.message,/)
+  })
 })
