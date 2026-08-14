@@ -156,5 +156,9 @@ describe('проводка: отказ личного диалога не тер
     const body = call.slice(0, call.indexOf('})') + 2)
     expect(body, 'MESSAGE_OUT не передаётся — в письмо уйдёт сырая BB-разметка').toContain('MESSAGE_OUT')
     expect(body, 'MESSAGE_OUT собран не тем же текстом').toMatch(/MESSAGE_OUT:\s*bbToPlainText\(m\.message\)/)
+    // ⚠ И обратное: сам `MESSAGE` обязан остаться СЫРЫМ. Проверка только на `MESSAGE_OUT` пропускала
+    // мутацию `MESSAGE: bbToPlainText(m.message)` — она снимает разметку и внутри портала, то есть
+    // отменяет ровно то, ради чего фолбэк идёт через `im.notify.system.add`: там ссылка кликабельна.
+    expect(body, 'MESSAGE тоже очищен — в портале пропала кликабельная ссылка').toMatch(/MESSAGE:\s*m\.message,/)
   })
 })
