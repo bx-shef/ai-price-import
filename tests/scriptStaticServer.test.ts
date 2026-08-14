@@ -1,6 +1,7 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { resolveSafePath } from '../scripts/lib/staticPath.mjs'
 
 /**
  * Локальные файловые серверы в `scripts/` не отдают ничего за пределами каталога сборки
@@ -16,13 +17,11 @@ import { describe, expect, it } from 'vitest'
  * сервера его не доносят. Отсюда правило: дыру такого рода проверяют запросом без клиентской
  * нормализации, иначе «не воспроизвелось» читается как «уязвимости нет».
  *
- * ЦЕНА. Скрипты в прод не идут и в CI не вызываются, но их запускают руками на машине, где рядом
- * лежат `.env`, ключи и `.git`. Без привязки к `127.0.0.1` Node слушает `0.0.0.0`, то есть на время
- * прогона порт виден с любой машины, которая видит эту по сети.
- *
- * ⚠ Проверка структурная и намеренно узкая: она сторожит ровно два приёма, каждый из которых уже
- * забывали. Список файлов НЕ захардкожен — новый скрипт с `createServer` попадает под неё сам,
- * иначе третья копия точно так же приехала бы без защиты.
+ * ⚠ ПРОВЕРКА ПОВЕДЕНИЕМ, А НЕ ТЕКСТОМ — и это вторая купленная находка. Первая редакция гарда
+ * искала в исходнике подстроку `startsWith(PUBLIC_DIR + sep)`. Мутация «убрать один символ `!`»
+ * подстроку не трогает, а смысл переворачивает целиком: безопасные пути получают 403, обход
+ * каталога отдаётся. Гард оставался зелёным. Поэтому замок вынесен в чистую `resolveSafePath`, и
+ * ниже проверяется он сам, а не то, как он записан.
  */
 
 const ROOT = new URL('..', import.meta.url).pathname
@@ -35,6 +34,45 @@ const servers = readdirSync(SCRIPTS)
   .filter(f => f.endsWith('.mjs'))
   .filter(f => strip(read(f)).includes('createServer('))
 
+const BASE = '/build/public'
+
+describe('#523: замок пути у локальных серверов', () => {
+  it('обычный путь резолвится внутрь каталога сборки', () => {
+    // ⚠ Этот случай и ловит ИНВЕРСИЮ условия: с перевёрнутым замком обычный путь отвергается.
+    expect(resolveSafePath(BASE, '/app.js')).toBe(`${BASE}/app.js`)
+    expect(resolveSafePath(BASE, '/settings/')).toBe(`${BASE}/settings/index.html`)
+    expect(resolveSafePath(BASE, '/settings/?x=1')).toBe(`${BASE}/settings/index.html`)
+  })
+
+  for (const attack of [
+    '/../../../../etc/passwd',
+    '/%2e%2e/%2e%2e/%2e%2e/etc/passwd',
+    '/a/../../../../../etc/shadow',
+    '/..%2f..%2f.env',
+    '/./../../.env'
+  ]) {
+    it(`обход каталога не выходит за базу: ${attack}`, () => {
+      const out = resolveSafePath(BASE, attack)
+      // Либо отказ, либо путь ВНУТРИ базы — третьего быть не должно. Формулировка именно такая,
+      // потому что часть попыток схлопывает уже `normalize`, и требовать от них `null` значило бы
+      // сторожить деталь реализации вместо самого свойства.
+      if (out !== null) expect(out.startsWith(`${BASE}/`), `${attack} → ${out}`).toBe(true)
+      expect(out === null || !out.includes('..')).toBe(true)
+    })
+  }
+
+  it('битая процентная последовательность — отказ, а не падение сервера', () => {
+    expect(resolveSafePath(BASE, '/%ZZ')).toBeNull()
+  })
+
+  it('соседний каталог с общим префиксом имени не считается своим', () => {
+    // Ради этого в условии стоит `+ sep`, а не голый префикс: `/build/public-old` начинается с
+    // `/build/public`, но своим каталогом не является.
+    expect(resolveSafePath('/build/public', '/x')).toBe('/build/public/x')
+    expect(resolveSafePath('/build/public-old', '/x')).toBe('/build/public-old/x')
+  })
+})
+
 describe('#523: локальные файловые серверы в scripts/', () => {
   it('такие скрипты вообще есть — иначе проверка молча ничего не сторожит', () => {
     // Без этого переименование `screenshot.mjs`/`probe-overflow.mjs` оставило бы пустой список, и
@@ -43,12 +81,10 @@ describe('#523: локальные файловые серверы в scripts/',
   })
 
   for (const file of servers) {
-    it(`${file}: путь из запроса нормализуется и не выходит за каталог сборки`, () => {
-      const src = strip(read(file))
-      expect(src, 'путь из запроса кладут в join() без normalize()').toMatch(/normalize\(/)
-      // Сам замок: результат обязан лежать ВНУТРИ базовой директории. `path.join` этого не
-      // обеспечивает — он нормализует итог, то есть `..` из адреса спокойно уводит выше базы.
-      expect(src, 'нет проверки «результат внутри каталога сборки»').toMatch(/startsWith\(PUBLIC_DIR \+ sep\)/)
+    it(`${file}: путь из запроса проходит через общий замок`, () => {
+      // Своя копия замка — то, с чего дефект и начался: в `screenshot.mjs` он был, во втором
+      // скрипте его забыли. Одно место на оба, и оно покрыто поведением выше.
+      expect(strip(read(file)), 'скрипт резолвит путь сам, мимо общего замка').toMatch(/resolveSafePath\(/)
     })
 
     it(`${file}: сервер слушает только 127.0.0.1`, () => {

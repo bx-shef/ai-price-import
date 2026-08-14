@@ -19,9 +19,10 @@
 import { chromium } from 'playwright-core'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { extname, join, normalize, sep } from 'node:path'
+import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveChromium } from './lib/chromium.mjs'
+import { resolveSafePath } from './lib/staticPath.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PUBLIC_DIR = join(ROOT, '.output', 'public')
@@ -39,15 +40,11 @@ const routes = args.filter((a, i) => a.startsWith('/') && (widthArg === -1 || i 
 const ROUTES = routes.length ? routes : ['/settings', '/metrics']
 
 const server = createServer(async (req, res) => {
-  let path = decodeURIComponent((req.url || '/').split('?')[0])
-  if (path.endsWith('/')) path += 'index.html'
-  // ⚠ Никогда не отдаём файл ЗА пределами каталога сборки, даже если в адресе есть `../`. Первая
-  // редакция скрипта клала `req.url` прямо в `join()`: `path.join` выход за базу не запрещает, и
-  // `/%2e%2e/%2e%2e/etc/passwd` читался как обычный файл (буквальный `../` схлопывает сам curl, а
-  // закодированный доезжает). Тот же приём и та же защита — в `screenshot.mjs`; там она стояла с
-  // самого начала, здесь её просто забыли повторить.
-  const filePath = join(PUBLIC_DIR, normalize(path))
-  if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + sep)) {
+  // ⚠ Замок от обхода каталога — в общей чистой функции, а не строкой здесь. Пока он жил тут,
+  // проверить его можно было только текстом, а текст не видит ИНВЕРСИИ: убери один `!` — и обход
+  // отдаётся, а обычные пути получают 403. Разбор — в самом модуле.
+  const filePath = resolveSafePath(PUBLIC_DIR, req.url || '/')
+  if (filePath === null) {
     res.writeHead(403)
     res.end('forbidden')
     return

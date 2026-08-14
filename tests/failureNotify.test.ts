@@ -154,7 +154,8 @@ describe('проводка: отказ личного диалога не тер
     const src = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
     const call = src.slice(src.indexOf('im.notify.system.add'))
     const body = call.slice(0, call.indexOf('})') + 2)
-    expect(body, 'MESSAGE_OUT не передаётся — в письмо уйдёт сырая BB-разметка').toContain('MESSAGE_OUT')
+    // ⚠ Голое `toContain('MESSAGE_OUT')` было вхолостую: слово стоит и в комментарии над вызовом,
+    // поэтому удаление самого ключа его не красило. Требуем поле с присваиванием.
     expect(body, 'MESSAGE_OUT собран не тем же текстом').toMatch(/MESSAGE_OUT:\s*bbToPlainText\(m\.message\)/)
     // ⚠ И обратное: сам `MESSAGE` обязан остаться СЫРЫМ. Проверка только на `MESSAGE_OUT` пропускала
     // мутацию `MESSAGE: bbToPlainText(m.message)` — она снимает разметку и внутри портала, то есть

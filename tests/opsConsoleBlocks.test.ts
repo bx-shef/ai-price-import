@@ -93,9 +93,19 @@ describe('#523: служебная консоль разобрана на бло
   }
 
   it('страница подписана на событие у КАЖДОГО блока', () => {
+    // ⚠ Считать СУММУ вхождений по файлу мало: проверяющий снял привязку у `OpsRatingsCard` и
+    // задвоил её на мёртвом элементе — сумма осталась прежней, гард зелёным, а просроченная сессия
+    // в блоке оценок перестала уводить на вход. Смотрим тег каждого блока отдельно.
     const page = strip(read('app/pages/queues.vue'))
-    const handled = (page.match(/@unauthorized="onUnauthorized"/g) || []).length
-    expect(handled, 'блок остался без обработчика — просроченная сессия молча превратится в ошибку').toBe(BLOCKS.length)
+    for (const block of BLOCKS) {
+      const tag = block.split('/').pop()!.replace('.vue', '')
+      const open = page.indexOf(`<${tag}`)
+      expect(open, `${tag} не найден на странице`).toBeGreaterThan(-1)
+      const close = page.indexOf('/>', open)
+      expect(close, `${tag}: тег не закрыт`).toBeGreaterThan(open)
+      expect(page.slice(open, close), `${tag}: своей привязки @unauthorized нет`)
+        .toContain('@unauthorized="onUnauthorized"')
+    }
   })
 
   it('уход на вход гасит автообновление и защищён от повторов', () => {
