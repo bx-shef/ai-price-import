@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   MAX_CHAT_REASON,
@@ -277,8 +279,6 @@ describe('bbToPlainText: у функции РОВНО ОДИН вызывающ�
     // сырых скобок, ради которых и живёт `neutralizeBb`. Безопасно ровно потому, что единственный
     // вызывающий получает уже собранное и обезвреженное сообщение; второй вызывающий на несанированном
     // входе воскресил бы ровно тот фишинг, от которого защищались.
-    const { readdirSync, readFileSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const { join } = require('node:path') as typeof import('node:path')
     const root = new URL('..', import.meta.url).pathname
     const callers: string[] = []
     const walk = (dir: string) => {
