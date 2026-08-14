@@ -143,4 +143,18 @@ describe('проводка: отказ личного диалога не тер
     // Фолбэк — только для личного адресата (голый числовой id), чат ошибок им не подменяется.
     expect(src.indexOf('im.notify.system.add')).toBeGreaterThan(src.indexOf('sendChatMessage(m.dialogId'))
   })
+
+  it('уведомление несёт MESSAGE_OUT — во внешний канал уходит текст без BB-разметки', async () => {
+    // ⚠ Это НЕ украшение. `MESSAGE` у `im.notify.system.add` BB-коды поддерживает (документация
+    // метода), а вот внешним каналам — почте и пушу — портал отдаёт `MESSAGE_OUT`; не задан, и
+    // туда уходит тот же `MESSAGE`, то есть человек читает в письме буквальное
+    // `[URL=https://…]открыть приложение[/URL]`. Прежде поле не заполнялось вовсе, и весь путь
+    // числился «никем не проверенным» — вопрос закрыт документацией, а не догадкой.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(new URL('../server/queue/liveDeps.ts', import.meta.url), 'utf8')
+    const call = src.slice(src.indexOf('im.notify.system.add'))
+    const body = call.slice(0, call.indexOf('})') + 2)
+    expect(body, 'MESSAGE_OUT не передаётся — в письмо уйдёт сырая BB-разметка').toContain('MESSAGE_OUT')
+    expect(body, 'MESSAGE_OUT собран не тем же текстом').toMatch(/MESSAGE_OUT:\s*bbToPlainText\(m\.message\)/)
+  })
 })

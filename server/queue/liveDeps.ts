@@ -32,7 +32,7 @@ import { fetchCurrencies } from '../utils/portalCurrency'
 import { createTargetItem, setProductRows } from '../utils/crmWrite'
 import { buildActivityInput, buildActivityMarkerFields, buildFileAttachment, buildTodoActivity } from '../utils/todoActivity'
 import { originatorCode } from '../utils/originMarker'
-import { buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
+import { bbToPlainText, buildErrorMessage, buildSuccessMessage, sendChatMessage } from '../utils/chatNotify'
 import { planFailureNotify } from '../utils/failureNotify'
 import { extractText } from '../utils/textExtract'
 import { uploadPath } from '../utils/fileStore'
@@ -315,7 +315,16 @@ export async function notifyImportFailure(
         let recovered = false
         if (isPersonal) {
           try {
-            await t.call('im.notify.system.add', { USER_ID: Number(m.dialogId), MESSAGE: m.message })
+            // ⚠ `MESSAGE_OUT` заполняется НЕ для красоты. Сам `MESSAGE` BB-коды поддерживает — это
+            // сказано в документации метода, — но у уведомления есть второй адресат: внешние каналы
+            // (почта, пуш), и им портал отдаёт `MESSAGE_OUT`. Не задан — уходит тот же `MESSAGE`, и
+            // в письме человек читает буквальное `[URL=https://…]открыть приложение[/URL]`.
+            // Внутри портала остаётся кликабельная ссылка, наружу — та же строка словами.
+            await t.call('im.notify.system.add', {
+              USER_ID: Number(m.dialogId),
+              MESSAGE: m.message,
+              MESSAGE_OUT: bbToPlainText(m.message)
+            })
             recovered = true
           } catch { /* fall through to the warn below */ }
         }
